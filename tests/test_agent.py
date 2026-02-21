@@ -176,7 +176,7 @@ def test_create_ssl_context(mock_ctx_factory: MagicMock) -> None:
         client_key=Path("/key.pem"),
     )
     result = create_ssl_context(tls)
-    mock_ctx_factory.assert_called_once_with(cafile="/ca.pem")
+    mock_ctx_factory.assert_called_once_with()
     mock_ctx.load_cert_chain.assert_called_once_with(certfile="/agent.pem", keyfile="/key.pem")
     assert result is mock_ctx
 

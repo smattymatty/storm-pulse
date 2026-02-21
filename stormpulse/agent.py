@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 def create_ssl_context(tls: TlsConfig) -> ssl.SSLContext:
     """Build a mutual TLS context from config paths."""
-    ctx = ssl.create_default_context(cafile=str(tls.ca_cert))
+    ctx = ssl.create_default_context()
     ctx.load_cert_chain(certfile=str(tls.client_cert), keyfile=str(tls.client_key))
     return ctx
 
