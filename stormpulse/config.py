@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ class ConfigError(Exception):
 @dataclass(frozen=True, slots=True)
 class AgentConfig:
     id: str
+    pulse_token: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +64,17 @@ class StorageConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CommandDef:
+    """A single whitelisted command definition."""
+
+    group: str
+    command: list[str]
+    timeout: int
+    requires_confirmation: bool = False
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Top-level configuration, mirrors stormpulse.toml structure."""
 
@@ -72,6 +85,7 @@ class Config:
     metrics: MetricsConfig
     project: ProjectConfig
     storage: StorageConfig
+    commands: dict[str, CommandDef] = dataclasses.field(default_factory=dict)
 
     def validate_paths(self) -> None:
         """Check that all referenced file paths exist and are readable.
@@ -139,6 +153,7 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
     s = _require_section(raw, "agent")
     return AgentConfig(
         id=_require_key(s, "id", str, "agent"),
+        pulse_token=_require_key(s, "pulse_token", str, "agent"),
     )
 
 
@@ -209,6 +224,71 @@ def _parse_storage(raw: dict[str, Any]) -> StorageConfig:
     )
 
 
+def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
+    """Parse optional [commands.*] sub-tables into CommandDef instances.
+
+    Returns an empty dict if no [commands] section exists.
+    Raises ConfigError for invalid command definitions.
+    """
+    section = raw.get("commands")
+    if section is None:
+        return {}
+    if not isinstance(section, dict):
+        raise ConfigError("[commands] must be a table")
+
+    result: dict[str, CommandDef] = {}
+    for name, entry in section.items():
+        label = f"commands.{name}"
+        if not isinstance(entry, dict):
+            raise ConfigError(f"[{label}] must be a table")
+
+        group = _require_key(entry, "group", str, label)
+        if not group:
+            raise ConfigError(f"'group' in [{label}] must not be empty")
+
+        command = _require_key(entry, "command", list, label)
+        if not command:
+            raise ConfigError(f"'command' in [{label}] must be a non-empty list")
+        for i, arg in enumerate(command):
+            if not isinstance(arg, str):
+                raise ConfigError(
+                    f"'command[{i}]' in [{label}] must be a string, got {type(arg).__name__}"
+                )
+        if not command[0].startswith("/"):
+            raise ConfigError(
+                f"'command[0]' in [{label}] must be an absolute path (starts with /), "
+                f"got {command[0]!r}"
+            )
+
+        timeout = _require_key(entry, "timeout", int, label)
+        if timeout <= 0:
+            raise ConfigError(f"'timeout' in [{label}] must be positive, got {timeout}")
+
+        requires_confirmation = entry.get("requires_confirmation", False)
+        if not isinstance(requires_confirmation, bool):
+            raise ConfigError(
+                f"'requires_confirmation' in [{label}] must be bool, "
+                f"got {type(requires_confirmation).__name__}"
+            )
+
+        description = entry.get("description", "")
+        if not isinstance(description, str):
+            raise ConfigError(
+                f"'description' in [{label}] must be a string, "
+                f"got {type(description).__name__}"
+            )
+
+        result[name] = CommandDef(
+            group=group,
+            command=command,
+            timeout=timeout,
+            requires_confirmation=requires_confirmation,
+            description=description,
+        )
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -238,4 +318,5 @@ def load_config(path: Path) -> Config:
         metrics=_parse_metrics(raw),
         project=_parse_project(raw),
         storage=_parse_storage(raw),
+        commands=_parse_commands(raw),
     )

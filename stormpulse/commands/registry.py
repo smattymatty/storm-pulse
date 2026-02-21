@@ -4,26 +4,14 @@ from __future__ import annotations
 
 import subprocess
 import time
-from dataclasses import dataclass
 from typing import Any
 
-from stormpulse.config import ProjectConfig
+from stormpulse.config import CommandDef, ProjectConfig
 from stormpulse.protocol import CommandResultPayload
 
 
 class CommandError(Exception):
     """Raised for unknown command names or invalid registry state."""
-
-
-@dataclass(frozen=True, slots=True)
-class CommandDef:
-    """A single whitelisted command definition."""
-
-    group: str
-    command: list[str]
-    timeout: int
-    requires_confirmation: bool = False
-    description: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +56,14 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
 }
 
 
+def build_registry(config_commands: dict[str, CommandDef]) -> dict[str, CommandDef]:
+    """Merge built-in commands with config-defined commands.
+
+    Config commands override built-ins on name collision.
+    """
+    return {**COMMAND_REGISTRY, **config_commands}
+
+
 # ---------------------------------------------------------------------------
 # Resolution and lookup
 # ---------------------------------------------------------------------------
@@ -92,12 +88,12 @@ def _resolve_command(template: list[str], config: ProjectConfig) -> list[str]:
     return resolved
 
 
-def get_command(name: str) -> CommandDef:
+def get_command(name: str, *, registry: dict[str, CommandDef]) -> CommandDef:
     """Look up a command by name, or raise CommandError."""
     try:
-        return COMMAND_REGISTRY[name]
+        return registry[name]
     except KeyError:
-        valid = ", ".join(sorted(COMMAND_REGISTRY))
+        valid = ", ".join(sorted(registry))
         raise CommandError(f"Unknown command: {name!r}. Valid commands: {valid}")
 
 
@@ -111,13 +107,15 @@ def execute_command(
     config: ProjectConfig,
     request_id: str,
     sequence_id: str | None = None,
+    *,
+    registry: dict[str, CommandDef],
 ) -> CommandResultPayload:
     """Execute a whitelisted command and return the result.
 
     Raises CommandError for unknown commands. All other failures
     (timeout, missing binary, OS errors) are reported in the result payload.
     """
-    cmd_def = get_command(command_name)
+    cmd_def = get_command(command_name, registry=registry)
     resolved = _resolve_command(cmd_def.command, config)
 
     start = time.monotonic()
@@ -144,6 +142,9 @@ def execute_command(
         )
     except subprocess.TimeoutExpired as exc:
         duration_ms = int((time.monotonic() - start) * 1000)
+        partial_stderr = str(exc.stderr or "")
+        timeout_msg = f"Command timed out after {cmd_def.timeout}s"
+        stderr = f"{timeout_msg}\n{partial_stderr}" if partial_stderr else timeout_msg
         return CommandResultPayload(
             request_id=request_id,
             command=command_name,
@@ -151,7 +152,7 @@ def execute_command(
             success=False,
             exit_code=-1,
             stdout=str(exc.stdout or ""),
-            stderr=str(exc.stderr or ""),
+            stderr=stderr,
             duration_ms=duration_ms,
             sequence_id=sequence_id,
             failure_reason="timeout",

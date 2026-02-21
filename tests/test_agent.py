@@ -46,7 +46,7 @@ SECRET = b"test-secret-key-256-bits-long!!!"
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
     return Config(
-        agent=AgentConfig(id="test-01"),
+        agent=AgentConfig(id="test-01", pulse_token="tok-test-123"),
         dashboard=DashboardConfig(
             url="wss://example.com/ws/",
             reconnect_min_seconds=0.05,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Generator
 
-from stormpulse.config import ProjectConfig
+from stormpulse.config import CommandDef, ProjectConfig
 from stormpulse.protocol import CommandResultPayload
 
 from .registry import execute_command, get_command
@@ -25,6 +25,7 @@ def run_deploy_sequence(
     sequence_id: str,
     *,
     stop_on_failure: bool = True,
+    registry: dict[str, CommandDef],
 ) -> Generator[CommandResultPayload, None, None]:
     """Execute commands in order, yielding each result.
 
@@ -33,10 +34,12 @@ def run_deploy_sequence(
     """
     # Validate all names first — fail fast on typos
     for name in commands:
-        get_command(name)
+        get_command(name, registry=registry)
 
     for name in commands:
-        result = execute_command(name, config, str(uuid.uuid4()), sequence_id)
+        result = execute_command(
+            name, config, str(uuid.uuid4()), sequence_id, registry=registry,
+        )
         yield result
         if stop_on_failure and not result.success:
             return

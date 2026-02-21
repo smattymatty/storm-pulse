@@ -6,6 +6,9 @@ License-Expression: MIT
 Requires-Python: >=3.12
 Requires-Dist: websockets>=14.0
 Requires-Dist: psutil>=6.0
+Requires-Dist: cryptography>=44.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=1.0; extra == "dev"
 Requires-Dist: mypy>=1.13; extra == "dev"
+Requires-Dist: types-psutil>=6.0; extra == "dev"

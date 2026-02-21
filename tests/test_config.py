@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from stormpulse.config import ConfigError, load_config
+from stormpulse.config import CommandDef, ConfigError, load_config
 
 
 # ---------------------------------------------------------------------------
@@ -19,6 +19,7 @@ EXAMPLE_CONFIG = Path(__file__).parent.parent / "config" / "stormpulse.example.t
 MINIMAL_VALID = """\
 [agent]
 id = "test-01"
+pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 [dashboard]
 url = "wss://example.com/ws/"
@@ -250,3 +251,185 @@ def test_config_is_frozen(write_config: Callable[[str], Path]) -> None:
     config = load_config(write_config(MINIMAL_VALID))
     with pytest.raises(AttributeError):
         config.agent = None  # type: ignore[misc,assignment]
+
+
+# ---------------------------------------------------------------------------
+# Custom commands
+# ---------------------------------------------------------------------------
+
+CUSTOM_COMMAND_TOML = """
+[commands.restart_caddy]
+group = "maintenance"
+command = ["/usr/bin/systemctl", "restart", "caddy.service"]
+timeout = 30
+requires_confirmation = true
+description = "Restart Caddy reverse proxy"
+"""
+
+
+def test_no_commands_section_gives_empty_dict(write_config: Callable[[str], Path]) -> None:
+    config = load_config(write_config(MINIMAL_VALID))
+    assert config.commands == {}
+
+
+def test_custom_command_parsed(write_config: Callable[[str], Path]) -> None:
+    config = load_config(write_config(MINIMAL_VALID + CUSTOM_COMMAND_TOML))
+    assert "restart_caddy" in config.commands
+    cmd = config.commands["restart_caddy"]
+    assert isinstance(cmd, CommandDef)
+    assert cmd.group == "maintenance"
+    assert cmd.command == ["/usr/bin/systemctl", "restart", "caddy.service"]
+    assert cmd.timeout == 30
+    assert cmd.requires_confirmation is True
+    assert cmd.description == "Restart Caddy reverse proxy"
+
+
+def test_custom_command_defaults(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.simple]
+group = "test"
+command = ["/bin/true"]
+timeout = 5
+"""
+    config = load_config(write_config(toml))
+    cmd = config.commands["simple"]
+    assert cmd.requires_confirmation is False
+    assert cmd.description == ""
+
+
+def test_multiple_custom_commands(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.cmd_a]
+group = "a"
+command = ["/bin/true"]
+timeout = 10
+
+[commands.cmd_b]
+group = "b"
+command = ["/bin/false"]
+timeout = 20
+"""
+    config = load_config(write_config(toml))
+    assert len(config.commands) == 2
+    assert "cmd_a" in config.commands
+    assert "cmd_b" in config.commands
+
+
+def test_command_missing_group_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+command = ["/bin/true"]
+timeout = 10
+"""
+    with pytest.raises(ConfigError, match="group"):
+        load_config(write_config(toml))
+
+
+def test_command_missing_command_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+timeout = 10
+"""
+    with pytest.raises(ConfigError, match="command"):
+        load_config(write_config(toml))
+
+
+def test_command_missing_timeout_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+"""
+    with pytest.raises(ConfigError, match="timeout"):
+        load_config(write_config(toml))
+
+
+def test_command_non_absolute_path_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["relative/bin", "arg"]
+timeout = 10
+"""
+    with pytest.raises(ConfigError, match="absolute path"):
+        load_config(write_config(toml))
+
+
+def test_command_empty_command_list_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = []
+timeout = 10
+"""
+    with pytest.raises(ConfigError, match="non-empty"):
+        load_config(write_config(toml))
+
+
+def test_command_negative_timeout_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = -1
+"""
+    with pytest.raises(ConfigError, match="positive"):
+        load_config(write_config(toml))
+
+
+def test_command_zero_timeout_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = 0
+"""
+    with pytest.raises(ConfigError, match="positive"):
+        load_config(write_config(toml))
+
+
+def test_command_wrong_type_requires_confirmation_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = 10
+requires_confirmation = "yes"
+"""
+    with pytest.raises(ConfigError, match="bool"):
+        load_config(write_config(toml))
+
+
+def test_command_wrong_type_description_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = 10
+description = 42
+"""
+    with pytest.raises(ConfigError, match="string"):
+        load_config(write_config(toml))
+
+
+def test_command_non_string_in_command_list_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true", 42]
+timeout = 10
+"""
+    with pytest.raises(ConfigError, match="string"):
+        load_config(write_config(toml))
+
+
+def test_command_empty_group_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = ""
+command = ["/bin/true"]
+timeout = 10
+"""
+    with pytest.raises(ConfigError, match="empty"):
+        load_config(write_config(toml))

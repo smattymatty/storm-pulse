@@ -132,7 +132,7 @@ def register_dict() -> dict[str, Any]:
         "id": "550e8400-e29b-41d4-a716-446655440005",
         "ts": "2026-02-21T12:00:00Z",
         "agent_id": "vps-toronto-01",
-        "payload": {"version": "0.1.0"},
+        "payload": {"version": "0.1.0", "pulse_token": "tok-abc-123"},
     }
 
 
@@ -209,9 +209,10 @@ def test_roundtrip_heartbeat() -> None:
 
 
 def test_roundtrip_register() -> None:
-    original = make_register("test-agent", "0.1.0")
+    original = make_register("test-agent", "0.1.0", "tok-abc-123")
     rebuilt = Envelope.from_json(original.to_json())
     assert rebuilt.payload["version"] == "0.1.0"
+    assert rebuilt.payload["pulse_token"] == "tok-abc-123"
 
 
 def test_roundtrip_metrics() -> None:
@@ -494,9 +495,10 @@ def test_make_heartbeat_valid() -> None:
 
 
 def test_make_register_valid() -> None:
-    env = make_register("test-01", "0.1.0")
+    env = make_register("test-01", "0.1.0", "tok-abc-123")
     assert env.type == MessageType.REGISTER
     assert env.payload["version"] == "0.1.0"
+    assert env.payload["pulse_token"] == "tok-abc-123"
     Envelope.from_json(env.to_json())
 
 
@@ -535,7 +537,7 @@ def test_extra_envelope_fields_ignored(heartbeat_dict: dict[str, Any]) -> None:
 
 
 def test_extra_payload_fields_ignored() -> None:
-    data: dict[str, Any] = {"version": "0.1.0", "extra": "ignored"}
+    data: dict[str, Any] = {"version": "0.1.0", "pulse_token": "tok", "extra": "ignored"}
     payload = RegisterPayload.from_dict(data)
     assert payload.version == "0.1.0"
 
@@ -590,6 +592,6 @@ def test_envelope_immutable() -> None:
 
 
 def test_payload_immutable() -> None:
-    payload = RegisterPayload(version="0.1.0")
+    payload = RegisterPayload(version="0.1.0", pulse_token="tok")
     with pytest.raises(AttributeError):
         payload.version = "0.2.0"  # type: ignore[misc]

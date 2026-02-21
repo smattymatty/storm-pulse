@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 storm_pulse_agent.egg-info/PKG-INFO
 storm_pulse_agent.egg-info/SOURCES.txt
@@ -7,8 +8,17 @@ storm_pulse_agent.egg-info/requires.txt
 storm_pulse_agent.egg-info/top_level.txt
 stormpulse/__init__.py
 stormpulse/__main__.py
+stormpulse/agent.py
+stormpulse/auth.py
 stormpulse/config.py
+stormpulse/metrics.py
 stormpulse/protocol.py
 stormpulse/commands/__init__.py
+stormpulse/commands/deploy.py
+stormpulse/commands/registry.py
+tests/test_agent.py
+tests/test_auth.py
+tests/test_commands.py
 tests/test_config.py
+tests/test_metrics.py
 tests/test_protocol.py

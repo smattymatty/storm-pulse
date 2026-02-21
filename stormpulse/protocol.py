@@ -157,6 +157,7 @@ class RegisterPayload:
     """Payload for register messages."""
 
     version: str
+    pulse_token: str
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -297,9 +298,12 @@ def make_heartbeat(agent_id: str) -> Envelope:
     return _make_envelope(agent_id, MessageType.HEARTBEAT, {})
 
 
-def make_register(agent_id: str, version: str) -> Envelope:
+def make_register(agent_id: str, version: str, pulse_token: str) -> Envelope:
     """Create a register envelope."""
-    return _make_envelope(agent_id, MessageType.REGISTER, asdict(RegisterPayload(version=version)))
+    return _make_envelope(
+        agent_id, MessageType.REGISTER,
+        asdict(RegisterPayload(version=version, pulse_token=pulse_token)),
+    )
 
 
 def make_metrics_push(agent_id: str, metrics: MetricsPayload) -> Envelope:

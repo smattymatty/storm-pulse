@@ -1,6 +1,9 @@
 websockets>=14.0
 psutil>=6.0
+cryptography>=44.0
 
 [dev]
 pytest>=8.0
+pytest-asyncio>=1.0
 mypy>=1.13
+types-psutil>=6.0

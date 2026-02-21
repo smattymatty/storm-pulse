@@ -14,6 +14,7 @@ from stormpulse.commands import (
     DEFAULT_DEPLOY_SEQUENCE,
     CommandDef,
     CommandError,
+    build_registry,
     execute_command,
     get_command,
     run_deploy_sequence,
@@ -81,18 +82,18 @@ def test_command_def_is_frozen() -> None:
 
 
 def test_get_command_valid() -> None:
-    cmd = get_command("git_pull")
+    cmd = get_command("git_pull", registry=COMMAND_REGISTRY)
     assert cmd is COMMAND_REGISTRY["git_pull"]
 
 
 def test_get_command_invalid_raises() -> None:
     with pytest.raises(CommandError, match="Unknown command"):
-        get_command("rm_rf_slash")
+        get_command("rm_rf_slash", registry=COMMAND_REGISTRY)
 
 
 def test_get_command_error_lists_valid_commands() -> None:
     with pytest.raises(CommandError, match="git_pull"):
-        get_command("nope")
+        get_command("nope", registry=COMMAND_REGISTRY)
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ def test_execute_success(
     mock_run.return_value = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="Already up to date.\n", stderr="",
     )
-    result = execute_command("git_pull", project_config, "req-1")
+    result = execute_command("git_pull", project_config, "req-1", registry=COMMAND_REGISTRY)
     assert result.success is True
     assert result.exit_code == 0
     assert result.duration_ms == 342
@@ -159,7 +160,7 @@ def test_execute_failure_nonzero_exit(
     mock_run.return_value = subprocess.CompletedProcess(
         args=[], returncode=1, stdout="", stderr="error: permission denied\n",
     )
-    result = execute_command("git_pull", project_config, "req-2")
+    result = execute_command("git_pull", project_config, "req-2", registry=COMMAND_REGISTRY)
     assert result.success is False
     assert result.exit_code == 1
     assert result.failure_reason == "exit_code"
@@ -178,11 +179,12 @@ def test_execute_timeout(
     exc.stdout = "partial"  # type: ignore[assignment]
     exc.stderr = ""  # type: ignore[assignment]
     mock_run.side_effect = exc
-    result = execute_command("git_pull", project_config, "req-3")
+    result = execute_command("git_pull", project_config, "req-3", registry=COMMAND_REGISTRY)
     assert result.success is False
     assert result.exit_code == -1
     assert result.failure_reason == "timeout"
     assert result.stdout == "partial"
+    assert "Command timed out after 60s" in result.stderr
 
 
 @patch("stormpulse.commands.registry.time.monotonic")
@@ -194,7 +196,7 @@ def test_execute_binary_not_found(
 ) -> None:
     mock_time.side_effect = [0.0, 0.001]
     mock_run.side_effect = FileNotFoundError("[Errno 2] No such file or directory: '/usr/bin/git'")
-    result = execute_command("git_pull", project_config, "req-4")
+    result = execute_command("git_pull", project_config, "req-4", registry=COMMAND_REGISTRY)
     assert result.success is False
     assert result.exit_code == -1
     assert result.failure_reason == "not_found"
@@ -210,7 +212,7 @@ def test_execute_os_error(
 ) -> None:
     mock_time.side_effect = [0.0, 0.001]
     mock_run.side_effect = OSError("Permission denied")
-    result = execute_command("git_pull", project_config, "req-5")
+    result = execute_command("git_pull", project_config, "req-5", registry=COMMAND_REGISTRY)
     assert result.success is False
     assert result.exit_code == -1
     assert result.failure_reason == "os_error"
@@ -225,7 +227,7 @@ def test_execute_measures_duration(
 ) -> None:
     mock_time.side_effect = [1.0, 1.5]
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-    result = execute_command("docker_up", project_config, "req-6")
+    result = execute_command("docker_up", project_config, "req-6", registry=COMMAND_REGISTRY)
     assert result.duration_ms == 500
 
 
@@ -238,13 +240,15 @@ def test_execute_forwards_sequence_id(
 ) -> None:
     mock_time.side_effect = [0.0, 0.1]
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-    result = execute_command("git_pull", project_config, "req-7", sequence_id="seq-42")
+    result = execute_command(
+        "git_pull", project_config, "req-7", sequence_id="seq-42", registry=COMMAND_REGISTRY,
+    )
     assert result.sequence_id == "seq-42"
 
 
 def test_execute_unknown_command_raises(project_config: ProjectConfig) -> None:
     with pytest.raises(CommandError, match="Unknown command"):
-        execute_command("nope", project_config, "req-x")
+        execute_command("nope", project_config, "req-x", registry=COMMAND_REGISTRY)
 
 
 # ---------------------------------------------------------------------------
@@ -254,21 +258,25 @@ def test_execute_unknown_command_raises(project_config: ProjectConfig) -> None:
 
 @patch("stormpulse.commands.deploy.execute_command")
 def test_deploy_all_success(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
-    mock_exec.side_effect = lambda name, cfg, rid, sid: MagicMock(
+    mock_exec.side_effect = lambda name, cfg, rid, sid, *, registry: MagicMock(
         success=True, command=name, sequence_id=sid, request_id=rid,
     )
-    results = list(run_deploy_sequence(DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-1"))
+    results = list(run_deploy_sequence(
+        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-1", registry=COMMAND_REGISTRY,
+    ))
     assert len(results) == 5
     assert all(r.success for r in results)
 
 
 @patch("stormpulse.commands.deploy.execute_command")
 def test_deploy_stop_on_failure(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None) -> MagicMock:
+    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
         return MagicMock(success=(name != "docker_build"), command=name)
 
     mock_exec.side_effect = side_effect
-    results = list(run_deploy_sequence(DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-2"))
+    results = list(run_deploy_sequence(
+        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-2", registry=COMMAND_REGISTRY,
+    ))
     assert len(results) == 2  # git_pull (ok), docker_build (fail), then stop
     assert results[0].success is True
     assert results[1].success is False
@@ -276,31 +284,36 @@ def test_deploy_stop_on_failure(mock_exec: MagicMock, project_config: ProjectCon
 
 @patch("stormpulse.commands.deploy.execute_command")
 def test_deploy_continue_on_failure(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None) -> MagicMock:
+    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
         return MagicMock(success=(name != "docker_build"), command=name)
 
     mock_exec.side_effect = side_effect
     results = list(run_deploy_sequence(
-        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-3", stop_on_failure=False,
+        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-3",
+        stop_on_failure=False, registry=COMMAND_REGISTRY,
     ))
     assert len(results) == 5
 
 
 def test_deploy_invalid_command_raises_upfront(project_config: ProjectConfig) -> None:
     with pytest.raises(CommandError, match="Unknown command"):
-        list(run_deploy_sequence(["git_pull", "bogus"], project_config, "seq-4"))
+        list(run_deploy_sequence(
+            ["git_pull", "bogus"], project_config, "seq-4", registry=COMMAND_REGISTRY,
+        ))
 
 
 @patch("stormpulse.commands.deploy.execute_command")
 def test_deploy_unique_request_ids(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
     call_args: list[str] = []
 
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None) -> MagicMock:
+    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
         call_args.append(rid)
         return MagicMock(success=True, command=name)
 
     mock_exec.side_effect = side_effect
-    list(run_deploy_sequence(DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-5"))
+    list(run_deploy_sequence(
+        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-5", registry=COMMAND_REGISTRY,
+    ))
     assert len(set(call_args)) == 5  # all unique
 
 
@@ -308,10 +321,79 @@ def test_deploy_unique_request_ids(mock_exec: MagicMock, project_config: Project
 def test_deploy_shared_sequence_id(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
     call_sids: list[str | None] = []
 
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None) -> MagicMock:
+    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
         call_sids.append(sid)
         return MagicMock(success=True, command=name)
 
     mock_exec.side_effect = side_effect
-    list(run_deploy_sequence(DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-6"))
+    list(run_deploy_sequence(
+        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-6", registry=COMMAND_REGISTRY,
+    ))
     assert all(sid == "seq-6" for sid in call_sids)
+
+
+# ---------------------------------------------------------------------------
+# build_registry
+# ---------------------------------------------------------------------------
+
+
+def test_build_registry_no_config_commands() -> None:
+    registry = build_registry({})
+    assert registry == COMMAND_REGISTRY
+
+
+def test_build_registry_adds_custom_command() -> None:
+    custom = CommandDef(
+        group="maintenance",
+        command=["/usr/bin/systemctl", "restart", "caddy.service"],
+        timeout=30,
+        description="Restart Caddy",
+    )
+    registry = build_registry({"restart_caddy": custom})
+    assert len(registry) == 6
+    assert registry["restart_caddy"] is custom
+    assert registry["git_pull"] is COMMAND_REGISTRY["git_pull"]
+
+
+def test_build_registry_overrides_builtin() -> None:
+    custom_git = CommandDef(
+        group="deploy",
+        command=["/usr/local/bin/git", "-C", "{project_dir}", "pull"],
+        timeout=120,
+    )
+    registry = build_registry({"git_pull": custom_git})
+    assert len(registry) == 5
+    assert registry["git_pull"] is custom_git
+    assert registry["git_pull"].timeout == 120
+
+
+def test_build_registry_does_not_mutate_original() -> None:
+    custom = CommandDef(
+        group="test", command=["/bin/true"], timeout=10,
+    )
+    registry = build_registry({"test_cmd": custom})
+    assert "test_cmd" in registry
+    assert "test_cmd" not in COMMAND_REGISTRY
+
+
+@patch("stormpulse.commands.registry.time.monotonic")
+@patch("stormpulse.commands.registry.subprocess.run")
+def test_execute_config_defined_command(
+    mock_run: MagicMock,
+    mock_time: MagicMock,
+    project_config: ProjectConfig,
+) -> None:
+    mock_time.side_effect = [0.0, 0.1]
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="ok\n", stderr="",
+    )
+    custom = CommandDef(
+        group="maintenance",
+        command=["/usr/bin/systemctl", "restart", "caddy.service"],
+        timeout=30,
+    )
+    registry = build_registry({"restart_caddy": custom})
+    result = execute_command("restart_caddy", project_config, "req-c1", registry=registry)
+    assert result.success is True
+    assert result.command == "restart_caddy"
+    assert result.group == "maintenance"

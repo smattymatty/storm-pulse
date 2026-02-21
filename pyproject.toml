@@ -11,6 +11,7 @@ license = "MIT"
 dependencies = [
     "websockets>=14.0",
     "psutil>=6.0",
+    "cryptography>=44.0",
 ]
 
 [project.optional-dependencies]

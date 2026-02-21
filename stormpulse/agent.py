@@ -13,7 +13,7 @@ from websockets.exceptions import ConnectionClosed
 
 from stormpulse import __version__
 from stormpulse.auth import AuthError, NonceStore, verify_envelope
-from stormpulse.commands import CommandError, execute_command, get_command
+from stormpulse.commands import CommandError, build_registry, execute_command, get_command
 from stormpulse.config import Config, ProjectConfig, TlsConfig
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
@@ -58,6 +58,7 @@ class Agent:
         self._nonce_store = nonce_store
         self._ssl_ctx = ssl_context
         self._shutdown = shutdown
+        self._registry = build_registry(config.commands)
 
     # ------------------------------------------------------------------
     # Outer reconnect loop
@@ -83,7 +84,9 @@ class Agent:
                     logger.info("Connected to dashboard")
                     delay = self._config.dashboard.reconnect_min_seconds
 
-                    register = make_register(agent_id, __version__)
+                    register = make_register(
+                        agent_id, __version__, self._config.agent.pulse_token,
+                    )
                     await ws.send(register.to_json())
                     logger.info("Sent register (v%s)", __version__)
 
@@ -195,12 +198,15 @@ class Agent:
             logger.warning("Auth failed for %s: %s", envelope.id, exc)
             return
 
-        assert isinstance(payload, CommandRequestPayload)
+        if not isinstance(payload, CommandRequestPayload):
+            logger.error("Expected CommandRequestPayload, got %s", type(payload).__name__)
+            return
         logger.info("Executing command %r (request %s)", payload.command, envelope.id)
 
         try:
             result = await asyncio.to_thread(
                 execute_command, payload.command, self._config.project, envelope.id,
+                registry=self._registry,
             )
         except CommandError as exc:
             logger.warning("Command error for %s: %s", envelope.id, exc)
@@ -226,14 +232,16 @@ class Agent:
             logger.warning("Auth failed for sequence %s: %s", envelope.id, exc)
             return
 
-        assert isinstance(payload, CommandSequencePayload)
+        if not isinstance(payload, CommandSequencePayload):
+            logger.error("Expected CommandSequencePayload, got %s", type(payload).__name__)
+            return
         logger.info(
             "Executing sequence %s: %s", payload.sequence_id, payload.commands,
         )
 
         try:
             for name in payload.commands:
-                get_command(name)
+                get_command(name, registry=self._registry)
         except CommandError as exc:
             logger.warning("Sequence %s has invalid command: %s", payload.sequence_id, exc)
             return
@@ -244,6 +252,7 @@ class Agent:
             request_id = str(uuid.uuid4())
             result = await asyncio.to_thread(
                 execute_command, name, project, request_id, payload.sequence_id,
+                registry=self._registry,
             )
             response = make_command_result(agent_id, result)
             await ws.send(response.to_json())

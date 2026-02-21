@@ -31,7 +31,7 @@ from stormpulse.metrics import _collect_containers, collect_metrics, prime_cpu_p
 @pytest.fixture
 def config() -> Config:
     return Config(
-        agent=AgentConfig(id="test-01"),
+        agent=AgentConfig(id="test-01", pulse_token="tok-test-123"),
         dashboard=DashboardConfig(url="wss://example.com/ws/", reconnect_min_seconds=1.0, reconnect_max_seconds=30.0, heartbeat_interval_seconds=30.0),
         tls=TlsConfig(ca_cert=Path("/tmp/ca.pem"), client_cert=Path("/tmp/agent.pem"), client_key=Path("/tmp/key.pem")),
         auth=AuthConfig(hmac_secret=Path("/tmp/hmac.key"), command_max_age_seconds=60),
