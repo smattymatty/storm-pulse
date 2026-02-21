@@ -24,6 +24,7 @@ id = "test-01"
 url = "wss://example.com/ws/"
 reconnect_min_seconds = 1
 reconnect_max_seconds = 30
+heartbeat_interval_seconds = 30
 
 [tls]
 ca_cert = "/tmp/ca.pem"
@@ -69,6 +70,7 @@ def test_load_example_config() -> None:
     assert config.dashboard.url == "wss://stormdevelopments.ca/ws/pulse/"
     assert config.dashboard.reconnect_min_seconds == 3.0
     assert config.dashboard.reconnect_max_seconds == 60.0
+    assert config.dashboard.heartbeat_interval_seconds == 30.0
     assert config.metrics.collect_containers is True
     assert config.metrics.push_interval_seconds == 15.0
     assert config.auth.command_max_age_seconds == 60
@@ -202,6 +204,12 @@ def test_zero_max_age_raises(write_config: Callable[[str], Path]) -> None:
 
 def test_negative_push_interval_raises(write_config: Callable[[str], Path]) -> None:
     content = MINIMAL_VALID.replace("push_interval_seconds = 10", "push_interval_seconds = 0")
+    with pytest.raises(ConfigError, match="positive"):
+        load_config(write_config(content))
+
+
+def test_zero_heartbeat_interval_raises(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace("heartbeat_interval_seconds = 30", "heartbeat_interval_seconds = 0")
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(content))
 

@@ -1,0 +1,258 @@
+"""Storm Pulse agent loop — async WebSocket client with heartbeat, metrics, and command dispatch."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import random
+import ssl
+import uuid
+
+from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosed
+
+from stormpulse import __version__
+from stormpulse.auth import AuthError, NonceStore, verify_envelope
+from stormpulse.commands import CommandError, execute_command, get_command
+from stormpulse.config import Config, ProjectConfig, TlsConfig
+from stormpulse.metrics import collect_metrics
+from stormpulse.protocol import (
+    CommandRequestPayload,
+    CommandSequencePayload,
+    Envelope,
+    MessageType,
+    ProtocolError,
+    make_command_result,
+    make_heartbeat,
+    make_metrics_push,
+    make_register,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def create_ssl_context(tls: TlsConfig) -> ssl.SSLContext:
+    """Build a mutual TLS context from config paths."""
+    ctx = ssl.create_default_context(cafile=str(tls.ca_cert))
+    ctx.load_cert_chain(certfile=str(tls.client_cert), keyfile=str(tls.client_key))
+    return ctx
+
+
+class Agent:
+    """Async WebSocket agent that connects to the Storm Pulse dashboard.
+
+    Manages three concurrent tasks per connection: heartbeat, metrics push,
+    and inbound message dispatch. Reconnects with exponential backoff.
+    """
+
+    def __init__(
+        self,
+        config: Config,
+        secret: bytes,
+        nonce_store: NonceStore,
+        ssl_context: ssl.SSLContext,
+        shutdown: asyncio.Event,
+    ) -> None:
+        self._config = config
+        self._secret = secret
+        self._nonce_store = nonce_store
+        self._ssl_ctx = ssl_context
+        self._shutdown = shutdown
+
+    # ------------------------------------------------------------------
+    # Outer reconnect loop
+    # ------------------------------------------------------------------
+
+    async def run(self) -> None:
+        """Connect to dashboard, run tasks, reconnect on failure."""
+        agent_id = self._config.agent.id
+        url = self._config.dashboard.url
+        delay = self._config.dashboard.reconnect_min_seconds
+
+        while not self._shutdown.is_set():
+            try:
+                logger.info("Connecting to %s", url)
+                async with connect(
+                    url,
+                    ssl=self._ssl_ctx,
+                    open_timeout=10,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    compression=None,
+                ) as ws:
+                    logger.info("Connected to dashboard")
+                    delay = self._config.dashboard.reconnect_min_seconds
+
+                    register = make_register(agent_id, __version__)
+                    await ws.send(register.to_json())
+                    logger.info("Sent register (v%s)", __version__)
+
+                    async with asyncio.TaskGroup() as tg:
+                        tg.create_task(self._heartbeat_loop(ws))
+                        tg.create_task(self._metrics_loop(ws))
+                        tg.create_task(self._receive_loop(ws))
+
+            except* ConnectionClosed as eg:
+                logger.warning("Connection closed: %s", eg.exceptions[0])
+            except* OSError as eg:
+                logger.warning("Connection error: %s", eg.exceptions[0])
+            except* Exception as eg:
+                logger.error("Unexpected error: %s", eg.exceptions[0], exc_info=True)
+
+            if self._shutdown.is_set():
+                break
+
+            jitter = random.uniform(0, delay * 0.25)
+            wait = delay + jitter
+            logger.info("Reconnecting in %.1fs", wait)
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=wait)
+                break
+            except TimeoutError:
+                pass
+
+            delay = min(delay * 1.5, self._config.dashboard.reconnect_max_seconds)
+
+        logger.info("Agent shutting down")
+
+    # ------------------------------------------------------------------
+    # Periodic loops
+    # ------------------------------------------------------------------
+
+    async def _heartbeat_loop(self, ws: ClientConnection) -> None:
+        """Send periodic heartbeats until shutdown or disconnect."""
+        interval = self._config.dashboard.heartbeat_interval_seconds
+        agent_id = self._config.agent.id
+        while not self._shutdown.is_set():
+            heartbeat = make_heartbeat(agent_id)
+            await ws.send(heartbeat.to_json())
+            logger.debug("Sent heartbeat %s", heartbeat.id)
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
+
+    async def _metrics_loop(self, ws: ClientConnection) -> None:
+        """Collect and push metrics at configured intervals."""
+        interval = self._config.metrics.push_interval_seconds
+        agent_id = self._config.agent.id
+        while not self._shutdown.is_set():
+            try:
+                metrics = await asyncio.to_thread(collect_metrics, self._config)
+                envelope = make_metrics_push(agent_id, metrics)
+                await ws.send(envelope.to_json())
+                logger.debug("Sent metrics push %s", envelope.id)
+            except ConnectionClosed:
+                raise
+            except Exception:
+                logger.warning("Failed to collect/send metrics", exc_info=True)
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
+
+    # ------------------------------------------------------------------
+    # Inbound message handling
+    # ------------------------------------------------------------------
+
+    async def _receive_loop(self, ws: ClientConnection) -> None:
+        """Receive and dispatch inbound messages."""
+        while not self._shutdown.is_set():
+            message = await ws.recv()
+            try:
+                await self._dispatch(ws, message)
+            except Exception:
+                logger.warning("Error dispatching message", exc_info=True)
+
+    async def _dispatch(self, ws: ClientConnection, raw: str | bytes) -> None:
+        """Parse envelope, verify auth, execute command(s)."""
+        try:
+            envelope = Envelope.from_json(raw)
+        except ProtocolError as exc:
+            logger.warning("Invalid message: %s", exc)
+            return
+
+        match envelope.type:
+            case MessageType.COMMAND_REQUEST:
+                await self._handle_command_request(ws, envelope)
+            case MessageType.COMMAND_SEQUENCE:
+                await self._handle_command_sequence(ws, envelope)
+            case _:
+                logger.warning("Unexpected message type: %s", envelope.type.value)
+
+    async def _handle_command_request(
+        self, ws: ClientConnection, envelope: Envelope,
+    ) -> None:
+        """Verify and execute a single command request."""
+        try:
+            payload = verify_envelope(
+                envelope, self._secret, self._nonce_store,
+                self._config.auth.command_max_age_seconds,
+            )
+        except AuthError as exc:
+            logger.warning("Auth failed for %s: %s", envelope.id, exc)
+            return
+
+        assert isinstance(payload, CommandRequestPayload)
+        logger.info("Executing command %r (request %s)", payload.command, envelope.id)
+
+        try:
+            result = await asyncio.to_thread(
+                execute_command, payload.command, self._config.project, envelope.id,
+            )
+        except CommandError as exc:
+            logger.warning("Command error for %s: %s", envelope.id, exc)
+            return
+
+        response = make_command_result(self._config.agent.id, result)
+        await ws.send(response.to_json())
+        logger.info(
+            "Sent result for %r: success=%s, %dms",
+            result.command, result.success, result.duration_ms,
+        )
+
+    async def _handle_command_sequence(
+        self, ws: ClientConnection, envelope: Envelope,
+    ) -> None:
+        """Verify and execute a command sequence, streaming results."""
+        try:
+            payload = verify_envelope(
+                envelope, self._secret, self._nonce_store,
+                self._config.auth.command_max_age_seconds,
+            )
+        except AuthError as exc:
+            logger.warning("Auth failed for sequence %s: %s", envelope.id, exc)
+            return
+
+        assert isinstance(payload, CommandSequencePayload)
+        logger.info(
+            "Executing sequence %s: %s", payload.sequence_id, payload.commands,
+        )
+
+        try:
+            for name in payload.commands:
+                get_command(name)
+        except CommandError as exc:
+            logger.warning("Sequence %s has invalid command: %s", payload.sequence_id, exc)
+            return
+
+        agent_id = self._config.agent.id
+        project = self._config.project
+        for name in payload.commands:
+            request_id = str(uuid.uuid4())
+            result = await asyncio.to_thread(
+                execute_command, name, project, request_id, payload.sequence_id,
+            )
+            response = make_command_result(agent_id, result)
+            await ws.send(response.to_json())
+            logger.info(
+                "Sequence %s step %r: success=%s, %dms",
+                payload.sequence_id, name, result.success, result.duration_ms,
+            )
+            if payload.stop_on_failure and not result.success:
+                logger.warning(
+                    "Sequence %s halted at %r", payload.sequence_id, name,
+                )
+                break

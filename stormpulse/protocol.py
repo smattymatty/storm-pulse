@@ -93,6 +93,8 @@ class MetricsPayload:
     disk_percent: float
     disk_used_gb: float
     disk_total_gb: float
+    load_avg_1m: float
+    load_avg_5m: float
     uptime_seconds: float
     containers: list[ContainerInfo]
 
@@ -143,6 +145,7 @@ class CommandResultPayload:
     stderr: str
     duration_ms: int
     sequence_id: str | None = None
+    failure_reason: str | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -178,7 +181,7 @@ def _parse_timestamp(raw: Any) -> datetime:
     return ts
 
 
-def _format_timestamp(ts: datetime) -> str:
+def format_timestamp(ts: datetime) -> str:
     """Format a datetime to ISO 8601 with Z suffix for UTC."""
     return ts.isoformat().replace("+00:00", "Z")
 
@@ -266,7 +269,7 @@ class Envelope:
             "v": self.v,
             "type": self.type.value,
             "id": self.id,
-            "ts": _format_timestamp(self.ts),
+            "ts": format_timestamp(self.ts),
             "agent_id": self.agent_id,
             "payload": self.payload,
         }

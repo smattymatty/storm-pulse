@@ -27,6 +27,7 @@ class DashboardConfig:
     url: str
     reconnect_min_seconds: float
     reconnect_max_seconds: float
+    heartbeat_interval_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,11 +147,19 @@ def _parse_dashboard(raw: dict[str, Any]) -> DashboardConfig:
     url = _require_key(s, "url", str, "dashboard")
     rmin = float(_require_key(s, "reconnect_min_seconds", (int, float), "dashboard"))
     rmax = float(_require_key(s, "reconnect_max_seconds", (int, float), "dashboard"))
+    heartbeat = float(_require_key(s, "heartbeat_interval_seconds", (int, float), "dashboard"))
     if rmin <= 0 or rmax <= 0:
         raise ConfigError("Reconnect intervals must be positive")
+    if heartbeat <= 0:
+        raise ConfigError("heartbeat_interval_seconds must be positive")
     if rmin > rmax:
         raise ConfigError("reconnect_min_seconds must be <= reconnect_max_seconds")
-    return DashboardConfig(url=url, reconnect_min_seconds=rmin, reconnect_max_seconds=rmax)
+    return DashboardConfig(
+        url=url,
+        reconnect_min_seconds=rmin,
+        reconnect_max_seconds=rmax,
+        heartbeat_interval_seconds=heartbeat,
+    )
 
 
 def _parse_tls(raw: dict[str, Any]) -> TlsConfig:

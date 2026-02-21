@@ -8,6 +8,7 @@ id = "vps-toronto-01"
 url = "wss://stormdevelopments.ca/ws/pulse/"
 reconnect_min_seconds = 3
 reconnect_max_seconds = 60
+heartbeat_interval_seconds = 30
 
 [tls]
 ca_cert = "/etc/stormpulse/ca.pem"

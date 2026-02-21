@@ -6,3 +6,4 @@ build/
 .venv/
 .pytest_cache/
 .mypy_cache/
+_temp/

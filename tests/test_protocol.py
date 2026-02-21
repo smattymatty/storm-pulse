@@ -58,6 +58,8 @@ def metrics_dict() -> dict[str, Any]:
             "disk_percent": 45.0,
             "disk_used_gb": 18.2,
             "disk_total_gb": 40.0,
+            "load_avg_1m": 0.75,
+            "load_avg_5m": 0.50,
             "uptime_seconds": 864000.0,
             "containers": [
                 {"name": "web", "status": "running", "image": "myapp:latest"},
@@ -221,6 +223,8 @@ def test_roundtrip_metrics() -> None:
         disk_percent=30.0,
         disk_used_gb=12.0,
         disk_total_gb=40.0,
+        load_avg_1m=0.5,
+        load_avg_5m=0.3,
         uptime_seconds=3600.0,
         containers=[ContainerInfo(name="web", status="running", image="app:1")],
     )
@@ -264,6 +268,25 @@ def test_roundtrip_command_result_no_sequence_id() -> None:
     assert rebuilt.payload["sequence_id"] is None
 
 
+def test_roundtrip_command_result_with_failure_reason() -> None:
+    result = CommandResultPayload(
+        request_id="req-3",
+        command="docker_build",
+        group="deploy",
+        success=False,
+        exit_code=-1,
+        stdout="",
+        stderr="",
+        duration_ms=10000,
+        failure_reason="timeout",
+    )
+    original = make_command_result("test-agent", result)
+    rebuilt = Envelope.from_json(original.to_json())
+    assert rebuilt.payload["failure_reason"] == "timeout"
+    payload = CommandResultPayload.from_dict(rebuilt.payload)
+    assert payload.failure_reason == "timeout"
+
+
 # ---------------------------------------------------------------------------
 # Payload from_dict
 # ---------------------------------------------------------------------------
@@ -292,6 +315,7 @@ def test_command_result_payload_from_dict(command_result_dict: dict[str, Any]) -
     payload = CommandResultPayload.from_dict(command_result_dict["payload"])
     assert payload.success is True
     assert payload.sequence_id is None
+    assert payload.failure_reason is None
 
 
 def test_command_result_payload_with_sequence_id() -> None:
@@ -334,7 +358,8 @@ def test_metrics_payload_asdict_roundtrip() -> None:
     original = MetricsPayload(
         cpu_percent=1.0, memory_percent=2.0, memory_used_mb=3.0,
         memory_total_mb=4.0, disk_percent=5.0, disk_used_gb=6.0,
-        disk_total_gb=7.0, uptime_seconds=8.0,
+        disk_total_gb=7.0, load_avg_1m=0.1, load_avg_5m=0.2,
+        uptime_seconds=8.0,
         containers=[ContainerInfo(name="x", status="y", image="z")],
     )
     d = asdict(original)
@@ -433,7 +458,8 @@ def test_metrics_containers_not_list_raises() -> None:
     data: dict[str, Any] = {
         "cpu_percent": 1.0, "memory_percent": 2.0, "memory_used_mb": 3.0,
         "memory_total_mb": 4.0, "disk_percent": 5.0, "disk_used_gb": 6.0,
-        "disk_total_gb": 7.0, "uptime_seconds": 8.0, "containers": "not a list",
+        "disk_total_gb": 7.0, "load_avg_1m": 0.1, "load_avg_5m": 0.2,
+        "uptime_seconds": 8.0, "containers": "not a list",
     }
     with pytest.raises(ProtocolError, match="expected list"):
         MetricsPayload.from_dict(data)
@@ -478,7 +504,8 @@ def test_make_metrics_push_valid() -> None:
     metrics = MetricsPayload(
         cpu_percent=5.0, memory_percent=10.0, memory_used_mb=512.0,
         memory_total_mb=1024.0, disk_percent=20.0, disk_used_gb=8.0,
-        disk_total_gb=40.0, uptime_seconds=100.0, containers=[],
+        disk_total_gb=40.0, load_avg_1m=0.0, load_avg_5m=0.0,
+        uptime_seconds=100.0, containers=[],
     )
     env = make_metrics_push("test-01", metrics)
     assert env.type == MessageType.METRICS_PUSH
@@ -517,7 +544,8 @@ def test_empty_containers_valid() -> None:
     data: dict[str, Any] = {
         "cpu_percent": 1.0, "memory_percent": 2.0, "memory_used_mb": 3.0,
         "memory_total_mb": 4.0, "disk_percent": 5.0, "disk_used_gb": 6.0,
-        "disk_total_gb": 7.0, "uptime_seconds": 8.0, "containers": [],
+        "disk_total_gb": 7.0, "load_avg_1m": 0.1, "load_avg_5m": 0.2,
+        "uptime_seconds": 8.0, "containers": [],
     }
     payload = MetricsPayload.from_dict(data)
     assert payload.containers == []
