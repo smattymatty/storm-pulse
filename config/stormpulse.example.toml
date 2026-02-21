@@ -1,0 +1,31 @@
+# Storm Pulse Agent Configuration
+# Copy to /etc/stormpulse/stormpulse.toml and edit.
+
+[agent]
+id = "vps-toronto-01"
+
+[dashboard]
+url = "wss://stormdevelopments.ca/ws/pulse/"
+reconnect_min_seconds = 3
+reconnect_max_seconds = 60
+
+[tls]
+ca_cert = "/etc/stormpulse/ca.pem"
+client_cert = "/etc/stormpulse/agent.pem"
+client_key = "/etc/stormpulse/agent-key.pem"
+
+[auth]
+hmac_secret = "/etc/stormpulse/hmac.key"
+command_max_age_seconds = 60
+
+[metrics]
+push_interval_seconds = 15
+collect_containers = true
+
+[project]
+project_dir = "/home/deploy/stormdevelopments"
+compose_file = "/home/deploy/stormdevelopments/docker-compose.yml"
+docker_service_name = "web"
+
+[storage]
+db_path = "/opt/stormpulse/data/stormpulse.db"

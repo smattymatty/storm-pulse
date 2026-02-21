@@ -1,0 +1,2 @@
+[console_scripts]
+stormpulse = stormpulse.__main__:main

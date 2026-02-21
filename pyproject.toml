@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "storm-pulse-agent"
+version = "0.1.0"
+description = "Secure server management agent for Storm Developments infrastructure"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "websockets>=14.0",
+    "psutil>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "mypy>=1.13"]
+
+[project.scripts]
+stormpulse = "stormpulse.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+strict = false
+check_untyped_defs = true
+
+[tool.setuptools.packages.find]
+include = ["stormpulse*"]
