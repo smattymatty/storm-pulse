@@ -83,7 +83,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 git clone <repo-url> && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 256 tests
+pytest          # 261 tests
 mypy .          # strict
 ```
 

@@ -560,6 +560,11 @@ def test_message_type_enum_values() -> None:
     assert MessageType.COMMAND_RESULT.value == "command.result"
     assert MessageType.COMMAND_SEQUENCE.value == "command.sequence"
     assert MessageType.REGISTER.value == "register"
+    assert MessageType.REGISTER_OK.value == "register.ok"
+    assert MessageType.HEARTBEAT_ACK.value == "heartbeat.ack"
+    assert MessageType.METRICS_ACK.value == "metrics.ack"
+    assert MessageType.COMMAND_RESULT_ACK.value == "command.result.ack"
+    assert MessageType.ERROR.value == "error"
 
 
 def test_to_json_uses_compact_separators() -> None:

@@ -30,6 +30,15 @@ from stormpulse.protocol import (
 
 logger = logging.getLogger(__name__)
 
+# Dashboard acknowledgement types — received but not actionable.
+_ACK_TYPES = {
+    MessageType.REGISTER_OK,
+    MessageType.HEARTBEAT_ACK,
+    MessageType.METRICS_ACK,
+    MessageType.COMMAND_RESULT_ACK,
+    MessageType.ERROR,
+}
+
 
 def create_ssl_context(tls: TlsConfig) -> ssl.SSLContext:
     """Build a mutual TLS context from config paths."""
@@ -175,6 +184,10 @@ class Agent:
             envelope = Envelope.from_json(raw)
         except ProtocolError as exc:
             logger.warning("Invalid message: %s", exc)
+            return
+
+        if envelope.type in _ACK_TYPES:
+            logger.debug("Received %s (%s)", envelope.type.value, envelope.id)
             return
 
         match envelope.type:

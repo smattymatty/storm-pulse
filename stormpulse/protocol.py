@@ -17,12 +17,22 @@ class ProtocolError(Exception):
 class MessageType(StrEnum):
     """All valid message types in the Storm Pulse protocol v1."""
 
+    # Agent → Dashboard
     HEARTBEAT = "heartbeat"
     METRICS_PUSH = "metrics.push"
-    COMMAND_REQUEST = "command.request"
     COMMAND_RESULT = "command.result"
-    COMMAND_SEQUENCE = "command.sequence"
     REGISTER = "register"
+
+    # Dashboard → Agent (actionable)
+    COMMAND_REQUEST = "command.request"
+    COMMAND_SEQUENCE = "command.sequence"
+
+    # Dashboard → Agent (acknowledgements)
+    REGISTER_OK = "register.ok"
+    HEARTBEAT_ACK = "heartbeat.ack"
+    METRICS_ACK = "metrics.ack"
+    COMMAND_RESULT_ACK = "command.result.ack"
+    ERROR = "error"
 
 
 # ---------------------------------------------------------------------------

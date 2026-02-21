@@ -424,3 +424,30 @@ async def test_dispatch_unexpected_type(agent: Agent) -> None:
     heartbeat = make_heartbeat("test-01")
     await agent._dispatch(ws, heartbeat.to_json())
     ws.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Dashboard acknowledgements (silently ignored)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ack_type", [
+    MessageType.REGISTER_OK,
+    MessageType.HEARTBEAT_ACK,
+    MessageType.METRICS_ACK,
+    MessageType.COMMAND_RESULT_ACK,
+    MessageType.ERROR,
+])
+async def test_dispatch_ack_types_ignored(agent: Agent, ack_type: MessageType) -> None:
+    ws = AsyncMock()
+    envelope = Envelope(
+        v=1,
+        type=ack_type,
+        id=str(uuid.uuid4()),
+        ts=datetime.now(timezone.utc),
+        agent_id="test-01",
+        payload={},
+    )
+    await agent._dispatch(ws, envelope.to_json())
+    ws.send.assert_not_called()
