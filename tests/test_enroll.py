@@ -21,6 +21,7 @@ from stormpulse.enroll import (
     generate_keypair,
     request_certificate,
     write_credentials,
+    write_enroll_metadata,
 )
 
 
@@ -189,6 +190,12 @@ class TestWriteCredentials:
         write_credentials(creds_dir, b"KEY_PEM", _mock_response())
         assert stat.S_IMODE(creds_dir.stat().st_mode) == 0o700
 
+    def test_preserves_existing_directory_permissions(self, tmp_path: Path) -> None:
+        creds_dir = tmp_path / "creds"
+        creds_dir.mkdir(mode=0o750)
+        write_credentials(creds_dir, b"KEY_PEM", _mock_response())
+        assert stat.S_IMODE(creds_dir.stat().st_mode) == 0o750
+
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         deep = tmp_path / "a" / "b" / "c"
         creds = write_credentials(deep, b"KEY_PEM", _mock_response())
@@ -247,6 +254,41 @@ class TestHTTPWarning:
                 "https://example.com/api/enroll/", "a", "t", b"csr",
             )
             mock_logger.warning.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Enrollment metadata
+# ---------------------------------------------------------------------------
+
+
+class TestWriteEnrollMetadata:
+    def test_writes_json(self, tmp_path: Path) -> None:
+        creds_dir = tmp_path / "creds"
+        creds_dir.mkdir()
+        path = write_enroll_metadata(
+            creds_dir, "https://example.com/api/enroll/", "agent-01",
+        )
+        data = json.loads(path.read_text())
+        assert data["endpoint"] == "https://example.com/api/enroll/"
+        assert data["agent_id"] == "agent-01"
+
+    def test_permissions(self, tmp_path: Path) -> None:
+        creds_dir = tmp_path / "creds"
+        creds_dir.mkdir()
+        path = write_enroll_metadata(creds_dir, "https://x/", "a")
+        assert stat.S_IMODE(path.stat().st_mode) == 0o644
+
+    def test_returns_path(self, tmp_path: Path) -> None:
+        creds_dir = tmp_path / "creds"
+        creds_dir.mkdir()
+        path = write_enroll_metadata(creds_dir, "https://x/", "a")
+        assert path == creds_dir / "enroll.json"
+
+    def test_no_tmp_left(self, tmp_path: Path) -> None:
+        creds_dir = tmp_path / "creds"
+        creds_dir.mkdir()
+        write_enroll_metadata(creds_dir, "https://x/", "a")
+        assert not (creds_dir / "enroll.tmp").exists()
 
 
 # ---------------------------------------------------------------------------

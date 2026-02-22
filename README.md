@@ -33,12 +33,15 @@ For full setup instructions (system user, permissions, systemd, firewall), see t
 
 ```
 stormpulse enroll ENDPOINT AGENT_ID TOKEN [--creds-dir DIR] [--force]
+stormpulse init [--creds-dir DIR] [--force]
 stormpulse run [CONFIG]
 stormpulse status [CONFIG]
 stormpulse --version
 ```
 
 **enroll** -- One-time enrollment. Generates an EC P-256 keypair, sends a CSR to the dashboard, writes the signed cert + CA cert + HMAC key to `/etc/stormpulse/`. The private key never leaves the machine.
+
+**init** -- Interactive setup wizard. Generates config, creates systemd service, sets permissions. Run after enrollment.
 
 **run** -- Starts the agent. Connects to the dashboard, sends heartbeats and metrics, executes commands. Reconnects automatically with exponential backoff.
 
@@ -72,7 +75,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 git clone <repo-url> && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 319 tests
+pytest          # 395 tests
 mypy .          # strict
 ```
 

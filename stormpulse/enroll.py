@@ -207,11 +207,14 @@ def write_credentials(
     Private key and HMAC key: 0o600 (owner read/write only).
     Certificates: 0o644 (world-readable, not secret).
     Creates creds_dir if it does not exist (mode 0o700).
+    If the directory already exists, its permissions are left unchanged.
 
     Raises EnrollError if credential files already exist and force is False.
     """
+    existed = creds_dir.is_dir()
     creds_dir.mkdir(parents=True, exist_ok=True)
-    os.chmod(creds_dir, 0o700)
+    if not existed:
+        os.chmod(creds_dir, 0o700)
 
     paths = Credentials(
         client_cert=creds_dir / "agent.pem",
@@ -243,3 +246,22 @@ def write_credentials(
     _write_file(paths.ca_cert, response["ca_cert_pem"].encode("ascii"), 0o644)
 
     return paths
+
+
+def write_enroll_metadata(
+    creds_dir: Path,
+    endpoint: str,
+    agent_id: str,
+) -> Path:
+    """Write enrollment metadata for use by ``stormpulse init``.
+
+    Stores the enrollment endpoint and agent ID so that ``init`` can derive
+    a default dashboard WebSocket URL without prompting blindly.
+
+    Returns the path to the written file.
+    """
+    meta = {"endpoint": endpoint, "agent_id": agent_id}
+    data = json.dumps(meta, indent=2).encode("utf-8") + b"\n"
+    path = creds_dir / "enroll.json"
+    _write_file(path, data, 0o644)
+    return path

@@ -11,8 +11,16 @@ stormpulse/__main__.py
 stormpulse/agent.py
 stormpulse/auth.py
 stormpulse/config.py
+stormpulse/enroll.py
+stormpulse/init.py
 stormpulse/metrics.py
 stormpulse/protocol.py
+stormpulse/status.py
+stormpulse/cli/__init__.py
+stormpulse/cli/enroll.py
+stormpulse/cli/init.py
+stormpulse/cli/run.py
+stormpulse/cli/status.py
 stormpulse/commands/__init__.py
 stormpulse/commands/deploy.py
 stormpulse/commands/registry.py
@@ -20,5 +28,9 @@ tests/test_agent.py
 tests/test_auth.py
 tests/test_commands.py
 tests/test_config.py
+tests/test_enroll.py
+tests/test_init.py
+tests/test_integration.py
 tests/test_metrics.py
 tests/test_protocol.py
+tests/test_status.py
