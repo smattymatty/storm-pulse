@@ -34,6 +34,7 @@ def project_config() -> ProjectConfig:
         project_dir=Path("/opt/myapp"),
         compose_file=Path("/opt/myapp/docker-compose.yml"),
         docker_service_name="web",
+        env_file=Path("/opt/myapp/.env"),
     )
 
 
@@ -108,21 +109,56 @@ def test_resolve_project_dir(project_config: ProjectConfig) -> None:
 
 
 def test_resolve_compose_file(project_config: ProjectConfig) -> None:
-    template = ["/usr/bin/docker", "compose", "-f", "{compose_file}", "build"]
+    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "build"]
     resolved = _resolve_command(template, project_config)
-    assert resolved[3] == "/opt/myapp/docker-compose.yml"
+    assert resolved[3] == "/opt/myapp/.env"
+    assert resolved[5] == "/opt/myapp/docker-compose.yml"
 
 
 def test_resolve_docker_service_name(project_config: ProjectConfig) -> None:
-    template = ["/usr/bin/docker", "compose", "-f", "{compose_file}", "exec", "{docker_service_name}", "python"]
+    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "exec", "{docker_service_name}", "python"]
     resolved = _resolve_command(template, project_config)
-    assert resolved[5] == "web"
+    assert resolved[7] == "web"
 
 
 def test_resolve_unknown_placeholder_raises(project_config: ProjectConfig) -> None:
     template = ["/usr/bin/git", "-C", "{unknown_dir}", "pull"]
     with pytest.raises(ValueError, match="Unknown placeholder"):
         _resolve_command(template, project_config)
+
+
+def test_resolve_env_file(project_config: ProjectConfig) -> None:
+    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "up"]
+    resolved = _resolve_command(template, project_config)
+    assert resolved == [
+        "/usr/bin/docker", "compose", "--env-file", "/opt/myapp/.env",
+        "-f", "/opt/myapp/docker-compose.yml", "up",
+    ]
+
+
+def test_resolve_without_env_file() -> None:
+    """When env_file is None, --env-file and placeholder are stripped."""
+    config = ProjectConfig(
+        project_dir=Path("/opt/myapp"),
+        compose_file=Path("/opt/myapp/docker-compose.yml"),
+        docker_service_name="web",
+    )
+    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "up"]
+    resolved = _resolve_command(template, config)
+    assert resolved == ["/usr/bin/docker", "compose", "-f", "/opt/myapp/docker-compose.yml", "up"]
+
+
+def test_resolve_strips_empty_flag_value() -> None:
+    """Generic test: any --flag with empty value is stripped."""
+    config = ProjectConfig(
+        project_dir=Path("/opt/myapp"),
+        compose_file=Path("/opt/myapp/docker-compose.yml"),
+        docker_service_name="web",
+    )
+    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "build"]
+    resolved = _resolve_command(template, config)
+    assert "--env-file" not in resolved
+    assert "" not in resolved
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +302,8 @@ def test_docker_logs_resolution(project_config: ProjectConfig) -> None:
     cmd = get_command("docker_logs", registry=COMMAND_REGISTRY)
     resolved = _resolve_command(cmd.command, project_config)
     assert resolved == [
-        "/usr/bin/docker", "compose", "-f", "/opt/myapp/docker-compose.yml",
+        "/usr/bin/docker", "compose", "--env-file", "/opt/myapp/.env",
+        "-f", "/opt/myapp/docker-compose.yml",
         "logs", "--tail", "100", "web",
     ]
 

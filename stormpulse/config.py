@@ -56,6 +56,7 @@ class ProjectConfig:
     project_dir: Path
     compose_file: Path
     docker_service_name: str
+    env_file: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +101,8 @@ class Config:
         ):
             if not p.is_file():
                 missing.append(str(p))
+        if self.project.env_file and not self.project.env_file.is_file():
+            missing.append(str(self.project.env_file))
         if not self.project.project_dir.is_dir():
             missing.append(f"{self.project.project_dir} (directory)")
         if not self.storage.db_path.parent.is_dir():
@@ -210,10 +213,14 @@ def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
 
 def _parse_project(raw: dict[str, Any]) -> ProjectConfig:
     s = _require_section(raw, "project")
+    env_file_raw = s.get("env_file")
+    if env_file_raw is not None and not isinstance(env_file_raw, str):
+        raise ConfigError("Key 'env_file' in [project] must be a string")
     return ProjectConfig(
         project_dir=Path(_require_key(s, "project_dir", str, "project")),
         compose_file=Path(_require_key(s, "compose_file", str, "project")),
         docker_service_name=_require_key(s, "docker_service_name", str, "project"),
+        env_file=Path(env_file_raw) if env_file_raw is not None else None,
     )
 
 

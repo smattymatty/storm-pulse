@@ -254,6 +254,34 @@ def test_config_is_frozen(write_config: Callable[[str], Path]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Optional env_file
+# ---------------------------------------------------------------------------
+
+
+def test_env_file_parsed(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace(
+        'docker_service_name = "web"',
+        'docker_service_name = "web"\nenv_file = "/opt/myapp/.env"',
+    )
+    config = load_config(write_config(content))
+    assert config.project.env_file == Path("/opt/myapp/.env")
+
+
+def test_env_file_omitted_is_none(write_config: Callable[[str], Path]) -> None:
+    config = load_config(write_config(MINIMAL_VALID))
+    assert config.project.env_file is None
+
+
+def test_env_file_wrong_type_raises(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace(
+        'docker_service_name = "web"',
+        'docker_service_name = "web"\nenv_file = 123',
+    )
+    with pytest.raises(ConfigError, match="env_file"):
+        load_config(write_config(content))
+
+
+# ---------------------------------------------------------------------------
 # Custom commands
 # ---------------------------------------------------------------------------
 

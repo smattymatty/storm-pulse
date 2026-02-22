@@ -69,6 +69,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 | `dashboard` | `url` | WebSocket URL (`wss://...`) |
 | `project` | `project_dir` | Absolute path to the deployed project |
 | `project` | `compose_file` | Absolute path to docker-compose.yml |
+| `project` | `env_file` | Absolute path to `.env` file (optional, passed as `--env-file` to docker compose) |
 | `commands.*` | | Custom commands (optional, see example config) |
 
 ## Documentation
@@ -83,7 +84,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 git clone <repo-url> && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 264 tests
+pytest          # 270 tests
 mypy .          # strict
 ```
 

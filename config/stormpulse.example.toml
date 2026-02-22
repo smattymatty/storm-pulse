@@ -28,13 +28,14 @@ collect_containers = true
 project_dir = "/home/deploy/stormdevelopments"
 compose_file = "/home/deploy/stormdevelopments/docker-compose.yml"
 docker_service_name = "web"
+# env_file = "/home/deploy/stormdevelopments/.env"  # optional, passed as --env-file to docker compose
 
 [storage]
 db_path = "/opt/stormpulse/data/stormpulse.db"
 
 # Custom commands (optional). Override built-ins or add new ones.
 # Each [commands.<name>] defines a whitelisted command.
-# Built-in commands: git_pull, docker_build, docker_down, docker_up, django_migrate
+# Built-in commands: git_pull, docker_build, docker_down, docker_up, django_migrate, docker_logs
 #
 # [commands.restart_caddy]
 # group = "maintenance"

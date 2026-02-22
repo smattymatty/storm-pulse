@@ -27,27 +27,37 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
     ),
     "docker_build": CommandDef(
         group="deploy",
-        command=["/usr/bin/docker", "compose", "-f", "{compose_file}", "build"],
+        command=[
+            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
+            "-f", "{compose_file}", "build",
+        ],
         timeout=300,
         description="Build Docker images",
     ),
     "docker_down": CommandDef(
         group="deploy",
-        command=["/usr/bin/docker", "compose", "-f", "{compose_file}", "down"],
+        command=[
+            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
+            "-f", "{compose_file}", "down",
+        ],
         timeout=60,
         requires_confirmation=True,
         description="Stop and remove containers",
     ),
     "docker_up": CommandDef(
         group="deploy",
-        command=["/usr/bin/docker", "compose", "-f", "{compose_file}", "up", "-d"],
+        command=[
+            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
+            "-f", "{compose_file}", "up", "-d",
+        ],
         timeout=120,
         description="Start containers in detached mode",
     ),
     "django_migrate": CommandDef(
         group="deploy",
         command=[
-            "/usr/bin/docker", "compose", "-f", "{compose_file}",
+            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
+            "-f", "{compose_file}",
             "exec", "{docker_service_name}", "python", "manage.py", "migrate",
         ],
         timeout=120,
@@ -56,7 +66,8 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
     "docker_logs": CommandDef(
         group="diagnostics",
         command=[
-            "/usr/bin/docker", "compose", "-f", "{compose_file}",
+            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
+            "-f", "{compose_file}",
             "logs", "--tail", "100", "{docker_service_name}",
         ],
         timeout=30,
@@ -81,12 +92,16 @@ def build_registry(config_commands: dict[str, CommandDef]) -> dict[str, CommandD
 def _resolve_command(template: list[str], config: ProjectConfig) -> list[str]:
     """Replace placeholders with values from local config.
 
+    Optional placeholders (like ``{env_file}``) resolve to ``""`` when unset.
+    Any ``--flag ""`` pair where the value is empty is stripped from the result.
+
     Raises ValueError on unknown placeholders.
     """
     replacements: dict[str, Any] = {
         "project_dir": str(config.project_dir),
         "compose_file": str(config.compose_file),
         "docker_service_name": config.docker_service_name,
+        "env_file": str(config.env_file) if config.env_file else "",
     }
     resolved: list[str] = []
     for part in template:
@@ -94,7 +109,19 @@ def _resolve_command(template: list[str], config: ProjectConfig) -> list[str]:
             resolved.append(part.format_map(replacements))
         except KeyError as exc:
             raise ValueError(f"Unknown placeholder in command template: {exc}") from exc
-    return resolved
+
+    # Strip --flag + value pairs where the value resolved to empty.
+    cleaned: list[str] = []
+    skip_next = False
+    for i, arg in enumerate(resolved):
+        if skip_next:
+            skip_next = False
+            continue
+        if arg.startswith("--") and i + 1 < len(resolved) and resolved[i + 1] == "":
+            skip_next = True
+            continue
+        cleaned.append(arg)
+    return cleaned
 
 
 def get_command(name: str, *, registry: dict[str, CommandDef]) -> CommandDef:
