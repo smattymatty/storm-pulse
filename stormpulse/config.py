@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +67,16 @@ class StorageConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class ParamDef:
+    """Declares an overridable placeholder for a command."""
+
+    placeholder: str
+    default: str | None
+    pattern: str
+    description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class CommandDef:
     """A single whitelisted command definition."""
 
@@ -74,6 +85,12 @@ class CommandDef:
     timeout: int
     requires_confirmation: bool = False
     description: str = ""
+    params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
+
+
+PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset({
+    "project_dir", "compose_file", "docker_service_name", "env_file",
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,12 +313,58 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                 f"got {type(description).__name__}"
             )
 
+        params_raw = entry.get("params", {})
+        if not isinstance(params_raw, dict):
+            raise ConfigError(f"'params' in [{label}] must be a table")
+        param_defs: dict[str, ParamDef] = {}
+        for pname, pentry in params_raw.items():
+            plabel = f"{label}.params.{pname}"
+            if not isinstance(pentry, dict):
+                raise ConfigError(f"[{plabel}] must be a table")
+            placeholder = _require_key(pentry, "placeholder", str, plabel)
+            if placeholder != pname:
+                raise ConfigError(
+                    f"'placeholder' in [{plabel}] must match the table key "
+                    f"{pname!r}, got {placeholder!r}"
+                )
+            if placeholder in PROTECTED_PLACEHOLDERS:
+                raise ConfigError(
+                    f"'placeholder' in [{plabel}] must not override a protected "
+                    f"placeholder: {placeholder!r}"
+                )
+            default_raw = pentry.get("default")
+            if default_raw is not None and not isinstance(default_raw, str):
+                raise ConfigError(
+                    f"'default' in [{plabel}] must be a string, "
+                    f"got {type(default_raw).__name__}"
+                )
+            pattern = _require_key(pentry, "pattern", str, plabel)
+            try:
+                re.compile(pattern)
+            except re.error as exc:
+                raise ConfigError(
+                    f"'pattern' in [{plabel}] is not valid regex: {exc}"
+                ) from exc
+            pdescription = pentry.get("description", "")
+            if not isinstance(pdescription, str):
+                raise ConfigError(
+                    f"'description' in [{plabel}] must be a string, "
+                    f"got {type(pdescription).__name__}"
+                )
+            param_defs[placeholder] = ParamDef(
+                placeholder=placeholder,
+                default=default_raw,
+                pattern=pattern,
+                description=pdescription,
+            )
+
         result[name] = CommandDef(
             group=group,
             command=command,
             timeout=timeout,
             requires_confirmation=requires_confirmation,
             description=description,
+            params=param_defs,
         )
 
     return result

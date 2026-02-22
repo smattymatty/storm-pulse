@@ -101,6 +101,7 @@ def _exec_side_effect_factory(
         sequence_id: str | None = None,
         *,
         registry: object,
+        runtime_params: dict[str, str] | None = None,
     ) -> CommandResultPayload:
         if name in fail:
             return make_failed_result(

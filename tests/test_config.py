@@ -521,3 +521,145 @@ def test_disabled_commands_is_frozenset(write_config: Callable[[str], Path]) -> 
     )
     config = load_config(write_config(content))
     assert isinstance(config.agent.disabled_commands, frozenset)
+
+
+# ---------------------------------------------------------------------------
+# Command params (ParamDef)
+# ---------------------------------------------------------------------------
+
+COMMAND_WITH_PARAMS_TOML = """
+[commands.docker_logs_service]
+group = "diagnostics"
+command = ["/usr/bin/docker", "compose", "-f", "{compose_file}", "logs", "--tail", "100", "{service}"]
+timeout = 30
+description = "Show logs for a specific service"
+
+[commands.docker_logs_service.params.service]
+placeholder = "service"
+default = "web"
+pattern = "[a-zA-Z0-9_-]+"
+description = "Docker Compose service name"
+"""
+
+
+def test_command_params_parsed(write_config: Callable[[str], Path]) -> None:
+    config = load_config(write_config(MINIMAL_VALID + COMMAND_WITH_PARAMS_TOML))
+    cmd = config.commands["docker_logs_service"]
+    assert "service" in cmd.params
+    p = cmd.params["service"]
+    assert p.placeholder == "service"
+    assert p.default == "web"
+    assert p.pattern == "[a-zA-Z0-9_-]+"
+    assert p.description == "Docker Compose service name"
+
+
+def test_command_params_omitted_is_empty_dict(write_config: Callable[[str], Path]) -> None:
+    config = load_config(write_config(MINIMAL_VALID + CUSTOM_COMMAND_TOML))
+    cmd = config.commands["restart_caddy"]
+    assert cmd.params == {}
+
+
+def test_command_params_none_default(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.logs]
+group = "diagnostics"
+command = ["/usr/bin/docker", "logs", "{service}"]
+timeout = 30
+
+[commands.logs.params.service]
+placeholder = "service"
+pattern = "[a-zA-Z0-9_-]+"
+"""
+    config = load_config(write_config(toml))
+    p = config.commands["logs"].params["service"]
+    assert p.default is None
+
+
+def test_command_params_protected_placeholder_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true", "{project_dir}"]
+timeout = 10
+
+[commands.bad.params.project_dir]
+placeholder = "project_dir"
+default = "/hacked"
+pattern = ".*"
+"""
+    with pytest.raises(ConfigError, match="protected"):
+        load_config(write_config(toml))
+
+
+def test_command_params_invalid_regex_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true", "{svc}"]
+timeout = 10
+
+[commands.bad.params.svc]
+placeholder = "svc"
+default = "web"
+pattern = "[invalid("
+"""
+    with pytest.raises(ConfigError, match="regex"):
+        load_config(write_config(toml))
+
+
+def test_command_params_missing_placeholder_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = 10
+
+[commands.bad.params.svc]
+default = "web"
+pattern = ".*"
+"""
+    with pytest.raises(ConfigError, match="placeholder"):
+        load_config(write_config(toml))
+
+
+def test_command_params_missing_pattern_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = 10
+
+[commands.bad.params.svc]
+placeholder = "svc"
+default = "web"
+"""
+    with pytest.raises(ConfigError, match="pattern"):
+        load_config(write_config(toml))
+
+
+def test_command_params_wrong_type_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = 10
+params = "not a table"
+"""
+    with pytest.raises(ConfigError, match="table"):
+        load_config(write_config(toml))
+
+
+def test_command_params_placeholder_mismatch_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "test"
+command = ["/bin/true", "{svc}"]
+timeout = 10
+
+[commands.bad.params.svc]
+placeholder = "different_name"
+default = "web"
+pattern = ".*"
+"""
+    with pytest.raises(ConfigError, match="match"):
+        load_config(write_config(toml))

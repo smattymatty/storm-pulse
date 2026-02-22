@@ -118,7 +118,7 @@ class CommandRequestPayload:
     """Payload for command.request (dashboard -> agent)."""
 
     command: str
-    params: dict[str, Any]
+    params: dict[str, str]
     hmac: str
     nonce: str
 
@@ -168,7 +168,7 @@ class RegisterPayload:
 
     version: str
     pulse_token: str
-    commands: list[str] | None = None
+    commands: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -313,7 +313,7 @@ def make_register(
     agent_id: str,
     version: str,
     pulse_token: str,
-    commands: list[str] | None = None,
+    commands: dict[str, Any] | None = None,
 ) -> Envelope:
     """Create a register envelope."""
     return _make_envelope(

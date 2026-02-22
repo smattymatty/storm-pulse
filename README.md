@@ -5,9 +5,9 @@ Secure server management agent for [Storm Developments](https://stormdevelopment
 ## How It Works
 
 1. Agent connects **outbound** to the dashboard. Caddy terminates mTLS.
-2. Sends a `register` message, then pushes metrics every 15s (CPU, memory, disk, load, containers).
+2. Sends a `register` message (including its available commands list), then pushes metrics every 15s (CPU, memory, disk, load, containers).
 3. Dashboard sends HMAC-signed commands. Agent verifies signature, nonce, and expiry before executing.
-4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config. No shell injection possible.
+4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config with optional overridable parameters (regex-validated). No shell injection possible.
 
 ## Security
 
@@ -70,7 +70,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 git clone <repo-url> && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 284 tests
+pytest          # 320 tests
 mypy .          # strict
 ```
 

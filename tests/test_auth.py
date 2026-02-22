@@ -16,6 +16,7 @@ from stormpulse.auth import (
     NonceStore,
     canonical_command_request,
     canonical_command_sequence,
+    canonicalize_params,
     generate_nonce,
     load_hmac_secret,
     sign,
@@ -63,13 +64,14 @@ def _make_signed_request(
     agent_id: str = "test-agent",
     nonce: str | None = None,
     ts: datetime | None = None,
+    params: dict[str, str] | None = None,
 ) -> Envelope:
     if ts is None:
         ts = datetime.now(timezone.utc)
     if nonce is None:
         nonce = generate_nonce()
     ts_str = format_timestamp(ts)
-    canonical = canonical_command_request(command, nonce, ts_str)
+    canonical = canonical_command_request(command, nonce, ts_str, params)
     sig = sign(canonical, secret)
     return Envelope(
         v=1,
@@ -77,7 +79,7 @@ def _make_signed_request(
         id=str(uuid.uuid4()),
         ts=ts,
         agent_id=agent_id,
-        payload={"command": command, "params": {}, "hmac": sig, "nonce": nonce},
+        payload={"command": command, "params": params or {}, "hmac": sig, "nonce": nonce},
     )
 
 
@@ -154,7 +156,15 @@ def test_load_hmac_secret_strips_whitespace(tmp_path: Path) -> None:
 
 def test_canonical_command_request_format() -> None:
     result = canonical_command_request("git_pull", "nonce-1", "2026-02-21T12:00:00Z")
-    assert result == "v1\ngit_pull\nnonce-1\n2026-02-21T12:00:00Z"
+    assert result == "v1\ngit_pull\n\nnonce-1\n2026-02-21T12:00:00Z"
+
+
+def test_canonical_command_request_with_params() -> None:
+    result = canonical_command_request(
+        "docker_logs", "nonce-1", "2026-02-21T12:00:00Z",
+        params={"service": "celery", "count": "50"},
+    )
+    assert result == "v1\ndocker_logs\ncount=50&service=celery\nnonce-1\n2026-02-21T12:00:00Z"
 
 
 def test_canonical_command_request_v1_prefix() -> None:
@@ -498,3 +508,36 @@ def test_empty_command_list_in_sequence(nonce_store: NonceStore) -> None:
     payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
     assert isinstance(payload, CommandSequencePayload)
     assert payload.commands == []
+
+
+# ---------------------------------------------------------------------------
+# canonicalize_params
+# ---------------------------------------------------------------------------
+
+
+def test_canonicalize_params_empty() -> None:
+    assert canonicalize_params({}) == ""
+
+
+def test_canonicalize_params_sorted() -> None:
+    result = canonicalize_params({"z": "3", "a": "1", "m": "2"})
+    assert result == "a=1&m=2&z=3"
+
+
+def test_canonicalize_params_single() -> None:
+    assert canonicalize_params({"service": "web"}) == "service=web"
+
+
+# ---------------------------------------------------------------------------
+# verify_envelope with params
+# ---------------------------------------------------------------------------
+
+
+def test_verify_command_request_with_params_roundtrip(nonce_store: NonceStore) -> None:
+    env = _make_signed_request(
+        command="docker_logs", params={"service": "celery"},
+    )
+    payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
+    assert isinstance(payload, CommandRequestPayload)
+    assert payload.command == "docker_logs"
+    assert payload.params == {"service": "celery"}

@@ -49,3 +49,25 @@ db_path = "/opt/stormpulse/data/stormpulse.db"
 # group = "deploy"
 # command = ["/usr/local/bin/git", "-C", "{project_dir}", "pull"]
 # timeout = 120
+#
+# Commands can declare overridable parameters with regex validation.
+# The dashboard sends runtime overrides in the params dict; the agent
+# validates them before substituting into the command template.
+#
+# [commands.service_logs]
+# group = "diagnostics"
+# command = ["/usr/bin/docker", "compose", "-f", "{compose_file}", "logs", "--tail", "{lines}", "{service}"]
+# timeout = 30
+# description = "Show recent logs for a specific service"
+#
+# [commands.service_logs.params.service]
+# placeholder = "service"
+# default = "web"
+# pattern = "[a-zA-Z0-9_-]+"
+# description = "Docker Compose service name"
+#
+# [commands.service_logs.params.lines]
+# placeholder = "lines"
+# default = "100"
+# pattern = "[0-9]{1,5}"
+# description = "Number of log lines to show"

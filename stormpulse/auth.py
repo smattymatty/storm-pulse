@@ -50,12 +50,25 @@ def load_hmac_secret(path: Path) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def canonical_command_request(command: str, nonce: str, timestamp: str) -> str:
+def canonicalize_params(params: dict[str, str]) -> str:
+    """Canonicalize params for HMAC: sorted key=value pairs joined by &."""
+    if not params:
+        return ""
+    return "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+
+
+def canonical_command_request(
+    command: str,
+    nonce: str,
+    timestamp: str,
+    params: dict[str, str] | None = None,
+) -> str:
     """Build the canonical message for a command.request HMAC.
 
-    Format: ``v1\\n{command}\\n{nonce}\\n{timestamp}``
+    Format: ``v1\\n{command}\\n{params_canonical}\\n{nonce}\\n{timestamp}``
     """
-    return f"v1\n{command}\n{nonce}\n{timestamp}"
+    params_str = canonicalize_params(params or {})
+    return f"v1\n{command}\n{params_str}\n{nonce}\n{timestamp}"
 
 
 def canonical_command_sequence(
@@ -191,7 +204,9 @@ def verify_envelope(
     payload: CommandRequestPayload | CommandSequencePayload
     if envelope.type == MessageType.COMMAND_REQUEST:
         req_payload = CommandRequestPayload.from_dict(envelope.payload)
-        canonical = canonical_command_request(req_payload.command, req_payload.nonce, ts_str)
+        canonical = canonical_command_request(
+            req_payload.command, req_payload.nonce, ts_str, req_payload.params,
+        )
         expected_hmac = req_payload.hmac
         nonce = req_payload.nonce
         payload = req_payload

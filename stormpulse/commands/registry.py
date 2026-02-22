@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from typing import Any
@@ -12,6 +13,10 @@ from stormpulse.protocol import CommandResultPayload
 
 class CommandError(Exception):
     """Raised for unknown command names or invalid registry state."""
+
+
+class ParamValidationError(Exception):
+    """Raised when runtime params fail validation."""
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +99,48 @@ def build_registry(
 # ---------------------------------------------------------------------------
 
 
-def _resolve_command(template: list[str], config: ProjectConfig) -> list[str]:
-    """Replace placeholders with values from local config.
+def validate_params(
+    cmd_def: CommandDef,
+    runtime_params: dict[str, str],
+) -> dict[str, str]:
+    """Validate runtime params against a command's ParamDefs.
+
+    Returns merged dict: ParamDef defaults overridden by valid runtime params.
+    Raises ParamValidationError for unknown params, pattern mismatches,
+    or missing values (param has no default and no runtime override).
+    """
+    unknown = set(runtime_params) - set(cmd_def.params)
+    if unknown:
+        raise ParamValidationError(
+            f"Unknown params: {', '.join(sorted(unknown))}"
+        )
+
+    merged: dict[str, str] = {}
+    for name, pdef in cmd_def.params.items():
+        if name in runtime_params:
+            value = runtime_params[name]
+        elif pdef.default is not None:
+            value = pdef.default
+        else:
+            raise ParamValidationError(
+                f"Param {name!r} has no default and was not provided"
+            )
+        if not re.fullmatch(pdef.pattern, value):
+            raise ParamValidationError(
+                f"Param {name!r} value {value!r} "
+                f"does not match pattern {pdef.pattern!r}"
+            )
+        merged[name] = value
+
+    return merged
+
+
+def _resolve_command(
+    template: list[str],
+    config: ProjectConfig,
+    param_overrides: dict[str, str] | None = None,
+) -> list[str]:
+    """Replace placeholders with values from local config and param overrides.
 
     Optional placeholders (like ``{env_file}``) resolve to ``""`` when unset.
     Any ``--flag ""`` pair where the value is empty is stripped from the result.
@@ -108,6 +153,8 @@ def _resolve_command(template: list[str], config: ProjectConfig) -> list[str]:
         "docker_service_name": config.docker_service_name,
         "env_file": str(config.env_file) if config.env_file else "",
     }
+    if param_overrides:
+        replacements.update(param_overrides)
     resolved: list[str] = []
     for part in template:
         try:
@@ -150,14 +197,17 @@ def execute_command(
     sequence_id: str | None = None,
     *,
     registry: dict[str, CommandDef],
+    runtime_params: dict[str, str] | None = None,
 ) -> CommandResultPayload:
     """Execute a whitelisted command and return the result.
 
-    Raises CommandError for unknown commands. All other failures
-    (timeout, missing binary, OS errors) are reported in the result payload.
+    Raises CommandError for unknown commands. Raises ParamValidationError
+    for invalid params. All other failures (timeout, missing binary,
+    OS errors) are reported in the result payload.
     """
     cmd_def = get_command(command_name, registry=registry)
-    resolved = _resolve_command(cmd_def.command, config)
+    validated = validate_params(cmd_def, runtime_params or {}) if cmd_def.params else None
+    resolved = _resolve_command(cmd_def.command, config, validated)
 
     start = time.monotonic()
     try:

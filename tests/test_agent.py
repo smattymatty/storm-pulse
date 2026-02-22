@@ -13,14 +13,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from stormpulse.agent import Agent, create_ssl_context
+from stormpulse.agent import Agent, _build_commands_metadata, _strip_binary_path, create_ssl_context
 from stormpulse.auth import NonceStore, generate_nonce, sign
 from stormpulse.config import (
     AgentConfig,
     AuthConfig,
+    CommandDef,
     Config,
     DashboardConfig,
     MetricsConfig,
+    ParamDef,
     ProjectConfig,
     StorageConfig,
     TlsConfig,
@@ -90,12 +92,13 @@ def agent(config: Config, nonce_store: NonceStore, shutdown: asyncio.Event) -> A
 def _make_signed_request_json(
     command: str = "git_pull",
     agent_id: str = "test-01",
+    params: dict[str, str] | None = None,
 ) -> str:
     """Build a signed command.request envelope as JSON string."""
     ts = datetime.now(timezone.utc)
     nonce = generate_nonce()
     ts_str = format_timestamp(ts)
-    canonical = canonical_command_request(command, nonce, ts_str)
+    canonical = canonical_command_request(command, nonce, ts_str, params)
     sig = sign(canonical, SECRET)
     envelope = Envelope(
         v=1,
@@ -103,7 +106,7 @@ def _make_signed_request_json(
         id=str(uuid.uuid4()),
         ts=ts,
         agent_id=agent_id,
-        payload={"command": command, "params": {}, "hmac": sig, "nonce": nonce},
+        payload={"command": command, "params": params or {}, "hmac": sig, "nonce": nonce},
     )
     return envelope.to_json()
 
@@ -179,6 +182,147 @@ def test_create_ssl_context(mock_ctx_factory: MagicMock) -> None:
     mock_ctx_factory.assert_called_once_with()
     mock_ctx.load_cert_chain.assert_called_once_with(certfile="/agent.pem", keyfile="/key.pem")
     assert result is mock_ctx
+
+
+# ---------------------------------------------------------------------------
+# _strip_binary_path
+# ---------------------------------------------------------------------------
+
+
+def test_strip_binary_path_absolute() -> None:
+    assert _strip_binary_path("/usr/bin/docker") == "docker"
+
+
+def test_strip_binary_path_deep() -> None:
+    assert _strip_binary_path("/usr/local/bin/git") == "git"
+
+
+def test_strip_binary_path_relative_unchanged() -> None:
+    assert _strip_binary_path("python") == "python"
+
+
+def test_strip_binary_path_single_slash_unchanged() -> None:
+    assert _strip_binary_path("/single") == "/single"
+
+
+def test_strip_binary_path_placeholder_unchanged() -> None:
+    assert _strip_binary_path("{project_dir}") == "{project_dir}"
+
+
+def test_strip_binary_path_flag_unchanged() -> None:
+    assert _strip_binary_path("--tail") == "--tail"
+
+
+# ---------------------------------------------------------------------------
+# _build_commands_metadata
+# ---------------------------------------------------------------------------
+
+
+def test_build_commands_metadata_basic() -> None:
+    registry = {
+        "git_pull": CommandDef(
+            group="deploy",
+            command=["/usr/bin/git", "-C", "{project_dir}", "pull"],
+            timeout=60,
+            description="Pull latest changes from remote",
+        ),
+    }
+    result = _build_commands_metadata(registry)
+    assert "git_pull" in result
+    entry = result["git_pull"]
+    assert entry["group"] == "deploy"
+    assert entry["description"] == "Pull latest changes from remote"
+    assert entry["template"] == ["git", "-C", "{project_dir}", "pull"]
+    assert entry["timeout"] == 60
+    assert entry["requires_confirmation"] is False
+    assert entry["params"] == {}
+
+
+def test_build_commands_metadata_strips_paths() -> None:
+    registry = {
+        "docker_up": CommandDef(
+            group="deploy",
+            command=["/usr/bin/docker", "compose", "up", "-d"],
+            timeout=120,
+        ),
+    }
+    result = _build_commands_metadata(registry)
+    assert result["docker_up"]["template"][0] == "docker"
+    assert result["docker_up"]["template"][1] == "compose"
+
+
+def test_build_commands_metadata_sorted_keys() -> None:
+    registry = {
+        "z_cmd": CommandDef(group="z", command=["/bin/z"], timeout=10),
+        "a_cmd": CommandDef(group="a", command=["/bin/a"], timeout=10),
+    }
+    result = _build_commands_metadata(registry)
+    assert list(result.keys()) == ["a_cmd", "z_cmd"]
+
+
+def test_build_commands_metadata_with_params() -> None:
+    registry = {
+        "docker_logs": CommandDef(
+            group="diagnostics",
+            command=["/usr/bin/docker", "logs", "{service}"],
+            timeout=30,
+            description="Show logs",
+            params={
+                "service": ParamDef(
+                    placeholder="service",
+                    default="web",
+                    pattern="[a-zA-Z0-9_-]+",
+                    description="Docker Compose service name",
+                ),
+            },
+        ),
+    }
+    result = _build_commands_metadata(registry)
+    params = result["docker_logs"]["params"]
+    assert "service" in params
+    assert params["service"] == {
+        "default": "web",
+        "pattern": "[a-zA-Z0-9_-]+",
+        "description": "Docker Compose service name",
+    }
+    assert "placeholder" not in params["service"]
+
+
+def test_build_commands_metadata_param_no_default() -> None:
+    registry = {
+        "logs": CommandDef(
+            group="diagnostics",
+            command=["/usr/bin/docker", "logs", "{service}"],
+            timeout=30,
+            params={
+                "service": ParamDef(
+                    placeholder="service",
+                    default=None,
+                    pattern="[a-z]+",
+                ),
+            },
+        ),
+    }
+    result = _build_commands_metadata(registry)
+    assert result["logs"]["params"]["service"]["default"] is None
+
+
+def test_build_commands_metadata_with_confirmation() -> None:
+    registry = {
+        "docker_down": CommandDef(
+            group="deploy",
+            command=["/usr/bin/docker", "compose", "down"],
+            timeout=60,
+            requires_confirmation=True,
+            description="Stop containers",
+        ),
+    }
+    result = _build_commands_metadata(registry)
+    assert result["docker_down"]["requires_confirmation"] is True
+
+
+def test_build_commands_metadata_empty_registry() -> None:
+    assert _build_commands_metadata({}) == {}
 
 
 # ---------------------------------------------------------------------------

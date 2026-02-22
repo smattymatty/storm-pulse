@@ -217,9 +217,27 @@ def test_roundtrip_register() -> None:
 
 
 def test_roundtrip_register_with_commands() -> None:
-    original = make_register("test-agent", "0.1.0", "tok-abc-123", commands=["git_pull", "docker_up"])
+    commands = {
+        "docker_up": {
+            "group": "deploy",
+            "description": "Start containers",
+            "template": ["docker", "compose", "up", "-d"],
+            "timeout": 120,
+            "requires_confirmation": False,
+            "params": {},
+        },
+        "git_pull": {
+            "group": "deploy",
+            "description": "Pull latest changes",
+            "template": ["git", "-C", "{project_dir}", "pull"],
+            "timeout": 60,
+            "requires_confirmation": False,
+            "params": {},
+        },
+    }
+    original = make_register("test-agent", "0.1.0", "tok-abc-123", commands=commands)
     rebuilt = Envelope.from_json(original.to_json())
-    assert rebuilt.payload["commands"] == ["git_pull", "docker_up"]
+    assert rebuilt.payload["commands"] == commands
 
 
 def test_roundtrip_metrics() -> None:
@@ -349,13 +367,23 @@ def test_register_payload_from_dict(register_dict: dict[str, Any]) -> None:
 
 
 def test_register_payload_from_dict_with_commands() -> None:
+    commands = {
+        "git_pull": {
+            "group": "deploy",
+            "description": "Pull latest",
+            "template": ["git", "pull"],
+            "timeout": 60,
+            "requires_confirmation": False,
+            "params": {},
+        },
+    }
     data: dict[str, Any] = {
         "version": "0.2.0",
         "pulse_token": "tok-123",
-        "commands": ["git_pull", "docker_up"],
+        "commands": commands,
     }
     payload = RegisterPayload.from_dict(data)
-    assert payload.commands == ["git_pull", "docker_up"]
+    assert payload.commands == commands
 
 
 def test_register_payload_from_dict_null_commands() -> None:
@@ -532,8 +560,18 @@ def test_make_register_valid() -> None:
 
 
 def test_make_register_with_commands() -> None:
-    env = make_register("test-01", "0.1.0", "tok-abc-123", commands=["docker_up", "git_pull"])
-    assert env.payload["commands"] == ["docker_up", "git_pull"]
+    commands = {
+        "docker_up": {
+            "group": "deploy",
+            "description": "Start containers",
+            "template": ["docker", "compose", "up"],
+            "timeout": 120,
+            "requires_confirmation": False,
+            "params": {},
+        },
+    }
+    env = make_register("test-01", "0.1.0", "tok-abc-123", commands=commands)
+    assert env.payload["commands"] == commands
     Envelope.from_json(env.to_json())
 
 

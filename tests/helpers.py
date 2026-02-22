@@ -90,6 +90,7 @@ def sign_command_request(
     nonce: str | None = None,
     ts: datetime | None = None,
     secret: bytes = SECRET,
+    params: dict[str, str] | None = None,
 ) -> str:
     """Build a signed command.request envelope as a JSON string."""
     if ts is None:
@@ -97,7 +98,7 @@ def sign_command_request(
     if nonce is None:
         nonce = generate_nonce()
     ts_str = format_timestamp(ts)
-    canonical = canonical_command_request(command, nonce, ts_str)
+    canonical = canonical_command_request(command, nonce, ts_str, params)
     sig = sign(canonical, secret)
     envelope = Envelope(
         v=1,
@@ -105,7 +106,7 @@ def sign_command_request(
         id=str(uuid.uuid4()),
         ts=ts,
         agent_id=agent_id,
-        payload={"command": command, "params": {}, "hmac": sig, "nonce": nonce},
+        payload={"command": command, "params": params or {}, "hmac": sig, "nonce": nonce},
     )
     return envelope.to_json()
 

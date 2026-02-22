@@ -7,14 +7,21 @@ import logging
 import random
 import ssl
 import uuid
+from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
 from stormpulse import __version__
 from stormpulse.auth import AuthError, NonceStore, verify_envelope
-from stormpulse.commands import CommandError, build_registry, execute_command, get_command
-from stormpulse.config import Config, ProjectConfig, TlsConfig
+from stormpulse.commands import (
+    CommandError,
+    ParamValidationError,
+    build_registry,
+    execute_command,
+    get_command,
+)
+from stormpulse.config import CommandDef, Config, ProjectConfig, TlsConfig
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
     CommandRequestPayload,
@@ -38,6 +45,41 @@ _ACK_TYPES = {
     MessageType.COMMAND_RESULT_ACK,
     MessageType.ERROR,
 }
+
+
+def _strip_binary_path(arg: str) -> str:
+    """Strip absolute directory from a binary path for display.
+
+    '/usr/bin/docker' -> 'docker', '{project_dir}' -> '{project_dir}'
+    """
+    if arg.startswith("/") and "/" in arg[1:]:
+        return arg.rsplit("/", 1)[1]
+    return arg
+
+
+def _build_commands_metadata(registry: dict[str, CommandDef]) -> dict[str, Any]:
+    """Build rich command metadata dict for the register payload."""
+    result: dict[str, Any] = {}
+    for name, cmd_def in sorted(registry.items()):
+        template = [_strip_binary_path(part) for part in cmd_def.command]
+
+        params: dict[str, Any] = {}
+        for pname, pdef in cmd_def.params.items():
+            params[pname] = {
+                "default": pdef.default,
+                "pattern": pdef.pattern,
+                "description": pdef.description,
+            }
+
+        result[name] = {
+            "group": cmd_def.group,
+            "description": cmd_def.description,
+            "template": template,
+            "timeout": cmd_def.timeout,
+            "requires_confirmation": cmd_def.requires_confirmation,
+            "params": params,
+        }
+    return result
 
 
 def create_ssl_context(tls: TlsConfig) -> ssl.SSLContext:
@@ -95,7 +137,7 @@ class Agent:
 
                     register = make_register(
                         agent_id, __version__, self._config.agent.pulse_token,
-                        commands=sorted(self._registry),
+                        commands=_build_commands_metadata(self._registry),
                     )
                     await ws.send(register.to_json())
                     logger.info("Sent register (v%s)", __version__)
@@ -221,8 +263,9 @@ class Agent:
             result = await asyncio.to_thread(
                 execute_command, payload.command, self._config.project, envelope.id,
                 registry=self._registry,
+                runtime_params=payload.params or None,
             )
-        except CommandError as exc:
+        except (CommandError, ParamValidationError) as exc:
             logger.warning("Command error for %s: %s", envelope.id, exc)
             return
 

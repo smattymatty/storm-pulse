@@ -14,13 +14,15 @@ from stormpulse.commands import (
     DEFAULT_DEPLOY_SEQUENCE,
     CommandDef,
     CommandError,
+    ParamValidationError,
     build_registry,
     execute_command,
     get_command,
     run_deploy_sequence,
+    validate_params,
 )
 from stormpulse.commands.registry import _resolve_command
-from stormpulse.config import ProjectConfig
+from stormpulse.config import ParamDef, ProjectConfig
 
 
 # ---------------------------------------------------------------------------
@@ -505,3 +507,90 @@ def test_execute_config_defined_command(
     assert result.success is True
     assert result.command == "restart_caddy"
     assert result.group == "maintenance"
+
+
+# ---------------------------------------------------------------------------
+# validate_params
+# ---------------------------------------------------------------------------
+
+
+def _cmd_with_params(**params: ParamDef) -> CommandDef:
+    """Helper to build a CommandDef with params."""
+    return CommandDef(
+        group="test",
+        command=["/bin/true"],
+        timeout=10,
+        params=params,
+    )
+
+
+def test_validate_params_no_params_defined() -> None:
+    cmd = _cmd_with_params()
+    assert validate_params(cmd, {}) == {}
+
+
+def test_validate_params_uses_defaults() -> None:
+    cmd = _cmd_with_params(
+        service=ParamDef(placeholder="service", default="web", pattern="[a-z]+"),
+    )
+    assert validate_params(cmd, {}) == {"service": "web"}
+
+
+def test_validate_params_overrides_default() -> None:
+    cmd = _cmd_with_params(
+        service=ParamDef(placeholder="service", default="web", pattern="[a-z]+"),
+    )
+    assert validate_params(cmd, {"service": "celery"}) == {"service": "celery"}
+
+
+def test_validate_params_unknown_param_raises() -> None:
+    cmd = _cmd_with_params(
+        service=ParamDef(placeholder="service", default="web", pattern="[a-z]+"),
+    )
+    with pytest.raises(ParamValidationError, match="Unknown"):
+        validate_params(cmd, {"bogus": "value"})
+
+
+def test_validate_params_pattern_mismatch_raises() -> None:
+    cmd = _cmd_with_params(
+        service=ParamDef(placeholder="service", default="web", pattern="[a-z]+"),
+    )
+    with pytest.raises(ParamValidationError, match="pattern"):
+        validate_params(cmd, {"service": "INVALID!!!"})
+
+
+def test_validate_params_none_default_no_override_raises() -> None:
+    cmd = _cmd_with_params(
+        service=ParamDef(placeholder="service", default=None, pattern="[a-z]+"),
+    )
+    with pytest.raises(ParamValidationError, match="no default"):
+        validate_params(cmd, {})
+
+
+def test_validate_params_none_default_with_override() -> None:
+    cmd = _cmd_with_params(
+        service=ParamDef(placeholder="service", default=None, pattern="[a-z]+"),
+    )
+    assert validate_params(cmd, {"service": "celery"}) == {"service": "celery"}
+
+
+# ---------------------------------------------------------------------------
+# Resolution with param overrides
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_with_param_overrides(project_config: ProjectConfig) -> None:
+    template = ["/usr/bin/docker", "logs", "{service}"]
+    resolved = _resolve_command(template, project_config, {"service": "celery"})
+    assert resolved == ["/usr/bin/docker", "logs", "celery"]
+
+
+def test_resolve_param_overrides_alongside_config_placeholders(
+    project_config: ProjectConfig,
+) -> None:
+    template = ["/usr/bin/docker", "compose", "-f", "{compose_file}", "logs", "{service}"]
+    resolved = _resolve_command(template, project_config, {"service": "worker"})
+    assert resolved == [
+        "/usr/bin/docker", "compose", "-f", "/opt/myapp/docker-compose.yml",
+        "logs", "worker",
+    ]
