@@ -53,6 +53,15 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
         timeout=120,
         description="Run Django database migrations",
     ),
+    "docker_logs": CommandDef(
+        group="diagnostics",
+        command=[
+            "/usr/bin/docker", "compose", "-f", "{compose_file}",
+            "logs", "--tail", "100", "{docker_service_name}",
+        ],
+        timeout=30,
+        description="Show last 100 lines of service logs",
+    ),
 }
 
 

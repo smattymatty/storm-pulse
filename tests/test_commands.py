@@ -42,12 +42,12 @@ def project_config() -> ProjectConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_five_commands() -> None:
-    assert len(COMMAND_REGISTRY) == 5
+def test_registry_has_six_commands() -> None:
+    assert len(COMMAND_REGISTRY) == 6
 
 
 def test_all_expected_commands_present() -> None:
-    expected = {"git_pull", "docker_build", "docker_down", "docker_up", "django_migrate"}
+    expected = {"git_pull", "docker_build", "docker_down", "docker_up", "django_migrate", "docker_logs"}
     assert set(COMMAND_REGISTRY.keys()) == expected
 
 
@@ -66,7 +66,7 @@ def test_docker_down_requires_confirmation() -> None:
 
 
 def test_non_destructive_commands_no_confirmation() -> None:
-    for name in ("git_pull", "docker_build", "docker_up", "django_migrate"):
+    for name in ("git_pull", "docker_build", "docker_up", "django_migrate", "docker_logs"):
         assert COMMAND_REGISTRY[name].requires_confirmation is False, f"{name} should not require confirmation"
 
 
@@ -252,6 +252,47 @@ def test_execute_unknown_command_raises(project_config: ProjectConfig) -> None:
 
 
 # ---------------------------------------------------------------------------
+# docker_logs
+# ---------------------------------------------------------------------------
+
+
+def test_docker_logs_in_registry() -> None:
+    cmd = get_command("docker_logs", registry=COMMAND_REGISTRY)
+    assert cmd.group == "diagnostics"
+    assert cmd.timeout == 30
+
+
+def test_docker_logs_resolution(project_config: ProjectConfig) -> None:
+    cmd = get_command("docker_logs", registry=COMMAND_REGISTRY)
+    resolved = _resolve_command(cmd.command, project_config)
+    assert resolved == [
+        "/usr/bin/docker", "compose", "-f", "/opt/myapp/docker-compose.yml",
+        "logs", "--tail", "100", "web",
+    ]
+
+
+@patch("stormpulse.commands.registry.time.monotonic")
+@patch("stormpulse.commands.registry.subprocess.run")
+def test_execute_docker_logs(
+    mock_run: MagicMock,
+    mock_time: MagicMock,
+    project_config: ProjectConfig,
+) -> None:
+    mock_time.side_effect = [0.0, 0.2]
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="log line 1\nlog line 2\n", stderr="",
+    )
+    result = execute_command("docker_logs", project_config, "req-logs", registry=COMMAND_REGISTRY)
+    assert result.success is True
+    assert result.command == "docker_logs"
+    assert result.group == "diagnostics"
+    called_args = mock_run.call_args[0][0]
+    assert "--tail" in called_args
+    assert "100" in called_args
+    assert "web" in called_args
+
+
+# ---------------------------------------------------------------------------
 # Deploy sequence
 # ---------------------------------------------------------------------------
 
@@ -350,7 +391,7 @@ def test_build_registry_adds_custom_command() -> None:
         description="Restart Caddy",
     )
     registry = build_registry({"restart_caddy": custom})
-    assert len(registry) == 6
+    assert len(registry) == 7
     assert registry["restart_caddy"] is custom
     assert registry["git_pull"] is COMMAND_REGISTRY["git_pull"]
 
@@ -362,7 +403,7 @@ def test_build_registry_overrides_builtin() -> None:
         timeout=120,
     )
     registry = build_registry({"git_pull": custom_git})
-    assert len(registry) == 5
+    assert len(registry) == 6
     assert registry["git_pull"] is custom_git
     assert registry["git_pull"].timeout == 120
 
