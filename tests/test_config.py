@@ -461,3 +461,63 @@ timeout = 10
 """
     with pytest.raises(ConfigError, match="empty"):
         load_config(write_config(toml))
+
+
+# ---------------------------------------------------------------------------
+# Disabled commands
+# ---------------------------------------------------------------------------
+
+
+def test_disabled_commands_default_empty(write_config: Callable[[str], Path]) -> None:
+    config = load_config(write_config(MINIMAL_VALID))
+    assert config.agent.disabled_commands == frozenset()
+
+
+def test_disabled_commands_parsed(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace(
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
+        'disabled_commands = ["docker_down", "django_migrate"]',
+    )
+    config = load_config(write_config(content))
+    assert config.agent.disabled_commands == frozenset({"docker_down", "django_migrate"})
+
+
+def test_disabled_commands_empty_list(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace(
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
+        'disabled_commands = []',
+    )
+    config = load_config(write_config(content))
+    assert config.agent.disabled_commands == frozenset()
+
+
+def test_disabled_commands_wrong_type_raises(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace(
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
+        'disabled_commands = "docker_down"',
+    )
+    with pytest.raises(ConfigError, match="list"):
+        load_config(write_config(content))
+
+
+def test_disabled_commands_non_string_item_raises(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace(
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
+        'disabled_commands = ["docker_down", 42]',
+    )
+    with pytest.raises(ConfigError, match="string"):
+        load_config(write_config(content))
+
+
+def test_disabled_commands_is_frozenset(write_config: Callable[[str], Path]) -> None:
+    content = MINIMAL_VALID.replace(
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
+        'disabled_commands = ["docker_down"]',
+    )
+    config = load_config(write_config(content))
+    assert isinstance(config.agent.disabled_commands, frozenset)

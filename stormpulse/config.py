@@ -22,6 +22,7 @@ class ConfigError(Exception):
 class AgentConfig:
     id: str
     pulse_token: str
+    disabled_commands: frozenset[str] = dataclasses.field(default_factory=frozenset)
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,9 +155,19 @@ def _require_key(
 
 def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
     s = _require_section(raw, "agent")
+    disabled = s.get("disabled_commands", [])
+    if not isinstance(disabled, list):
+        raise ConfigError("'disabled_commands' in [agent] must be a list")
+    for i, item in enumerate(disabled):
+        if not isinstance(item, str):
+            raise ConfigError(
+                f"'disabled_commands[{i}]' in [agent] must be a string, "
+                f"got {type(item).__name__}"
+            )
     return AgentConfig(
         id=_require_key(s, "id", str, "agent"),
         pulse_token=_require_key(s, "pulse_token", str, "agent"),
+        disabled_commands=frozenset(disabled),
     )
 
 

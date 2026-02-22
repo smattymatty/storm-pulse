@@ -4,6 +4,7 @@
 [agent]
 id = "vps-toronto-01"
 pulse_token = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # from Server.pulse_token in dashboard
+# disabled_commands = ["docker_down"]  # optional, removes commands from the registry
 
 [dashboard]
 url = "wss://stormdevelopments.ca/ws/pulse/"

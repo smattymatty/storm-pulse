@@ -213,6 +213,13 @@ def test_roundtrip_register() -> None:
     rebuilt = Envelope.from_json(original.to_json())
     assert rebuilt.payload["version"] == "0.1.0"
     assert rebuilt.payload["pulse_token"] == "tok-abc-123"
+    assert rebuilt.payload["commands"] is None
+
+
+def test_roundtrip_register_with_commands() -> None:
+    original = make_register("test-agent", "0.1.0", "tok-abc-123", commands=["git_pull", "docker_up"])
+    rebuilt = Envelope.from_json(original.to_json())
+    assert rebuilt.payload["commands"] == ["git_pull", "docker_up"]
 
 
 def test_roundtrip_metrics() -> None:
@@ -338,6 +345,27 @@ def test_command_result_payload_with_sequence_id() -> None:
 def test_register_payload_from_dict(register_dict: dict[str, Any]) -> None:
     payload = RegisterPayload.from_dict(register_dict["payload"])
     assert payload.version == "0.1.0"
+    assert payload.commands is None
+
+
+def test_register_payload_from_dict_with_commands() -> None:
+    data: dict[str, Any] = {
+        "version": "0.2.0",
+        "pulse_token": "tok-123",
+        "commands": ["git_pull", "docker_up"],
+    }
+    payload = RegisterPayload.from_dict(data)
+    assert payload.commands == ["git_pull", "docker_up"]
+
+
+def test_register_payload_from_dict_null_commands() -> None:
+    data: dict[str, Any] = {
+        "version": "0.2.0",
+        "pulse_token": "tok-123",
+        "commands": None,
+    }
+    payload = RegisterPayload.from_dict(data)
+    assert payload.commands is None
 
 
 def test_container_info_from_dict() -> None:
@@ -499,6 +527,13 @@ def test_make_register_valid() -> None:
     assert env.type == MessageType.REGISTER
     assert env.payload["version"] == "0.1.0"
     assert env.payload["pulse_token"] == "tok-abc-123"
+    assert env.payload["commands"] is None
+    Envelope.from_json(env.to_json())
+
+
+def test_make_register_with_commands() -> None:
+    env = make_register("test-01", "0.1.0", "tok-abc-123", commands=["docker_up", "git_pull"])
+    assert env.payload["commands"] == ["docker_up", "git_pull"]
     Envelope.from_json(env.to_json())
 
 

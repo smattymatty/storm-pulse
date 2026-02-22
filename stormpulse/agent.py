@@ -67,7 +67,7 @@ class Agent:
         self._nonce_store = nonce_store
         self._ssl_ctx = ssl_context
         self._shutdown = shutdown
-        self._registry = build_registry(config.commands)
+        self._registry = build_registry(config.commands, config.agent.disabled_commands)
 
     # ------------------------------------------------------------------
     # Outer reconnect loop
@@ -95,6 +95,7 @@ class Agent:
 
                     register = make_register(
                         agent_id, __version__, self._config.agent.pulse_token,
+                        commands=sorted(self._registry),
                     )
                     await ws.send(register.to_json())
                     logger.info("Sent register (v%s)", __version__)

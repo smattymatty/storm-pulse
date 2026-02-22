@@ -76,12 +76,17 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
 }
 
 
-def build_registry(config_commands: dict[str, CommandDef]) -> dict[str, CommandDef]:
+def build_registry(
+    config_commands: dict[str, CommandDef],
+    disabled: frozenset[str] = frozenset(),
+) -> dict[str, CommandDef]:
     """Merge built-in commands with config-defined commands.
 
     Config commands override built-ins on name collision.
+    Commands in *disabled* are removed from the final registry.
     """
-    return {**COMMAND_REGISTRY, **config_commands}
+    merged = {**COMMAND_REGISTRY, **config_commands}
+    return {k: v for k, v in merged.items() if k not in disabled}
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 |---------|-------|-------------|
 | `agent` | `id` | Unique identifier for this server |
 | `agent` | `pulse_token` | UUID from the Server record in the dashboard |
+| `agent` | `disabled_commands` | List of command names to remove from the registry (optional) |
 | `dashboard` | `url` | WebSocket URL (`wss://...`) |
 | `project` | `project_dir` | Absolute path to the deployed project |
 | `project` | `compose_file` | Absolute path to docker-compose.yml |
@@ -84,7 +85,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 git clone <repo-url> && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 270 tests
+pytest          # 284 tests
 mypy .          # strict
 ```
 

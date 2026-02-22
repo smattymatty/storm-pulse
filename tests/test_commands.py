@@ -445,6 +445,36 @@ def test_build_registry_overrides_builtin() -> None:
     assert registry["git_pull"].timeout == 120
 
 
+def test_build_registry_disables_builtin() -> None:
+    registry = build_registry({}, disabled=frozenset({"docker_down"}))
+    assert "docker_down" not in registry
+    assert len(registry) == 5
+
+
+def test_build_registry_disables_custom_command() -> None:
+    custom = CommandDef(
+        group="maintenance",
+        command=["/usr/bin/systemctl", "restart", "caddy.service"],
+        timeout=30,
+    )
+    registry = build_registry({"restart_caddy": custom}, disabled=frozenset({"restart_caddy"}))
+    assert "restart_caddy" not in registry
+    assert len(registry) == 6
+
+
+def test_build_registry_disables_multiple() -> None:
+    registry = build_registry({}, disabled=frozenset({"docker_down", "docker_up", "docker_logs"}))
+    assert "docker_down" not in registry
+    assert "docker_up" not in registry
+    assert "docker_logs" not in registry
+    assert len(registry) == 3
+
+
+def test_build_registry_disabled_unknown_is_harmless() -> None:
+    registry = build_registry({}, disabled=frozenset({"nonexistent_command"}))
+    assert len(registry) == 6
+
+
 def test_build_registry_does_not_mutate_original() -> None:
     custom = CommandDef(
         group="test", command=["/bin/true"], timeout=10,
