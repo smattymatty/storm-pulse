@@ -94,7 +94,7 @@ def _make_signed_sequence(
     ts: datetime | None = None,
 ) -> Envelope:
     if commands is None:
-        commands = ["git_pull", "docker_build", "docker_up"]
+        commands = ["git_pull", "docker_logs"]
     if ts is None:
         ts = datetime.now(timezone.utc)
     if nonce is None:
@@ -174,9 +174,9 @@ def test_canonical_command_request_v1_prefix() -> None:
 
 def test_canonical_command_sequence_format() -> None:
     result = canonical_command_sequence(
-        "seq-001", ["git_pull", "docker_build"], True, "nonce-2", "2026-02-21T12:00:00Z"
+        "seq-001", ["git_pull", "docker_logs"], True, "nonce-2", "2026-02-21T12:00:00Z"
     )
-    assert result == "v1\nseq-001\ngit_pull,docker_build\ntrue\nnonce-2\n2026-02-21T12:00:00Z"
+    assert result == "v1\nseq-001\ngit_pull,docker_logs\ntrue\nnonce-2\n2026-02-21T12:00:00Z"
 
 
 def test_canonical_command_sequence_stop_on_failure_false() -> None:
@@ -292,10 +292,10 @@ def test_verify_valid_command_request(nonce_store: NonceStore) -> None:
 
 
 def test_verify_command_request_returns_typed_payload(nonce_store: NonceStore) -> None:
-    env = _make_signed_request(command="docker_up")
+    env = _make_signed_request(command="docker_logs")
     payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
     assert isinstance(payload, CommandRequestPayload)
-    assert payload.command == "docker_up"
+    assert payload.command == "docker_logs"
     assert isinstance(payload.nonce, str)
 
 
@@ -336,10 +336,10 @@ def test_verify_valid_command_sequence(nonce_store: NonceStore) -> None:
 
 
 def test_verify_command_sequence_returns_typed_payload(nonce_store: NonceStore) -> None:
-    env = _make_signed_sequence(commands=["git_pull", "docker_up"])
+    env = _make_signed_sequence(commands=["git_pull", "docker_logs"])
     payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
     assert isinstance(payload, CommandSequencePayload)
-    assert payload.commands == ["git_pull", "docker_up"]
+    assert payload.commands == ["git_pull", "docker_logs"]
     assert payload.stop_on_failure is True
 
 
@@ -456,13 +456,13 @@ def test_bad_hmac_rejected_before_nonce_stored(nonce_store: NonceStore) -> None:
 
 
 def test_sign_verify_command_request_roundtrip(nonce_store: NonceStore) -> None:
-    env = _make_signed_request(command="docker_build")
+    env = _make_signed_request(command="docker_logs")
     payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
-    assert payload.command == "docker_build"  # type: ignore[union-attr]
+    assert payload.command == "docker_logs"  # type: ignore[union-attr]
 
 
 def test_sign_verify_command_sequence_roundtrip(nonce_store: NonceStore) -> None:
-    cmds = ["git_pull", "docker_build", "docker_down", "docker_up", "django_migrate"]
+    cmds = ["git_pull", "docker_logs"]
     env = _make_signed_sequence(commands=cmds, stop_on_failure=False)
     payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
     assert isinstance(payload, CommandSequencePayload)

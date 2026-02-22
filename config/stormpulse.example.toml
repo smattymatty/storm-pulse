@@ -4,7 +4,7 @@
 [agent]
 id = "vps-toronto-01"
 pulse_token = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # from Server.pulse_token in dashboard
-# disabled_commands = ["docker_down"]  # optional, removes commands from the registry
+# disabled_commands = ["docker_logs"]  # optional, removes commands from the registry
 
 [dashboard]
 url = "wss://stormdevelopments.ca/ws/pulse/"
@@ -34,9 +34,42 @@ docker_service_name = "web"
 [storage]
 db_path = "/opt/stormpulse/data/stormpulse.db"
 
-# Custom commands (optional). Override built-ins or add new ones.
-# Each [commands.<name>] defines a whitelisted command.
-# Built-in commands: git_pull, docker_build, docker_down, docker_up, django_migrate, docker_logs
+# ---------------------------------------------------------------------------
+# Custom commands (optional)
+# ---------------------------------------------------------------------------
+# Built-in commands: git_pull, docker_logs
+# Add your own commands below. Each [commands.<name>] defines a whitelisted
+# subprocess call. Use placeholders like {project_dir}, {compose_file},
+# {env_file}, and {docker_service_name} — they resolve from [project] config.
+#
+# Deploy commands — uncomment and adjust for your stack:
+#
+# [commands.docker_build]
+# group = "deploy"
+# command = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "build"]
+# timeout = 300
+# description = "Build Docker images"
+#
+# [commands.docker_down]
+# group = "deploy"
+# command = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "down"]
+# timeout = 60
+# requires_confirmation = true
+# description = "Stop and remove containers"
+#
+# [commands.docker_up]
+# group = "deploy"
+# command = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "up", "-d"]
+# timeout = 120
+# description = "Start containers in detached mode"
+#
+# [commands.django_migrate]
+# group = "deploy"
+# command = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "exec", "{docker_service_name}", "python", "manage.py", "migrate"]
+# timeout = 120
+# description = "Run Django database migrations"
+#
+# Other examples:
 #
 # [commands.restart_caddy]
 # group = "maintenance"
@@ -44,11 +77,6 @@ db_path = "/opt/stormpulse/data/stormpulse.db"
 # timeout = 30
 # requires_confirmation = true
 # description = "Restart Caddy reverse proxy"
-#
-# [commands.git_pull]  # override built-in with different binary path
-# group = "deploy"
-# command = ["/usr/local/bin/git", "-C", "{project_dir}", "pull"]
-# timeout = 120
 #
 # Commands can declare overridable parameters with regex validation.
 # The dashboard sends runtime overrides in the params dict; the agent

@@ -10,15 +10,6 @@ from stormpulse.protocol import CommandResultPayload
 
 from .registry import execute_command, get_command
 
-DEFAULT_DEPLOY_SEQUENCE: list[str] = [
-    "git_pull",
-    "docker_build",
-    "docker_down",
-    "docker_up",
-    "django_migrate",
-]
-
-
 def run_deploy_sequence(
     commands: list[str],
     config: ProjectConfig,

@@ -11,7 +11,6 @@ import pytest
 
 from stormpulse.commands import (
     COMMAND_REGISTRY,
-    DEFAULT_DEPLOY_SEQUENCE,
     CommandDef,
     CommandError,
     ParamValidationError,
@@ -45,12 +44,12 @@ def project_config() -> ProjectConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_six_commands() -> None:
-    assert len(COMMAND_REGISTRY) == 6
+def test_registry_has_two_commands() -> None:
+    assert len(COMMAND_REGISTRY) == 2
 
 
 def test_all_expected_commands_present() -> None:
-    expected = {"git_pull", "docker_build", "docker_down", "docker_up", "django_migrate", "docker_logs"}
+    expected = {"git_pull", "docker_logs"}
     assert set(COMMAND_REGISTRY.keys()) == expected
 
 
@@ -64,12 +63,8 @@ def test_all_commands_have_groups() -> None:
         assert cmd_def.group, f"{name} has empty group"
 
 
-def test_docker_down_requires_confirmation() -> None:
-    assert COMMAND_REGISTRY["docker_down"].requires_confirmation is True
-
-
-def test_non_destructive_commands_no_confirmation() -> None:
-    for name in ("git_pull", "docker_build", "docker_up", "django_migrate", "docker_logs"):
+def test_builtin_commands_no_confirmation() -> None:
+    for name in ("git_pull", "docker_logs"):
         assert COMMAND_REGISTRY[name].requires_confirmation is False, f"{name} should not require confirmation"
 
 
@@ -265,7 +260,7 @@ def test_execute_measures_duration(
 ) -> None:
     mock_time.side_effect = [1.0, 1.5]
     mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-    result = execute_command("docker_up", project_config, "req-6", registry=COMMAND_REGISTRY)
+    result = execute_command("git_pull", project_config, "req-6", registry=COMMAND_REGISTRY)
     assert result.duration_ms == 500
 
 
@@ -343,22 +338,22 @@ def test_deploy_all_success(mock_exec: MagicMock, project_config: ProjectConfig)
         success=True, command=name, sequence_id=sid, request_id=rid,
     )
     results = list(run_deploy_sequence(
-        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-1", registry=COMMAND_REGISTRY,
+        ["git_pull", "docker_logs"], project_config, "seq-1", registry=COMMAND_REGISTRY,
     ))
-    assert len(results) == 5
+    assert len(results) == 2
     assert all(r.success for r in results)
 
 
 @patch("stormpulse.commands.deploy.execute_command")
 def test_deploy_stop_on_failure(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
     def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
-        return MagicMock(success=(name != "docker_build"), command=name)
+        return MagicMock(success=(name != "docker_logs"), command=name)
 
     mock_exec.side_effect = side_effect
     results = list(run_deploy_sequence(
-        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-2", registry=COMMAND_REGISTRY,
+        ["git_pull", "docker_logs"], project_config, "seq-2", registry=COMMAND_REGISTRY,
     ))
-    assert len(results) == 2  # git_pull (ok), docker_build (fail), then stop
+    assert len(results) == 2  # git_pull (ok), docker_logs (fail), then stop
     assert results[0].success is True
     assert results[1].success is False
 
@@ -366,14 +361,14 @@ def test_deploy_stop_on_failure(mock_exec: MagicMock, project_config: ProjectCon
 @patch("stormpulse.commands.deploy.execute_command")
 def test_deploy_continue_on_failure(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
     def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
-        return MagicMock(success=(name != "docker_build"), command=name)
+        return MagicMock(success=(name != "docker_logs"), command=name)
 
     mock_exec.side_effect = side_effect
     results = list(run_deploy_sequence(
-        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-3",
+        ["git_pull", "docker_logs"], project_config, "seq-3",
         stop_on_failure=False, registry=COMMAND_REGISTRY,
     ))
-    assert len(results) == 5
+    assert len(results) == 2
 
 
 def test_deploy_invalid_command_raises_upfront(project_config: ProjectConfig) -> None:
@@ -393,9 +388,9 @@ def test_deploy_unique_request_ids(mock_exec: MagicMock, project_config: Project
 
     mock_exec.side_effect = side_effect
     list(run_deploy_sequence(
-        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-5", registry=COMMAND_REGISTRY,
+        ["git_pull", "docker_logs"], project_config, "seq-5", registry=COMMAND_REGISTRY,
     ))
-    assert len(set(call_args)) == 5  # all unique
+    assert len(set(call_args)) == 2  # all unique
 
 
 @patch("stormpulse.commands.deploy.execute_command")
@@ -408,7 +403,7 @@ def test_deploy_shared_sequence_id(mock_exec: MagicMock, project_config: Project
 
     mock_exec.side_effect = side_effect
     list(run_deploy_sequence(
-        DEFAULT_DEPLOY_SEQUENCE, project_config, "seq-6", registry=COMMAND_REGISTRY,
+        ["git_pull", "docker_logs"], project_config, "seq-6", registry=COMMAND_REGISTRY,
     ))
     assert all(sid == "seq-6" for sid in call_sids)
 
@@ -431,7 +426,7 @@ def test_build_registry_adds_custom_command() -> None:
         description="Restart Caddy",
     )
     registry = build_registry({"restart_caddy": custom})
-    assert len(registry) == 7
+    assert len(registry) == 3
     assert registry["restart_caddy"] is custom
     assert registry["git_pull"] is COMMAND_REGISTRY["git_pull"]
 
@@ -443,15 +438,15 @@ def test_build_registry_overrides_builtin() -> None:
         timeout=120,
     )
     registry = build_registry({"git_pull": custom_git})
-    assert len(registry) == 6
+    assert len(registry) == 2
     assert registry["git_pull"] is custom_git
     assert registry["git_pull"].timeout == 120
 
 
 def test_build_registry_disables_builtin() -> None:
-    registry = build_registry({}, disabled=frozenset({"docker_down"}))
-    assert "docker_down" not in registry
-    assert len(registry) == 5
+    registry = build_registry({}, disabled=frozenset({"docker_logs"}))
+    assert "docker_logs" not in registry
+    assert len(registry) == 1
 
 
 def test_build_registry_disables_custom_command() -> None:
@@ -462,20 +457,19 @@ def test_build_registry_disables_custom_command() -> None:
     )
     registry = build_registry({"restart_caddy": custom}, disabled=frozenset({"restart_caddy"}))
     assert "restart_caddy" not in registry
-    assert len(registry) == 6
+    assert len(registry) == 2
 
 
 def test_build_registry_disables_multiple() -> None:
-    registry = build_registry({}, disabled=frozenset({"docker_down", "docker_up", "docker_logs"}))
-    assert "docker_down" not in registry
-    assert "docker_up" not in registry
+    registry = build_registry({}, disabled=frozenset({"git_pull", "docker_logs"}))
+    assert "git_pull" not in registry
     assert "docker_logs" not in registry
-    assert len(registry) == 3
+    assert len(registry) == 0
 
 
 def test_build_registry_disabled_unknown_is_harmless() -> None:
     registry = build_registry({}, disabled=frozenset({"nonexistent_command"}))
-    assert len(registry) == 6
+    assert len(registry) == 2
 
 
 def test_build_registry_does_not_mutate_original() -> None:

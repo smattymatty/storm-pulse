@@ -477,10 +477,10 @@ def test_disabled_commands_parsed(write_config: Callable[[str], Path]) -> None:
     content = MINIMAL_VALID.replace(
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
-        'disabled_commands = ["docker_down", "django_migrate"]',
+        'disabled_commands = ["git_pull", "docker_logs"]',
     )
     config = load_config(write_config(content))
-    assert config.agent.disabled_commands == frozenset({"docker_down", "django_migrate"})
+    assert config.agent.disabled_commands == frozenset({"git_pull", "docker_logs"})
 
 
 def test_disabled_commands_empty_list(write_config: Callable[[str], Path]) -> None:
@@ -497,7 +497,7 @@ def test_disabled_commands_wrong_type_raises(write_config: Callable[[str], Path]
     content = MINIMAL_VALID.replace(
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
-        'disabled_commands = "docker_down"',
+        'disabled_commands = "git_pull"',
     )
     with pytest.raises(ConfigError, match="list"):
         load_config(write_config(content))
@@ -507,7 +507,7 @@ def test_disabled_commands_non_string_item_raises(write_config: Callable[[str], 
     content = MINIMAL_VALID.replace(
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
-        'disabled_commands = ["docker_down", 42]',
+        'disabled_commands = ["git_pull", 42]',
     )
     with pytest.raises(ConfigError, match="string"):
         load_config(write_config(content))
@@ -517,7 +517,7 @@ def test_disabled_commands_is_frozenset(write_config: Callable[[str], Path]) -> 
     content = MINIMAL_VALID.replace(
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
-        'disabled_commands = ["docker_down"]',
+        'disabled_commands = ["git_pull"]',
     )
     config = load_config(write_config(content))
     assert isinstance(config.agent.disabled_commands, frozenset)

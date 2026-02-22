@@ -309,17 +309,17 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
         await _wait_for_register(ws)
 
         msg = sign_command_sequence(
-            ["git_pull", "docker_build", "docker_up"],
+            ["git_pull", "docker_logs"],
             stop_on_failure=True,
         )
         await ws.send(msg)
 
-        # Collect results — expect exactly 2 (3rd skipped)
-        results.extend(await _collect_results(ws, count=3, timeout=3.0))
+        # Collect results — expect exactly 1 (2nd skipped due to 1st failure)
+        results.extend(await _collect_results(ws, count=2, timeout=3.0))
         server_done.set()
 
     mock_exec = MagicMock(
-        side_effect=_exec_side_effect_factory(fail_commands={"docker_build"}),
+        side_effect=_exec_side_effect_factory(fail_commands={"git_pull"}),
     )
 
     with (
@@ -337,23 +337,16 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
 
     store.close()
 
-    assert len(results) == 2
+    assert len(results) == 1
     assert results[0]["payload"]["command"] == "git_pull"
-    assert results[0]["payload"]["success"] is True
-    assert results[1]["payload"]["command"] == "docker_build"
-    assert results[1]["payload"]["success"] is False
+    assert results[0]["payload"]["success"] is False
 
-    # Same sequence_id on both
-    seq_id = results[0]["payload"]["sequence_id"]
-    assert seq_id is not None
-    assert results[1]["payload"]["sequence_id"] == seq_id
-
-    assert mock_exec.call_count == 2
+    assert mock_exec.call_count == 1
 
 
 @pytest.mark.asyncio
 async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
-    """3-command sequence where all succeed — 3 results in order."""
+    """2-command sequence where all succeed — 2 results in order."""
     config = build_config(tmp_path, free_port)
     store = NonceStore(tmp_path / "nonces.db")
     shutdown = asyncio.Event()
@@ -364,12 +357,12 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
         await _wait_for_register(ws)
 
         msg = sign_command_sequence(
-            ["git_pull", "docker_build", "docker_up"],
+            ["git_pull", "docker_logs"],
             stop_on_failure=True,
         )
         await ws.send(msg)
 
-        results.extend(await _collect_results(ws, count=3, timeout=3.0))
+        results.extend(await _collect_results(ws, count=2, timeout=3.0))
         server_done.set()
 
     with (
@@ -387,9 +380,9 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
 
     store.close()
 
-    assert len(results) == 3
+    assert len(results) == 2
     commands = [r["payload"]["command"] for r in results]
-    assert commands == ["git_pull", "docker_build", "docker_up"]
+    assert commands == ["git_pull", "docker_logs"]
     assert all(r["payload"]["success"] is True for r in results)
 
     # All share the same sequence_id
@@ -411,7 +404,7 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
         await _wait_for_register(ws)
 
         msg = sign_command_sequence(
-            ["git_pull", "totally_bogus_command", "docker_up"],
+            ["git_pull", "totally_bogus_command"],
         )
         await ws.send(msg)
 

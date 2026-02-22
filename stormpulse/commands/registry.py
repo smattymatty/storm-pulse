@@ -30,52 +30,6 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
         timeout=60,
         description="Pull latest changes from remote",
     ),
-    "docker_build": CommandDef(
-        group="deploy",
-        command=[
-            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
-            "-f", "{compose_file}", "build",
-        ],
-        timeout=300,
-        description="Build Docker images",
-    ),
-    "docker_down": CommandDef(
-        group="deploy",
-        command=[
-            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
-            "-f", "{compose_file}", "down",
-        ],
-        timeout=60,
-        requires_confirmation=True,
-        description="Stop and remove containers",
-    ),
-    "docker_up": CommandDef(
-        group="deploy",
-        command=[
-            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
-            "-f", "{compose_file}", "up", "-d",
-        ],
-        timeout=120,
-        description="Start containers in detached mode",
-    ),
-    "django_migrate": CommandDef(
-        group="deploy",
-        command=[
-            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
-            "-f", "{compose_file}",
-            "exec", "{docker_service_name}", "python", "manage.py", "migrate",
-        ],
-        timeout=120,
-        description="Run Django database migrations",
-        params={
-            "docker_service_name": ParamDef(
-                placeholder="docker_service_name",
-                default=None,
-                pattern="[a-zA-Z0-9_-]+",
-                description="Docker Compose service name",
-            ),
-        },
-    ),
     "docker_logs": CommandDef(
         group="diagnostics",
         command=[
@@ -84,7 +38,7 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
             "logs", "--tail", "{tail_lines}", "{docker_service_name}",
         ],
         timeout=30,
-        description="Show last 100 lines of service logs",
+        description="Show recent service logs",
         params={
             "docker_service_name": ParamDef(
                 placeholder="docker_service_name",

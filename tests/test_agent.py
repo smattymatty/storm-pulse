@@ -118,7 +118,7 @@ def _make_signed_sequence_json(
 ) -> str:
     """Build a signed command.sequence envelope as JSON string."""
     if commands is None:
-        commands = ["git_pull", "docker_up"]
+        commands = ["git_pull", "docker_logs"]
     ts = datetime.now(timezone.utc)
     nonce = generate_nonce()
     ts_str = format_timestamp(ts)
@@ -485,7 +485,7 @@ async def test_dispatch_command_sequence(
 ) -> None:
     mock_exec.return_value = _make_result()
     ws = AsyncMock()
-    raw = _make_signed_sequence_json(commands=["git_pull", "docker_up"])
+    raw = _make_signed_sequence_json(commands=["git_pull", "docker_logs"])
 
     await agent._dispatch(ws, raw)
 
@@ -501,7 +501,7 @@ async def test_dispatch_sequence_stop_on_failure(
     mock_exec.return_value = _make_result(success=False)
     ws = AsyncMock()
     raw = _make_signed_sequence_json(
-        commands=["git_pull", "docker_build", "docker_up"],
+        commands=["git_pull", "docker_logs"],
         stop_on_failure=True,
     )
 

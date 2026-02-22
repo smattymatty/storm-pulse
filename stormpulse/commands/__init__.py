@@ -2,7 +2,7 @@
 
 from stormpulse.config import CommandDef
 
-from .deploy import DEFAULT_DEPLOY_SEQUENCE, run_deploy_sequence
+from .deploy import run_deploy_sequence
 from .registry import (
     COMMAND_REGISTRY,
     CommandError,
@@ -17,7 +17,6 @@ __all__ = [
     "COMMAND_REGISTRY",
     "CommandDef",
     "CommandError",
-    "DEFAULT_DEPLOY_SEQUENCE",
     "ParamValidationError",
     "build_registry",
     "execute_command",

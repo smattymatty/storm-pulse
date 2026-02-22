@@ -169,7 +169,7 @@ def make_successful_result(
 
 
 def make_failed_result(
-    command: str = "docker_build",
+    command: str = "docker_logs",
     request_id: str = "r1",
     sequence_id: str | None = None,
 ) -> CommandResultPayload:

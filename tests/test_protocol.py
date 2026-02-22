@@ -116,7 +116,7 @@ def command_sequence_dict() -> dict[str, Any]:
         "agent_id": "vps-toronto-01",
         "payload": {
             "sequence_id": "seq-001",
-            "commands": ["git_pull", "docker_build", "docker_down", "docker_up", "django_migrate"],
+            "commands": ["git_pull", "docker_logs"],
             "stop_on_failure": True,
             "hmac": "def456",
             "nonce": "nonce-2",
@@ -179,7 +179,7 @@ def test_parse_command_result(command_result_dict: dict[str, Any]) -> None:
 def test_parse_command_sequence(command_sequence_dict: dict[str, Any]) -> None:
     env = Envelope.from_json(json.dumps(command_sequence_dict))
     assert env.type == MessageType.COMMAND_SEQUENCE
-    assert len(env.payload["commands"]) == 5
+    assert len(env.payload["commands"]) == 2
     assert env.payload["stop_on_failure"] is True
 
 
@@ -281,7 +281,7 @@ def test_roundtrip_command_result() -> None:
 def test_roundtrip_command_result_no_sequence_id() -> None:
     result = CommandResultPayload(
         request_id="req-2",
-        command="docker_up",
+        command="git_pull",
         group="deploy",
         success=False,
         exit_code=1,
@@ -297,7 +297,7 @@ def test_roundtrip_command_result_no_sequence_id() -> None:
 def test_roundtrip_command_result_with_failure_reason() -> None:
     result = CommandResultPayload(
         request_id="req-3",
-        command="docker_build",
+        command="git_pull",
         group="deploy",
         success=False,
         exit_code=-1,
@@ -334,7 +334,7 @@ def test_command_request_payload_from_dict(command_request_dict: dict[str, Any])
 def test_command_sequence_payload_from_dict(command_sequence_dict: dict[str, Any]) -> None:
     payload = CommandSequencePayload.from_dict(command_sequence_dict["payload"])
     assert payload.sequence_id == "seq-001"
-    assert len(payload.commands) == 5
+    assert len(payload.commands) == 2
 
 
 def test_command_result_payload_from_dict(command_result_dict: dict[str, Any]) -> None:
@@ -590,7 +590,7 @@ def test_make_metrics_push_valid() -> None:
 
 def test_make_command_result_valid() -> None:
     result = CommandResultPayload(
-        request_id="r1", command="docker_up", group="deploy",
+        request_id="r1", command="git_pull", group="deploy",
         success=True, exit_code=0, stdout="up\n", stderr="", duration_ms=200,
     )
     env = make_command_result("test-01", result)
