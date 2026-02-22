@@ -7,7 +7,7 @@ import subprocess
 import time
 from typing import Any
 
-from stormpulse.config import CommandDef, ProjectConfig
+from stormpulse.config import CommandDef, ParamDef, ProjectConfig
 from stormpulse.protocol import CommandResultPayload
 
 
@@ -67,16 +67,38 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
         ],
         timeout=120,
         description="Run Django database migrations",
+        params={
+            "docker_service_name": ParamDef(
+                placeholder="docker_service_name",
+                default=None,
+                pattern="[a-zA-Z0-9_-]+",
+                description="Docker Compose service name",
+            ),
+        },
     ),
     "docker_logs": CommandDef(
         group="diagnostics",
         command=[
             "/usr/bin/docker", "compose", "--env-file", "{env_file}",
             "-f", "{compose_file}",
-            "logs", "--tail", "100", "{docker_service_name}",
+            "logs", "--tail", "{tail_lines}", "{docker_service_name}",
         ],
         timeout=30,
         description="Show last 100 lines of service logs",
+        params={
+            "docker_service_name": ParamDef(
+                placeholder="docker_service_name",
+                default=None,
+                pattern="[a-zA-Z0-9_-]+",
+                description="Docker Compose service name",
+            ),
+            "tail_lines": ParamDef(
+                placeholder="tail_lines",
+                default="100",
+                pattern="[0-9]{1,5}",
+                description="Number of log lines to show",
+            ),
+        },
     ),
 }
 
@@ -122,9 +144,7 @@ def validate_params(
         elif pdef.default is not None:
             value = pdef.default
         else:
-            raise ParamValidationError(
-                f"Param {name!r} has no default and was not provided"
-            )
+            continue  # no static default — config provides the fallback
         if not re.fullmatch(pdef.pattern, value):
             raise ParamValidationError(
                 f"Param {name!r} value {value!r} "

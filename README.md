@@ -9,6 +9,8 @@ Secure server management agent for [Storm Developments](https://stormdevelopment
 3. Dashboard sends HMAC-signed commands. Agent verifies signature, nonce, and expiry before executing.
 4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config with optional overridable parameters (regex-validated). No shell injection possible.
 
+Read the [Protocol Specification](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Protocol-Specification) for exact information.
+
 ## Security
 
 Five layers, each independent:

@@ -302,7 +302,8 @@ def test_docker_logs_in_registry() -> None:
 
 def test_docker_logs_resolution(project_config: ProjectConfig) -> None:
     cmd = get_command("docker_logs", registry=COMMAND_REGISTRY)
-    resolved = _resolve_command(cmd.command, project_config)
+    validated = validate_params(cmd, {})
+    resolved = _resolve_command(cmd.command, project_config, validated)
     assert resolved == [
         "/usr/bin/docker", "compose", "--env-file", "/opt/myapp/.env",
         "-f", "/opt/myapp/docker-compose.yml",
@@ -559,12 +560,16 @@ def test_validate_params_pattern_mismatch_raises() -> None:
         validate_params(cmd, {"service": "INVALID!!!"})
 
 
-def test_validate_params_none_default_no_override_raises() -> None:
+def test_validate_params_none_default_no_override_skips() -> None:
+    """When default is None and no runtime override, the param is skipped.
+
+    The config-level placeholder (e.g. docker_service_name) provides the
+    fallback value during _resolve_command.
+    """
     cmd = _cmd_with_params(
         service=ParamDef(placeholder="service", default=None, pattern="[a-z]+"),
     )
-    with pytest.raises(ParamValidationError, match="no default"):
-        validate_params(cmd, {})
+    assert validate_params(cmd, {}) == {}
 
 
 def test_validate_params_none_default_with_override() -> None:

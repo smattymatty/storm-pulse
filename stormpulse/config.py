@@ -89,7 +89,7 @@ class CommandDef:
 
 
 PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset({
-    "project_dir", "compose_file", "docker_service_name", "env_file",
+    "project_dir", "compose_file", "env_file",
 })
 
 
