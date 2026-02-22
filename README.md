@@ -21,23 +21,7 @@ Five layers, each independent:
 
 See the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) wiki page for the full design.
 
-## Quick Start
-
-```bash
-# install
-python3 -m venv /opt/stormpulse/venv
-/opt/stormpulse/venv/bin/pip install .
-
-# enroll (generates keypair locally, sends CSR to dashboard)
-stormpulse enroll https://stormdevelopments.ca/api/enroll/ vps-toronto-01 <token>
-
-# configure
-cp config/stormpulse.example.toml /etc/stormpulse/stormpulse.toml
-# edit stormpulse.toml — set agent.id, agent.pulse_token, project paths
-
-# run
-stormpulse run
-```
+## Setup
 
 Requires Python 3.12+. Three runtime deps: `websockets`, `psutil`, `cryptography`.
 
@@ -76,6 +60,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 ## Documentation
 
 - [Setup Guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Setup-Guide) -- Full install, enrollment, systemd, permissions
+- [Customize Commands](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Customize--Commands) -- How to disable existing commands, or whitelist new commands
 - [Protocol Specification](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Protocol-Specification) -- Message formats, envelope structure, versioning
 - [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) -- Threat model, five security layers
 
