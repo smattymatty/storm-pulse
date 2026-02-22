@@ -4,7 +4,7 @@ Secure server management agent for [Storm Developments](https://stormdevelopment
 
 ## How It Works
 
-1. Agent connects **outbound** to the dashboard. Caddy terminates mTLS.
+1. Agent connects **outbound** to the dashboard. Nginx terminates mTLS.
 2. Sends a `register` message (including its available commands list), then pushes metrics every 15s (CPU, memory, disk, load, containers).
 3. Dashboard sends HMAC-signed commands. Agent verifies signature, nonce, and expiry before executing.
 4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config with optional overridable parameters (regex-validated). No shell injection possible.
@@ -18,7 +18,7 @@ Five layers, each independent:
 - **Network** -- No inbound ports. Agent initiates all connections.
 - **Transport** -- mTLS with per-agent certs from a private CA.
 - **Application** -- HMAC-SHA256 + nonce + expiry on every command.
-- **Execution** -- Whitelisted commands only. Absolute paths. `shell=False`. Parameters from local config, never from the wire.
+- **Execution** -- Whitelisted commands only. Absolute paths. `shell=False`. Config placeholders from local config only; runtime params are regex-validated.
 - **OS** -- Dedicated user. Systemd sandboxing.
 
 See the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) wiki page for the full design.
