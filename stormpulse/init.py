@@ -283,7 +283,7 @@ def prompt_compose_file(project_dir: Path) -> Path:
 
 
 def prompt_docker_service(compose_path: Path) -> str:
-    """Parse services from compose file, let user pick."""
+    """Parse services from compose file, let user pick the default."""
     services = parse_service_names(compose_path)
     if services:
         print("  Services found:", file=sys.stderr)
@@ -291,14 +291,16 @@ def prompt_docker_service(compose_path: Path) -> str:
             print(f"    {i}. {name}", file=sys.stderr)
         default = services[0]
         while True:
-            choice = _prompt("Docker service name", default=default)
+            choice = _prompt(
+                "Default service for commands (e.g. docker_logs)", default=default,
+            )
             if choice.isdigit() and 1 <= int(choice) <= len(services):
                 return services[int(choice) - 1]
             if choice:
                 return choice
     # No services parsed, manual entry
     while True:
-        value = _prompt("Docker service name (e.g. web)")
+        value = _prompt("Default service for commands (e.g. web)")
         if value:
             return value
         print("  Service name cannot be empty", file=sys.stderr)
