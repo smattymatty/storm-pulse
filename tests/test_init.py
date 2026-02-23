@@ -328,8 +328,20 @@ class TestParseVolumeMounts:
         volumes = parse_volume_mounts(p, tmp_path)
         assert len(volumes) == 1
 
-    def test_missing_file(self, tmp_path: Path) -> None:
-        assert parse_volume_mounts(tmp_path / "nope.yml", tmp_path) == []
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        assert parse_volume_mounts(tmp_path / "nope.yml", tmp_path) is None
+
+    def test_not_a_compose_file_returns_none(self, tmp_path: Path) -> None:
+        p = tmp_path / "docker-compose.yml"
+        p.write_text("just some random text\nno services here\n")
+        assert parse_volume_mounts(p, tmp_path) is None
+
+    def test_empty_list_when_no_bind_mounts(self, tmp_path: Path) -> None:
+        p = tmp_path / "docker-compose.yml"
+        p.write_text(SAMPLE_COMPOSE_NO_VOLUMES)
+        result = parse_volume_mounts(p, tmp_path)
+        assert result is not None
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +616,92 @@ class TestWriteSystemdUnit:
 
 
 # ---------------------------------------------------------------------------
+# TestRunFindApply
+# ---------------------------------------------------------------------------
+
+
+class TestRunFindApply:
+    @patch("stormpulse.init.subprocess.Popen")
+    def test_builds_find_with_prune_args(
+        self, mock_popen: MagicMock, tmp_path: Path,
+    ) -> None:
+        from stormpulse.init import _run_find_apply
+
+        mock_find = MagicMock()
+        mock_find.stdout = MagicMock()
+        mock_find.wait.return_value = 0
+        mock_find.returncode = 0
+
+        mock_xargs = MagicMock()
+        mock_xargs.communicate.return_value = (b"", b"")
+        mock_xargs.returncode = 0
+
+        mock_popen.side_effect = [mock_find, mock_xargs]
+
+        vol1 = tmp_path / "data"
+        vol2 = tmp_path / "logs"
+
+        result = _run_find_apply(
+            tmp_path, [vol1, vol2],
+            ["/usr/bin/chown", "root:stormpulse"],
+            description="test chown",
+        )
+
+        assert result is True
+
+        find_args = mock_popen.call_args_list[0][0][0]
+        assert find_args[0] == "/usr/bin/find"
+        assert find_args[1] == str(tmp_path)
+        # Prune structure: -path <vol1> -prune -o -path <vol2> -prune -o -print0
+        assert str(vol1) in find_args
+        assert str(vol2) in find_args
+        assert find_args.count("-prune") == 2
+        assert find_args[-1] == "-print0"
+
+        xargs_args = mock_popen.call_args_list[1][0][0]
+        assert xargs_args == ["/usr/bin/xargs", "-0", "/usr/bin/chown", "root:stormpulse"]
+
+    @patch("stormpulse.init.subprocess.Popen")
+    def test_returns_false_on_find_failure(
+        self, mock_popen: MagicMock, tmp_path: Path,
+    ) -> None:
+        from stormpulse.init import _run_find_apply
+
+        mock_find = MagicMock()
+        mock_find.stdout = MagicMock()
+        mock_find.wait.return_value = 1
+        mock_find.returncode = 1
+
+        mock_xargs = MagicMock()
+        mock_xargs.communicate.return_value = (b"", b"permission denied")
+        mock_xargs.returncode = 0
+
+        mock_popen.side_effect = [mock_find, mock_xargs]
+
+        result = _run_find_apply(
+            tmp_path, [],
+            ["/usr/bin/chown", "root:stormpulse"],
+            description="test",
+        )
+        assert result is False
+
+    @patch("stormpulse.init.subprocess.Popen")
+    def test_returns_false_on_missing_binary(
+        self, mock_popen: MagicMock, tmp_path: Path,
+    ) -> None:
+        from stormpulse.init import _run_find_apply
+
+        mock_popen.side_effect = FileNotFoundError(2, "No such file", "/usr/bin/find")
+
+        result = _run_find_apply(
+            tmp_path, [],
+            ["/usr/bin/chown", "root:stormpulse"],
+            description="test",
+        )
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
 # TestRunSystemSetup
 # ---------------------------------------------------------------------------
 
@@ -611,7 +709,7 @@ class TestWriteSystemdUnit:
 class TestRunSystemSetup:
     @patch("stormpulse.init.subprocess.run")
     @patch("stormpulse.init.parse_volume_mounts", return_value=[])
-    def test_runs_all_commands(
+    def test_no_volumes_uses_simple_chown(
         self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
     ) -> None:
         project = tmp_path / "project"
@@ -622,10 +720,100 @@ class TestRunSystemSetup:
         run_system_setup(project, compose)
 
         all_args = [c[0][0] for c in mock_run.call_args_list]
-        # usermod, git config, chown, chmod — each c[0][0] is a list of strings
         assert any("/usr/sbin/usermod" in args for args in all_args)
         assert any("/usr/bin/git" in args for args in all_args)
-        assert any("/usr/bin/chown" in args for args in all_args)
+        chown_calls = [a for a in all_args if "/usr/bin/chown" in a]
+        assert len(chown_calls) == 1
+        assert "-R" in chown_calls[0]
+        assert "root:stormpulse" in chown_calls[0]
+
+    @patch("stormpulse.init._run_find_apply", return_value=True)
+    @patch("stormpulse.init.subprocess.run")
+    def test_with_volumes_uses_find_prune(
+        self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        data_dir = project / "data"
+        data_dir.mkdir()
+        compose = project / "docker-compose.yml"
+        compose.write_text(
+            "services:\n  web:\n    volumes:\n      - ./data:/app/data\n"
+        )
+
+        run_system_setup(project, compose)
+
+        # _run_find_apply called twice (chown + chmod)
+        assert mock_find_apply.call_count == 2
+
+        # First call: chown with volume excluded
+        chown_call = mock_find_apply.call_args_list[0]
+        assert chown_call[0][0] == project
+        assert data_dir.resolve() in chown_call[0][1]
+        assert "root:stormpulse" in chown_call[0][2]
+
+        # Second call: chmod with volume excluded
+        chmod_call = mock_find_apply.call_args_list[1]
+        assert "g+w" in chmod_call[0][2]
+
+        # No chown -R on the project dir via subprocess.run
+        run_args = [c[0][0] for c in mock_run.call_args_list]
+        project_chowns = [
+            a for a in run_args
+            if "/usr/bin/chown" in a and str(project) in a
+        ]
+        assert len(project_chowns) == 0
+
+    @patch("stormpulse.init._run_find_apply", return_value=True)
+    @patch("stormpulse.init.subprocess.run")
+    def test_volume_dirs_never_chowned(
+        self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        data_dir = project / "data"
+        data_dir.mkdir()
+        logs_dir = project / "logs"
+        logs_dir.mkdir()
+        compose = project / "docker-compose.yml"
+        compose.write_text(
+            "services:\n  web:\n    volumes:\n"
+            "      - ./data:/app/data\n"
+            "      - ./logs:/app/logs\n"
+        )
+
+        run_system_setup(project, compose)
+
+        # No subprocess.run calls should reference volume dirs
+        for c in mock_run.call_args_list:
+            args_str = str(c[0][0])
+            if "chown" in args_str or "chmod" in args_str:
+                assert str(data_dir) not in args_str
+                assert str(logs_dir) not in args_str
+
+    @patch("stormpulse.init.subprocess.run")
+    @patch("stormpulse.init.parse_volume_mounts", return_value=None)
+    def test_parse_failure_skips_chown(
+        self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        project = tmp_path / "project"
+        project.mkdir()
+        compose = project / "docker-compose.yml"
+
+        run_system_setup(project, compose)
+
+        # No chown or chmod calls at all (only usermod + git config)
+        all_args = [c[0][0] for c in mock_run.call_args_list]
+        chown_calls = [a for a in all_args if "/usr/bin/chown" in a]
+        chmod_calls = [a for a in all_args if "/usr/bin/chmod" in a]
+        assert len(chown_calls) == 0
+        assert len(chmod_calls) == 0
+
+        # Warning printed to stderr
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+        assert "Could not parse" in captured.err
 
     @patch("stormpulse.init.subprocess.run")
     @patch("stormpulse.init.parse_volume_mounts", return_value=[])
@@ -642,9 +830,10 @@ class TestRunSystemSetup:
         # Should not raise
         run_system_setup(project, compose)
 
+    @patch("stormpulse.init._run_find_apply", return_value=False)
     @patch("stormpulse.init.subprocess.run")
-    def test_volume_dirs_restored(
-        self, mock_run: MagicMock, tmp_path: Path,
+    def test_returns_early_on_chown_failure_with_volumes(
+        self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
@@ -657,30 +846,8 @@ class TestRunSystemSetup:
 
         run_system_setup(project, compose)
 
-        # Find calls that restore volume dir ownership
-        restore_calls = [
-            c for c in mock_run.call_args_list
-            if "/usr/bin/chown" in c[0][0] and "root:root" in c[0][0] and str(data_dir) in c[0][0]
-        ]
-        assert len(restore_calls) == 1
-
-    @patch("stormpulse.init.subprocess.run")
-    @patch("stormpulse.init.parse_volume_mounts", return_value=[])
-    def test_no_restore_without_volumes(
-        self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
-    ) -> None:
-        project = tmp_path / "project"
-        project.mkdir()
-        compose = project / "docker-compose.yml"
-
-        run_system_setup(project, compose)
-
-        # No root:root chown calls
-        restore_calls = [
-            c for c in mock_run.call_args_list
-            if "root:root" in str(c)
-        ]
-        assert len(restore_calls) == 0
+        # chown failed, so chmod should not be attempted
+        assert mock_find_apply.call_count == 1
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import binascii
 import json
 import logging
 import os
+import shutil
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -204,10 +205,13 @@ def write_credentials(
 ) -> Credentials:
     """Write credential files with appropriate permissions.
 
-    Private key and HMAC key: 0o600 (owner read/write only).
-    Certificates: 0o644 (world-readable, not secret).
+    Private key and HMAC key: 0o640 root:stormpulse (group-readable).
+    Certificates: 0o644 root:stormpulse (world-readable, not secret).
     Creates creds_dir if it does not exist (mode 0o700).
     If the directory already exists, its permissions are left unchanged.
+
+    Ownership is set to root:stormpulse so the agent can read at runtime.
+    Falls back silently if the stormpulse group does not exist (e.g. in tests).
 
     Raises EnrollError if credential files already exist and force is False.
     """
@@ -240,10 +244,16 @@ def write_credentials(
             f"This may indicate a dashboard bug — contact the admin."
         ) from exc
 
-    _write_file(paths.client_key, key_pem, 0o600)
-    _write_file(paths.hmac_key, hmac_bytes, 0o600)
+    _write_file(paths.client_key, key_pem, 0o640)
+    _write_file(paths.hmac_key, hmac_bytes, 0o640)
     _write_file(paths.client_cert, response["client_cert_pem"].encode("ascii"), 0o644)
     _write_file(paths.ca_cert, response["ca_cert_pem"].encode("ascii"), 0o644)
+
+    for p in (paths.client_key, paths.hmac_key, paths.client_cert, paths.ca_cert):
+        try:
+            shutil.chown(p, "root", "stormpulse")
+        except (LookupError, PermissionError):
+            pass  # stormpulse group may not exist (e.g. tests, dev machines)
 
     return paths
 

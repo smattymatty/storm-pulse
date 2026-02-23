@@ -174,11 +174,11 @@ class TestWriteCredentials:
 
     def test_private_key_permissions(self, tmp_path: Path) -> None:
         creds = write_credentials(tmp_path / "creds", b"KEY_PEM", _mock_response())
-        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o600
+        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o640
 
     def test_hmac_key_permissions(self, tmp_path: Path) -> None:
         creds = write_credentials(tmp_path / "creds", b"KEY_PEM", _mock_response())
-        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o600
+        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o640
 
     def test_cert_permissions(self, tmp_path: Path) -> None:
         creds = write_credentials(tmp_path / "creds", b"KEY_PEM", _mock_response())
@@ -315,8 +315,8 @@ class TestIntegration:
         )
         creds = write_credentials(tmp_path / "creds", key_pem, server_response)
 
-        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o600
-        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o600
+        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o640
+        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o640
         assert stat.S_IMODE(creds.client_cert.stat().st_mode) == 0o644
         assert stat.S_IMODE(creds.ca_cert.stat().st_mode) == 0o644
 
