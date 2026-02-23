@@ -44,6 +44,12 @@ from stormpulse.auth import canonical_command_request, canonical_command_sequenc
 
 SECRET = b"test-secret-key-256-bits-long!!!"
 
+_DUMMY_PROJECT = ProjectConfig(
+    project_dir=Path("/opt/myapp"),
+    compose_file=Path("/opt/myapp/docker-compose.yml"),
+    docker_service_name="web",
+)
+
 
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
@@ -227,7 +233,7 @@ def test_build_commands_metadata_basic() -> None:
             description="Pull latest changes from remote",
         ),
     }
-    result = _build_commands_metadata(registry)
+    result = _build_commands_metadata(registry, _DUMMY_PROJECT)
     assert "git_pull" in result
     entry = result["git_pull"]
     assert entry["group"] == "deploy"
@@ -246,7 +252,7 @@ def test_build_commands_metadata_strips_paths() -> None:
             timeout=120,
         ),
     }
-    result = _build_commands_metadata(registry)
+    result = _build_commands_metadata(registry, _DUMMY_PROJECT)
     assert result["docker_up"]["template"][0] == "docker"
     assert result["docker_up"]["template"][1] == "compose"
 
@@ -256,7 +262,7 @@ def test_build_commands_metadata_sorted_keys() -> None:
         "z_cmd": CommandDef(group="z", command=["/bin/z"], timeout=10),
         "a_cmd": CommandDef(group="a", command=["/bin/a"], timeout=10),
     }
-    result = _build_commands_metadata(registry)
+    result = _build_commands_metadata(registry, _DUMMY_PROJECT)
     assert list(result.keys()) == ["a_cmd", "z_cmd"]
 
 
@@ -277,7 +283,7 @@ def test_build_commands_metadata_with_params() -> None:
             },
         ),
     }
-    result = _build_commands_metadata(registry)
+    result = _build_commands_metadata(registry, _DUMMY_PROJECT)
     params = result["docker_logs"]["params"]
     assert "service" in params
     assert params["service"] == {
@@ -303,8 +309,30 @@ def test_build_commands_metadata_param_no_default() -> None:
             },
         ),
     }
-    result = _build_commands_metadata(registry)
+    result = _build_commands_metadata(registry, _DUMMY_PROJECT)
     assert result["logs"]["params"]["service"]["default"] is None
+
+
+def test_build_commands_metadata_param_default_from_config() -> None:
+    """Params with no static default get their default from project config."""
+    registry = {
+        "docker_logs": CommandDef(
+            group="diagnostics",
+            command=["/usr/bin/docker", "logs", "{docker_service_name}"],
+            timeout=30,
+            params={
+                "docker_service_name": ParamDef(
+                    placeholder="docker_service_name",
+                    default=None,
+                    pattern="[a-zA-Z0-9_-]+",
+                    description="Docker Compose service name",
+                ),
+            },
+        ),
+    }
+    result = _build_commands_metadata(registry, _DUMMY_PROJECT)
+    # default should come from _DUMMY_PROJECT.docker_service_name ("web")
+    assert result["docker_logs"]["params"]["docker_service_name"]["default"] == "web"
 
 
 def test_build_commands_metadata_with_confirmation() -> None:
@@ -317,12 +345,12 @@ def test_build_commands_metadata_with_confirmation() -> None:
             description="Stop containers",
         ),
     }
-    result = _build_commands_metadata(registry)
+    result = _build_commands_metadata(registry, _DUMMY_PROJECT)
     assert result["docker_down"]["requires_confirmation"] is True
 
 
 def test_build_commands_metadata_empty_registry() -> None:
-    assert _build_commands_metadata({}) == {}
+    assert _build_commands_metadata({}, _DUMMY_PROJECT) == {}
 
 
 # ---------------------------------------------------------------------------

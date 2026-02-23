@@ -57,16 +57,31 @@ def _strip_binary_path(arg: str) -> str:
     return arg
 
 
-def _build_commands_metadata(registry: dict[str, CommandDef]) -> dict[str, Any]:
-    """Build rich command metadata dict for the register payload."""
+def _build_commands_metadata(
+    registry: dict[str, CommandDef],
+    config: ProjectConfig,
+) -> dict[str, Any]:
+    """Build rich command metadata dict for the register payload.
+
+    Params with no static default get their default from the project config
+    (e.g. ``docker_service_name`` comes from the TOML ``[project]`` section).
+    """
+    # Config values that can serve as param defaults
+    config_defaults: dict[str, str] = {
+        "docker_service_name": config.docker_service_name,
+    }
+
     result: dict[str, Any] = {}
     for name, cmd_def in sorted(registry.items()):
         template = [_strip_binary_path(part) for part in cmd_def.command]
 
         params: dict[str, Any] = {}
         for pname, pdef in cmd_def.params.items():
+            default = pdef.default
+            if default is None:
+                default = config_defaults.get(pdef.placeholder)
             params[pname] = {
-                "default": pdef.default,
+                "default": default,
                 "pattern": pdef.pattern,
                 "description": pdef.description,
             }
@@ -137,7 +152,9 @@ class Agent:
 
                     register = make_register(
                         agent_id, __version__, self._config.agent.pulse_token,
-                        commands=_build_commands_metadata(self._registry),
+                        commands=_build_commands_metadata(
+                            self._registry, self._config.project,
+                        ),
                     )
                     await ws.send(register.to_json())
                     logger.info("Sent register (v%s)", __version__)
