@@ -381,7 +381,7 @@ def generate_toml(config: InitConfig) -> str:
     )
 
 
-_SYSTEMD_UNIT = """\
+_SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
 Description=Storm Pulse Agent
 After=network-online.target docker.service
@@ -400,6 +400,7 @@ RestartSec=5
 ProtectSystem=strict
 ReadOnlyPaths=/
 ReadWritePaths=/opt/stormpulse/data
+ReadWritePaths={project_dir}
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectHome=yes
@@ -446,13 +447,16 @@ def write_config_file(path: Path, content: str, *, force: bool = False) -> None:
         pass  # stormpulse user/group may not exist yet in test environments
 
 
-def write_systemd_unit(path: Path, *, force: bool = False) -> None:
+def write_systemd_unit(
+    path: Path, project_dir: Path, *, force: bool = False,
+) -> None:
     """Write the systemd unit file with mode 0o644."""
     if path.is_file() and not force:
         raise InitError(
             f"{path} already exists. Use --force to overwrite."
         )
-    _write_file(path, _SYSTEMD_UNIT.encode("utf-8"), 0o644)
+    content = _SYSTEMD_UNIT_TEMPLATE.format(project_dir=project_dir)
+    _write_file(path, content.encode("utf-8"), 0o644)
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +636,7 @@ def run_init(creds_dir: Path, *, force: bool = False) -> None:
     write_config_file(_CONFIG_PATH, toml_content, force=force)
     print(f"  Config:  {_CONFIG_PATH}", file=sys.stderr)
 
-    write_systemd_unit(_SYSTEMD_PATH, force=force)
+    write_systemd_unit(_SYSTEMD_PATH, project_dir, force=force)
     print(f"  Systemd: {_SYSTEMD_PATH}", file=sys.stderr)
 
     print("\nSystem setup...", file=sys.stderr)

@@ -17,7 +17,7 @@ from cryptography.x509.oid import NameOID
 from stormpulse.init import (
     InitConfig,
     InitError,
-    _SYSTEMD_UNIT,
+    _SYSTEMD_UNIT_TEMPLATE,
     check_credentials,
     check_root,
     derive_dashboard_url,
@@ -600,19 +600,28 @@ class TestWriteConfigFile:
 class TestWriteSystemdUnit:
     def test_correct_content(self, tmp_path: Path) -> None:
         path = tmp_path / "stormpulse.service"
-        write_systemd_unit(path, force=True)
-        assert path.read_text() == _SYSTEMD_UNIT
+        project = tmp_path / "project"
+        write_systemd_unit(path, project, force=True)
+        expected = _SYSTEMD_UNIT_TEMPLATE.format(project_dir=project)
+        assert path.read_text() == expected
+
+    def test_includes_project_dir_readwrite(self, tmp_path: Path) -> None:
+        path = tmp_path / "stormpulse.service"
+        project = tmp_path / "myproject"
+        write_systemd_unit(path, project, force=True)
+        content = path.read_text()
+        assert f"ReadWritePaths={project}" in content
 
     def test_permissions(self, tmp_path: Path) -> None:
         path = tmp_path / "stormpulse.service"
-        write_systemd_unit(path, force=True)
+        write_systemd_unit(path, tmp_path / "p", force=True)
         assert stat.S_IMODE(path.stat().st_mode) == 0o644
 
     def test_refuses_overwrite(self, tmp_path: Path) -> None:
         path = tmp_path / "stormpulse.service"
         path.write_text("old")
         with pytest.raises(InitError, match="already exists"):
-            write_systemd_unit(path)
+            write_systemd_unit(path, tmp_path / "p")
 
 
 # ---------------------------------------------------------------------------
