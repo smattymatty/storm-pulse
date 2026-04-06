@@ -287,6 +287,7 @@ class TestParseVolumeMounts:
         p = tmp_path / "docker-compose.yml"
         p.write_text(SAMPLE_COMPOSE)
         volumes = parse_volume_mounts(p, tmp_path)
+        assert volumes is not None
         resolved = [v.name for v in volumes]
         assert "data" in resolved
         assert "logs" in resolved
@@ -295,6 +296,7 @@ class TestParseVolumeMounts:
         p = tmp_path / "docker-compose.yml"
         p.write_text(SAMPLE_COMPOSE)
         volumes = parse_volume_mounts(p, tmp_path)
+        assert volumes is not None
         names = [v.name for v in volumes]
         assert "pgdata" not in names
 
@@ -302,6 +304,7 @@ class TestParseVolumeMounts:
         p = tmp_path / "docker-compose.yml"
         p.write_text(SAMPLE_COMPOSE)
         volumes = parse_volume_mounts(p, tmp_path)
+        assert volumes is not None
         # ./logs:/app/logs:ro should be parsed
         assert any(v.name == "logs" for v in volumes)
 
@@ -314,6 +317,7 @@ class TestParseVolumeMounts:
         p = tmp_path / "docker-compose.yml"
         p.write_text("services:\n  web:\n    volumes:\n      - ./mydata:/data\n")
         volumes = parse_volume_mounts(p, tmp_path)
+        assert volumes is not None
         assert len(volumes) == 1
         assert volumes[0] == (tmp_path / "mydata").resolve()
 
@@ -326,6 +330,7 @@ class TestParseVolumeMounts:
             "  worker:\n    volumes:\n      - ./data:/worker/data\n"
         )
         volumes = parse_volume_mounts(p, tmp_path)
+        assert volumes is not None
         assert len(volumes) == 1
 
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
