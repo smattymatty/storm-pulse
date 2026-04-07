@@ -22,6 +22,9 @@ from stormpulse.commands import (
     get_command,
 )
 from stormpulse.config import CommandDef, Config, ProjectConfig, TlsConfig
+from stormpulse.garage.commands import build_garage_commands
+from stormpulse.garage.discover import discover_garage
+from stormpulse.garage.state import GarageState, collect_garage_state
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
     CommandRequestPayload,
@@ -124,7 +127,12 @@ class Agent:
         self._nonce_store = nonce_store
         self._ssl_ctx = ssl_context
         self._shutdown = shutdown
-        self._registry = build_registry(config.commands, config.agent.disabled_commands)
+        # Merge garage commands into registry if enabled
+        commands = dict(config.commands)
+        if config.garage and config.garage.enabled:
+            commands.update(build_garage_commands(config.garage))
+        self._registry = build_registry(commands, config.agent.disabled_commands)
+        self._garage_state: GarageState | None = None
 
     # ------------------------------------------------------------------
     # Outer reconnect loop
@@ -150,11 +158,21 @@ class Agent:
                     logger.info("Connected to dashboard")
                     delay = self._config.dashboard.reconnect_min_seconds
 
+                    # Discover garage state for initial register
+                    garage_dict = None
+                    if self._config.garage and self._config.garage.enabled:
+                        self._garage_state = await asyncio.to_thread(
+                            discover_garage, self._config.garage,
+                        )
+                        if self._garage_state:
+                            garage_dict = self._garage_state.to_dict()
+
                     register = make_register(
                         agent_id, __version__, self._config.agent.pulse_token,
                         commands=_build_commands_metadata(
                             self._registry, self._config.project,
                         ),
+                        garage=garage_dict,
                     )
                     await ws.send(register.to_json())
                     logger.info("Sent register (v%s)", __version__)
@@ -163,6 +181,7 @@ class Agent:
                         tg.create_task(self._heartbeat_loop(ws))
                         tg.create_task(self._metrics_loop(ws))
                         tg.create_task(self._receive_loop(ws))
+                        tg.create_task(self._garage_loop(ws))
 
             except* ConnectionClosed as eg:
                 logger.warning("Connection closed: %s", eg.exceptions[0])
@@ -212,7 +231,9 @@ class Agent:
         while not self._shutdown.is_set():
             try:
                 metrics = await asyncio.to_thread(collect_metrics, self._config)
-                envelope = make_metrics_push(agent_id, metrics)
+                # Include latest garage state snapshot if available
+                garage_dict = self._garage_state.to_dict() if self._garage_state else None
+                envelope = make_metrics_push(agent_id, metrics, garage=garage_dict)
                 await ws.send(envelope.to_json())
                 logger.debug("Sent metrics push %s", envelope.id)
             except ConnectionClosed:
@@ -224,6 +245,30 @@ class Agent:
                 return
             except TimeoutError:
                 pass
+
+    async def _garage_loop(self, ws: ClientConnection) -> None:
+        """Refresh Garage state at configured intervals.
+
+        No-op if config.garage is None or disabled. Updates shared
+        _garage_state which the metrics loop reads each cycle.
+        """
+        gc = self._config.garage
+        if gc is None or not gc.enabled:
+            return
+        interval = gc.state_push_interval_seconds
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
+            try:
+                state = await asyncio.to_thread(collect_garage_state, gc)
+                if state is not None:
+                    self._garage_state = state
+                    logger.debug("Refreshed garage state")
+            except Exception:
+                logger.warning("Failed to collect garage state", exc_info=True)
 
     # ------------------------------------------------------------------
     # Inbound message handling

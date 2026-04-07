@@ -17,6 +17,7 @@ from stormpulse.config import (
     AuthConfig,
     Config,
     DashboardConfig,
+    GarageConfig,
     MetricsConfig,
     ProjectConfig,
     StorageConfig,
@@ -57,7 +58,11 @@ FAKE_METRICS = MetricsPayload(
 # ---------------------------------------------------------------------------
 
 
-def build_config(tmp_path: Path, port: int) -> Config:
+def build_config(
+    tmp_path: Path,
+    port: int,
+    garage: GarageConfig | None = None,
+) -> Config:
     """Build a Config pointing at ws://localhost:{port}/ws/ with fast intervals."""
     return Config(
         agent=AgentConfig(id=AGENT_ID, pulse_token=PULSE_TOKEN),
@@ -80,6 +85,21 @@ def build_config(tmp_path: Path, port: int) -> Config:
             docker_service_name="web",
         ),
         storage=StorageConfig(db_path=tmp_path / "test.db"),
+        garage=garage,
+    )
+
+
+def build_garage_config(tmp_path: Path) -> GarageConfig:
+    """Build a valid GarageConfig with fake paths for testing."""
+    config_path = tmp_path / "garage.toml"
+    config_path.write_text("[s3_api]\napi_bind_addr = '[::]:3900'\n")
+    return GarageConfig(
+        enabled=True,
+        container_name="garaged",
+        garage_binary="/garage",
+        docker_binary="/usr/bin/docker",
+        config_path=config_path,
+        state_push_interval_seconds=0.05,
     )
 
 

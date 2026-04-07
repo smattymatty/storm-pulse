@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 import time
@@ -9,6 +10,8 @@ from typing import Any
 
 from stormpulse.config import CommandDef, ParamDef, ProjectConfig
 from stormpulse.protocol import CommandResultPayload
+
+logger = logging.getLogger(__name__)
 
 
 class CommandError(Exception):
@@ -182,6 +185,9 @@ def execute_command(
     cmd_def = get_command(command_name, registry=registry)
     validated = validate_params(cmd_def, runtime_params or {}) if cmd_def.params else None
     resolved = _resolve_command(cmd_def.command, config, validated)
+
+    if not cmd_def.sensitive_output:
+        logger.debug("Running command %r: %s", command_name, resolved)
 
     start = time.monotonic()
     try:

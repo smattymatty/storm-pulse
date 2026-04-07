@@ -85,12 +85,25 @@ class CommandDef:
     timeout: int
     requires_confirmation: bool = False
     description: str = ""
+    sensitive_output: bool = False
     params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
 
 
 PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset({
     "project_dir", "compose_file", "env_file",
 })
+
+
+@dataclass(frozen=True, slots=True)
+class GarageConfig:
+    """Optional [garage] section — Garage S3 node management."""
+
+    enabled: bool
+    container_name: str
+    garage_binary: str
+    docker_binary: str
+    config_path: Path
+    state_push_interval_seconds: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +118,7 @@ class Config:
     project: ProjectConfig
     storage: StorageConfig
     commands: dict[str, CommandDef] = dataclasses.field(default_factory=dict)
+    garage: GarageConfig | None = None
 
     def validate_paths(self) -> None:
         """Check that all referenced file paths exist and are readable.
@@ -125,6 +139,9 @@ class Config:
             missing.append(f"{self.project.project_dir} (directory)")
         if not self.storage.db_path.parent.is_dir():
             missing.append(f"{self.storage.db_path.parent} (directory for db)")
+        if self.garage and self.garage.enabled:
+            if not Path(self.garage.config_path).is_file():
+                missing.append(str(self.garage.config_path))
         if missing:
             raise ConfigError(f"Missing files/directories: {', '.join(missing)}")
 
@@ -306,6 +323,13 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                 f"got {type(requires_confirmation).__name__}"
             )
 
+        sensitive_output = entry.get("sensitive_output", False)
+        if not isinstance(sensitive_output, bool):
+            raise ConfigError(
+                f"'sensitive_output' in [{label}] must be bool, "
+                f"got {type(sensitive_output).__name__}"
+            )
+
         description = entry.get("description", "")
         if not isinstance(description, str):
             raise ConfigError(
@@ -364,10 +388,48 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
             timeout=timeout,
             requires_confirmation=requires_confirmation,
             description=description,
+            sensitive_output=sensitive_output,
             params=param_defs,
         )
 
     return result
+
+
+def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
+    """Parse optional [garage] section. Returns None if absent."""
+    section = raw.get("garage")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise ConfigError("[garage] must be a table")
+
+    enabled = _require_key(section, "enabled", bool, "garage")
+    container_name = _require_key(section, "container_name", str, "garage")
+    if not container_name:
+        raise ConfigError("'container_name' in [garage] must not be empty")
+    garage_binary = _require_key(section, "garage_binary", str, "garage")
+    if not garage_binary:
+        raise ConfigError("'garage_binary' in [garage] must not be empty")
+    docker_binary = _require_key(section, "docker_binary", str, "garage")
+    if not docker_binary.startswith("/"):
+        raise ConfigError(
+            f"'docker_binary' in [garage] must be an absolute path, got {docker_binary!r}"
+        )
+    config_path = Path(_require_key(section, "config_path", str, "garage"))
+    interval = float(
+        _require_key(section, "state_push_interval_seconds", (int, float), "garage")
+    )
+    if interval <= 0:
+        raise ConfigError("'state_push_interval_seconds' in [garage] must be positive")
+
+    return GarageConfig(
+        enabled=enabled,
+        container_name=container_name,
+        garage_binary=garage_binary,
+        docker_binary=docker_binary,
+        config_path=config_path,
+        state_push_interval_seconds=interval,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -400,4 +462,5 @@ def load_config(path: Path) -> Config:
         project=_parse_project(raw),
         storage=_parse_storage(raw),
         commands=_parse_commands(raw),
+        garage=_parse_garage(raw),
     )

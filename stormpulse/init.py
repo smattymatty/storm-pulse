@@ -613,6 +613,42 @@ def run_init(creds_dir: Path, *, force: bool = False) -> None:
     docker_service_name = prompt_docker_service(compose_file)
     env_file = prompt_env_file(project_dir)
 
+    # Garage auto-detection
+    garage_section = ""
+    print("\nChecking for Garage installation...", file=sys.stderr)
+    from stormpulse.garage.init import (
+        find_garage_config,
+        parse_garage_container_name,
+        prompt_confirm,
+        prompt_garage_values,
+    )
+    garage_config = find_garage_config()
+    if garage_config:
+        print(f"  Found: {garage_config}", file=sys.stderr)
+        if prompt_confirm("\nEnable Garage integration?"):
+            # Detect container name
+            garage_dir = garage_config.parent
+            container = "garaged"
+            for name in ("docker-compose.yml", "docker-compose.yaml"):
+                cp = garage_dir / name
+                if cp.is_file():
+                    container = parse_garage_container_name(cp)
+                    break
+            values = prompt_garage_values(
+                container_name=container,
+                garage_config_path=str(garage_config),
+            )
+            from stormpulse.garage.init import _GARAGE_TOML_TEMPLATE
+            garage_section = _GARAGE_TOML_TEMPLATE.format(
+                container_name=values["container_name"],
+                garage_binary=values["garage_binary"],
+                docker_binary=values["docker_binary"],
+                config_path=values["garage_config_path"],
+                state_push_interval_seconds=values["state_push_interval_seconds"],
+            )
+    else:
+        print("  No Garage installation found. Skipping.", file=sys.stderr)
+
     config = InitConfig(
         agent_id=agent_id,
         pulse_token=pulse_token,
@@ -631,7 +667,7 @@ def run_init(creds_dir: Path, *, force: bool = False) -> None:
             raise InitError("Aborted — config file not overwritten")
         force = True
 
-    toml_content = generate_toml(config)
+    toml_content = generate_toml(config) + garage_section
     print("\nWriting files...", file=sys.stderr)
     write_config_file(_CONFIG_PATH, toml_content, force=force)
     print(f"  Config:  {_CONFIG_PATH}", file=sys.stderr)

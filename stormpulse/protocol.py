@@ -107,6 +107,7 @@ class MetricsPayload:
     load_avg_5m: float
     uptime_seconds: float
     containers: list[ContainerInfo]
+    garage: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -169,6 +170,7 @@ class RegisterPayload:
     version: str
     pulse_token: str
     commands: dict[str, Any] | None = None
+    garage: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -314,17 +316,28 @@ def make_register(
     version: str,
     pulse_token: str,
     commands: dict[str, Any] | None = None,
+    garage: dict[str, Any] | None = None,
 ) -> Envelope:
     """Create a register envelope."""
     return _make_envelope(
         agent_id, MessageType.REGISTER,
-        asdict(RegisterPayload(version=version, pulse_token=pulse_token, commands=commands)),
+        asdict(RegisterPayload(
+            version=version, pulse_token=pulse_token,
+            commands=commands, garage=garage,
+        )),
     )
 
 
-def make_metrics_push(agent_id: str, metrics: MetricsPayload) -> Envelope:
+def make_metrics_push(
+    agent_id: str,
+    metrics: MetricsPayload,
+    garage: dict[str, Any] | None = None,
+) -> Envelope:
     """Create a metrics.push envelope."""
-    return _make_envelope(agent_id, MessageType.METRICS_PUSH, asdict(metrics))
+    payload = asdict(metrics)
+    if garage is not None:
+        payload["garage"] = garage
+    return _make_envelope(agent_id, MessageType.METRICS_PUSH, payload)
 
 
 def make_command_result(agent_id: str, result: CommandResultPayload) -> Envelope:
