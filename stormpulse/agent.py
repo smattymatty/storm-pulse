@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import ssl
+import time
 import uuid
 from typing import Any
 
@@ -28,6 +29,7 @@ from stormpulse.garage.state import GarageState, collect_garage_state
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
     CommandRequestPayload,
+    CommandResultPayload,
     CommandSequencePayload,
     Envelope,
     MessageType,
@@ -271,6 +273,42 @@ class Agent:
                 logger.warning("Failed to collect garage state", exc_info=True)
 
     # ------------------------------------------------------------------
+    # Internal commands
+    # ------------------------------------------------------------------
+
+    async def _handle_garage_refresh(self, request_id: str) -> CommandResultPayload:
+        """Collect fresh Garage state and update shared state.
+
+        Returns a CommandResultPayload. The caller sends a metrics.push
+        with the updated state separately.
+        """
+        gc = self._config.garage
+        if gc is None or not gc.enabled:
+            return CommandResultPayload(
+                request_id=request_id, command="garage_refresh", group="garage",
+                success=False, exit_code=-1, stdout="",
+                stderr="Garage integration not enabled",
+                duration_ms=0, failure_reason="not_configured",
+            )
+        start = time.monotonic()
+        state = await asyncio.to_thread(collect_garage_state, gc)
+        duration_ms = int((time.monotonic() - start) * 1000)
+        if state is not None:
+            self._garage_state = state
+            return CommandResultPayload(
+                request_id=request_id, command="garage_refresh", group="garage",
+                success=True, exit_code=0,
+                stdout=f"Refreshed: {len(state.buckets)} buckets",
+                stderr="", duration_ms=duration_ms,
+            )
+        return CommandResultPayload(
+            request_id=request_id, command="garage_refresh", group="garage",
+            success=False, exit_code=-1, stdout="",
+            stderr="Failed to collect garage state",
+            duration_ms=duration_ms, failure_reason="collection_failed",
+        )
+
+    # ------------------------------------------------------------------
     # Inbound message handling
     # ------------------------------------------------------------------
 
@@ -321,15 +359,18 @@ class Agent:
             return
         logger.info("Executing command %r (request %s)", payload.command, envelope.id)
 
-        try:
-            result = await asyncio.to_thread(
-                execute_command, payload.command, self._config.project, envelope.id,
-                registry=self._registry,
-                runtime_params=payload.params or None,
-            )
-        except (CommandError, ParamValidationError) as exc:
-            logger.warning("Command error for %s: %s", envelope.id, exc)
-            return
+        if payload.command == "garage_refresh":
+            result = await self._handle_garage_refresh(envelope.id)
+        else:
+            try:
+                result = await asyncio.to_thread(
+                    execute_command, payload.command, self._config.project, envelope.id,
+                    registry=self._registry,
+                    runtime_params=payload.params or None,
+                )
+            except (CommandError, ParamValidationError) as exc:
+                logger.warning("Command error for %s: %s", envelope.id, exc)
+                return
 
         response = make_command_result(self._config.agent.id, result)
         await ws.send(response.to_json())
@@ -337,6 +378,19 @@ class Agent:
             "Sent result for %r: success=%s, %dms",
             result.command, result.success, result.duration_ms,
         )
+
+        # After garage_refresh, push fresh metrics immediately
+        if payload.command == "garage_refresh" and result.success:
+            try:
+                metrics = await asyncio.to_thread(collect_metrics, self._config)
+                garage_dict = self._garage_state.to_dict() if self._garage_state else None
+                metrics_env = make_metrics_push(
+                    self._config.agent.id, metrics, garage=garage_dict,
+                )
+                await ws.send(metrics_env.to_json())
+                logger.info("Sent immediate metrics push after garage_refresh")
+            except Exception:
+                logger.warning("Failed to send metrics after garage_refresh", exc_info=True)
 
     async def _handle_command_sequence(
         self, ws: ClientConnection, envelope: Envelope,

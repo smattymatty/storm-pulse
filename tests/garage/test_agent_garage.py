@@ -164,6 +164,73 @@ class TestGarageCommandsInRegistry:
         assert "git_pull" in agent._registry
 
 
+class TestGarageRefresh:
+    """garage_refresh collects state and returns result."""
+
+    def _garage_cfg(self, tmp_path: Path) -> GarageConfig:
+        return GarageConfig(
+            enabled=True,
+            container_name="garaged",
+            garage_binary="/garage",
+            docker_binary="/usr/bin/docker",
+            config_path=tmp_path / "garage.toml",
+            state_push_interval_seconds=300,
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_updates_state(self, tmp_path: Path) -> None:
+        config = _make_config(tmp_path, garage=self._garage_cfg(tmp_path))
+        agent, _ = _make_agent(config, tmp_path)
+
+        fake_state = GarageState(
+            node_id="abc123", hostname="test", zone="zone-1",
+            capacity_gb=10.0, data_avail_gb=8.0, version="v2.2.0",
+            healthy=True, db_engine="sqlite",
+            object_count=5, block_count=10, buckets=[],
+        )
+        with patch(
+            "stormpulse.agent.collect_garage_state",
+            return_value=fake_state,
+        ):
+            result = await agent._handle_garage_refresh("req-1")
+
+        assert result.success is True
+        assert result.command == "garage_refresh"
+        assert "0 buckets" in result.stdout
+        assert agent._garage_state is not None
+        assert agent._garage_state.node_id == "abc123"
+
+    @pytest.mark.asyncio
+    async def test_refresh_not_configured(self, tmp_path: Path) -> None:
+        config = _make_config(tmp_path, garage=None)
+        agent, _ = _make_agent(config, tmp_path)
+
+        result = await agent._handle_garage_refresh("req-1")
+
+        assert result.success is False
+        assert result.failure_reason == "not_configured"
+
+    @pytest.mark.asyncio
+    async def test_refresh_collection_fails(self, tmp_path: Path) -> None:
+        config = _make_config(tmp_path, garage=self._garage_cfg(tmp_path))
+        agent, _ = _make_agent(config, tmp_path)
+
+        with patch(
+            "stormpulse.agent.collect_garage_state",
+            return_value=None,
+        ):
+            result = await agent._handle_garage_refresh("req-1")
+
+        assert result.success is False
+        assert result.failure_reason == "collection_failed"
+        assert agent._garage_state is None
+
+    def test_garage_refresh_in_registry(self, tmp_path: Path) -> None:
+        config = _make_config(tmp_path, garage=self._garage_cfg(tmp_path))
+        agent, _ = _make_agent(config, tmp_path)
+        assert "garage_refresh" in agent._registry
+
+
 class TestSensitiveOutputLogging:
     """Verify sensitive_output flag prevents logging."""
 

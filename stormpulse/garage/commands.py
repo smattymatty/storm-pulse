@@ -1,7 +1,11 @@
 """Garage-specific whitelisted commands.
 
-All commands resolve to: docker exec <container> /garage <subcommand>
+Most commands resolve to: docker exec <container> /garage <subcommand>
 with absolute paths and shell=False.
+
+Exception: ``garage_refresh`` is an internal command handled directly
+by the agent — it triggers immediate state collection and metrics push
+without executing a subprocess.
 """
 
 from __future__ import annotations
@@ -145,6 +149,13 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     description="Key to grant access for",
                 ),
             },
+        ),
+        # ----- Internal -----
+        "garage_refresh": CommandDef(
+            group="garage",
+            command=["garage_refresh"],  # internal — not a subprocess
+            timeout=30,
+            description="Internal command — triggers immediate state collection and metrics push",
         ),
         "garage_bucket_deny": CommandDef(
             group="garage",

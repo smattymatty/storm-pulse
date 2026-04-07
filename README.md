@@ -36,16 +36,19 @@ stormpulse enroll ENDPOINT AGENT_ID TOKEN [--creds-dir DIR] [--force]
 stormpulse init [--creds-dir DIR] [--force]
 stormpulse run [CONFIG]
 stormpulse status [CONFIG]
+stormpulse garage init [--config PATH] [--garage-config PATH] [--force]
 stormpulse --version
 ```
 
 **enroll** -- One-time enrollment. Generates an EC P-256 keypair, sends a CSR to the dashboard, writes the signed cert + CA cert + HMAC key to `/etc/stormpulse/`. The private key never leaves the machine.
 
-**init** -- Interactive setup wizard. Generates config, creates systemd service, sets permissions. Run after enrollment.
+**init** -- Interactive setup wizard. Generates config, creates systemd service, sets permissions. Run after enrollment. Auto-detects Garage installations and offers to enable integration.
 
 **run** -- Starts the agent. Connects to the dashboard, sends heartbeats and metrics, executes commands. Reconnects automatically with exponential backoff.
 
 **status** -- Local inspection. Shows version, agent ID, config path, dashboard URL, certificate expiry, nonce DB entry count, and whether the agent process is running. No network required.
+
+**garage init** -- Detects a Garage S3 node and appends a `[garage]` section to an existing `stormpulse.toml`. Auto-detects container name from docker-compose.yml. Use `--force` to overwrite an existing `[garage]` section.
 
 ## Configuration
 
@@ -61,6 +64,10 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 | `project` | `compose_file` | Absolute path to docker-compose.yml |
 | `project` | `env_file` | Absolute path to `.env` file (optional, passed as `--env-file` to docker compose) |
 | `commands.*` | | Custom commands (optional, see example config) |
+| `garage` | `enabled` | Enable Garage S3 integration (optional, default: absent) |
+| `garage` | `container_name` | Docker container name for Garage (e.g. `garaged`) |
+| `garage` | `config_path` | Path to Garage config file |
+| `garage` | `state_push_interval_seconds` | How often to refresh Garage state (default: 300) |
 
 ## Documentation
 
@@ -75,7 +82,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 git clone <repo-url> && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 395 tests
+pytest          # 481 tests
 mypy .          # strict
 ```
 

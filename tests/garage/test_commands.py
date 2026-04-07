@@ -29,12 +29,15 @@ class TestBuildGarageCommands:
             "garage_bucket_create", "garage_bucket_delete",
             "garage_key_create", "garage_key_delete",
             "garage_bucket_allow", "garage_bucket_deny",
+            "garage_refresh",
         }
         assert set(cmds.keys()) == expected
 
     def test_all_commands_use_absolute_paths(self) -> None:
         cmds = build_garage_commands(_make_config())
         for name, cmd_def in cmds.items():
+            if name == "garage_refresh":
+                continue  # internal command, not a subprocess
             assert cmd_def.command[0].startswith("/"), (
                 f"{name} first arg must be absolute: {cmd_def.command[0]}"
             )
@@ -54,7 +57,7 @@ class TestBuildGarageCommands:
     def test_read_only_commands_no_confirmation(self) -> None:
         cmds = build_garage_commands(_make_config())
         for name in ("garage_status", "garage_stats", "garage_bucket_list",
-                      "garage_bucket_info", "garage_key_list"):
+                      "garage_bucket_info", "garage_key_list", "garage_refresh"):
             assert cmds[name].requires_confirmation is False, (
                 f"{name} should not require confirmation"
             )
