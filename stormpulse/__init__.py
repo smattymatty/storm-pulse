@@ -1,3 +1,5 @@
 """Storm Pulse Agent — secure server management over WebSocket."""
 
-__version__ = "0.1.2"
+from importlib.metadata import version
+
+__version__ = version("storm-pulse-agent")

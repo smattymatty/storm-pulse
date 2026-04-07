@@ -19,14 +19,45 @@ ID  Hostname  Address  Tags  Zone  Capacity  DataAvail  Version
 """
 
 STATS_OUTPUT = """\
+2026-04-07T20:55:20.265399Z  INFO garage_net::netapp: Connected to 127.0.0.1:3901, negotiating handshake...
+2026-04-07T20:55:20.308272Z  INFO garage_net::netapp: Connection established to 7a58a5fa192ad6dd
 ==== NODE [7a58a5fa192ad6dd] ====
 Node ID:                7a58a5fa192ad6dd
 Hostname:               garage-one
 Garage version:         v2.2.0
-Database engine:        sqlite
-Disk usage:             available: 16.3 GiB, total: 19.6 GiB
-Object count:           2
-Block count:            3
+Garage features:        bundled-libs, consul-discovery, fjall, journald, k2v, kubernetes-discovery, lmdb, metrics, sqlite, syslog, telemetry-otlp
+Rust compiler version:  1.91.0
+Database engine:        sqlite3 v3.50.2 (using rusqlite crate)
+
+Table stats:
+  Table                  Items  MklItems  MklTodo  InsQueue  GcTodo
+  admin_token            0      0         0        0         0
+  bucket_v2              3      4         0        0         0
+  bucket_alias           3      4         0        0         0
+  key                    4      5         0        0         0
+  object                 5      6         0        0         3
+  bucket_object_counter  1      1         0        0         2
+  multipart_upload       0      0         0        0         0
+  bucket_mpu_counter     0      0         0        0         0
+  version                7      7         0        0         6
+  block_ref              1      1         0        0         0
+  k2v_item               0      0         0        0         0
+  k2v_index_counter_v2   0      0         0        0         0
+
+Block manager stats:
+  number of RC entries:       1 (~= number of blocks)
+  resync queue length:        0
+  blocks with resync errors:  0
+
+
+==== CLUSTER STATISTICS ====
+Storage nodes:
+  ID                Hostname    Zone      Capacity  Part.  DataAvail                MetaAvail
+  7a58a5fa192ad6dd  garage-one  canada-1  10.0 GB   256    16.3 GB/19.7 GB (83.0%)  16.3 GB/19.7 GB (83.0%)
+
+Estimated available storage space cluster-wide (might be lower in practice):
+  data: 16.3 GB
+  metadata: 16.3 GB
 """
 
 STATS_OUTPUT_EMPTY = """\

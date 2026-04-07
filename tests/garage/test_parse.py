@@ -76,9 +76,9 @@ class TestParseStatus:
 class TestParseStats:
     def test_normal_output(self) -> None:
         stats = parse_stats(STATS_OUTPUT)
-        assert stats.db_engine == "sqlite"
-        assert stats.object_count == 2
-        assert stats.block_count == 3
+        assert stats.db_engine == "sqlite3 v3.50.2 (using rusqlite crate)"
+        assert stats.object_count == 5
+        assert stats.block_count == 1
 
     def test_minimal_output(self) -> None:
         stats = parse_stats(STATS_OUTPUT_EMPTY)

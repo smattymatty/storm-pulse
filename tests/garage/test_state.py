@@ -55,9 +55,9 @@ class TestCollectGarageState:
         assert state.hostname == "garage-one"
         assert state.zone == "canada-1"
         assert state.healthy is True
-        assert state.db_engine == "sqlite"
-        assert state.object_count == 2
-        assert state.block_count == 3
+        assert state.db_engine == "sqlite3 v3.50.2 (using rusqlite crate)"
+        assert state.object_count == 5
+        assert state.block_count == 1
         assert len(state.buckets) == 1
         bucket = state.buckets[0]
         assert bucket.alias == "obsidian-vault"

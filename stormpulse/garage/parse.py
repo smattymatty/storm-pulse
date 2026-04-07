@@ -143,27 +143,51 @@ class GarageStats:
 
 
 def parse_stats(stdout: str) -> GarageStats:
-    """Parse ``garage stats`` stdout for db engine, object count, block count."""
+    """Parse ``garage stats`` stdout for db engine, object count, block count.
+
+    Real output format (v2.2.0):
+    - ``Database engine:  sqlite3 v3.50.2 (using rusqlite crate)``
+    - Object count from table stats row: ``object  5  6  0  0  3``
+      (Items column = first number after the table name)
+    - Block count from: ``number of RC entries:  1 (~= number of blocks)``
+    """
     db_engine = "unknown"
     object_count = 0
     block_count = 0
+    in_table_stats = False
 
     for line in stdout.splitlines():
         stripped = line.strip()
+        if not stripped:
+            continue
+
         if stripped.startswith("Database engine:"):
             db_engine = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("Object count:"):
-            object_count = _parse_int(stripped.split(":", 1)[1].strip())
-        elif stripped.startswith("Block count:"):
-            block_count = _parse_int(stripped.split(":", 1)[1].strip())
-        elif "objects," in stripped and "versions," in stripped:
-            # Alternative format: "Total: 42 objects, 100 versions, 50 blocks"
-            obj_match = re.search(r"(\d+)\s+objects", stripped)
-            blk_match = re.search(r"(\d+)\s+blocks", stripped)
-            if obj_match:
-                object_count = int(obj_match.group(1))
-            if blk_match:
-                block_count = int(blk_match.group(1))
+
+        # Table stats section — object count is the Items column
+        elif stripped == "Table stats:":
+            in_table_stats = True
+        elif in_table_stats:
+            if stripped.startswith("Table"):
+                # Header row, skip
+                continue
+            if not stripped[0].isspace() and not stripped.startswith("object"):
+                # Only match rows starting with a table name at indented level
+                pass
+            # Match: "  object  5  6  0  0  3"
+            m = re.match(r"^object\s+(\d+)", stripped)
+            if m:
+                object_count = int(m.group(1))
+            # End of table stats section
+            if stripped.startswith("Block manager") or stripped.startswith("===="):
+                in_table_stats = False
+
+        # Block count from block manager stats
+        elif stripped.startswith("number of RC entries:"):
+            # "number of RC entries:  1 (~= number of blocks)"
+            m = re.search(r":\s*(\d+)", stripped)
+            if m:
+                block_count = int(m.group(1))
 
     return GarageStats(
         db_engine=db_engine,
