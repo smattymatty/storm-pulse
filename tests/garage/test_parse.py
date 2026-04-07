@@ -53,11 +53,15 @@ class TestParseStatus:
 
     def test_multi_node(self) -> None:
         nodes = parse_status(STATUS_OUTPUT_MULTI_NODE)
-        assert len(nodes) == 2
-        assert nodes[0].hostname == "garage-one"
-        assert nodes[1].hostname == "garage-two"
-        assert nodes[1].zone == "canada-2"
+        assert len(nodes) == 3
+        assert nodes[0].node_id == "7a58a5fa192ad6dd"
+        assert nodes[0].zone == "canada-1"
+        assert nodes[1].node_id == "ab12cd34ef56gh78"
+        assert nodes[1].zone == "ca-east-2"
         assert nodes[1].capacity_gb == 20.0
+        assert nodes[2].node_id == "cd34ef56gh78ij90"
+        assert nodes[2].zone == "ca-home-1"
+        assert all(n.healthy for n in nodes)
 
     def test_empty_output(self) -> None:
         nodes = parse_status(STATUS_OUTPUT_EMPTY)

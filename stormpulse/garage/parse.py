@@ -16,8 +16,8 @@ class GarageParseError(Exception):
 
 
 @dataclass(frozen=True, slots=True)
-class GarageStatusNode:
-    """Parsed node from ``garage status`` output."""
+class GaragePeer:
+    """A single node row from ``garage status`` output."""
 
     node_id: str
     hostname: str
@@ -30,13 +30,13 @@ class GarageStatusNode:
     healthy: bool
 
 
-def parse_status(stdout: str) -> list[GarageStatusNode]:
+def parse_status(stdout: str) -> list[GaragePeer]:
     """Parse ``garage status`` stdout into a list of nodes.
 
     Expects the ``==== HEALTHY NODES ====`` table format.
     Returns an empty list if no nodes are found.
     """
-    nodes: list[GarageStatusNode] = []
+    nodes: list[GaragePeer] = []
     in_healthy = False
     in_sick = False
 
@@ -95,7 +95,7 @@ def parse_status(stdout: str) -> list[GarageStatusNode]:
 
         version = rest[version_idx] if len(rest) > version_idx else "unknown"
 
-        nodes.append(GarageStatusNode(
+        nodes.append(GaragePeer(
             node_id=node_id,
             hostname=hostname,
             address=address,

@@ -7,10 +7,13 @@ ID                Hostname    Address         Tags  Zone      Capacity  DataAvai
 """
 
 STATUS_OUTPUT_MULTI_NODE = """\
+2026-04-07T15:37:55.000000Z  INFO garage_net::netapp: Connected to 127.0.0.1:3901, negotiating handshake...
+2026-04-07T15:37:55.000000Z  INFO garage_net::netapp: Connection established to 7a58a5fa192ad6dd
 ==== HEALTHY NODES ====
-ID                Hostname    Address         Tags  Zone      Capacity  DataAvail        Version
-7a58a5fa192ad6dd  garage-one  127.0.0.1:3901  []    canada-1  10.0 GB   16.3 GB (83.0%)  v2.2.0
-b2c4d6e8f0a1b3c5  garage-two  192.168.1.2:3901  []  canada-2  20.0 GB   15.0 GB (75.0%)  v2.2.0
+ID                Hostname    Address         Tags  Zone       Capacity  DataAvail        Version
+7a58a5fa192ad6dd  garage-one  127.0.0.1:3901  []    canada-1   10.0 GB   16.3 GB (83.0%)  v2.2.0
+ab12cd34ef56gh78  garage-two  10.0.0.2:3901   []    ca-east-2  20.0 GB   18.0 GB (90.0%)  v2.2.0
+cd34ef56gh78ij90  garage-pi   10.0.0.3:3901   []    ca-home-1   5.0 GB    4.5 GB (90.0%)  v2.2.0
 """
 
 STATUS_OUTPUT_EMPTY = """\

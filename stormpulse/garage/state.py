@@ -9,6 +9,7 @@ from typing import Any
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import (
+    GaragePeer,
     GarageParseError,
     parse_bucket_info,
     parse_bucket_list,
@@ -63,6 +64,7 @@ class GarageState:
     block_count: int
     buckets: list[GarageBucket]
     keys: list[GarageKeyRef]
+    peers: list[GaragePeer]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to plain dict for inclusion in protocol payloads."""
@@ -205,4 +207,5 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
         block_count=block_count,
         buckets=buckets,
         keys=all_keys,
+        peers=nodes,
     )

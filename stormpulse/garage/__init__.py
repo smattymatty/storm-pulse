@@ -2,6 +2,7 @@
 
 from stormpulse.garage.commands import build_garage_commands
 from stormpulse.garage.discover import discover_garage
+from stormpulse.garage.parse import GaragePeer
 from stormpulse.garage.state import (
     GarageBucket,
     GarageKeyRef,
@@ -12,6 +13,7 @@ from stormpulse.garage.state import (
 __all__ = [
     "GarageBucket",
     "GarageKeyRef",
+    "GaragePeer",
     "GarageState",
     "build_garage_commands",
     "collect_garage_state",

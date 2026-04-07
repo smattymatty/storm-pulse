@@ -73,6 +73,10 @@ class TestCollectGarageState:
         assert state.keys[0].key_id == "GK5e6fb0b4fa406ace8126a7db"
         assert state.keys[0].key_name == "obsidian-key"
         assert state.keys[0].permissions == ""
+        # Peers list includes all nodes from garage status
+        assert len(state.peers) == 1
+        assert state.peers[0].node_id == "7a58a5fa192ad6dd"
+        assert state.peers[0].hostname == "garage-one"
 
     def test_status_failure_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -120,3 +124,6 @@ class TestCollectGarageState:
         assert d["node_id"] == "7a58a5fa192ad6dd"
         assert isinstance(d["buckets"], list)
         assert d["buckets"][0]["alias"] == "obsidian-vault"
+        assert isinstance(d["peers"], list)
+        assert len(d["peers"]) == 1
+        assert d["peers"][0]["node_id"] == "7a58a5fa192ad6dd"
