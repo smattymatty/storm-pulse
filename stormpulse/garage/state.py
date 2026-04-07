@@ -62,6 +62,7 @@ class GarageState:
     object_count: int
     block_count: int
     buckets: list[GarageBucket]
+    keys: list[GarageKeyRef]
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to plain dict for inclusion in protocol payloads."""
@@ -185,6 +186,12 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
         except GarageParseError:
             logger.warning("Failed to parse garage bucket list output")
 
+    # All keys (including unlinked ones) for the dashboard
+    all_keys = [
+        GarageKeyRef(key_id=kid, key_name=kname, permissions="")
+        for kid, kname in key_name_map.items()
+    ]
+
     return GarageState(
         node_id=node.node_id,
         hostname=node.hostname,
@@ -197,4 +204,5 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
         object_count=object_count,
         block_count=block_count,
         buckets=buckets,
+        keys=all_keys,
     )

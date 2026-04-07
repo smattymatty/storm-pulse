@@ -56,6 +56,7 @@ class TestDiscoverGarage:
             object_count=2,
             block_count=3,
             buckets=[],
+            keys=[],
         )
         with patch(
             "stormpulse.garage.discover.collect_garage_state",

@@ -68,6 +68,11 @@ class TestCollectGarageState:
         # key_name resolved from key list, not from bucket info local_alias
         assert bucket.keys[0].key_name == "obsidian-key"
         assert bucket.keys[0].permissions == "RWO"
+        # Top-level keys list includes all keys (even unlinked)
+        assert len(state.keys) == 1
+        assert state.keys[0].key_id == "GK5e6fb0b4fa406ace8126a7db"
+        assert state.keys[0].key_name == "obsidian-key"
+        assert state.keys[0].permissions == ""
 
     def test_status_failure_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)

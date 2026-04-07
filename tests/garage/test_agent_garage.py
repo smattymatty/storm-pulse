@@ -120,6 +120,7 @@ class TestGarageLoopEnabled:
             object_count=5,
             block_count=10,
             buckets=[],
+            keys=[],
         )
 
         async def run_loop() -> None:
@@ -186,7 +187,7 @@ class TestGarageRefresh:
             node_id="abc123", hostname="test", zone="zone-1",
             capacity_gb=10.0, data_avail_gb=8.0, version="v2.2.0",
             healthy=True, db_engine="sqlite",
-            object_count=5, block_count=10, buckets=[],
+            object_count=5, block_count=10, buckets=[], keys=[],
         )
         with patch(
             "stormpulse.agent.collect_garage_state",
