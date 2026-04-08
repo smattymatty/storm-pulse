@@ -277,6 +277,8 @@ class GarageBucketInfo:
     website_access: bool
     global_alias: str
     keys: list[GarageBucketKeyEntry]
+    quota_max_size_bytes: int | None
+    quota_max_objects: int | None
 
 
 def parse_bucket_info(stdout: str) -> GarageBucketInfo:
@@ -287,6 +289,8 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
     website_access = False
     global_alias = ""
     keys: list[GarageBucketKeyEntry] = []
+    quota_max_size_bytes: int | None = None
+    quota_max_objects: int | None = None
 
     in_keys_section = False
 
@@ -325,6 +329,10 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
             website_access = stripped.split(":", 1)[1].strip().lower() == "true"
         elif stripped.startswith("Global alias:"):
             global_alias = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("maximum size:"):
+            quota_max_size_bytes = _parse_size_bytes(stripped.split(":", 1)[1].strip())
+        elif stripped.startswith("maximum number of objects:"):
+            quota_max_objects = _parse_int(stripped.split(":", 1)[1].strip())
 
     if not bucket_id:
         raise GarageParseError("Could not parse bucket ID from bucket info output")
@@ -336,6 +344,8 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
         website_access=website_access,
         global_alias=global_alias,
         keys=keys,
+        quota_max_size_bytes=quota_max_size_bytes,
+        quota_max_objects=quota_max_objects,
     )
 
 

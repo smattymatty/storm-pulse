@@ -46,6 +46,9 @@ class GarageBucket:
     size_bytes: int
     object_count: int
     keys: list[GarageKeyRef]
+    website_access: bool
+    quota_max_size_bytes: int | None
+    quota_max_objects: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +185,9 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
                         size_bytes=info.size_bytes,
                         object_count=info.object_count,
                         keys=keys,
+                        website_access=info.website_access,
+                        quota_max_size_bytes=info.quota_max_size_bytes,
+                        quota_max_objects=info.quota_max_objects,
                     ))
                 except GarageParseError:
                     logger.warning("Failed to parse bucket info for %s", alias)

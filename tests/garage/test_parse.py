@@ -16,6 +16,8 @@ from stormpulse.garage.parse import (
 from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT,
     BUCKET_INFO_OUTPUT_NO_KEYS,
+    BUCKET_INFO_OUTPUT_QUOTA_SIZE_ONLY,
+    BUCKET_INFO_OUTPUT_WITH_QUOTAS,
     BUCKET_LIST_OUTPUT,
     BUCKET_LIST_OUTPUT_EMPTY,
     BUCKET_LIST_OUTPUT_MULTI,
@@ -139,12 +141,27 @@ class TestParseBucketInfo:
         assert info.keys[0].permissions == "RWO"
         assert info.keys[0].access_key_id == "GK5e6fb0b4fa406ace8126a7db"
         assert info.keys[0].local_alias == "obsidian-key"
+        assert info.quota_max_size_bytes is None
+        assert info.quota_max_objects is None
 
     def test_bucket_no_keys(self) -> None:
         info = parse_bucket_info(BUCKET_INFO_OUTPUT_NO_KEYS)
         assert info.object_count == 0
         assert info.keys == []
         assert info.global_alias == "empty-bucket"
+        assert info.quota_max_size_bytes is None
+        assert info.quota_max_objects is None
+
+    def test_bucket_with_both_quotas(self) -> None:
+        info = parse_bucket_info(BUCKET_INFO_OUTPUT_WITH_QUOTAS)
+        assert info.bucket_id.startswith("f1dc3224")
+        assert info.quota_max_size_bytes == 1_000_000_000  # 1000.0 MB
+        assert info.quota_max_objects == 1000
+
+    def test_bucket_with_size_quota_only(self) -> None:
+        info = parse_bucket_info(BUCKET_INFO_OUTPUT_QUOTA_SIZE_ONLY)
+        assert info.quota_max_size_bytes == 1_000_000_000
+        assert info.quota_max_objects is None
 
     def test_invalid_output_raises(self) -> None:
         with pytest.raises(GarageParseError, match="bucket ID"):

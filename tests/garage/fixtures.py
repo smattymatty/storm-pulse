@@ -109,6 +109,47 @@ Global alias:    empty-bucket
 Permissions  Access key  Local aliases
 """
 
+BUCKET_INFO_OUTPUT_WITH_QUOTAS = """\
+==== BUCKET INFORMATION ====
+Bucket:                       f1dc32249aa1d80af4bf6e887443fefac616e56dfdacc29c4bf6fedf9ec20617
+Created:                      2026-04-07 16:06:34.587 +00:00
+
+Size:                         5.7 kiB (5.8 KB)
+Objects:                      2
+
+Website access:               false
+
+Quotas:                       enabled
+  maximum size:               953.7 MiB (1000.0 MB)
+  maximum number of objects:  1000
+
+Global alias:                 obsidian-vault
+
+==== KEYS FOR THIS BUCKET ====
+Permissions  Access key                                Local aliases
+RWO          GK5e6fb0b4fa406ace8126a7db  obsidian-key  \n\
+"""
+
+BUCKET_INFO_OUTPUT_QUOTA_SIZE_ONLY = """\
+==== BUCKET INFORMATION ====
+Bucket:          f1dc32249aa1d80af4bf6e887443fefac616e56dfdacc29c4bf6fedf9ec20617
+Created:         2026-04-07 16:06:34.587 +00:00
+
+Size:            5.7 kiB (5.8 KB)
+Objects:         2
+
+Website access:  false
+
+Quotas:          enabled
+  maximum size:  953.7 MiB (1000.0 MB)
+
+Global alias:    obsidian-vault
+
+==== KEYS FOR THIS BUCKET ====
+Permissions  Access key                                Local aliases
+RWO          GK5e6fb0b4fa406ace8126a7db  obsidian-key  \n\
+"""
+
 KEY_LIST_OUTPUT = """\
 ID                          Created     Name          Expiration
 GK5e6fb0b4fa406ace8126a7db  2026-04-07  obsidian-key  never

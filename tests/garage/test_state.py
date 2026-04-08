@@ -9,6 +9,7 @@ from stormpulse.config import GarageConfig
 from stormpulse.garage.state import collect_garage_state
 from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT,
+    BUCKET_INFO_OUTPUT_WITH_QUOTAS,
     BUCKET_LIST_OUTPUT,
     KEY_LIST_OUTPUT,
     STATS_OUTPUT,
@@ -68,6 +69,9 @@ class TestCollectGarageState:
         # key_name resolved from key list, not from bucket info local_alias
         assert bucket.keys[0].key_name == "obsidian-key"
         assert bucket.keys[0].permissions == "RWO"
+        assert bucket.website_access is False
+        assert bucket.quota_max_size_bytes is None
+        assert bucket.quota_max_objects is None
         # Top-level keys list includes all keys (even unlinked)
         assert len(state.keys) == 1
         assert state.keys[0].key_id == "GK5e6fb0b4fa406ace8126a7db"
@@ -77,6 +81,27 @@ class TestCollectGarageState:
         assert len(state.peers) == 1
         assert state.peers[0].node_id == "7a58a5fa192ad6dd"
         assert state.peers[0].hostname == "garage-one"
+
+    def test_bucket_with_quotas(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT,
+            ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT_WITH_QUOTAS,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ):
+            state = collect_garage_state(cfg)
+
+        assert state is not None
+        bucket = state.buckets[0]
+        assert bucket.website_access is False
+        assert bucket.quota_max_size_bytes == 1_000_000_000
+        assert bucket.quota_max_objects == 1000
 
     def test_status_failure_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
