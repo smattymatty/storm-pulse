@@ -151,6 +151,50 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_bucket_allow_rw": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage, "bucket", "allow",
+                     "--read", "--write",
+                     "{bucket_name}", "--key", "{key_id}"],
+            timeout=15,
+            description="Grant read-write access to a bucket for a key",
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket to grant access to",
+                ),
+                "key_id": ParamDef(
+                    placeholder="key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Key to grant access for",
+                ),
+            },
+        ),
+        "garage_bucket_allow_ro": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage, "bucket", "allow",
+                     "--read",
+                     "{bucket_name}", "--key", "{key_id}"],
+            timeout=15,
+            description="Grant read-only access to a bucket for a key",
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket to grant access to",
+                ),
+                "key_id": ParamDef(
+                    placeholder="key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Key to grant access for",
+                ),
+            },
+        ),
         "garage_bucket_website_allow": CommandDef(
             group="garage",
             command=[docker, "exec", container, garage,
