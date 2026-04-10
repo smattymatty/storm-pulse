@@ -140,6 +140,56 @@ class TestGarageLoopEnabled:
         assert agent._garage_state.node_id == "abc123"
 
 
+    @pytest.mark.asyncio
+    async def test_collects_before_first_wait(self, tmp_path: Path) -> None:
+        """First action in _garage_loop must be collect, not sleep."""
+        garage_cfg = GarageConfig(
+            enabled=True,
+            container_name="garaged",
+            garage_binary="/garage",
+            docker_binary="/usr/bin/docker",
+            config_path=tmp_path / "garage.toml",
+            # Long interval — if loop waits first, we'd time out
+            state_push_interval_seconds=600,
+        )
+        config = _make_config(tmp_path, garage=garage_cfg)
+        agent, shutdown = _make_agent(config, tmp_path)
+        ws = AsyncMock()
+
+        fake_state = GarageState(
+            node_id="immediate",
+            hostname="test",
+            zone="zone-1",
+            capacity_gb=10.0,
+            data_avail_gb=8.0,
+            version="v2.2.0",
+            healthy=True,
+            db_engine="sqlite",
+            object_count=5,
+            block_count=10,
+            buckets=[],
+            keys=[],
+            peers=[],
+        )
+
+        async def run_loop() -> None:
+            with patch(
+                "stormpulse.agent.collect_garage_state",
+                return_value=fake_state,
+            ) as mock_collect:
+                task = asyncio.create_task(agent._garage_loop(ws))
+                # Give just enough time for the collect to run, but nowhere
+                # near 600s — proves collect happens before the wait
+                await asyncio.sleep(0.1)
+                assert mock_collect.called, "collect_garage_state was not called before wait"
+                shutdown.set()
+                await task
+
+        await run_loop()
+        assert agent._garage_state is not None
+        assert agent._garage_state.node_id == "immediate"
+
+
 class TestGarageCommandsInRegistry:
     """Garage commands are merged into the registry when enabled."""
 

@@ -17,6 +17,8 @@ from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT,
     BUCKET_INFO_OUTPUT_NO_KEYS,
     BUCKET_INFO_OUTPUT_QUOTA_SIZE_ONLY,
+    BUCKET_INFO_OUTPUT_WEBSITE_CUSTOM_ERROR,
+    BUCKET_INFO_OUTPUT_WEBSITE_ENABLED,
     BUCKET_INFO_OUTPUT_WITH_QUOTAS,
     BUCKET_LIST_OUTPUT,
     BUCKET_LIST_OUTPUT_EMPTY,
@@ -136,6 +138,8 @@ class TestParseBucketInfo:
         assert info.size_bytes == 5800  # 5.8 KB
         assert info.object_count == 2
         assert info.website_access is False
+        assert info.website_index_document == "index.html"
+        assert info.website_error_document is None
         assert info.global_alias == "obsidian-vault"
         assert len(info.keys) == 1
         assert info.keys[0].permissions == "RWO"
@@ -162,6 +166,18 @@ class TestParseBucketInfo:
         info = parse_bucket_info(BUCKET_INFO_OUTPUT_QUOTA_SIZE_ONLY)
         assert info.quota_max_size_bytes == 1_000_000_000
         assert info.quota_max_objects is None
+
+    def test_website_enabled_no_error_doc(self) -> None:
+        info = parse_bucket_info(BUCKET_INFO_OUTPUT_WEBSITE_ENABLED)
+        assert info.website_access is True
+        assert info.website_index_document == "index.html"
+        assert info.website_error_document is None
+
+    def test_website_custom_error_document(self) -> None:
+        info = parse_bucket_info(BUCKET_INFO_OUTPUT_WEBSITE_CUSTOM_ERROR)
+        assert info.website_access is True
+        assert info.website_index_document == "index.html"
+        assert info.website_error_document == "404.html"
 
     def test_invalid_output_raises(self) -> None:
         with pytest.raises(GarageParseError, match="bucket ID"):

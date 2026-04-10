@@ -15,6 +15,7 @@ from stormpulse.config import CommandDef, GarageConfig, ParamDef
 _BUCKET_NAME_PATTERN = r"[a-zA-Z0-9_-]+"
 _KEY_NAME_PATTERN = r"[a-zA-Z0-9_-]+"
 _KEY_ID_PATTERN = r"[a-zA-Z0-9]+"
+_DOCUMENT_PATTERN = r"[a-zA-Z0-9._/-]+"
 
 
 def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
@@ -147,6 +148,51 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     default=None,
                     pattern=_KEY_ID_PATTERN,
                     description="Key to grant access for",
+                ),
+            },
+        ),
+        "garage_bucket_website_allow": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage,
+                     "bucket", "website", "--allow", "{bucket_name}",
+                     "--index-document", "{index_document}",
+                     "--error-document", "{error_document}"],
+            timeout=30,
+            description="Enable static website hosting on a bucket",
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket name or alias",
+                ),
+                "index_document": ParamDef(
+                    placeholder="index_document",
+                    default="index.html",
+                    pattern=_DOCUMENT_PATTERN,
+                    description="Index document filename",
+                ),
+                "error_document": ParamDef(
+                    placeholder="error_document",
+                    default="404.html",
+                    pattern=_DOCUMENT_PATTERN,
+                    description="Error document filename",
+                ),
+            },
+        ),
+        "garage_bucket_website_deny": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage,
+                     "bucket", "website", "--deny", "{bucket_name}"],
+            timeout=30,
+            requires_confirmation=True,
+            description="Disable static website hosting on a bucket",
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket name or alias",
                 ),
             },
         ),

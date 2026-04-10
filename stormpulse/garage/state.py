@@ -47,6 +47,8 @@ class GarageBucket:
     object_count: int
     keys: list[GarageKeyRef]
     website_access: bool
+    website_index_document: str
+    website_error_document: str | None
     quota_max_size_bytes: int | None
     quota_max_objects: int | None
 
@@ -186,6 +188,8 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
                         object_count=info.object_count,
                         keys=keys,
                         website_access=info.website_access,
+                        website_index_document=info.website_index_document,
+                        website_error_document=info.website_error_document,
                         quota_max_size_bytes=info.quota_max_size_bytes,
                         quota_max_objects=info.quota_max_objects,
                     ))

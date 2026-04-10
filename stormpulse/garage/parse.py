@@ -275,6 +275,8 @@ class GarageBucketInfo:
     size_bytes: int
     object_count: int
     website_access: bool
+    website_index_document: str
+    website_error_document: str | None
     global_alias: str
     keys: list[GarageBucketKeyEntry]
     quota_max_size_bytes: int | None
@@ -287,6 +289,8 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
     size_bytes = 0
     object_count = 0
     website_access = False
+    website_index_document = "index.html"
+    website_error_document: str | None = None
     global_alias = ""
     keys: list[GarageBucketKeyEntry] = []
     quota_max_size_bytes: int | None = None
@@ -327,6 +331,11 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
             object_count = _parse_int(stripped.split(":", 1)[1].strip())
         elif stripped.startswith("Website access:"):
             website_access = stripped.split(":", 1)[1].strip().lower() == "true"
+        elif stripped.startswith("index document:"):
+            website_index_document = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("error document:"):
+            val = stripped.split(":", 1)[1].strip()
+            website_error_document = None if val == "(not defined)" else val
         elif stripped.startswith("Global alias:"):
             global_alias = stripped.split(":", 1)[1].strip()
         elif stripped.startswith("maximum size:"):
@@ -342,6 +351,8 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
         size_bytes=size_bytes,
         object_count=object_count,
         website_access=website_access,
+        website_index_document=website_index_document,
+        website_error_document=website_error_document,
         global_alias=global_alias,
         keys=keys,
         quota_max_size_bytes=quota_max_size_bytes,

@@ -29,6 +29,7 @@ class TestBuildGarageCommands:
             "garage_bucket_create", "garage_bucket_delete",
             "garage_key_create", "garage_key_delete",
             "garage_bucket_allow", "garage_bucket_deny",
+            "garage_bucket_website_allow", "garage_bucket_website_deny",
             "garage_refresh",
         }
         assert set(cmds.keys()) == expected
@@ -49,7 +50,8 @@ class TestBuildGarageCommands:
 
     def test_destructive_commands_require_confirmation(self) -> None:
         cmds = build_garage_commands(_make_config())
-        for name in ("garage_bucket_delete", "garage_key_delete", "garage_bucket_deny"):
+        for name in ("garage_bucket_delete", "garage_key_delete", "garage_bucket_deny",
+                     "garage_bucket_website_deny"):
             assert cmds[name].requires_confirmation is True, (
                 f"{name} should require confirmation"
             )

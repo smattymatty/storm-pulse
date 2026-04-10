@@ -70,6 +70,8 @@ class TestCollectGarageState:
         assert bucket.keys[0].key_name == "obsidian-key"
         assert bucket.keys[0].permissions == "RWO"
         assert bucket.website_access is False
+        assert bucket.website_index_document == "index.html"
+        assert bucket.website_error_document is None
         assert bucket.quota_max_size_bytes is None
         assert bucket.quota_max_objects is None
         # Top-level keys list includes all keys (even unlinked)

@@ -260,17 +260,17 @@ class Agent:
         interval = gc.state_push_interval_seconds
         while not self._shutdown.is_set():
             try:
-                await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
-                return
-            except TimeoutError:
-                pass
-            try:
                 state = await asyncio.to_thread(collect_garage_state, gc)
                 if state is not None:
                     self._garage_state = state
                     logger.debug("Refreshed garage state")
             except Exception:
                 logger.warning("Failed to collect garage state", exc_info=True)
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
 
     # ------------------------------------------------------------------
     # Internal commands
