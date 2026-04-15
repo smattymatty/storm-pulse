@@ -79,15 +79,13 @@ def test_persistence_across_connections(tmp_path: Path) -> None:
     s2.close()
 
 
-def test_get_docker_ts_unseen_returns_none(tmp_path):
-    from stormpulse.logging.positions import LogPositionStore
+def test_get_docker_ts_unseen_returns_none(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     assert store.get_docker_ts("missing") is None
     store.close()
 
 
-def test_set_and_get_docker_ts_roundtrip(tmp_path):
-    from stormpulse.logging.positions import LogPositionStore
+def test_set_and_get_docker_ts_roundtrip(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
     assert store.get_docker_ts("web") == "2026-04-15T13:00:00.000000Z"
@@ -96,8 +94,7 @@ def test_set_and_get_docker_ts_roundtrip(tmp_path):
     store.close()
 
 
-def test_file_and_docker_groups_coexist(tmp_path):
-    from stormpulse.logging.positions import LogPositionStore
+def test_file_and_docker_groups_coexist(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     store.set("fgroup", "/var/log/x.log", 123, 456)
     store.set_docker_ts("dgroup", "web", "2026-04-15T13:00:00.000000Z")

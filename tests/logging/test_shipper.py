@@ -63,6 +63,7 @@ def test_parses_valid_lines(tmp_path: Path) -> None:
     assert len(batch.lines) == 2
     assert batch.dropped == 0
     assert batch.from_position == 0
+    assert isinstance(batch.to_position, int)
     assert batch.to_position > 0
     store.close()
 
@@ -107,7 +108,8 @@ def test_max_batch_limit_respected(tmp_path: Path) -> None:
     assert batch is not None
     assert len(batch.lines) == 3
     # Remaining lines should be available on next call after confirm
-    shipper.tailer.confirm_shipped(batch.to_position)
+    assert isinstance(batch.to_position, int)
+    shipper.tailer.confirm_shipped(batch.to_position)  # type: ignore[arg-type]
     batch2 = shipper.collect_batch()
     assert batch2 is not None
     assert len(batch2.lines) == 3

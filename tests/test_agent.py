@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from websockets.exceptions import ConnectionClosed
 
 from stormpulse.agent import Agent, _build_commands_metadata, _strip_binary_path, create_ssl_context
 from stormpulse.auth import NonceStore, generate_nonce, sign

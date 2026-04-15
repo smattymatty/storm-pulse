@@ -390,7 +390,7 @@ class Agent:
         shipper = self._shippers.get(group_name)
         if shipper is None:
             return
-        await asyncio.to_thread(shipper.tailer.confirm_shipped, to_position)
+        await asyncio.to_thread(shipper.tailer.confirm_shipped, to_position)  # type: ignore[arg-type]
         logger.debug(
             "Advanced position for group %s to %s (batch %s)",
             group_name, to_position, batch_id,

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from stormpulse.logging.writer import PulseLogger
 
 
-def _read_lines(path: Path) -> list[dict]:
+def _read_lines(path: Path) -> list[dict[str, Any]]:
     return [json.loads(ln) for ln in path.read_text().splitlines() if ln]
 
 
