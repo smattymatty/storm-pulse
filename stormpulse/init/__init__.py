@@ -1,0 +1,83 @@
+"""Storm Pulse init — interactive setup wizard after enrollment."""
+
+from __future__ import annotations
+
+from stormpulse.init.checks import (
+    InitError,
+    check_credentials,
+    check_root,
+    derive_dashboard_url,
+    extract_agent_id,
+    load_enroll_metadata,
+)
+from stormpulse.init.compose import (
+    detect_compose_files,
+    parse_service_names,
+    parse_volume_mounts,
+)
+from stormpulse.init.files import (
+    _CONFIG_PATH,
+    _SYSTEMD_PATH,
+    _write_file,
+    write_config_file,
+    write_systemd_unit,
+)
+from stormpulse.init.generate import (
+    _SYSTEMD_UNIT_TEMPLATE,
+    _TOML_TEMPLATE,
+    InitConfig,
+    generate_toml,
+    render_systemd_unit,
+)
+from stormpulse.init.orchestrator import run_init
+from stormpulse.init.prompts import (
+    _prompt,
+    _UUID_RE,
+    prompt_compose_file,
+    prompt_dashboard_url,
+    prompt_docker_service,
+    prompt_env_file,
+    prompt_project_dir,
+    prompt_pulse_token,
+)
+from stormpulse.init.system import (
+    _run_cmd,
+    _run_find_apply,
+    run_daemon_reload,
+    run_system_setup,
+)
+
+__all__ = [
+    "InitConfig",
+    "InitError",
+    "_CONFIG_PATH",
+    "_SYSTEMD_PATH",
+    "_SYSTEMD_UNIT_TEMPLATE",
+    "_TOML_TEMPLATE",
+    "_UUID_RE",
+    "_prompt",
+    "_run_cmd",
+    "_run_find_apply",
+    "_write_file",
+    "check_credentials",
+    "check_root",
+    "derive_dashboard_url",
+    "detect_compose_files",
+    "extract_agent_id",
+    "generate_toml",
+    "render_systemd_unit",
+    "load_enroll_metadata",
+    "parse_service_names",
+    "parse_volume_mounts",
+    "prompt_compose_file",
+    "prompt_dashboard_url",
+    "prompt_docker_service",
+    "prompt_env_file",
+    "prompt_project_dir",
+    "prompt_pulse_token",
+    "run_daemon_reload",
+    "run_init",
+    "run_system_setup",
+    "write_config_file",
+    "write_systemd_unit",
+]

@@ -22,20 +22,29 @@ from stormpulse.commands import (
     execute_command,
     get_command,
 )
-from stormpulse.config import CommandDef, Config, ProjectConfig, TlsConfig
+from stormpulse.config import CommandDef, Config, LogGroupConfig, ProjectConfig, TlsConfig
 from stormpulse.garage.commands import build_garage_commands
 from stormpulse.garage.discover import discover_garage
 from stormpulse.garage.state import GarageState, collect_garage_state
+from stormpulse.logging import (
+    LogPositionStore,
+    DockerTailer,
+    LogShipper,
+    LogTailer,
+    PulseLogger,
+)
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
     CommandRequestPayload,
     CommandResultPayload,
     CommandSequencePayload,
     Envelope,
+    LogBatchPayload,
     MessageType,
     ProtocolError,
     make_command_result,
     make_heartbeat,
+    make_log_batch,
     make_metrics_push,
     make_register,
 )
@@ -124,18 +133,34 @@ class Agent:
         nonce_store: NonceStore,
         ssl_context: ssl.SSLContext,
         shutdown: asyncio.Event,
+        log_position_store: LogPositionStore | None = None,
+        pulse_logger: PulseLogger | None = None,
     ) -> None:
         self._config = config
         self._secret = secret
         self._nonce_store = nonce_store
         self._ssl_ctx = ssl_context
         self._shutdown = shutdown
+        self._pulse_logger = pulse_logger
         # Merge garage commands into registry if enabled
         commands = dict(config.commands)
         if config.garage and config.garage.enabled:
             commands.update(build_garage_commands(config.garage))
         self._registry = build_registry(commands, config.agent.disabled_commands)
         self._garage_state: GarageState | None = None
+        # Build log shippers for enabled groups
+        self._shippers: dict[str, LogShipper] = {}
+        if log_position_store is not None:
+            for group in config.log_groups:
+                if group.enabled:
+                    tailer: LogTailer | DockerTailer
+                    if group.source_type == "docker":
+                        tailer = DockerTailer(group, log_position_store)
+                    else:
+                        tailer = LogTailer(group, log_position_store)
+                    self._shippers[group.name] = LogShipper(group, tailer)
+        # batch_id -> (group_name, to_position, sent_at)
+        self._pending_batches: dict[str, tuple[str, int | str, float]] = {}
 
     # ------------------------------------------------------------------
     # Outer reconnect loop
@@ -170,28 +195,52 @@ class Agent:
                         if self._garage_state:
                             garage_dict = self._garage_state.to_dict()
 
+                    log_group_names = sorted(self._shippers.keys()) or None
                     register = make_register(
                         agent_id, __version__, self._config.agent.pulse_token,
                         commands=_build_commands_metadata(
                             self._registry, self._config.project,
                         ),
                         garage=garage_dict,
+                        log_groups=log_group_names,
                     )
                     await ws.send(register.to_json())
                     logger.info("Sent register (v%s)", __version__)
+                    if self._pulse_logger is not None:
+                        self._pulse_logger.info(
+                            "Connected to dashboard", "connection",
+                            {"url": url, "version": __version__},
+                        )
 
                     async with asyncio.TaskGroup() as tg:
                         tg.create_task(self._heartbeat_loop(ws))
                         tg.create_task(self._metrics_loop(ws))
                         tg.create_task(self._receive_loop(ws))
                         tg.create_task(self._garage_loop(ws))
+                        for group_name in self._shippers:
+                            tg.create_task(self._log_loop(ws, group_name))
 
             except* ConnectionClosed as eg:
                 logger.warning("Connection closed: %s", eg.exceptions[0])
+                if self._pulse_logger is not None:
+                    self._pulse_logger.warning(
+                        "Connection closed", "connection",
+                        {"reason": str(eg.exceptions[0])},
+                    )
             except* OSError as eg:
                 logger.warning("Connection error: %s", eg.exceptions[0])
+                if self._pulse_logger is not None:
+                    self._pulse_logger.warning(
+                        "Connection error", "connection",
+                        {"reason": str(eg.exceptions[0])},
+                    )
             except* Exception as eg:
                 logger.error("Unexpected error: %s", eg.exceptions[0], exc_info=True)
+                if self._pulse_logger is not None:
+                    self._pulse_logger.error(
+                        "Unexpected error", "error",
+                        {"reason": str(eg.exceptions[0])},
+                    )
 
             if self._shutdown.is_set():
                 break
@@ -274,6 +323,80 @@ class Agent:
                 pass
 
     # ------------------------------------------------------------------
+    # Log shipping
+    # ------------------------------------------------------------------
+
+    _BATCH_ACK_TIMEOUT_SECONDS = 30.0
+
+    async def _log_loop(self, ws: ClientConnection, group_name: str) -> None:
+        """Tail, parse, batch, and ship logs for one group."""
+        shipper = self._shippers[group_name]
+        interval = shipper.ship_interval_seconds
+        agent_id = self._config.agent.id
+        while not self._shutdown.is_set():
+            try:
+                # Prune stale pending batches (no ack after timeout)
+                now = time.monotonic()
+                stale = [
+                    bid for bid, (_g, _p, sent) in self._pending_batches.items()
+                    if now - sent > self._BATCH_ACK_TIMEOUT_SECONDS
+                ]
+                for bid in stale:
+                    self._pending_batches.pop(bid, None)
+
+                batch = await asyncio.to_thread(shipper.collect_batch)
+                if batch is not None:
+                    batch_id = str(uuid.uuid4())
+                    envelope = make_log_batch(
+                        agent_id,
+                        group=group_name,
+                        parser=shipper.parser_name,
+                        batch_id=batch_id,
+                        lines=batch.lines,
+                        dropped=batch.dropped,
+                        from_position=batch.from_position,
+                        to_position=batch.to_position,
+                    )
+                    self._pending_batches[batch_id] = (
+                        group_name, batch.to_position, time.monotonic(),
+                    )
+                    await ws.send(envelope.to_json())
+                    logger.debug(
+                        "Sent log.batch %s group=%s lines=%d dropped=%d",
+                        batch_id, group_name, len(batch.lines), batch.dropped,
+                    )
+            except ConnectionClosed:
+                raise
+            except Exception:
+                logger.warning("Log loop error for group %s", group_name, exc_info=True)
+
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=interval)
+                return
+            except TimeoutError:
+                pass
+
+    async def _handle_log_batch_ack(self, envelope: Envelope) -> None:
+        """Advance stored position for an acknowledged batch."""
+        batch_id = envelope.payload.get("batch_id")
+        if not isinstance(batch_id, str):
+            logger.warning("log.batch.ack missing batch_id")
+            return
+        pending = self._pending_batches.pop(batch_id, None)
+        if pending is None:
+            logger.debug("log.batch.ack for unknown batch_id %s", batch_id)
+            return
+        group_name, to_position, _sent_at = pending
+        shipper = self._shippers.get(group_name)
+        if shipper is None:
+            return
+        await asyncio.to_thread(shipper.tailer.confirm_shipped, to_position)
+        logger.debug(
+            "Advanced position for group %s to %s (batch %s)",
+            group_name, to_position, batch_id,
+        )
+
+    # ------------------------------------------------------------------
     # Internal commands
     # ------------------------------------------------------------------
 
@@ -339,6 +462,8 @@ class Agent:
                 await self._handle_command_request(ws, envelope)
             case MessageType.COMMAND_SEQUENCE:
                 await self._handle_command_sequence(ws, envelope)
+            case MessageType.LOG_BATCH_ACK:
+                await self._handle_log_batch_ack(envelope)
             case _:
                 logger.warning("Unexpected message type: %s", envelope.type.value)
 
@@ -379,6 +504,15 @@ class Agent:
             "Sent result for %r: success=%s, %dms",
             result.command, result.success, result.duration_ms,
         )
+        if self._pulse_logger is not None:
+            cmd_def = self._registry.get(payload.command)
+            sensitive = cmd_def.sensitive_output if cmd_def else False
+            self._pulse_logger.log_command_result(
+                command=result.command,
+                success=result.success,
+                duration_ms=result.duration_ms,
+                sensitive=sensitive,
+            )
 
         # After garage_refresh, push fresh metrics immediately
         if payload.command == "garage_refresh" and result.success:

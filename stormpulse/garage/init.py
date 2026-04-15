@@ -210,7 +210,7 @@ def prompt_garage_values(
     garage_binary: str = "/garage",
     docker_binary: str = "/usr/bin/docker",
     garage_config_path: str = "/opt/garage/garage.toml",
-    state_push_interval_seconds: int = 300,
+    state_push_interval_seconds: int = 30,
 ) -> dict[str, str | int]:
     """Prompt user for Garage config values with defaults."""
     container_name = _prompt("Container name", default=container_name)

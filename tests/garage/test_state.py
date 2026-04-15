@@ -2,18 +2,25 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 from stormpulse.config import GarageConfig
-from stormpulse.garage.state import collect_garage_state
+from stormpulse.garage.parse import GarageParseError
+from stormpulse.garage.state import _run_garage, collect_garage_state
 from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT,
     BUCKET_INFO_OUTPUT_WITH_QUOTAS,
     BUCKET_LIST_OUTPUT,
+    BUCKET_LIST_OUTPUT_EMPTY,
+    BUCKET_LIST_OUTPUT_MULTI,
     KEY_LIST_OUTPUT,
+    KEY_LIST_OUTPUT_MULTI,
     STATS_OUTPUT,
     STATUS_OUTPUT,
+    STATUS_OUTPUT_EMPTY,
+    STATUS_OUTPUT_MULTI_NODE,
 )
 
 
@@ -131,6 +138,200 @@ class TestCollectGarageState:
         assert state.db_engine == "unknown"
         assert state.buckets == []
 
+    def test_status_parse_error_returns_none(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {("status",): STATUS_OUTPUT}
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ), patch(
+            "stormpulse.garage.state.parse_status",
+            side_effect=GarageParseError("bad"),
+        ):
+            assert collect_garage_state(cfg) is None
+
+    def test_stats_parse_error_falls_back_to_defaults(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT_EMPTY,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ), patch(
+            "stormpulse.garage.state.parse_stats",
+            side_effect=GarageParseError("bad"),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert state.db_engine == "unknown"
+        assert state.object_count == 0
+        assert state.block_count == 0
+
+    def test_key_list_parse_error_gives_empty_map(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT,
+            ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ), patch(
+            "stormpulse.garage.state.parse_key_list",
+            side_effect=GarageParseError("bad"),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert state.keys == []
+        # Bucket still present, but key_name empty since map is empty
+        assert state.buckets[0].keys[0].key_name == ""
+
+    def test_bucket_list_parse_error_gives_no_buckets(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ), patch(
+            "stormpulse.garage.state.parse_bucket_list",
+            side_effect=GarageParseError("bad"),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert state.buckets == []
+
+    def test_bucket_info_parse_error_skips_one_bucket(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT_MULTI,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT_MULTI,
+            ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,
+            ("bucket", "info", "backups"): "GARBAGE",
+        }
+        real_parse_bucket_info = __import__(
+            "stormpulse.garage.parse", fromlist=["parse_bucket_info"],
+        ).parse_bucket_info
+
+        def flaky_parse(out: str) -> object:
+            if out == "GARBAGE":
+                raise GarageParseError("bad")
+            return real_parse_bucket_info(out)
+
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ), patch(
+            "stormpulse.garage.state.parse_bucket_info",
+            side_effect=flaky_parse,
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert [b.alias for b in state.buckets] == ["obsidian-vault"]
+
+    def test_empty_status_returns_none(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT_EMPTY,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ):
+            assert collect_garage_state(cfg) is None
+
+    def test_multi_node_all_peers_collected(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT_MULTI_NODE,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT_EMPTY,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert len(state.peers) == 3
+        assert {p.hostname for p in state.peers} == {"garage-one", "garage-two", "garage-pi"}
+        # node_id picks first node
+        assert state.node_id == "7a58a5fa192ad6dd"
+
+    def test_multi_bucket_all_collected(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT_MULTI,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT_MULTI,
+            ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,
+            ("bucket", "info", "backups"): BUCKET_INFO_OUTPUT_WITH_QUOTAS,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert {b.alias for b in state.buckets} == {"obsidian-vault", "backups"}
+
+    def test_bucket_without_global_alias_is_skipped(self, tmp_path: Path) -> None:
+        """Buckets created via S3 API with no alias have empty global_alias → skipped."""
+        cfg = _make_config(tmp_path)
+        from stormpulse.garage.parse import GarageBucketListEntry
+
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT,
+            ("bucket", "list"): BUCKET_LIST_OUTPUT,
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ), patch(
+            "stormpulse.garage.state.parse_bucket_list",
+            return_value=[GarageBucketListEntry(bucket_id="x", global_alias="")],
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert state.buckets == []
+
+    def test_unlinked_keys_appear_in_top_level(self, tmp_path: Path) -> None:
+        """Keys in `key list` but not attached to any bucket still surface for the dashboard."""
+        cfg = _make_config(tmp_path)
+        outputs: dict[tuple[str, ...], str | None] = {
+            ("status",): STATUS_OUTPUT,
+            ("stats",): STATS_OUTPUT,
+            ("key", "list"): KEY_LIST_OUTPUT_MULTI,  # 2 keys
+            ("bucket", "list"): BUCKET_LIST_OUTPUT,  # 1 bucket
+            ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,  # uses 1 key
+        }
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=_mock_run_garage(outputs),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        # Bucket has 1 attached key, but top-level has both (including unlinked "backup-key")
+        assert len(state.buckets[0].keys) == 1
+        assert {k.key_name for k in state.keys} == {"obsidian-key", "backup-key"}
+
     def test_to_dict(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         outputs: dict[tuple[str, ...], str | None] = {
@@ -154,3 +355,39 @@ class TestCollectGarageState:
         assert isinstance(d["peers"], list)
         assert len(d["peers"]) == 1
         assert d["peers"][0]["node_id"] == "7a58a5fa192ad6dd"
+
+
+class TestRunGarage:
+    """Direct tests for _run_garage subprocess failure modes."""
+
+    def test_returns_stdout_on_success(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="hello\n", stderr="",
+        )
+        with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
+            assert _run_garage(cfg, "status") == "hello\n"
+
+    def test_file_not_found_returns_none(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        with patch(
+            "stormpulse.garage.state.subprocess.run",
+            side_effect=FileNotFoundError(),
+        ):
+            assert _run_garage(cfg, "status") is None
+
+    def test_timeout_returns_none(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        with patch(
+            "stormpulse.garage.state.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="garage", timeout=15),
+        ):
+            assert _run_garage(cfg, "status") is None
+
+    def test_nonzero_exit_returns_none(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        completed = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="boom\n",
+        )
+        with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
+            assert _run_garage(cfg, "status") is None

@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 import subprocess
 from dataclasses import asdict, dataclass
-from typing import Any
+from collections.abc import Callable
+from typing import Any, TypeVar
+
+_T = TypeVar("_T")
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import (
@@ -117,92 +120,57 @@ def _run_garage(config: GarageConfig, *args: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _try_parse(config: GarageConfig, parser: Callable[[str], _T], *args: str, what: str) -> _T | None:
+    out = _run_garage(config, *args)
+    if out is None:
+        return None
+    try:
+        return parser(out)
+    except GarageParseError:
+        logger.warning("Failed to parse garage %s output", what)
+        return None
+
+
 def collect_garage_state(config: GarageConfig) -> GarageState | None:
     """Collect full Garage state by running status, stats, and bucket info commands.
 
     Returns None if the node is unreachable or the output can't be parsed.
     """
-    status_out = _run_garage(config, "status")
-    if status_out is None:
-        return None
-
-    nodes = parse_status(status_out)
+    nodes = _try_parse(config, parse_status, "status", what="status")
     if not nodes:
         logger.warning("No nodes found in garage status output")
         return None
-
-    # Use the first node (single-node deployment)
     node = nodes[0]
 
-    # Collect stats
-    db_engine = "unknown"
-    object_count = 0
-    block_count = 0
-    stats_out = _run_garage(config, "stats")
-    if stats_out is not None:
-        try:
-            stats = parse_stats(stats_out)
-            db_engine = stats.db_engine
-            object_count = stats.object_count
-            block_count = stats.block_count
-        except GarageParseError:
-            logger.warning("Failed to parse garage stats output")
+    stats = _try_parse(config, parse_stats, "stats", what="stats")
+    key_entries = _try_parse(config, parse_key_list, "key", "list", what="key list") or []
+    key_name_map = {k.key_id: k.name for k in key_entries}
 
-    # Build key ID -> name map from key list (real key names)
-    key_name_map: dict[str, str] = {}
-    key_list_out = _run_garage(config, "key", "list")
-    if key_list_out is not None:
-        try:
-            for key_entry in parse_key_list(key_list_out):
-                key_name_map[key_entry.key_id] = key_entry.name
-        except GarageParseError:
-            logger.warning("Failed to parse garage key list output")
-
-    # Collect bucket list + info
     buckets: list[GarageBucket] = []
-    bucket_list_out = _run_garage(config, "bucket", "list")
-    if bucket_list_out is not None:
-        try:
-            bucket_entries = parse_bucket_list(bucket_list_out)
-            for entry in bucket_entries:
-                alias = entry.global_alias
-                if not alias:
-                    continue
-                info_out = _run_garage(config, "bucket", "info", alias)
-                if info_out is None:
-                    continue
-                try:
-                    info = parse_bucket_info(info_out)
-                    keys = [
-                        GarageKeyRef(
-                            key_id=k.access_key_id,
-                            key_name=key_name_map.get(k.access_key_id, ""),
-                            permissions=k.permissions,
-                        )
-                        for k in info.keys
-                    ]
-                    buckets.append(GarageBucket(
-                        id=info.bucket_id,
-                        alias=alias,
-                        size_bytes=info.size_bytes,
-                        object_count=info.object_count,
-                        keys=keys,
-                        website_access=info.website_access,
-                        website_index_document=info.website_index_document,
-                        website_error_document=info.website_error_document,
-                        quota_max_size_bytes=info.quota_max_size_bytes,
-                        quota_max_objects=info.quota_max_objects,
-                    ))
-                except GarageParseError:
-                    logger.warning("Failed to parse bucket info for %s", alias)
-        except GarageParseError:
-            logger.warning("Failed to parse garage bucket list output")
-
-    # All keys (including unlinked ones) for the dashboard
-    all_keys = [
-        GarageKeyRef(key_id=kid, key_name=kname, permissions="")
-        for kid, kname in key_name_map.items()
-    ]
+    for entry in _try_parse(config, parse_bucket_list, "bucket", "list", what="bucket list") or []:
+        if not entry.global_alias:
+            continue
+        info = _try_parse(
+            config, parse_bucket_info, "bucket", "info", entry.global_alias,
+            what=f"bucket info for {entry.global_alias}",
+        )
+        if info is None:
+            continue
+        buckets.append(GarageBucket(
+            id=info.bucket_id,
+            alias=entry.global_alias,
+            size_bytes=info.size_bytes,
+            object_count=info.object_count,
+            keys=[
+                GarageKeyRef(k.access_key_id, key_name_map.get(k.access_key_id, ""), k.permissions)
+                for k in info.keys
+            ],
+            website_access=info.website_access,
+            website_index_document=info.website_index_document,
+            website_error_document=info.website_error_document,
+            quota_max_size_bytes=info.quota_max_size_bytes,
+            quota_max_objects=info.quota_max_objects,
+        ))
 
     return GarageState(
         node_id=node.node_id,
@@ -212,10 +180,10 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
         data_avail_gb=node.data_avail_gb,
         version=node.version,
         healthy=node.healthy,
-        db_engine=db_engine,
-        object_count=object_count,
-        block_count=block_count,
+        db_engine=stats.db_engine if stats else "unknown",
+        object_count=stats.object_count if stats else 0,
+        block_count=stats.block_count if stats else 0,
         buckets=buckets,
-        keys=all_keys,
+        keys=[GarageKeyRef(kid, kname, "") for kid, kname in key_name_map.items()],
         peers=nodes,
     )

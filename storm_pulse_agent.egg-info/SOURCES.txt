@@ -12,7 +12,6 @@ stormpulse/agent.py
 stormpulse/auth.py
 stormpulse/config.py
 stormpulse/enroll.py
-stormpulse/init.py
 stormpulse/metrics.py
 stormpulse/protocol.py
 stormpulse/status.py
@@ -31,6 +30,19 @@ stormpulse/garage/discover.py
 stormpulse/garage/init.py
 stormpulse/garage/parse.py
 stormpulse/garage/state.py
+stormpulse/init/__init__.py
+stormpulse/init/checks.py
+stormpulse/init/compose.py
+stormpulse/init/files.py
+stormpulse/init/generate.py
+stormpulse/init/prompts.py
+stormpulse/init/system.py
+stormpulse/logging/__init__.py
+stormpulse/logging/parsers.py
+stormpulse/logging/positions.py
+stormpulse/logging/shipper.py
+stormpulse/logging/tailer.py
+stormpulse/logging/writer.py
 tests/test_agent.py
 tests/test_auth.py
 tests/test_commands.py

@@ -94,6 +94,28 @@ PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset({
 })
 
 
+_LOG_PARSERS: frozenset[str] = frozenset({"garage_s3", "stormpulse", "caddy_json", "docker_raw"})
+_LOG_SOURCE_TYPES: frozenset[str] = frozenset({"file", "docker"})
+_LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_]{1,50}")
+
+
+@dataclass(frozen=True, slots=True)
+class LogGroupConfig:
+    """A single [[log_groups]] entry — one tailed log source."""
+
+    name: str
+    enabled: bool
+    source_type: str
+    source_path: Path
+    filter_contains: str
+    parser: str
+    ship_interval_seconds: float
+    max_lines_per_batch: int
+    retention_days: int
+    container_name: str = ""
+    docker_binary: str = "/usr/bin/docker"
+
+
 @dataclass(frozen=True, slots=True)
 class GarageConfig:
     """Optional [garage] section — Garage S3 node management."""
@@ -119,6 +141,7 @@ class Config:
     storage: StorageConfig
     commands: dict[str, CommandDef] = dataclasses.field(default_factory=dict)
     garage: GarageConfig | None = None
+    log_groups: list[LogGroupConfig] = dataclasses.field(default_factory=list)
 
     def validate_paths(self) -> None:
         """Check that all referenced file paths exist and are readable.
@@ -432,6 +455,103 @@ def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
     )
 
 
+def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
+    """Parse the optional [[log_groups]] array."""
+    entries = raw.get("log_groups", [])
+    if not isinstance(entries, list):
+        raise ConfigError("'log_groups' must be an array of tables")
+
+    result: list[LogGroupConfig] = []
+    seen_names: set[str] = set()
+    for i, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ConfigError(f"log_groups[{i}] must be a table")
+
+        ctx = f"log_groups[{i}]"
+        name = _require_key(entry, "name", str, ctx)
+        if not _LOG_NAME_PATTERN.fullmatch(name):
+            raise ConfigError(
+                f"'name' in {ctx} must be alphanumeric/underscore, 1-50 chars, got {name!r}"
+            )
+        if name in seen_names:
+            raise ConfigError(f"Duplicate log group name: {name!r}")
+        seen_names.add(name)
+
+        source_type = _require_key(entry, "source_type", str, ctx)
+        if source_type not in _LOG_SOURCE_TYPES:
+            raise ConfigError(
+                f"'source_type' in {ctx} must be one of {sorted(_LOG_SOURCE_TYPES)}, "
+                f"got {source_type!r}"
+            )
+
+        container_name = ""
+        docker_binary = "/usr/bin/docker"
+        source_path = ""
+        if source_type == "file":
+            source_path = _require_key(entry, "source_path", str, ctx)
+            if not source_path.startswith("/"):
+                raise ConfigError(
+                    f"'source_path' in {ctx} must be an absolute path, got {source_path!r}"
+                )
+        else:  # docker
+            container_name = _require_key(entry, "container_name", str, ctx)
+            if not container_name.strip():
+                raise ConfigError(
+                    f"'container_name' in {ctx} must be non-empty for docker sources"
+                )
+            docker_binary_raw = entry.get("docker_binary", "/usr/bin/docker")
+            if not isinstance(docker_binary_raw, str) or not docker_binary_raw.startswith("/"):
+                raise ConfigError(
+                    f"'docker_binary' in {ctx} must be an absolute path"
+                )
+            docker_binary = docker_binary_raw
+
+        parser = _require_key(entry, "parser", str, ctx)
+        if parser not in _LOG_PARSERS:
+            raise ConfigError(
+                f"'parser' in {ctx} must be one of {sorted(_LOG_PARSERS)}, got {parser!r}"
+            )
+
+        interval = float(
+            _require_key(entry, "ship_interval_seconds", (int, float), ctx)
+        )
+        if interval < 5.0:
+            raise ConfigError(
+                f"'ship_interval_seconds' in {ctx} must be >= 5.0, got {interval}"
+            )
+
+        batch_max = _require_key(entry, "max_lines_per_batch", int, ctx)
+        if not 1 <= batch_max <= 200:
+            raise ConfigError(
+                f"'max_lines_per_batch' in {ctx} must be 1-200, got {batch_max}"
+            )
+
+        retention = _require_key(entry, "retention_days", int, ctx)
+        if not 1 <= retention <= 365:
+            raise ConfigError(
+                f"'retention_days' in {ctx} must be 1-365, got {retention}"
+            )
+
+        filter_contains = entry.get("filter_contains", "")
+        if not isinstance(filter_contains, str):
+            raise ConfigError(f"'filter_contains' in {ctx} must be a string")
+
+        result.append(LogGroupConfig(
+            name=name,
+            enabled=_require_key(entry, "enabled", bool, ctx),
+            source_type=source_type,
+            source_path=Path(source_path) if source_path else Path(""),
+            filter_contains=filter_contains,
+            parser=parser,
+            ship_interval_seconds=interval,
+            max_lines_per_batch=batch_max,
+            retention_days=retention,
+            container_name=container_name,
+            docker_binary=docker_binary,
+        ))
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -463,4 +583,5 @@ def load_config(path: Path) -> Config:
         storage=_parse_storage(raw),
         commands=_parse_commands(raw),
         garage=_parse_garage(raw),
+        log_groups=_parse_log_groups(raw),
     )

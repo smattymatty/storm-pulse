@@ -14,12 +14,14 @@ from stormpulse.protocol import (
     CommandSequencePayload,
     ContainerInfo,
     Envelope,
+    LogBatchPayload,
     MessageType,
     MetricsPayload,
     ProtocolError,
     RegisterPayload,
     make_command_result,
     make_heartbeat,
+    make_log_batch,
     make_metrics_push,
     make_register,
 )
@@ -673,3 +675,162 @@ def test_payload_immutable() -> None:
     payload = RegisterPayload(version="0.1.0", pulse_token="tok")
     with pytest.raises(AttributeError):
         payload.version = "0.2.0"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# LOG_BATCH / LogBatchPayload
+# ---------------------------------------------------------------------------
+
+
+def test_log_batch_payload_roundtrip() -> None:
+    original = LogBatchPayload(
+        group="storage",
+        parser="garage_s3",
+        batch_id="abc-123",
+        lines=[{"ts": "2026-04-10T13:00:00Z", "bucket": "b1"}],
+        dropped=2,
+        from_position=100,
+        to_position=500,
+    )
+    restored = LogBatchPayload.from_dict(asdict(original))
+    assert restored == original
+
+
+def test_log_batch_payload_missing_field_raises() -> None:
+    with pytest.raises(ProtocolError):
+        LogBatchPayload.from_dict({"group": "storage"})
+
+
+def test_make_log_batch_envelope() -> None:
+    env = make_log_batch(
+        "agent-1",
+        group="storage",
+        parser="garage_s3",
+        batch_id="b1",
+        lines=[{"ts": "x", "bucket": "b"}],
+        dropped=0,
+        from_position=0,
+        to_position=100,
+    )
+    assert env.type == MessageType.LOG_BATCH
+    assert env.agent_id == "agent-1"
+    assert env.payload["group"] == "storage"
+    assert env.payload["batch_id"] == "b1"
+    assert len(env.payload["lines"]) == 1
+
+
+def test_log_batch_envelope_json_roundtrip() -> None:
+    env = make_log_batch(
+        "a",
+        group="pulse",
+        parser="stormpulse",
+        batch_id="bid",
+        lines=[{"ts": "t", "level": "INFO", "message": "m", "event_type": "connection"}],
+        dropped=0,
+        from_position=0,
+        to_position=10,
+    )
+    raw = env.to_json()
+    restored = Envelope.from_json(raw)
+    assert restored.type == MessageType.LOG_BATCH
+    payload = LogBatchPayload.from_dict(restored.payload)
+    assert payload.batch_id == "bid"
+
+
+def test_log_batch_ack_message_type_valid() -> None:
+    assert MessageType("log.batch.ack") is MessageType.LOG_BATCH_ACK
+
+
+def test_register_with_log_groups() -> None:
+    env = make_register(
+        "agent-1", "0.3.0", "tok",
+        log_groups=["storage", "pulse"],
+    )
+    assert env.payload["log_groups"] == ["storage", "pulse"]
+
+
+# ---------------------------------------------------------------------------
+# Gap coverage — garage merging, ack round-trips, version post_init,
+# LogBatch.lines invalid items
+# ---------------------------------------------------------------------------
+
+
+def test_make_metrics_push_with_garage_merges_dict() -> None:
+    from stormpulse.protocol import MetricsPayload
+    metrics = MetricsPayload(
+        cpu_percent=1.0, memory_percent=2.0, memory_used_mb=3.0,
+        memory_total_mb=4.0, disk_percent=5.0, disk_used_gb=6.0,
+        disk_total_gb=7.0, load_avg_1m=0.0, load_avg_5m=0.0,
+        uptime_seconds=1.0, containers=[],
+    )
+    garage = {"node_id": "abc", "healthy": True, "buckets": []}
+    env = make_metrics_push("agent-1", metrics, garage=garage)
+    assert env.payload["garage"] == garage
+    # Full round-trip preserves garage
+    from stormpulse.protocol import Envelope
+    round_tripped = Envelope.from_json(env.to_json())
+    assert round_tripped.payload["garage"] == garage
+    assert round_tripped.payload["cpu_percent"] == 1.0
+
+
+def test_make_register_with_garage_and_log_groups() -> None:
+    from stormpulse.protocol import Envelope
+    garage = {"node_id": "n", "buckets": []}
+    env = make_register(
+        "agent-1", "1.0.0", "tok",
+        commands={"git_pull": {"group": "deploy"}},
+        garage=garage,
+        log_groups=["storage"],
+    )
+    rt = Envelope.from_json(env.to_json())
+    assert rt.payload["garage"] == garage
+    assert rt.payload["log_groups"] == ["storage"]
+    assert rt.payload["commands"] == {"git_pull": {"group": "deploy"}}
+
+
+@pytest.mark.parametrize("ack_type", [
+    MessageType.REGISTER_OK,
+    MessageType.HEARTBEAT_ACK,
+    MessageType.METRICS_ACK,
+    MessageType.COMMAND_RESULT_ACK,
+    MessageType.LOG_BATCH_ACK,
+    MessageType.ERROR,
+])
+def test_ack_envelope_round_trip(ack_type: MessageType) -> None:
+    """Dashboard-origin ack messages must round-trip through from_json/to_json unchanged."""
+    from stormpulse.protocol import Envelope
+    import uuid
+    from datetime import datetime, timezone
+    original = Envelope(
+        v=1, type=ack_type, id=str(uuid.uuid4()),
+        ts=datetime.now(timezone.utc).replace(microsecond=0),
+        agent_id="agent-1",
+        payload={"detail": "ok"},
+    )
+    rt = Envelope.from_json(original.to_json())
+    assert rt.type is ack_type
+    assert rt.payload == {"detail": "ok"}
+    # Re-serialize: byte-for-byte stable
+    assert rt.to_json() == original.to_json()
+
+
+def test_envelope_post_init_rejects_unsupported_version() -> None:
+    """Directly constructing with v!=1 must raise (not just from_json)."""
+    from stormpulse.protocol import Envelope
+    from datetime import datetime, timezone
+    with pytest.raises(ProtocolError, match="Unsupported protocol version"):
+        Envelope(
+            v=2, type=MessageType.HEARTBEAT, id="x",
+            ts=datetime.now(timezone.utc), agent_id="a", payload={},
+        )
+
+
+def test_envelope_post_init_rejects_naive_timestamp() -> None:
+    from stormpulse.protocol import Envelope
+    from datetime import datetime
+    with pytest.raises(ProtocolError, match="timezone-aware"):
+        Envelope(
+            v=1, type=MessageType.HEARTBEAT, id="x",
+            ts=datetime(2026, 1, 1),  # naive
+            agent_id="a", payload={},
+        )

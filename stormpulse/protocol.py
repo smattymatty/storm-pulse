@@ -22,10 +22,12 @@ class MessageType(StrEnum):
     METRICS_PUSH = "metrics.push"
     COMMAND_RESULT = "command.result"
     REGISTER = "register"
+    LOG_BATCH = "log.batch"
 
     # Dashboard → Agent (actionable)
     COMMAND_REQUEST = "command.request"
     COMMAND_SEQUENCE = "command.sequence"
+    LOG_BATCH_ACK = "log.batch.ack"
 
     # Dashboard → Agent (acknowledgements)
     REGISTER_OK = "register.ok"
@@ -171,6 +173,24 @@ class RegisterPayload:
     pulse_token: str
     commands: dict[str, Any] | None = None
     garage: dict[str, Any] | None = None
+    log_groups: list[str] | None = None
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Self:
+        return _payload_from_dict(cls, data)
+
+
+@dataclass(frozen=True, slots=True)
+class LogBatchPayload:
+    """Payload for log.batch messages (agent -> dashboard)."""
+
+    group: str
+    parser: str
+    batch_id: str
+    lines: list[dict[str, Any]]
+    dropped: int
+    from_position: int | str
+    to_position: int | str
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -317,13 +337,14 @@ def make_register(
     pulse_token: str,
     commands: dict[str, Any] | None = None,
     garage: dict[str, Any] | None = None,
+    log_groups: list[str] | None = None,
 ) -> Envelope:
     """Create a register envelope."""
     return _make_envelope(
         agent_id, MessageType.REGISTER,
         asdict(RegisterPayload(
             version=version, pulse_token=pulse_token,
-            commands=commands, garage=garage,
+            commands=commands, garage=garage, log_groups=log_groups,
         )),
     )
 
@@ -343,3 +364,24 @@ def make_metrics_push(
 def make_command_result(agent_id: str, result: CommandResultPayload) -> Envelope:
     """Create a command.result envelope."""
     return _make_envelope(agent_id, MessageType.COMMAND_RESULT, asdict(result))
+
+
+def make_log_batch(
+    agent_id: str,
+    group: str,
+    parser: str,
+    batch_id: str,
+    lines: list[dict[str, Any]],
+    dropped: int,
+    from_position: int | str,
+    to_position: int | str,
+) -> Envelope:
+    """Create a log.batch envelope."""
+    return _make_envelope(
+        agent_id, MessageType.LOG_BATCH,
+        asdict(LogBatchPayload(
+            group=group, parser=parser, batch_id=batch_id,
+            lines=lines, dropped=dropped,
+            from_position=from_position, to_position=to_position,
+        )),
+    )

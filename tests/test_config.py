@@ -663,3 +663,290 @@ pattern = ".*"
 """
     with pytest.raises(ConfigError, match="match"):
         load_config(write_config(toml))
+
+
+# ---------------------------------------------------------------------------
+# log_groups
+# ---------------------------------------------------------------------------
+
+
+_VALID_LOG_GROUP = """
+[[log_groups]]
+name = "storage"
+enabled = true
+source_type = "file"
+source_path = "/var/log/garage/garaged.log"
+filter_contains = "garage_api_common"
+parser = "garage_s3"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 90
+"""
+
+
+def test_log_groups_empty_when_absent(write_config: Callable[[str], Path]) -> None:
+    cfg = load_config(write_config(MINIMAL_VALID))
+    assert cfg.log_groups == []
+
+
+def test_log_groups_parsed(write_config: Callable[[str], Path]) -> None:
+    cfg = load_config(write_config(MINIMAL_VALID + _VALID_LOG_GROUP))
+    assert len(cfg.log_groups) == 1
+    g = cfg.log_groups[0]
+    assert g.name == "storage"
+    assert g.enabled is True
+    assert g.parser == "garage_s3"
+    assert g.ship_interval_seconds == 10.0
+    assert g.max_lines_per_batch == 200
+    assert g.retention_days == 90
+
+
+def test_log_groups_duplicate_name_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + _VALID_LOG_GROUP + _VALID_LOG_GROUP
+    with pytest.raises(ConfigError, match="Duplicate"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_invalid_name_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "bad name with spaces"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    with pytest.raises(ConfigError, match="alphanumeric"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_non_file_source_type_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "syslog"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    with pytest.raises(ConfigError, match="'source_type'"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_relative_path_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "relative/path.log"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    with pytest.raises(ConfigError, match="absolute"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_unknown_parser_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "made_up"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    with pytest.raises(ConfigError, match="'parser'"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_interval_too_low_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 1
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    with pytest.raises(ConfigError, match="ship_interval_seconds"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_batch_too_large_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 500
+retention_days = 90
+"""
+    with pytest.raises(ConfigError, match="max_lines_per_batch"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_retention_out_of_range_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 0
+"""
+    with pytest.raises(ConfigError, match="retention_days"):
+        load_config(write_config(toml))
+
+
+# ---------------------------------------------------------------------------
+# [garage] section
+# ---------------------------------------------------------------------------
+
+
+_VALID_GARAGE = """
+[garage]
+enabled = true
+container_name = "garaged"
+garage_binary = "/garage"
+docker_binary = "/usr/bin/docker"
+config_path = "/etc/garage/garage.toml"
+state_push_interval_seconds = 300
+"""
+
+
+def test_garage_section_parses(write_config: Callable[[str], Path]) -> None:
+    cfg = load_config(write_config(MINIMAL_VALID + _VALID_GARAGE))
+    assert cfg.garage is not None
+    assert cfg.garage.enabled is True
+    assert cfg.garage.container_name == "garaged"
+    assert cfg.garage.state_push_interval_seconds == 300.0
+
+
+def test_garage_section_absent_is_none(write_config: Callable[[str], Path]) -> None:
+    cfg = load_config(write_config(MINIMAL_VALID))
+    assert cfg.garage is None
+
+
+def test_garage_must_be_table(write_config: Callable[[str], Path]) -> None:
+    toml = 'garage = "oops"\n' + MINIMAL_VALID
+    with pytest.raises(ConfigError, match=r"\[garage\] must be a table"):
+        load_config(write_config(toml))
+
+
+def test_garage_empty_container_name(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + _VALID_GARAGE.replace(
+        'container_name = "garaged"', 'container_name = ""',
+    )
+    with pytest.raises(ConfigError, match="container_name.*must not be empty"):
+        load_config(write_config(toml))
+
+
+def test_garage_empty_binary(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + _VALID_GARAGE.replace(
+        'garage_binary = "/garage"', 'garage_binary = ""',
+    )
+    with pytest.raises(ConfigError, match="garage_binary.*must not be empty"):
+        load_config(write_config(toml))
+
+
+def test_garage_docker_binary_must_be_absolute(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + _VALID_GARAGE.replace(
+        'docker_binary = "/usr/bin/docker"', 'docker_binary = "docker"',
+    )
+    with pytest.raises(ConfigError, match="docker_binary.*absolute path"):
+        load_config(write_config(toml))
+
+
+def test_garage_interval_must_be_positive(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + _VALID_GARAGE.replace(
+        "state_push_interval_seconds = 300", "state_push_interval_seconds = 0",
+    )
+    with pytest.raises(ConfigError, match="state_push_interval_seconds.*positive"):
+        load_config(write_config(toml))
+
+
+# ---------------------------------------------------------------------------
+# log_groups — non-array + filter_contains type
+# ---------------------------------------------------------------------------
+
+
+def test_log_groups_must_be_array(write_config: Callable[[str], Path]) -> None:
+    toml = 'log_groups = "not an array"\n' + MINIMAL_VALID
+    with pytest.raises(ConfigError, match="log_groups.*must be an array"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_filter_contains_must_be_string(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 100
+retention_days = 30
+filter_contains = 42
+"""
+    with pytest.raises(ConfigError, match="filter_contains"):
+        load_config(write_config(toml))
+
+
+def test_log_groups_filter_contains_defaults_to_empty(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 100
+retention_days = 30
+"""
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups[0].filter_contains == ""
+
+
+def test_log_groups_ship_interval_boundary_5_accepted(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = MINIMAL_VALID + """
+[[log_groups]]
+name = "x"
+enabled = true
+source_type = "file"
+source_path = "/var/log/x.log"
+parser = "stormpulse"
+ship_interval_seconds = 5
+max_lines_per_batch = 200
+retention_days = 365
+"""
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups[0].ship_interval_seconds == 5.0
+    assert cfg.log_groups[0].max_lines_per_batch == 200
+    assert cfg.log_groups[0].retention_days == 365

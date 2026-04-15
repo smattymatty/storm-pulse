@@ -67,7 +67,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 | `garage` | `enabled` | Enable Garage S3 integration (optional, default: absent) |
 | `garage` | `container_name` | Docker container name for Garage (e.g. `garaged`) |
 | `garage` | `config_path` | Path to Garage config file |
-| `garage` | `state_push_interval_seconds` | How often to refresh Garage state (default: 300) |
+| `garage` | `state_push_interval_seconds` | How often to refresh Garage state (default: 30) |
 
 ## Documentation
 

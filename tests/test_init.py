@@ -17,7 +17,6 @@ from cryptography.x509.oid import NameOID
 from stormpulse.init import (
     InitConfig,
     InitError,
-    _SYSTEMD_UNIT_TEMPLATE,
     check_credentials,
     check_root,
     derive_dashboard_url,
@@ -33,6 +32,7 @@ from stormpulse.init import (
     prompt_env_file,
     prompt_project_dir,
     prompt_pulse_token,
+    render_systemd_unit,
     run_daemon_reload,
     run_init,
     run_system_setup,
@@ -114,11 +114,11 @@ services:
 
 
 class TestCheckRoot:
-    @patch("stormpulse.init.os.geteuid", return_value=0)
+    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
     def test_passes_as_root(self, _mock: MagicMock) -> None:
         check_root()  # should not raise
 
-    @patch("stormpulse.init.os.geteuid", return_value=1000)
+    @patch("stormpulse.init.checks.os.geteuid", return_value=1000)
     def test_raises_when_not_root(self, _mock: MagicMock) -> None:
         with pytest.raises(InitError, match="must be run as root"):
             check_root()
@@ -606,27 +606,30 @@ class TestWriteSystemdUnit:
     def test_correct_content(self, tmp_path: Path) -> None:
         path = tmp_path / "stormpulse.service"
         project = tmp_path / "project"
-        write_systemd_unit(path, project, force=True)
-        expected = _SYSTEMD_UNIT_TEMPLATE.format(project_dir=project)
-        assert path.read_text() == expected
+        content = render_systemd_unit(project)
+        write_systemd_unit(path, content, force=True)
+        assert path.read_text() == content
 
     def test_includes_project_dir_readwrite(self, tmp_path: Path) -> None:
         path = tmp_path / "stormpulse.service"
         project = tmp_path / "myproject"
-        write_systemd_unit(path, project, force=True)
-        content = path.read_text()
-        assert f"ReadWritePaths={project}" in content
+        content = render_systemd_unit(project)
+        write_systemd_unit(path, content, force=True)
+        written = path.read_text()
+        assert f"ReadWritePaths={project}" in written
 
     def test_permissions(self, tmp_path: Path) -> None:
         path = tmp_path / "stormpulse.service"
-        write_systemd_unit(path, tmp_path / "p", force=True)
+        content = render_systemd_unit(tmp_path / "p")
+        write_systemd_unit(path, content, force=True)
         assert stat.S_IMODE(path.stat().st_mode) == 0o644
 
     def test_refuses_overwrite(self, tmp_path: Path) -> None:
         path = tmp_path / "stormpulse.service"
         path.write_text("old")
+        content = render_systemd_unit(tmp_path / "p")
         with pytest.raises(InitError, match="already exists"):
-            write_systemd_unit(path, tmp_path / "p")
+            write_systemd_unit(path, content)
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +638,7 @@ class TestWriteSystemdUnit:
 
 
 class TestRunFindApply:
-    @patch("stormpulse.init.subprocess.Popen")
+    @patch("stormpulse.init.system.subprocess.Popen")
     def test_builds_find_with_prune_args(
         self, mock_popen: MagicMock, tmp_path: Path,
     ) -> None:
@@ -675,7 +678,7 @@ class TestRunFindApply:
         xargs_args = mock_popen.call_args_list[1][0][0]
         assert xargs_args == ["/usr/bin/xargs", "-0", "/usr/bin/chown", "root:stormpulse"]
 
-    @patch("stormpulse.init.subprocess.Popen")
+    @patch("stormpulse.init.system.subprocess.Popen")
     def test_returns_false_on_find_failure(
         self, mock_popen: MagicMock, tmp_path: Path,
     ) -> None:
@@ -699,7 +702,7 @@ class TestRunFindApply:
         )
         assert result is False
 
-    @patch("stormpulse.init.subprocess.Popen")
+    @patch("stormpulse.init.system.subprocess.Popen")
     def test_returns_false_on_missing_binary(
         self, mock_popen: MagicMock, tmp_path: Path,
     ) -> None:
@@ -721,8 +724,8 @@ class TestRunFindApply:
 
 
 class TestRunSystemSetup:
-    @patch("stormpulse.init.subprocess.run")
-    @patch("stormpulse.init.parse_volume_mounts", return_value=[])
+    @patch("stormpulse.init.system.subprocess.run")
+    @patch("stormpulse.init.system.parse_volume_mounts", return_value=[])
     def test_no_volumes_uses_simple_chown(
         self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
     ) -> None:
@@ -741,8 +744,8 @@ class TestRunSystemSetup:
         assert "-R" in chown_calls[0]
         assert "root:stormpulse" in chown_calls[0]
 
-    @patch("stormpulse.init._run_find_apply", return_value=True)
-    @patch("stormpulse.init.subprocess.run")
+    @patch("stormpulse.init.system._run_find_apply", return_value=True)
+    @patch("stormpulse.init.system.subprocess.run")
     def test_with_volumes_uses_find_prune(
         self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
     ) -> None:
@@ -778,8 +781,8 @@ class TestRunSystemSetup:
         ]
         assert len(project_chowns) == 0
 
-    @patch("stormpulse.init._run_find_apply", return_value=True)
-    @patch("stormpulse.init.subprocess.run")
+    @patch("stormpulse.init.system._run_find_apply", return_value=True)
+    @patch("stormpulse.init.system.subprocess.run")
     def test_volume_dirs_never_chowned(
         self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
     ) -> None:
@@ -805,8 +808,8 @@ class TestRunSystemSetup:
                 assert str(data_dir) not in args_str
                 assert str(logs_dir) not in args_str
 
-    @patch("stormpulse.init.subprocess.run")
-    @patch("stormpulse.init.parse_volume_mounts", return_value=None)
+    @patch("stormpulse.init.system.subprocess.run")
+    @patch("stormpulse.init.system.parse_volume_mounts", return_value=None)
     def test_parse_failure_skips_chown(
         self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
@@ -829,8 +832,8 @@ class TestRunSystemSetup:
         assert "WARNING" in captured.err
         assert "Could not parse" in captured.err
 
-    @patch("stormpulse.init.subprocess.run")
-    @patch("stormpulse.init.parse_volume_mounts", return_value=[])
+    @patch("stormpulse.init.system.subprocess.run")
+    @patch("stormpulse.init.system.parse_volume_mounts", return_value=[])
     def test_continues_on_failure(
         self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
     ) -> None:
@@ -844,8 +847,8 @@ class TestRunSystemSetup:
         # Should not raise
         run_system_setup(project, compose)
 
-    @patch("stormpulse.init._run_find_apply", return_value=False)
-    @patch("stormpulse.init.subprocess.run")
+    @patch("stormpulse.init.system._run_find_apply", return_value=False)
+    @patch("stormpulse.init.system.subprocess.run")
     def test_returns_early_on_chown_failure_with_volumes(
         self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
     ) -> None:
@@ -870,13 +873,13 @@ class TestRunSystemSetup:
 
 
 class TestRunDaemonReload:
-    @patch("stormpulse.init.subprocess.run")
+    @patch("stormpulse.init.system.subprocess.run")
     def test_calls_systemctl(self, mock_run: MagicMock) -> None:
         run_daemon_reload()
         mock_run.assert_called_once()
         assert "daemon-reload" in mock_run.call_args[0][0]
 
-    @patch("stormpulse.init.subprocess.run")
+    @patch("stormpulse.init.system.subprocess.run")
     def test_raises_on_failure(self, mock_run: MagicMock) -> None:
         import subprocess as sp
 
@@ -891,21 +894,22 @@ class TestRunDaemonReload:
 
 
 class TestRunInit:
-    @patch("stormpulse.init.os.geteuid", return_value=1000)
+    @patch("stormpulse.init.checks.os.geteuid", return_value=1000)
     def test_aborts_not_root(self, _mock: MagicMock, tmp_path: Path) -> None:
         with pytest.raises(InitError, match="must be run as root"):
             run_init(tmp_path)
 
-    @patch("stormpulse.init.os.geteuid", return_value=0)
+    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
     def test_aborts_missing_creds(self, _mock: MagicMock, tmp_path: Path) -> None:
         with pytest.raises(InitError, match="not found"):
             run_init(tmp_path / "nonexistent")
 
-    @patch("stormpulse.init.run_daemon_reload")
-    @patch("stormpulse.init.run_system_setup")
-    @patch("stormpulse.init.write_systemd_unit")
-    @patch("stormpulse.init.write_config_file")
-    @patch("stormpulse.init.os.geteuid", return_value=0)
+    @patch("stormpulse.logging.init.detect_docker_containers", return_value=[])
+    @patch("stormpulse.init.orchestrator.run_daemon_reload")
+    @patch("stormpulse.init.orchestrator.run_system_setup")
+    @patch("stormpulse.init.orchestrator.write_systemd_unit")
+    @patch("stormpulse.init.orchestrator.write_config_file")
+    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
     @patch("builtins.input")
     def test_happy_path(
         self,
@@ -915,6 +919,7 @@ class TestRunInit:
         mock_write_unit: MagicMock,
         mock_setup: MagicMock,
         mock_reload: MagicMock,
+        _mock_containers: MagicMock,
         tmp_path: Path,
     ) -> None:
         creds = _make_creds_dir(tmp_path, cn="happy-agent")

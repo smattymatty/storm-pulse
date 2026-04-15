@@ -19,6 +19,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     from stormpulse.agent import Agent, create_ssl_context
     from stormpulse.auth import AuthError, NonceStore, load_hmac_secret
     from stormpulse.config import ConfigError, load_config
+    from stormpulse.logging import LogPositionStore, PulseLogger
     from stormpulse.metrics import prime_cpu_percent
 
     config_path = Path(args.config)
@@ -36,6 +37,12 @@ def cmd_run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     nonce_store = NonceStore(config.storage.db_path)
+    log_position_store: LogPositionStore | None = None
+    pulse_logger: PulseLogger | None = None
+    if config.log_groups:
+        log_position_store = LogPositionStore(config.storage.db_path)
+        pulse_log_path = Path("/var/log/stormpulse/agent.log")
+        pulse_logger = PulseLogger(pulse_log_path, config.agent.id)
     prime_cpu_percent()
 
     try:
@@ -55,7 +62,11 @@ def cmd_run(args: argparse.Namespace) -> None:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, shutdown.set)
 
-        agent = Agent(config, secret, nonce_store, ssl_ctx, shutdown)
+        agent = Agent(
+            config, secret, nonce_store, ssl_ctx, shutdown,
+            log_position_store=log_position_store,
+            pulse_logger=pulse_logger,
+        )
         await agent.run()
 
     logger.info(
@@ -67,4 +78,6 @@ def cmd_run(args: argparse.Namespace) -> None:
         logger.info("Received interrupt, shutting down")
     finally:
         nonce_store.close()
+        if log_position_store is not None:
+            log_position_store.close()
         logger.info("Agent stopped")

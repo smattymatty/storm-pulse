@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
+import time
 import uuid
 from collections.abc import Generator
 from datetime import datetime, timezone
@@ -21,6 +22,7 @@ from stormpulse.config import (
     CommandDef,
     Config,
     DashboardConfig,
+    GarageConfig,
     MetricsConfig,
     ParamDef,
     ProjectConfig,
@@ -602,6 +604,284 @@ async def test_dispatch_unexpected_type(agent: Agent) -> None:
 # ---------------------------------------------------------------------------
 # Dashboard acknowledgements (silently ignored)
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# garage_refresh command
+# ---------------------------------------------------------------------------
+
+
+def _garage_cfg(tmp_path: Path, enabled: bool = True) -> GarageConfig:
+    return GarageConfig(
+        enabled=enabled,
+        container_name="garaged",
+        garage_binary="/garage",
+        docker_binary="/usr/bin/docker",
+        config_path=tmp_path / "garage.toml",
+        state_push_interval_seconds=0.05,
+    )
+
+
+def _config_with_garage(base: Config, garage: GarageConfig) -> Config:
+    # Config is frozen; rebuild with garage set.
+    from dataclasses import replace
+    return replace(base, garage=garage)
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.collect_metrics")
+@patch("stormpulse.agent.collect_garage_state")
+async def test_garage_refresh_command_success(
+    mock_collect: MagicMock, mock_metrics: MagicMock,
+    config: Config, nonce_store: NonceStore, shutdown: asyncio.Event, tmp_path: Path,
+) -> None:
+    from stormpulse.garage.state import GarageState
+    fake_state = GarageState(
+        node_id="n1", hostname="h", zone="z", capacity_gb=1.0, data_avail_gb=1.0,
+        version="v", healthy=True, db_engine="x", object_count=0, block_count=0,
+        buckets=[], keys=[], peers=[],
+    )
+    mock_collect.return_value = fake_state
+    mock_metrics.return_value = MetricsPayload(
+        cpu_percent=0, memory_percent=0, memory_used_mb=0, memory_total_mb=0,
+        disk_percent=0, disk_used_gb=0, disk_total_gb=0, load_avg_1m=0,
+        load_avg_5m=0, uptime_seconds=0, containers=[],
+    )
+    cfg = _config_with_garage(config, _garage_cfg(tmp_path))
+    ssl_ctx = MagicMock(spec=ssl.SSLContext)
+    ag = Agent(cfg, SECRET, nonce_store, ssl_ctx, shutdown)
+    ws = AsyncMock()
+    raw = _make_signed_request_json(command="garage_refresh")
+
+    await ag._dispatch(ws, raw)
+
+    # First send = command.result, second send = immediate metrics push
+    assert ws.send.call_count == 2
+    result_env = json.loads(ws.send.call_args_list[0][0][0])
+    metrics_env = json.loads(ws.send.call_args_list[1][0][0])
+    assert result_env["type"] == "command.result"
+    assert result_env["payload"]["success"] is True
+    assert metrics_env["type"] == "metrics.push"
+    assert ag._garage_state is fake_state
+
+
+@pytest.mark.asyncio
+async def test_garage_refresh_when_disabled_returns_failure(
+    config: Config, nonce_store: NonceStore, shutdown: asyncio.Event, tmp_path: Path,
+) -> None:
+    cfg = _config_with_garage(config, _garage_cfg(tmp_path, enabled=False))
+    ssl_ctx = MagicMock(spec=ssl.SSLContext)
+    ag = Agent(cfg, SECRET, nonce_store, ssl_ctx, shutdown)
+
+    result = await ag._handle_garage_refresh("req-1")
+    assert result.success is False
+    assert result.failure_reason == "not_configured"
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.collect_garage_state", return_value=None)
+async def test_garage_refresh_collection_failure(
+    _mock: MagicMock,
+    config: Config, nonce_store: NonceStore, shutdown: asyncio.Event, tmp_path: Path,
+) -> None:
+    cfg = _config_with_garage(config, _garage_cfg(tmp_path))
+    ag = Agent(cfg, SECRET, nonce_store, MagicMock(spec=ssl.SSLContext), shutdown)
+    result = await ag._handle_garage_refresh("req-1")
+    assert result.success is False
+    assert result.failure_reason == "collection_failed"
+
+
+# ---------------------------------------------------------------------------
+# _garage_loop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_garage_loop_noop_when_disabled(
+    config: Config, nonce_store: NonceStore, shutdown: asyncio.Event, tmp_path: Path,
+) -> None:
+    cfg = _config_with_garage(config, _garage_cfg(tmp_path, enabled=False))
+    ag = Agent(cfg, SECRET, nonce_store, MagicMock(spec=ssl.SSLContext), shutdown)
+    ws = AsyncMock()
+    # Should return immediately without touching collect_garage_state
+    with patch("stormpulse.agent.collect_garage_state") as mock_collect:
+        await ag._garage_loop(ws)
+        mock_collect.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.collect_garage_state")
+async def test_garage_loop_updates_state(
+    mock_collect: MagicMock,
+    config: Config, nonce_store: NonceStore, shutdown: asyncio.Event, tmp_path: Path,
+) -> None:
+    from stormpulse.garage.state import GarageState
+    fake = GarageState(
+        node_id="n1", hostname="h", zone="z", capacity_gb=1.0, data_avail_gb=1.0,
+        version="v", healthy=True, db_engine="x", object_count=0, block_count=0,
+        buckets=[], keys=[], peers=[],
+    )
+    mock_collect.return_value = fake
+    cfg = _config_with_garage(config, _garage_cfg(tmp_path))
+    ag = Agent(cfg, SECRET, nonce_store, MagicMock(spec=ssl.SSLContext), shutdown)
+    ws = AsyncMock()
+
+    async def stop_after_delay() -> None:
+        await asyncio.sleep(0.12)
+        shutdown.set()
+
+    await asyncio.gather(ag._garage_loop(ws), stop_after_delay())
+    assert ag._garage_state is fake
+    assert mock_collect.call_count >= 1
+
+
+# ---------------------------------------------------------------------------
+# log.batch.ack handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_missing_batch_id(agent: Agent) -> None:
+    envelope = Envelope(
+        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
+        ts=datetime.now(timezone.utc), agent_id="test-01",
+        payload={},  # no batch_id
+    )
+    # Should not raise
+    await agent._handle_log_batch_ack(envelope)
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_unknown_batch_is_noop(agent: Agent) -> None:
+    envelope = Envelope(
+        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
+        ts=datetime.now(timezone.utc), agent_id="test-01",
+        payload={"batch_id": "never-sent"},
+    )
+    await agent._handle_log_batch_ack(envelope)  # should silently ignore
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_advances_position(agent: Agent) -> None:
+    # Inject a fake pending batch + shipper
+    fake_shipper = MagicMock()
+    fake_shipper.tailer.confirm_shipped = MagicMock()
+    agent._shippers["grp"] = fake_shipper
+    agent._pending_batches["bid-1"] = ("grp", 4242, time.monotonic())
+
+    envelope = Envelope(
+        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
+        ts=datetime.now(timezone.utc), agent_id="test-01",
+        payload={"batch_id": "bid-1"},
+    )
+    await agent._handle_log_batch_ack(envelope)
+    fake_shipper.tailer.confirm_shipped.assert_called_once_with(4242)
+    assert "bid-1" not in agent._pending_batches
+
+
+# ---------------------------------------------------------------------------
+# Sequence — continue-through-failure + invalid command
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.execute_command")
+async def test_dispatch_sequence_continues_past_failure(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    mock_exec.return_value = _make_result(success=False)
+    ws = AsyncMock()
+    raw = _make_signed_sequence_json(
+        commands=["git_pull", "docker_logs"],
+        stop_on_failure=False,
+    )
+    await agent._dispatch(ws, raw)
+    # Both commands executed despite first failing
+    assert mock_exec.call_count == 2
+    assert ws.send.call_count == 2
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.execute_command")
+async def test_dispatch_sequence_invalid_command_aborts(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    ws = AsyncMock()
+    raw = _make_signed_sequence_json(commands=["this_command_does_not_exist"])
+    await agent._dispatch(ws, raw)
+    mock_exec.assert_not_called()
+    ws.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# PulseLogger integration on command result
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.execute_command")
+async def test_command_result_logged_to_pulse_logger(
+    mock_exec: MagicMock,
+    config: Config, nonce_store: NonceStore, shutdown: asyncio.Event,
+) -> None:
+    mock_exec.return_value = _make_result()
+    pulse_logger = MagicMock()
+    ag = Agent(
+        config, SECRET, nonce_store, MagicMock(spec=ssl.SSLContext), shutdown,
+        pulse_logger=pulse_logger,
+    )
+    ws = AsyncMock()
+    raw = _make_signed_request_json()
+    await ag._dispatch(ws, raw)
+    pulse_logger.log_command_result.assert_called_once()
+    kwargs = pulse_logger.log_command_result.call_args.kwargs
+    assert kwargs["command"] == "git_pull"
+    assert kwargs["success"] is True
+
+
+# ---------------------------------------------------------------------------
+# Reconnect loop — ConnectionClosed and generic Exception branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_reconnects_on_connection_closed(
+    config: Config, nonce_store: NonceStore,
+) -> None:
+    shutdown = asyncio.Event()
+    ag = Agent(config, SECRET, nonce_store, MagicMock(spec=ssl.SSLContext), shutdown)
+    attempts = 0
+
+    def mock_connect(*a: object, **kw: object) -> MagicMock:
+        nonlocal attempts
+        attempts += 1
+        if attempts >= 2:
+            shutdown.set()
+        raise ConnectionClosed(None, None)
+
+    with patch("stormpulse.agent.connect", side_effect=mock_connect):
+        await ag.run()
+    assert attempts >= 2
+
+
+@pytest.mark.asyncio
+async def test_run_handles_unexpected_exception(
+    config: Config, nonce_store: NonceStore,
+) -> None:
+    shutdown = asyncio.Event()
+    ag = Agent(config, SECRET, nonce_store, MagicMock(spec=ssl.SSLContext), shutdown)
+    attempts = 0
+
+    def mock_connect(*a: object, **kw: object) -> MagicMock:
+        nonlocal attempts
+        attempts += 1
+        if attempts >= 1:
+            shutdown.set()
+        raise RuntimeError("totally unexpected")
+
+    with patch("stormpulse.agent.connect", side_effect=mock_connect):
+        await ag.run()
+    assert attempts >= 1
 
 
 @pytest.mark.asyncio

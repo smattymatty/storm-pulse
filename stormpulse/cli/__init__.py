@@ -80,6 +80,10 @@ def main() -> None:
     from stormpulse.cli.garage import add_garage_subparser
     add_garage_subparser(subparsers)
 
+    # --- logging subcommand group ---
+    from stormpulse.cli.logging import add_logging_subparser
+    add_logging_subparser(subparsers)
+
     args = parser.parse_args()
 
     log_level = os.environ.get("STORMPULSE_LOG_LEVEL", "INFO").upper()
@@ -110,6 +114,15 @@ def main() -> None:
             print("Subcommands:", file=sys.stderr)
             print("  init     Detect and configure Garage integration", file=sys.stderr)
             sys.exit(1)
+    elif args.command == "logging":
+        if getattr(args, "logging_command", None) == "init":
+            from stormpulse.cli.logging import cmd_logging_init
+            cmd_logging_init(args)
+        else:
+            print("Usage: stormpulse logging <subcommand>\n", file=sys.stderr)
+            print("Subcommands:", file=sys.stderr)
+            print("  init     Detect containers and configure log shipping", file=sys.stderr)
+            sys.exit(1)
     elif args.command is None:
         # Detect old syntax: stormpulse /path/to/config
         if len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
@@ -125,6 +138,7 @@ def main() -> None:
             print("  init     Generate config and systemd unit", file=sys.stderr)
             print("  status   Show agent status", file=sys.stderr)
             print("  garage   Garage S3 node management", file=sys.stderr)
+            print("  logging  Log shipping configuration", file=sys.stderr)
             print(
                 "\nRun 'stormpulse <command> --help' for details.",
                 file=sys.stderr,
