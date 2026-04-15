@@ -81,7 +81,7 @@ def main() -> None:
     add_garage_subparser(subparsers)
 
     # --- logging subcommand group ---
-    from stormpulse.cli.logging import add_logging_subparser
+    from stormpulse.cli.log import add_logging_subparser
     add_logging_subparser(subparsers)
 
     args = parser.parse_args()
@@ -116,7 +116,7 @@ def main() -> None:
             sys.exit(1)
     elif args.command == "logging":
         if getattr(args, "logging_command", None) == "init":
-            from stormpulse.cli.logging import cmd_logging_init
+            from stormpulse.cli.log import cmd_logging_init
             cmd_logging_init(args)
         else:
             print("Usage: stormpulse logging <subcommand>\n", file=sys.stderr)
