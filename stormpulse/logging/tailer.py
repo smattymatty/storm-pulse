@@ -113,6 +113,36 @@ _MAX_LINE_BYTES = 4096
 _DOCKER_TIMEOUT_SECONDS = 30.0
 
 
+def _advance_nanos(ts: str) -> str:
+    """Return the next representable timestamp strictly after ``ts``.
+
+    ``docker logs --since`` is inclusive of the boundary value, so the
+    stored cursor must be **one tick past** the last line we've shipped
+    or Docker will return the same line again next cycle.
+
+    ``ts`` is RFC3339Nano, e.g. ``"2026-04-16T15:37:00.600193533Z"``;
+    the fractional part may have up to nanosecond precision. We treat
+    the fractional digits as an integer, add one, and zero-pad back to
+    the original width. If all digits are 9 (overflow into seconds) we
+    return the input unchanged — next cycle will dedup at the dashboard
+    rather than risk an invalid second value.
+    """
+    if not ts.endswith("Z"):
+        return ts
+    body = ts[:-1]
+    if "." not in body:
+        return f"{body}.000000001Z"
+    base, frac = body.rsplit(".", 1)
+    width = len(frac)
+    if not frac.isdigit():
+        return ts
+    incremented = int(frac) + 1
+    new_frac = str(incremented).zfill(width)
+    if len(new_frac) > width:
+        return ts  # overflow — keep existing cursor, rely on dashboard dedup
+    return f"{base}.{new_frac}Z"
+
+
 class DockerTailer:
     """Tail a Docker container's log output via ``docker logs --since``.
 
@@ -193,7 +223,7 @@ class DockerTailer:
         for line in reversed(lines):
             m = _DOCKER_TS_PREFIX_RE.match(line)
             if m is not None:
-                to_ts = m.group(1)
+                to_ts = _advance_nanos(m.group(1))
                 break
 
         return (lines, from_ts, to_ts)
