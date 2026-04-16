@@ -67,6 +67,19 @@ class TestParseGarageS3:
         assert parse_garage_s3("") is None
         assert parse_garage_s3("WARN not the right module") is None
 
+    def test_docker_prefixed_line(self) -> None:
+        # Docker source prepends an extra timestamp.
+        line = (
+            "2026-04-15T13:23:51.766230288Z "
+            "2026-04-15T13:23:51.766230Z  INFO garage_api_common::generic_server: "
+            "1.2.3.4 (via [::1]:1234) (key GKabc123) GET /bucket/object"
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["client_ip"] == "1.2.3.4"
+        assert result["bucket"] == "bucket"
+        assert result["object_key"] == "object"
+
     def test_injection_attempt_rejected(self) -> None:
         # Lines with shell metacharacters but wrong format are dropped as
         # normal — they don't match the fullmatch regex.

@@ -45,6 +45,11 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
         return None
 
     stripped = line.rstrip("\r\n")
+    # Docker source prepends its own timestamp. Strip it only when the
+    # remainder still begins with a timestamp (the original Garage one).
+    docker_prefix = _DOCKER_TS_RE.match(stripped)
+    if docker_prefix is not None and _DOCKER_TS_RE.match(docker_prefix.group(2)):
+        stripped = docker_prefix.group(2)
     truncated_line, truncated = _truncate(stripped)
     m = _GARAGE_S3_RE.fullmatch(truncated_line)
     if m is None:
