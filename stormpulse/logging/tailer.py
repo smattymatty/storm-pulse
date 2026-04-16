@@ -139,6 +139,14 @@ class DockerTailer:
         stored = self._store.get_docker_ts(self._group.name)
         if stored is None:
             from_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            # Persist the seed immediately so the next interval actually
+            # queries a back-window. Without this, every call would re-seed
+            # to "now" and nothing would ever be shipped until the first
+            # confirmed batch — and the first batch can't happen if the
+            # window is empty.
+            self._store.set_docker_ts(
+                self._group.name, self._group.container_name, from_ts,
+            )
         else:
             from_ts = stored
 
