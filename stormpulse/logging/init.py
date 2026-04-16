@@ -20,12 +20,35 @@ enabled = true
 source_type = "docker"
 container_name = "{container_name}"
 docker_binary = "{docker_binary}"
-filter_contains = ""
-parser = "docker_raw"
+filter_contains = "{filter_contains}"
+parser = "{parser}"
 ship_interval_seconds = {ship_interval_seconds}
 max_lines_per_batch = 200
 retention_days = 90
 """
+
+
+# Map container-name patterns to (parser, filter_contains).
+# First match wins. Patterns match the container name exactly or as a
+# whole word inside it (so "my-caddy-1" still matches "caddy").
+_CONTAINER_PARSER_HINTS: list[tuple[str, str, str]] = [
+    ("caddy",   "caddy_json", ""),
+    ("garaged", "garage_s3",  "garage_api_common::generic_server"),
+    ("garage",  "garage_s3",  "garage_api_common::generic_server"),
+]
+
+
+def _pick_parser(container_name: str) -> tuple[str, str]:
+    """Return (parser, filter_contains) for a container name.
+
+    Falls back to the generic ``docker_raw`` parser with no filter when
+    no hint matches.
+    """
+    name_lower = container_name.lower()
+    for needle, parser, filter_contains in _CONTAINER_PARSER_HINTS:
+        if needle in name_lower:
+            return (parser, filter_contains)
+    return ("docker_raw", "")
 
 
 def detect_docker_containers(docker_binary: str = _DEFAULT_DOCKER_BINARY) -> list[str]:
@@ -93,15 +116,23 @@ def prompt_logging_setup(
         except ValueError:
             print("  Must be a positive integer", file=sys.stderr)
 
-    return [
-        {
+    groups: list[dict[str, str | int]] = []
+    for name in enabled:
+        parser, filter_contains = _pick_parser(name)
+        if parser != "docker_raw":
+            print(
+                f"  {name}: detected as {parser} (filter={filter_contains!r})",
+                file=sys.stderr,
+            )
+        groups.append({
             "name": name,
             "container_name": name,
             "docker_binary": docker_binary_input,
             "ship_interval_seconds": interval,
-        }
-        for name in enabled
-    ]
+            "parser": parser,
+            "filter_contains": filter_contains,
+        })
+    return groups
 
 
 def append_log_groups(
@@ -120,6 +151,8 @@ def append_log_groups(
             container_name=g["container_name"],
             docker_binary=g["docker_binary"],
             ship_interval_seconds=g["ship_interval_seconds"],
+            parser=g.get("parser", "docker_raw"),
+            filter_contains=g.get("filter_contains", ""),
         )
         for g in groups
     )

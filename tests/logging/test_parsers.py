@@ -201,6 +201,13 @@ class TestParseDockerRaw:
         assert result is not None
         assert result["message"] == "msg"
 
+    def test_strips_ansi_escapes(self) -> None:
+        line = "2026-04-15T13:23:51.000000Z \x1b[2m2026-04-15T13:23:51.311360Z\x1b[0m \x1b[32m INFO\x1b[0m \x1b[2mgarage_net::netapp\x1b[0m: Connection closed"
+        result = parse_docker_raw(line)
+        assert result is not None
+        assert "\x1b" not in result["message"]
+        assert result["message"] == "2026-04-15T13:23:51.311360Z  INFO garage_net::netapp: Connection closed"
+
     def test_oversize_truncated(self) -> None:
         long_msg = "x" * (MAX_LINE_BYTES + 500)
         line = f"2026-04-15T13:23:51.000000Z {long_msg}"

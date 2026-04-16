@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, cast
 
 MAX_LINE_BYTES = 4096
@@ -114,47 +115,93 @@ def parse_stormpulse(line: str) -> dict[str, Any] | None:
 
 
 _CADDY_REQUIRED = {"ts", "request", "status"}
+_DOCKER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(.*)$")
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+_UA_BROWSER_RE = re.compile(r"(Firefox|Chrome|Safari|Edge|Opera|curl|wget|Go-http-client|python-requests)/[\d.]+")
+
+
+def _summarize_user_agent(ua: str) -> str:
+    """Pick a short tag from a User-Agent header (e.g. 'Firefox/134.0')."""
+    if not ua:
+        return ""
+    m = _UA_BROWSER_RE.search(ua)
+    return m.group(0) if m else ua[:40]
 
 
 def parse_caddy_json(line: str) -> dict[str, Any] | None:
     """Parse a Caddy JSON access log line.
 
-    Stub: returns ``None`` for now — the ``network`` group is disabled
-    by default. This function exists so config validation accepts the
-    ``caddy_json`` parser value and the shipper can route to it.
+    Tolerates an optional Docker ``--timestamps`` prefix so the same
+    parser works for both file-source and docker-source ``caddy`` log
+    groups. Builds a human-readable ``message`` summarising the request
+    and lifts ``level`` from the JSON envelope.
     """
     stripped = line.rstrip("\r\n").strip()
     if not stripped:
         return None
+
+    docker_prefix = _DOCKER_TS_RE.match(stripped)
+    if docker_prefix is not None:
+        stripped = docker_prefix.group(2)
+
     truncated_line, truncated = _truncate(stripped)
     try:
-        obj = json.loads(truncated_line)
+        parsed = json.loads(truncated_line)
     except (json.JSONDecodeError, ValueError):
         return None
-    if not isinstance(obj, dict):
+    if not isinstance(parsed, dict):
         return None
+    obj: dict[str, Any] = cast(dict[str, Any], parsed)
 
     missing = _CADDY_REQUIRED - obj.keys()
     if missing:
         return None
 
-    request: dict[str, Any] = obj.get("request", {})
-    if not isinstance(request, dict):
+    request_raw = obj.get("request", {})
+    if not isinstance(request_raw, dict):
         return None
+    request: dict[str, Any] = cast(dict[str, Any], request_raw)
+
+    raw_ts = obj.get("ts")
+    if isinstance(raw_ts, (int, float)):
+        ts_iso = datetime.fromtimestamp(float(raw_ts), tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+        )
+    else:
+        ts_iso = str(raw_ts)
+
+    method = request.get("method", "") or ""
+    uri = request.get("uri", "") or ""
+    host = request.get("host", "") or ""
+    client_ip = request.get("remote_ip", "") or request.get("client_ip", "") or ""
+    status = obj.get("status", 0)
+
+    headers_raw = request.get("headers") or {}
+    headers: dict[str, Any] = cast(dict[str, Any], headers_raw) if isinstance(headers_raw, dict) else {}
+    ua_list = headers.get("User-Agent") or []
+    ua = str(ua_list[0]) if isinstance(ua_list, list) and ua_list else ""
+    ua_brief = _summarize_user_agent(ua)
+
+    message = f"{method} {host}{uri} -> {status}"
+    if client_ip:
+        message += f" from {client_ip}"
+    if ua_brief:
+        message += f" ({ua_brief})"
 
     return {
-        "ts": obj["ts"],
-        "client_ip": request.get("remote_ip", ""),
-        "method": request.get("method", ""),
-        "path": request.get("uri", ""),
-        "status": obj["status"],
+        "ts": ts_iso,
+        "level": obj.get("level", "info"),
+        "message": message,
+        "client_ip": client_ip,
+        "method": method,
+        "host": host,
+        "path": uri,
+        "status": status,
+        "user_agent": ua,
         "duration_ms": int(float(obj.get("duration", 0.0)) * 1000),
         "bytes_sent": obj.get("size", 0),
         "truncated": truncated,
     }
-
-
-_DOCKER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(.*)$")
 
 
 def parse_docker_raw(line: str) -> dict[str, Any] | None:
@@ -162,7 +209,9 @@ def parse_docker_raw(line: str) -> dict[str, Any] | None:
 
     Docker prefixes each line with an RFC3339Nano timestamp followed by
     whitespace and the container's original log output. Returns ``None``
-    when the leading timestamp is missing.
+    when the leading timestamp is missing. ANSI escape sequences in the
+    message body are stripped — many containers emit terminal colors
+    that are unreadable in a web UI.
     """
     stripped = line.rstrip("\r\n")
     if not stripped:
@@ -173,7 +222,7 @@ def parse_docker_raw(line: str) -> dict[str, Any] | None:
         return None
     return {
         "ts": m.group(1),
-        "message": m.group(2),
+        "message": _ANSI_ESCAPE_RE.sub("", m.group(2)),
         "truncated": truncated,
     }
 
