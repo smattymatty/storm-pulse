@@ -37,18 +37,21 @@ stormpulse init [--creds-dir DIR] [--force]
 stormpulse run [CONFIG]
 stormpulse status [CONFIG]
 stormpulse garage init [--config PATH] [--garage-config PATH] [--force]
+stormpulse logging init [--config PATH]
 stormpulse --version
 ```
 
 **enroll** -- One-time enrollment. Generates an EC P-256 keypair, sends a CSR to the dashboard, writes the signed cert + CA cert + HMAC key to `/etc/stormpulse/`. The private key never leaves the machine.
 
-**init** -- Interactive setup wizard. Generates config, creates systemd service, sets permissions. Run after enrollment. Auto-detects Garage installations and offers to enable integration.
+**init** -- Interactive setup wizard. Generates config, creates systemd service, sets permissions. Run after enrollment. Auto-detects Garage installations and running Docker containers and offers to enable integration / log shipping.
 
 **run** -- Starts the agent. Connects to the dashboard, sends heartbeats and metrics, executes commands. Reconnects automatically with exponential backoff.
 
 **status** -- Local inspection. Shows version, agent ID, config path, dashboard URL, certificate expiry, nonce DB entry count, and whether the agent process is running. No network required.
 
 **garage init** -- Detects a Garage S3 node and appends a `[garage]` section to an existing `stormpulse.toml`. Auto-detects container name from docker-compose.yml. Use `--force` to overwrite an existing `[garage]` section.
+
+**logging init** -- Detects running Docker containers and appends `[[log_groups]]` blocks for each, using `source_type = "docker"` and the `docker_raw` parser. Skips containers already present in the config. See [Log Shipping](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Logging) for details.
 
 ## Configuration
 
@@ -73,6 +76,8 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 
 - [Setup Guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Setup-Guide) -- Full install, enrollment, systemd, permissions
 - [Customize Commands](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Customize--Commands) -- How to disable existing commands, or whitelist new commands
+- [Log Shipping](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Logging) -- Tailing container and file logs to the dashboard
+- [Garage Integration](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Garage-Integration) -- Garage S3 node management
 - [Protocol Specification](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Protocol-Specification) -- Message formats, envelope structure, versioning
 - [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) -- Threat model, five security layers
 
@@ -82,7 +87,7 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 git clone <repo-url> && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 481 tests
+pytest          # 632 tests
 mypy .          # strict
 ```
 

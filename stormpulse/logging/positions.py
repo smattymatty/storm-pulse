@@ -10,6 +10,7 @@ received is persisted instead.
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -18,8 +19,11 @@ class LogPositionStore:
     """Persist position state per log group in SQLite."""
 
     def __init__(self, db_path: Path) -> None:
-        self._conn = sqlite3.connect(str(db_path), timeout=5.0)
+        self._conn = sqlite3.connect(
+            str(db_path), timeout=5.0, check_same_thread=False,
+        )
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._lock = threading.Lock()
         self._ensure_table()
 
     def _ensure_table(self) -> None:
@@ -48,17 +52,18 @@ class LogPositionStore:
 
     def get(self, group: str) -> tuple[int, int | None]:
         """Return (position, inode) for a file group. (0, None) if unseen."""
-        row = self._conn.execute(
-            "SELECT position, inode FROM log_positions WHERE group_name = ?",
-            (group,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT position, inode FROM log_positions WHERE group_name = ?",
+                (group,),
+            ).fetchone()
         if row is None:
             return (0, None)
         return (int(row[0]), int(row[1]) if row[1] is not None else None)
 
     def set(self, group: str, file_path: str, position: int, inode: int) -> None:
         """Upsert the stored position and inode for a file group."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO log_positions "
                 "  (group_name, source_type, file_path, position, inode, updated_at) "
@@ -74,17 +79,18 @@ class LogPositionStore:
 
     def get_docker_ts(self, group: str) -> str | None:
         """Return last_ts for a docker group, or None if unseen."""
-        row = self._conn.execute(
-            "SELECT last_ts FROM log_positions WHERE group_name = ?",
-            (group,),
-        ).fetchone()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT last_ts FROM log_positions WHERE group_name = ?",
+                (group,),
+            ).fetchone()
         if row is None or row[0] is None:
             return None
         return str(row[0])
 
     def set_docker_ts(self, group: str, container_name: str, last_ts: str) -> None:
         """Upsert last_ts for a docker group."""
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO log_positions "
                 "  (group_name, source_type, file_path, last_ts, updated_at) "
@@ -99,4 +105,5 @@ class LogPositionStore:
 
     def close(self) -> None:
         """Close the database connection."""
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
