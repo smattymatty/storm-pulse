@@ -67,6 +67,22 @@ class TestParseGarageS3:
         assert parse_garage_s3("") is None
         assert parse_garage_s3("WARN not the right module") is None
 
+    def test_docker_prefixed_with_ansi_codes(self) -> None:
+        # Real-world line from a docker-shipped Garage container with
+        # the default ANSI-coloured logger output.
+        line = (
+            "2026-04-15T13:23:51.766230288Z "
+            "\x1b[2m2026-04-15T13:23:51.766230Z\x1b[0m "
+            "\x1b[32m INFO\x1b[0m "
+            "\x1b[2mgarage_api_common::generic_server\x1b[0m\x1b[2m:\x1b[0m "
+            "1.2.3.4 (via [::1]:1234) (key GKabc123) GET /bucket/object"
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["client_ip"] == "1.2.3.4"
+        assert result["bucket"] == "bucket"
+        assert result["object_key"] == "object"
+
     def test_docker_prefixed_line(self) -> None:
         # Docker source prepends an extra timestamp.
         line = (

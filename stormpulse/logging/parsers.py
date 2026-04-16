@@ -44,7 +44,7 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
     if "garage_api_admin" in line:
         return None
 
-    stripped = line.rstrip("\r\n")
+    stripped = _ANSI_ESCAPE_RE.sub("", line.rstrip("\r\n"))
     # Docker source prepends its own timestamp. Strip it only when the
     # remainder still begins with a timestamp (the original Garage one).
     docker_prefix = _DOCKER_TS_RE.match(stripped)
