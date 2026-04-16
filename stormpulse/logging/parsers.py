@@ -66,12 +66,22 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
         bucket = parts[0]
         object_key = parts[1] if len(parts) > 1 else ""
 
+    method = m.group("method")
+    if object_key:
+        message = f"{method} {bucket}/{object_key}"
+    elif bucket:
+        message = f"{method} {bucket}"
+    else:
+        message = f"{method} {path}"
+
     return {
         "ts": m.group("ts"),
+        "level": "info",
+        "message": message,
         "client_ip": m.group("ip"),
         "proxy": m.group("proxy"),
         "key_id": m.group("key_id"),
-        "method": m.group("method"),
+        "method": method,
         "path": path,
         "bucket": bucket,
         "object_key": object_key,
