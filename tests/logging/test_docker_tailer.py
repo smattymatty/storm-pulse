@@ -126,8 +126,8 @@ def test_to_ts_is_one_tick_past_last_line(tmp_path: Path) -> None:
         lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
     assert len(lines) == 3
     assert from_ts == "2026-04-15T13:00:00.000000Z"
-    # Last line was ...53.100000000Z; cursor advances one nanosecond past it.
-    assert to_ts == "2026-04-15T13:23:53.100000001Z"
+    # Last line was ...53.100000000Z; cursor advances one microsecond past it.
+    assert to_ts == "2026-04-15T13:23:53.100001Z"
     store.close()
 
 
@@ -161,7 +161,7 @@ def test_max_lines_cap(tmp_path: Path) -> None:
     tailer = DockerTailer(group, store)
 
     stdout = "".join(
-        f"2026-04-15T13:23:{i:02d}.000000Z line {i}\n"
+        f"2026-04-15T13:00:00.{i:06d}Z line {i}\n"
         for i in range(MAX_LINES_PER_INTERVAL + 50)
     )
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
@@ -212,8 +212,8 @@ def test_cursor_does_not_stall_on_boundary_line(tmp_path: Path) -> None:
     # Now the stored cursor must be strictly past the line we shipped.
     stored = store.get_docker_ts("web")
     assert stored is not None
-    assert stored > "2026-04-16T15:37:00.600193533Z"
-    assert stored == "2026-04-16T15:37:00.600193534Z"
+    assert stored > "2026-04-16T15:37:00.600193Z"
+    assert stored == "2026-04-16T15:37:00.600194Z"
 
     # Next call passes this new cursor to docker; the shipped line is
     # excluded by --since so we get nothing back.
@@ -222,26 +222,29 @@ def test_cursor_does_not_stall_on_boundary_line(tmp_path: Path) -> None:
         lines, from_ts, to_ts2 = tailer.read_new_lines(max_lines=10)
         args = mock_run.call_args.args[0]
     assert lines == []
-    assert from_ts == "2026-04-16T15:37:00.600193534Z"
-    assert args[args.index("--since") + 1] == "2026-04-16T15:37:00.600193534Z"
+    assert from_ts == "2026-04-16T15:37:00.600194Z"
+    assert args[args.index("--since") + 1] == "2026-04-16T15:37:00.600194Z"
     store.close()
 
 
-def test_advance_nanos_overflow_keeps_cursor(tmp_path: Path) -> None:
-    """When the fractional part is all 9s, incrementing would overflow
-    into the seconds column — we can't safely bump that, so we keep the
-    cursor in place and rely on dashboard-side dedup."""
+def test_advance_nanos_microsecond_precision(tmp_path: Path) -> None:
+    """Cursor advances by 1µs (Docker only accepts microsecond precision)."""
     from stormpulse.logging.tailer import _advance_nanos
-    assert _advance_nanos("2026-04-16T15:37:00.999999999Z") == (
-        "2026-04-16T15:37:00.999999999Z"
+    # Nanosecond input gets truncated to µs then bumped
+    assert _advance_nanos("2026-04-16T15:37:00.600193533Z") == (
+        "2026-04-16T15:37:00.600194Z"
     )
-    # Non-overflow cases still bump
-    assert _advance_nanos("2026-04-16T15:37:00.999999998Z") == (
-        "2026-04-16T15:37:00.999999999Z"
+    # Microsecond input bumped directly
+    assert _advance_nanos("2026-04-16T15:37:00.600193Z") == (
+        "2026-04-16T15:37:00.600194Z"
     )
-    # No fractional part gets minimal fraction appended
+    # µs overflow rolls into seconds
+    assert _advance_nanos("2026-04-16T15:37:00.999999Z") == (
+        "2026-04-16T15:37:01.000000Z"
+    )
+    # No fractional part
     assert _advance_nanos("2026-04-16T15:37:00Z") == (
-        "2026-04-16T15:37:00.000000001Z"
+        "2026-04-16T15:37:00.000001Z"
     )
 
 

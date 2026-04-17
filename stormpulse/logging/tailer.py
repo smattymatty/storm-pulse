@@ -14,7 +14,7 @@ import logging
 import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
@@ -118,29 +118,31 @@ def _advance_nanos(ts: str) -> str:
 
     ``docker logs --since`` is inclusive of the boundary value, so the
     stored cursor must be **one tick past** the last line we've shipped
-    or Docker will return the same line again next cycle.
+    or Docker will return the same line forever next cycle.
 
-    ``ts`` is RFC3339Nano, e.g. ``"2026-04-16T15:37:00.600193533Z"``;
-    the fractional part may have up to nanosecond precision. We treat
-    the fractional digits as an integer, add one, and zero-pad back to
-    the original width. If all digits are 9 (overflow into seconds) we
-    return the input unchanged — next cycle will dedup at the dashboard
-    rather than risk an invalid second value.
+    Docker's ``--since`` flag only parses up to **microsecond** precision
+    — nanosecond-precision values silently return an empty result. So we
+    truncate the input to microseconds, add 1µs, and reformat. The
+    smallest effective resolution is 1µs, which is plenty: we're past
+    any Docker log line that shared the same microsecond window.
     """
-    if not ts.endswith("Z"):
-        return ts
-    body = ts[:-1]
-    if "." not in body:
-        return f"{body}.000000001Z"
-    base, frac = body.rsplit(".", 1)
-    width = len(frac)
-    if not frac.isdigit():
-        return ts
-    incremented = int(frac) + 1
-    new_frac = str(incremented).zfill(width)
-    if len(new_frac) > width:
-        return ts  # overflow — keep existing cursor, rely on dashboard dedup
-    return f"{base}.{new_frac}Z"
+    try:
+        parsed = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ")
+    except ValueError:
+        try:
+            parsed = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            # Docker's nanosecond format: truncate to 6 fractional digits.
+            if "." in ts and ts.endswith("Z"):
+                base, frac = ts[:-1].rsplit(".", 1)
+                parsed = datetime.strptime(
+                    f"{base}.{frac[:6].ljust(6, '0')}Z",
+                    "%Y-%m-%dT%H:%M:%S.%fZ",
+                )
+            else:
+                return ts
+    advanced = parsed.replace(tzinfo=timezone.utc) + timedelta(microseconds=1)
+    return advanced.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 class DockerTailer:

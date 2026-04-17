@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
 from stormpulse.logging.shipper import LogShipper
-from stormpulse.logging.tailer import LogTailer
+from stormpulse.logging.tailer import DockerTailer, LogTailer
 
 
 def _make_group(
@@ -164,4 +166,35 @@ def test_all_dropped_ships_drop_count(tmp_path: Path) -> None:
     assert batch is not None
     assert batch.lines == []
     assert batch.dropped == 3
+    store.close()
+
+
+def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
+    """Confirm LogShipper works when handed a DockerTailer — to_position
+    is a string timestamp (not int) and confirm_shipped accepts it."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    group = LogGroupConfig(
+        name="web", enabled=True, source_type="docker",
+        source_path=Path(""), filter_contains="", parser="docker_raw",
+        ship_interval_seconds=10.0, max_lines_per_batch=50, retention_days=30,
+        container_name="web", docker_binary="/usr/bin/docker",
+    )
+    store.set_docker_ts("web", "web", "2026-04-16T13:00:00.000000Z")
+    tailer = DockerTailer(group, store)
+    shipper = LogShipper(group, tailer)
+
+    stdout = "2026-04-16T13:00:01.000000Z some log line\n"
+    with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=stdout, stderr="",
+        )
+        batch = shipper.collect_batch()
+
+    assert batch is not None
+    assert len(batch.lines) == 1
+    assert isinstance(batch.to_position, str)
+    assert batch.to_position > "2026-04-16T13:00:01.000000Z"
+    # Confirm round-trips through the store cleanly
+    shipper.tailer.confirm_shipped(batch.to_position)  # type: ignore[arg-type]
+    assert store.get_docker_ts("web") == batch.to_position
     store.close()
