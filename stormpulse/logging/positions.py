@@ -48,6 +48,17 @@ class LogPositionStore:
                 )
             except sqlite3.OperationalError:
                 pass
+        # Normalize any nanosecond-precision cursors left by older agent
+        # versions. Docker's --since only accepts microsecond precision;
+        # nanosecond values silently return empty results, stalling the
+        # log loop.
+        self._conn.execute("""
+            UPDATE log_positions
+            SET last_ts = SUBSTR(last_ts, 1, INSTR(last_ts, '.') + 6) || 'Z'
+            WHERE last_ts IS NOT NULL
+              AND last_ts LIKE '%.%Z'
+              AND LENGTH(last_ts) - INSTR(last_ts, '.') > 7
+        """)
         self._conn.commit()
 
     def get(self, group: str) -> tuple[int, int | None]:

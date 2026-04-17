@@ -33,8 +33,8 @@ retention_days = 90
 # whole word inside it (so "my-caddy-1" still matches "caddy").
 _CONTAINER_PARSER_HINTS: list[tuple[str, str, str]] = [
     ("caddy",   "caddy_json", ""),
-    ("garaged", "garage_s3",  "garage_api_common::generic_server"),
-    ("garage",  "garage_s3",  "garage_api_common::generic_server"),
+    ("garaged", "garage_s3",  "garage_api"),
+    ("garage",  "garage_s3",  "garage_api"),
 ]
 
 

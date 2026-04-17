@@ -55,12 +55,15 @@ class TestParseGarageS3:
         assert result["object_key"] == ""
         assert result["path"] == "/my-bucket/?list-type=2"
 
-    def test_admin_api_rejected(self) -> None:
+    def test_admin_api_parsed(self) -> None:
         line = (
-            "2026-04-10T13:23:51Z INFO garage_api_admin::api_server: "
+            "2026-04-10T13:23:51Z  INFO garage_api_admin::api_server: "
             "Proxied admin API request: CreateKey"
         )
-        assert parse_garage_s3(line) is None
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["method"] == "ADMIN"
+        assert result["message"] == "CreateKey"
 
     def test_malformed_rejected(self) -> None:
         assert parse_garage_s3("random garbage") is None
@@ -95,6 +98,49 @@ class TestParseGarageS3:
         assert result["client_ip"] == "1.2.3.4"
         assert result["bucket"] == "bucket"
         assert result["object_key"] == "object"
+
+    def test_admin_create_key(self) -> None:
+        line = (
+            "2026-04-17T10:12:19.432094Z  INFO garage_api_admin::api_server: "
+            "Proxied admin API request: CreateKey"
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["method"] == "ADMIN"
+        assert result["message"] == "CreateKey"
+        assert result["client_ip"] == ""
+
+    def test_admin_delete_bucket(self) -> None:
+        line = (
+            "2026-04-17T10:10:44.931116Z  INFO garage_api_admin::api_server: "
+            "Proxied admin API request: DeleteBucket"
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["method"] == "ADMIN"
+        assert result["message"] == "DeleteBucket"
+
+    def test_admin_docker_prefixed_with_ansi(self) -> None:
+        line = (
+            "2026-04-17T10:12:19.432094000Z "
+            "\x1b[2m2026-04-17T10:12:19.432094Z\x1b[0m "
+            "\x1b[32m INFO\x1b[0m "
+            "\x1b[2mgarage_api_admin::api_server\x1b[0m\x1b[2m:\x1b[0m "
+            "Proxied admin API request: DeleteKey"
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["method"] == "ADMIN"
+        assert result["message"] == "DeleteKey"
+
+    def test_internal_admin_request(self) -> None:
+        line = (
+            "2026-04-17T10:12:40.402186Z  INFO garage_api_admin::api_server: "
+            "Internal admin API request: GetNodeStatistics"
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["message"] == "GetNodeStatistics"
 
     def test_injection_attempt_rejected(self) -> None:
         # Lines with shell metacharacters but wrong format are dropped as

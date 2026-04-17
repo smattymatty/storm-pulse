@@ -34,6 +34,12 @@ _GARAGE_S3_RE = re.compile(
     r"(?P<path>\S+)\s*$"
 )
 
+_GARAGE_ADMIN_RE = re.compile(
+    r"(?P<ts>\S+)\s+INFO\s+garage_api_admin::api_server:\s+"
+    r"(?:Proxied|Internal)\s+admin\s+API\s+request:\s+"
+    r"(?P<operation>\S+)\s*$"
+)
+
 
 def parse_garage_s3(line: str) -> dict[str, Any] | None:
     """Parse a Garage S3 access log line.
@@ -41,9 +47,6 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
     Returns ``None`` for non-matching lines, admin API noise, or
     anything that doesn't look like a customer-facing request.
     """
-    if "garage_api_admin" in line:
-        return None
-
     stripped = _ANSI_ESCAPE_RE.sub("", line.rstrip("\r\n"))
     # Docker source prepends its own timestamp. Strip it only when the
     # remainder still begins with a timestamp (the original Garage one).
@@ -51,43 +54,62 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
     if docker_prefix is not None and _DOCKER_TS_RE.match(docker_prefix.group(2)):
         stripped = docker_prefix.group(2)
     truncated_line, truncated = _truncate(stripped)
+
+    # Try the S3 access log format first (customer-facing requests).
     m = _GARAGE_S3_RE.fullmatch(truncated_line)
-    if m is None:
-        return None
+    if m is not None:
+        path = m.group("path")
+        bucket = ""
+        object_key = ""
+        if path.startswith("/"):
+            path_part = path.split("?", 1)[0]
+            parts = path_part[1:].split("/", 1)
+            bucket = parts[0]
+            object_key = parts[1] if len(parts) > 1 else ""
 
-    path = m.group("path")
-    # bucket is the first path component; object_key is the rest
-    bucket = ""
-    object_key = ""
-    if path.startswith("/"):
-        # strip query string for bucket/object extraction
-        path_part = path.split("?", 1)[0]
-        parts = path_part[1:].split("/", 1)
-        bucket = parts[0]
-        object_key = parts[1] if len(parts) > 1 else ""
+        method = m.group("method")
+        if object_key:
+            message = f"{method} {bucket}/{object_key}"
+        elif bucket:
+            message = f"{method} {bucket}"
+        else:
+            message = f"{method} {path}"
 
-    method = m.group("method")
-    if object_key:
-        message = f"{method} {bucket}/{object_key}"
-    elif bucket:
-        message = f"{method} {bucket}"
-    else:
-        message = f"{method} {path}"
+        return {
+            "ts": m.group("ts"),
+            "level": "info",
+            "message": message,
+            "client_ip": m.group("ip"),
+            "proxy": m.group("proxy"),
+            "key_id": m.group("key_id"),
+            "method": method,
+            "path": path,
+            "bucket": bucket,
+            "object_key": object_key,
+            "response_code": None,
+            "truncated": truncated,
+        }
 
-    return {
-        "ts": m.group("ts"),
-        "level": "info",
-        "message": message,
-        "client_ip": m.group("ip"),
-        "proxy": m.group("proxy"),
-        "key_id": m.group("key_id"),
-        "method": method,
-        "path": path,
-        "bucket": bucket,
-        "object_key": object_key,
-        "response_code": None,
-        "truncated": truncated,
-    }
+    # Fall back to admin API operations (CreateKey, DeleteBucket, etc.).
+    am = _GARAGE_ADMIN_RE.fullmatch(truncated_line)
+    if am is not None:
+        operation = am.group("operation")
+        return {
+            "ts": am.group("ts"),
+            "level": "info",
+            "message": operation,
+            "client_ip": "",
+            "proxy": "",
+            "key_id": "",
+            "method": "ADMIN",
+            "path": "",
+            "bucket": "",
+            "object_key": "",
+            "response_code": None,
+            "truncated": truncated,
+        }
+
+    return None
 
 
 _STORMPULSE_REQUIRED = {"ts", "level", "message", "event_type"}

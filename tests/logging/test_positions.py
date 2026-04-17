@@ -104,3 +104,29 @@ def test_file_and_docker_groups_coexist(tmp_path: Path) -> None:
     assert store.get_docker_ts("fgroup") is None
     assert store.get("dgroup") == (0, None)
     store.close()
+
+
+def test_nanosecond_cursors_normalized_on_init(tmp_path: Path) -> None:
+    """Old nano-precision cursors get truncated to µs on startup."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    # Simulate old agent writing nanosecond cursor directly
+    store._conn.execute(
+        "INSERT INTO log_positions (group_name, source_type, last_ts, updated_at) "
+        "VALUES ('nano', 'docker', '2026-04-16T15:37:00.600193533Z', 0)"
+    )
+    store._conn.commit()
+    store.close()
+    # Re-open — _ensure_table should normalize
+    store2 = LogPositionStore(tmp_path / "pos.db")
+    assert store2.get_docker_ts("nano") == "2026-04-16T15:37:00.600193Z"
+    store2.close()
+
+
+def test_microsecond_cursors_untouched_on_init(tmp_path: Path) -> None:
+    """Already-clean µs cursors are not mangled by the normalizer."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_docker_ts("clean", "web", "2026-04-16T15:37:00.600193Z")
+    store.close()
+    store2 = LogPositionStore(tmp_path / "pos.db")
+    assert store2.get_docker_ts("clean") == "2026-04-16T15:37:00.600193Z"
+    store2.close()
