@@ -40,6 +40,16 @@ _GARAGE_ADMIN_RE = re.compile(
     r"(?P<operation>\S+)\s*$"
 )
 
+# Only ship mutating admin operations. The agent's own garage_refresh
+# polls GetBucketInfo/ListKeys/GetClusterStatus every 30s — that's
+# noise, not operator-initiated activity worth tracking.
+_GARAGE_ADMIN_MUTATIONS: frozenset[str] = frozenset({
+    "CreateBucket", "DeleteBucket", "UpdateBucket",
+    "CreateKey", "DeleteKey", "UpdateKey",
+    "AllowBucketKey", "DenyBucketKey",
+    "ApplyClusterLayout",
+})
+
 
 def parse_garage_s3(line: str) -> dict[str, Any] | None:
     """Parse a Garage S3 access log line.
@@ -90,10 +100,14 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
             "truncated": truncated,
         }
 
-    # Fall back to admin API operations (CreateKey, DeleteBucket, etc.).
+    # Fall back to mutating admin API operations only.
+    # Read-only polls (GetBucketInfo, ListKeys, etc.) are dropped — the
+    # agent's own garage_refresh generates these every 30s.
     am = _GARAGE_ADMIN_RE.fullmatch(truncated_line)
     if am is not None:
         operation = am.group("operation")
+        if operation not in _GARAGE_ADMIN_MUTATIONS:
+            return None
         return {
             "ts": am.group("ts"),
             "level": "info",

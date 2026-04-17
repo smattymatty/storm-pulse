@@ -133,14 +133,15 @@ class TestParseGarageS3:
         assert result["method"] == "ADMIN"
         assert result["message"] == "DeleteKey"
 
-    def test_internal_admin_request(self) -> None:
-        line = (
-            "2026-04-17T10:12:40.402186Z  INFO garage_api_admin::api_server: "
-            "Internal admin API request: GetNodeStatistics"
-        )
-        result = parse_garage_s3(line)
-        assert result is not None
-        assert result["message"] == "GetNodeStatistics"
+    def test_readonly_admin_ops_rejected(self) -> None:
+        """Read-only polling ops (agent's garage_refresh) are dropped."""
+        for op in ("GetNodeStatistics", "GetBucketInfo", "ListKeys",
+                    "ListBuckets", "GetClusterStatus", "GetClusterLayout"):
+            line = (
+                f"2026-04-17T10:12:40.402186Z  INFO garage_api_admin::api_server: "
+                f"Proxied admin API request: {op}"
+            )
+            assert parse_garage_s3(line) is None, f"{op} should be filtered"
 
     def test_injection_attempt_rejected(self) -> None:
         # Lines with shell metacharacters but wrong format are dropped as
