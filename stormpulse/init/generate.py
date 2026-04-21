@@ -85,6 +85,8 @@ Environment=HOME=/opt/stormpulse
 ExecStart=/opt/stormpulse/venv/bin/stormpulse run /etc/stormpulse/stormpulse.toml
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
+KillMode=mixed
 
 # Sandboxing
 ProtectSystem=strict

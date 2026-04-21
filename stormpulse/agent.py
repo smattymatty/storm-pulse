@@ -213,6 +213,7 @@ class Agent:
                         )
 
                     async with asyncio.TaskGroup() as tg:
+                        tg.create_task(self._shutdown_watcher(ws))
                         tg.create_task(self._heartbeat_loop(ws))
                         tg.create_task(self._metrics_loop(ws))
                         tg.create_task(self._receive_loop(ws))
@@ -261,6 +262,16 @@ class Agent:
     # ------------------------------------------------------------------
     # Periodic loops
     # ------------------------------------------------------------------
+
+    async def _shutdown_watcher(self, ws: ClientConnection) -> None:
+        """Close the websocket when shutdown fires so ``recv()`` unblocks.
+
+        Without this, ``_receive_loop`` stays parked inside ``ws.recv()``
+        and the TaskGroup waits on it until systemd's ``TimeoutStopSec``
+        elapses and SIGKILL arrives.
+        """
+        await self._shutdown.wait()
+        await ws.close()
 
     async def _heartbeat_loop(self, ws: ClientConnection) -> None:
         """Send periodic heartbeats until shutdown or disconnect."""

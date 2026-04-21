@@ -96,7 +96,7 @@ PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset({
 
 _LOG_PARSERS: frozenset[str] = frozenset({"garage_s3", "stormpulse", "caddy_json", "docker_raw"})
 _LOG_SOURCE_TYPES: frozenset[str] = frozenset({"file", "docker"})
-_LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_]{1,50}")
+_LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,50}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,7 +471,7 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
         name = _require_key(entry, "name", str, ctx)
         if not _LOG_NAME_PATTERN.fullmatch(name):
             raise ConfigError(
-                f"'name' in {ctx} must be alphanumeric/underscore, 1-50 chars, got {name!r}"
+                f"'name' in {ctx} must be alphanumeric/underscore/hyphen, 1-50 chars, got {name!r}"
             )
         if name in seen_names:
             raise ConfigError(f"Duplicate log group name: {name!r}")
