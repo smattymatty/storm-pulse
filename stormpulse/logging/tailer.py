@@ -10,10 +10,13 @@ shipped. This ensures at-least-once delivery across restarts.
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import os
 import re
+import select
 import subprocess
+import time
 from datetime import datetime, timedelta, timezone
 
 from stormpulse.config import LogGroupConfig
@@ -235,6 +238,210 @@ class DockerTailer:
         self._store.set_docker_ts(
             self._group.name, self._group.container_name, to_ts,
         )
+
+
+class StreamingDockerTailer:
+    """Tail a container via a long-lived ``docker logs --follow`` subprocess.
+
+    One process per container for its lifetime. Lines are drained from the
+    non-blocking stdout pipe on each ``read_new_lines`` call. When the
+    container stops, the subprocess exits; ``_ensure_running`` respawns
+    after ``_RESPAWN_DELAY_SECONDS``.
+
+    Position is persisted as an ISO timestamp (same contract as DockerTailer)
+    so a respawn uses ``--since <last_ts>`` and doesn't replay container
+    history.
+    """
+
+    _RESPAWN_DELAY_SECONDS = 5.0
+    # Slightly less than ship_interval_seconds=10 so read_new_lines always
+    # returns before the caller's next tick even on a silent container.
+    _READ_TIMEOUT_SECONDS = 9.0
+    _READ_CHUNK_BYTES = 65536
+    _TERMINATE_GRACE_SECONDS = 3.0
+
+    def __init__(self, group: LogGroupConfig, position_store: LogPositionStore) -> None:
+        self._group = group
+        self._store = position_store
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._buffer: bytes = b""
+        # Seed so the first ever call attempts a spawn (won't be throttled).
+        self._last_respawn_attempt: float = float("-inf")
+
+    def read_new_lines(self, max_lines: int) -> tuple[list[str], str, str]:
+        """Drain up to ``max_lines`` lines from the running subprocess stdout.
+
+        ``from_ts`` is the stored last_ts (seeded to "now" on first run, same
+        as ``DockerTailer``). ``to_ts`` is the timestamp of the last line
+        received advanced by 1µs; equals ``from_ts`` when no lines arrive.
+        Never raises.
+        """
+        stored = self._store.get_docker_ts(self._group.name)
+        if stored is None:
+            from_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            self._store.set_docker_ts(
+                self._group.name, self._group.container_name, from_ts,
+            )
+        else:
+            from_ts = stored
+
+        if not self._ensure_running():
+            return ([], from_ts, from_ts)
+
+        raw_lines = self._drain_lines(max_lines)
+        if not raw_lines:
+            return ([], from_ts, from_ts)
+
+        capped = min(max_lines, MAX_LINES_PER_INTERVAL)
+        lines = raw_lines[:capped]
+
+        to_ts = from_ts
+        for line in reversed(lines):
+            m = _DOCKER_TS_PREFIX_RE.match(line)
+            if m is not None:
+                to_ts = _advance_nanos(m.group(1))
+                break
+
+        return (lines, from_ts, to_ts)
+
+    def confirm_shipped(self, to_ts: str) -> None:
+        """Persist ``to_ts`` as the new stored last_ts for this group."""
+        self._store.set_docker_ts(
+            self._group.name, self._group.container_name, to_ts,
+        )
+
+    def close(self) -> None:
+        """Terminate the subprocess if running. Called on agent shutdown."""
+        self._terminate()
+
+    def _ensure_running(self) -> bool:
+        """Start the subprocess if not running. Returns True if running."""
+        if self._is_alive():
+            return True
+        if self._proc is not None:
+            try:
+                self._proc.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            logger.warning(
+                "docker logs process died for group %s", self._group.name,
+            )
+            self._proc = None
+            self._buffer = b""
+        now = time.monotonic()
+        if now - self._last_respawn_attempt < self._RESPAWN_DELAY_SECONDS:
+            return False
+        self._last_respawn_attempt = now
+        return self._spawn()
+
+    def _spawn(self) -> bool:
+        """Spawn ``docker logs --follow --timestamps --since <last_ts>``."""
+        stored = self._store.get_docker_ts(self._group.name)
+        from_ts = stored or datetime.now(timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+        )
+        cmd = [
+            self._group.docker_binary,
+            "logs",
+            "--follow",
+            "--timestamps",
+            "--since", from_ts,
+            self._group.container_name,
+        ]
+        try:
+            self._proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+                shell=False,
+            )
+        except FileNotFoundError:
+            logger.warning(
+                "Docker binary not found for group %s: %s",
+                self._group.name, self._group.docker_binary,
+            )
+            self._proc = None
+            return False
+        except OSError as exc:
+            logger.warning(
+                "Failed to spawn docker logs for group %s: %s",
+                self._group.name, exc,
+            )
+            self._proc = None
+            return False
+
+        assert self._proc.stdout is not None
+        fd = self._proc.stdout.fileno()
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        self._buffer = b""
+        logger.info(
+            "Spawned docker logs --follow for group %s (since %s)",
+            self._group.name, from_ts,
+        )
+        return True
+
+    def _drain_lines(self, max_lines: int) -> list[str]:
+        """Non-blocking drain from the pipe; splits on newlines."""
+        if self._proc is None or self._proc.stdout is None:
+            return []
+        fd = self._proc.stdout.fileno()
+        lines: list[str] = []
+        deadline = time.monotonic() + self._READ_TIMEOUT_SECONDS
+        eof = False
+
+        while len(lines) < max_lines:
+            # Pull any complete lines out of the buffer first.
+            while b"\n" in self._buffer and len(lines) < max_lines:
+                line, _, rest = self._buffer.partition(b"\n")
+                self._buffer = rest
+                lines.append(line.decode("utf-8", errors="replace"))
+            if len(lines) >= max_lines or eof:
+                break
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                ready, _, _ = select.select([fd], [], [], remaining)
+            except (OSError, ValueError):
+                break
+            if not ready:
+                break
+            try:
+                chunk = os.read(fd, self._READ_CHUNK_BYTES)
+            except BlockingIOError:
+                continue
+            except OSError:
+                break
+            if not chunk:
+                eof = True
+                continue
+            self._buffer += chunk
+
+        return lines
+
+    def _is_alive(self) -> bool:
+        return self._proc is not None and self._proc.poll() is None
+
+    def _terminate(self) -> None:
+        if self._proc is None:
+            return
+        if self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+                self._proc.wait(timeout=self._TERMINATE_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+                try:
+                    self._proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:
+                    pass
+            except OSError:
+                pass
+        self._proc = None
+        self._buffer = b""
 
 
 def _inode(path: str) -> int:

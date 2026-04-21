@@ -95,7 +95,7 @@ PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset({
 
 
 _LOG_PARSERS: frozenset[str] = frozenset({"garage_s3", "stormpulse", "caddy_json", "docker_raw"})
-_LOG_SOURCE_TYPES: frozenset[str] = frozenset({"file", "docker"})
+_LOG_SOURCE_TYPES: frozenset[str] = frozenset({"file", "docker", "docker_stream"})
 _LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,50}")
 
 
@@ -493,7 +493,7 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
                 raise ConfigError(
                     f"'source_path' in {ctx} must be an absolute path, got {source_path!r}"
                 )
-        else:  # docker
+        else:  # docker, docker_stream
             container_name = _require_key(entry, "container_name", str, ctx)
             if not container_name.strip():
                 raise ConfigError(

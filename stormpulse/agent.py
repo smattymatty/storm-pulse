@@ -32,6 +32,7 @@ from stormpulse.logging import (
     LogShipper,
     LogTailer,
     PulseLogger,
+    StreamingDockerTailer,
 )
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
@@ -150,11 +151,16 @@ class Agent:
         self._garage_state: GarageState | None = None
         # Build log shippers for enabled groups
         self._shippers: dict[str, LogShipper] = {}
+        self._streaming_tailers: list[StreamingDockerTailer] = []
         if log_position_store is not None:
             for group in config.log_groups:
                 if group.enabled:
-                    tailer: LogTailer | DockerTailer
-                    if group.source_type == "docker":
+                    tailer: LogTailer | DockerTailer | StreamingDockerTailer
+                    if group.source_type == "docker_stream":
+                        streaming = StreamingDockerTailer(group, log_position_store)
+                        self._streaming_tailers.append(streaming)
+                        tailer = streaming
+                    elif group.source_type == "docker":
                         tailer = DockerTailer(group, log_position_store)
                     else:
                         tailer = LogTailer(group, log_position_store)
@@ -257,6 +263,8 @@ class Agent:
 
             delay = min(delay * 1.5, self._config.dashboard.reconnect_max_seconds)
 
+        for tailer in self._streaming_tailers:
+            tailer.close()
         logger.info("Agent shutting down")
 
     # ------------------------------------------------------------------

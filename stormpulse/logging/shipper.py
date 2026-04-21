@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.parsers import PARSERS
-from stormpulse.logging.tailer import DockerTailer, LogTailer
+from stormpulse.logging.tailer import DockerTailer, LogTailer, StreamingDockerTailer
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ class Batch:
 class LogShipper:
     """Pull lines from a tailer, filter, parse, and batch for shipping."""
 
-    def __init__(self, group: LogGroupConfig, tailer: LogTailer | DockerTailer) -> None:
+    def __init__(self, group: LogGroupConfig, tailer: LogTailer | DockerTailer | StreamingDockerTailer) -> None:
         self._group = group
         self._tailer = tailer
         parser = PARSERS.get(group.parser)
@@ -43,7 +43,7 @@ class LogShipper:
         return self._group.parser
 
     @property
-    def tailer(self) -> LogTailer | DockerTailer:
+    def tailer(self) -> LogTailer | DockerTailer | StreamingDockerTailer:
         return self._tailer
 
     @property

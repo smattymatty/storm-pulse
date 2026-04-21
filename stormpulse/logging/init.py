@@ -17,7 +17,7 @@ _LOG_GROUP_TEMPLATE = """
 [[log_groups]]
 name = "{name}"
 enabled = true
-source_type = "docker"
+source_type = "docker_stream"
 container_name = "{container_name}"
 docker_binary = "{docker_binary}"
 filter_contains = "{filter_contains}"
