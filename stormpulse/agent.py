@@ -22,6 +22,8 @@ from stormpulse.commands import (
     execute_command,
     get_command,
 )
+from stormpulse.commands.jobs import JobHandler, JobManager
+from stormpulse.commands.registry import validate_params
 from stormpulse.config import CommandDef, Config, LogGroupConfig, ProjectConfig, TlsConfig
 from stormpulse.garage.commands import build_garage_commands
 from stormpulse.garage.discover import discover_garage
@@ -107,6 +109,7 @@ def _build_commands_metadata(
             "template": template,
             "timeout": cmd_def.timeout,
             "requires_confirmation": cmd_def.requires_confirmation,
+            "long_running": cmd_def.long_running,
             "params": params,
         }
     return result
@@ -167,6 +170,9 @@ class Agent:
                     self._shippers[group.name] = LogShipper(group, tailer)
         # batch_id -> (group_name, to_position, sent_at)
         self._pending_batches: dict[str, tuple[str, int | str, float]] = {}
+        # One JobManager per active connection. Recreated on reconnect; jobs
+        # do not survive across connections.
+        self._job_manager: JobManager | None = None
 
     # ------------------------------------------------------------------
     # Outer reconnect loop
@@ -218,14 +224,22 @@ class Agent:
                             {"url": url, "version": __version__},
                         )
 
-                    async with asyncio.TaskGroup() as tg:
-                        tg.create_task(self._shutdown_watcher(ws))
-                        tg.create_task(self._heartbeat_loop(ws))
-                        tg.create_task(self._metrics_loop(ws))
-                        tg.create_task(self._receive_loop(ws))
-                        tg.create_task(self._garage_loop(ws))
-                        for group_name in self._shippers:
-                            tg.create_task(self._log_loop(ws, group_name))
+                    async def _ws_send(env: Envelope) -> None:
+                        await ws.send(env.to_json())
+
+                    self._job_manager = JobManager(agent_id, _ws_send)
+                    try:
+                        async with asyncio.TaskGroup() as tg:
+                            tg.create_task(self._shutdown_watcher(ws))
+                            tg.create_task(self._heartbeat_loop(ws))
+                            tg.create_task(self._metrics_loop(ws))
+                            tg.create_task(self._receive_loop(ws))
+                            tg.create_task(self._garage_loop(ws))
+                            for group_name in self._shippers:
+                                tg.create_task(self._log_loop(ws, group_name))
+                    finally:
+                        await self._job_manager.shutdown_all()
+                        self._job_manager = None
 
             except* ConnectionClosed as eg:
                 logger.warning("Connection closed: %s", eg.exceptions[0])
@@ -456,7 +470,13 @@ class Agent:
     # ------------------------------------------------------------------
 
     async def _receive_loop(self, ws: ClientConnection) -> None:
-        """Receive and dispatch inbound messages."""
+        """Receive and dispatch inbound messages.
+
+        A malformed or buggy message must not kill the receive loop — the
+        agent drops it and keeps serving. Auth failures already return
+        early without executing anything, so swallowing here cannot cause
+        an unauthorized command to run; worst case is a logged bug.
+        """
         while not self._shutdown.is_set():
             message = await ws.recv()
             try:
@@ -504,8 +524,13 @@ class Agent:
             return
         logger.info("Executing command %r (request %s)", payload.command, envelope.id)
 
+        cmd_def = self._registry.get(payload.command)
+
         if payload.command == "garage_refresh":
             result = await self._handle_garage_refresh(envelope.id)
+        elif cmd_def is not None and cmd_def.long_running:
+            await self._dispatch_long_running(envelope.id, payload, cmd_def)
+            return
         else:
             try:
                 result = await asyncio.to_thread(
@@ -545,6 +570,82 @@ class Agent:
                 logger.info("Sent immediate metrics push after garage_refresh")
             except Exception:
                 logger.warning("Failed to send metrics after garage_refresh", exc_info=True)
+
+    async def _dispatch_long_running(
+        self, request_id: str, payload: CommandRequestPayload, cmd_def: CommandDef,
+    ) -> None:
+        """Hand a long-running command off to the JobManager.
+
+        Sends a synthetic failure result inline if the command is marked
+        ``long_running`` but no internal handler is registered (config bug)
+        or the connection is no longer active.
+        """
+        if self._job_manager is None:
+            logger.error("Cannot dispatch %r: no active JobManager", payload.command)
+            return
+
+        # Enforce the same param-validation contract the subprocess path uses.
+        # CommandDef declares regex patterns for every param; honoring them here
+        # closes the asymmetry between the two dispatch paths and prevents
+        # malformed values (e.g. an attacker-controlled bucket name with path
+        # traversal characters, or an s3_endpoint pointing somewhere unintended)
+        # from reaching the handler.
+        try:
+            validated_params = validate_params(cmd_def, payload.params or {})
+        except ParamValidationError as exc:
+            logger.warning("Param validation failed for %s: %s", request_id, exc)
+            failure = CommandResultPayload(
+                request_id=request_id,
+                command=payload.command,
+                group=cmd_def.group,
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=0,
+                failure_reason="os_error",
+            )
+            await self._job_manager.send_now(make_command_result(self._config.agent.id, failure))
+            return
+
+        handler = self._make_long_running_handler(payload.command, validated_params)
+        if handler is None:
+            logger.error(
+                "Command %r is marked long_running but no handler is registered",
+                payload.command,
+            )
+            failure = CommandResultPayload(
+                request_id=request_id,
+                command=payload.command,
+                group=cmd_def.group,
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=f"No long-running handler for {payload.command!r}",
+                duration_ms=0,
+                failure_reason="os_error",
+            )
+            await self._job_manager.send_now(make_command_result(self._config.agent.id, failure))
+            return
+
+        try:
+            self._job_manager.start(request_id, payload.command, cmd_def.group, handler)
+        except ValueError:
+            logger.warning("Duplicate dispatch for request %s", request_id)
+
+    def _make_long_running_handler(
+        self, command: str, params: dict[str, str],
+    ) -> JobHandler | None:
+        """Build the handler coroutine for a long-running command, or None.
+
+        Returns ``None`` when the command name has no registered handler
+        or when required params are missing — the dispatcher then emits
+        a structured no-handler failure.
+        """
+        if command == "garage_bucket_clear":
+            from stormpulse.garage.clear_bucket import make_clear_bucket_handler
+            return make_clear_bucket_handler(params)
+        return None
 
     async def _handle_command_sequence(
         self, ws: ClientConnection, envelope: Envelope,

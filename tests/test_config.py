@@ -323,6 +323,31 @@ timeout = 5
     cmd = config.commands["simple"]
     assert cmd.requires_confirmation is False
     assert cmd.description == ""
+    assert cmd.long_running is False
+
+
+def test_custom_command_long_running(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bulk_op]
+group = "maintenance"
+command = ["/usr/bin/true"]
+timeout = 600
+long_running = true
+"""
+    config = load_config(write_config(toml))
+    assert config.commands["bulk_op"].long_running is True
+
+
+def test_custom_command_long_running_wrong_type_raises(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + """
+[commands.bad]
+group = "x"
+command = ["/bin/true"]
+timeout = 10
+long_running = "yes"
+"""
+    with pytest.raises(ConfigError, match="long_running"):
+        load_config(write_config(toml))
 
 
 def test_multiple_custom_commands(write_config: Callable[[str], Path]) -> None:

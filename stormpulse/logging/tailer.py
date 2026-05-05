@@ -373,8 +373,17 @@ class StreamingDockerTailer:
 
         assert self._proc.stdout is not None
         fd = self._proc.stdout.fileno()
-        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        try:
+            flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+            fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        except OSError as exc:
+            logger.warning(
+                "Failed to set non-blocking on docker logs pipe for group %s: %s",
+                self._group.name, exc,
+            )
+            self._terminate()
+            self._proc = None
+            return False
         self._buffer = b""
         logger.info(
             "Spawned docker logs --follow for group %s (since %s)",

@@ -26,6 +26,12 @@ class AuthError(Exception):
     """Raised when a command fails HMAC, timestamp, or nonce verification."""
 
 
+# Accept commands dated up to this many seconds in the future to tolerate
+# minor clock skew between dashboard and agent. Anything further ahead is
+# rejected so a future ts can't extend the replay window past nonce eviction.
+_CLOCK_SKEW_TOLERANCE_SECONDS = 5
+
+
 # ---------------------------------------------------------------------------
 # HMAC secret loading
 # ---------------------------------------------------------------------------
@@ -147,6 +153,8 @@ class NonceStore:
                     "SELECT 1 FROM seen_nonces WHERE nonce = ?", (nonce,)
                 ).fetchone()
                 if row is not None:
+                    # Raising here rolls back both the DELETE and any INSERT.
+                    # Pruning work is lost but harmless — next call re-prunes.
                     raise AuthError(f"Nonce already seen: {nonce!r}")
                 self._conn.execute(
                     "INSERT INTO seen_nonces (nonce, seen_at) VALUES (?, ?)",
@@ -192,9 +200,13 @@ def verify_envelope(
             f"Cannot verify non-command message type: {envelope.type.value}"
         )
 
-    # 2. Timestamp freshness
+    # 2. Timestamp freshness — directional: reject future-dated commands
+    # beyond a small skew tolerance so a future ts can't extend the replay
+    # window past nonce eviction.
     now = datetime.now(timezone.utc)
-    age = abs((now - envelope.ts).total_seconds())
+    age = (now - envelope.ts).total_seconds()
+    if age < -_CLOCK_SKEW_TOLERANCE_SECONDS:
+        raise AuthError(f"Command timestamp in the future: {-age:.1f}s ahead")
     if age > max_age_seconds:
         raise AuthError(f"Command too old: {age:.1f}s > {max_age_seconds}s limit")
 

@@ -495,10 +495,10 @@ def test_verify_future_timestamp_within_window(nonce_store: NonceStore) -> None:
 
 
 def test_verify_future_timestamp_too_far_raises(nonce_store: NonceStore) -> None:
-    """A future timestamp beyond the window should be rejected."""
+    """A future timestamp beyond the skew tolerance should be rejected."""
     far_future = datetime.now(timezone.utc) + timedelta(seconds=120)
     env = _make_signed_request(ts=far_future)
-    with pytest.raises(AuthError, match="old"):
+    with pytest.raises(AuthError, match="future"):
         verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
 
 

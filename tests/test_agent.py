@@ -245,6 +245,7 @@ def test_build_commands_metadata_basic() -> None:
     assert entry["template"] == ["git", "-C", "{project_dir}", "pull"]
     assert entry["timeout"] == 60
     assert entry["requires_confirmation"] is False
+    assert entry["long_running"] is False
     assert entry["params"] == {}
 
 
@@ -905,3 +906,132 @@ async def test_dispatch_ack_types_ignored(agent: Agent, ack_type: MessageType) -
     )
     await agent._dispatch(ws, envelope.to_json())
     ws.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Long-running dispatch param validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_long_running_dispatch_rejects_params_failing_regex(agent: Agent) -> None:
+    """Long-running path must enforce CommandDef param patterns the same way
+    the subprocess path does. A bucket_name that doesn't match the registry
+    regex should produce a structured failure result without ever invoking
+    the handler factory.
+    """
+    from stormpulse.commands.jobs import JobManager
+    from stormpulse.protocol import CommandRequestPayload
+
+    test_cmd = CommandDef(
+        group="test",
+        command=["test_long_running"],
+        timeout=60,
+        long_running=True,
+        params={
+            "bucket_name": ParamDef(
+                placeholder="bucket_name",
+                default=None,
+                pattern=r"[a-z0-9_-]+",  # lowercase, digits, underscore, hyphen
+                description="bucket",
+            ),
+        },
+    )
+    agent._registry["test_long_running"] = test_cmd
+
+    sent: list[Envelope] = []
+
+    async def fake_send(env: Envelope) -> None:
+        sent.append(env)
+
+    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+
+    # Track whether the handler factory was reached
+    factory_invocations: list[str] = []
+
+    def fake_factory(command: str, params: dict[str, str]) -> None:
+        factory_invocations.append(command)
+        return None  # never reached if validation does its job
+
+    agent._make_long_running_handler = fake_factory  # type: ignore[method-assign]
+
+    # Path-traversal-shaped value violates the lowercase-only pattern
+    payload = CommandRequestPayload(
+        command="test_long_running",
+        params={"bucket_name": "../etc/passwd"},
+        hmac="x",
+        nonce="x",
+    )
+    await agent._dispatch_long_running("req-bad", payload, test_cmd)
+
+    # Failure result emitted; handler factory never invoked
+    assert factory_invocations == []
+    assert len(sent) == 1
+    failure = sent[0]
+    assert failure.type == MessageType.COMMAND_RESULT
+    assert failure.payload["request_id"] == "req-bad"
+    assert failure.payload["success"] is False
+    assert failure.payload["failure_reason"] == "os_error"
+    assert "does not match pattern" in failure.payload["stderr"]
+
+    await agent._job_manager.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_long_running_dispatch_passes_validated_params_to_factory(agent: Agent) -> None:
+    """When params validate, they reach the handler factory (with defaults
+    merged in by validate_params)."""
+    from stormpulse.commands.jobs import JobManager
+    from stormpulse.protocol import CommandRequestPayload
+
+    test_cmd = CommandDef(
+        group="test",
+        command=["test_long_running"],
+        timeout=60,
+        long_running=True,
+        params={
+            "bucket_name": ParamDef(
+                placeholder="bucket_name",
+                default=None,
+                pattern=r"[a-z0-9_-]+",
+                description="bucket",
+            ),
+            "mode": ParamDef(
+                placeholder="mode",
+                default="fast",
+                pattern=r"fast|slow",
+                description="mode",
+            ),
+        },
+    )
+    agent._registry["test_long_running"] = test_cmd
+
+    async def fake_send(env: Envelope) -> None:
+        pass
+
+    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+
+    captured_params: dict[str, dict[str, str]] = {}
+
+    def fake_factory(command: str, params: dict[str, str]) -> None:
+        captured_params[command] = dict(params)
+        return None
+
+    agent._make_long_running_handler = fake_factory  # type: ignore[method-assign]
+
+    payload = CommandRequestPayload(
+        command="test_long_running",
+        params={"bucket_name": "valid-bucket"},  # mode omitted -> default
+        hmac="x",
+        nonce="x",
+    )
+    await agent._dispatch_long_running("req-ok", payload, test_cmd)
+
+    assert "test_long_running" in captured_params
+    # Default merged in
+    assert captured_params["test_long_running"] == {
+        "bucket_name": "valid-bucket",
+        "mode": "fast",
+    }
+
+    await agent._job_manager.shutdown_all()

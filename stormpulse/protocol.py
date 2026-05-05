@@ -21,6 +21,7 @@ class MessageType(StrEnum):
     HEARTBEAT = "heartbeat"
     METRICS_PUSH = "metrics.push"
     COMMAND_RESULT = "command.result"
+    COMMAND_PROGRESS = "command.progress"
     REGISTER = "register"
     LOG_BATCH = "log.batch"
 
@@ -159,6 +160,28 @@ class CommandResultPayload:
     duration_ms: int
     sequence_id: str | None = None
     failure_reason: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Self:
+        return _payload_from_dict(cls, data)
+
+
+@dataclass(frozen=True, slots=True)
+class CommandProgressPayload:
+    """Payload for command.progress (agent -> dashboard).
+
+    Long-running commands emit one or more of these between the originating
+    command.request and the terminal command.result. The first event always
+    has stage="starting"; the terminal command.result still closes the job.
+    """
+
+    request_id: str
+    command: str
+    group: str
+    stage: str
+    current: int
+    total: int | None = None
+    message: str = ""
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -361,9 +384,31 @@ def make_metrics_push(
     return _make_envelope(agent_id, MessageType.METRICS_PUSH, payload)
 
 
-def make_command_result(agent_id: str, result: CommandResultPayload) -> Envelope:
-    """Create a command.result envelope."""
-    return _make_envelope(agent_id, MessageType.COMMAND_RESULT, asdict(result))
+def make_command_result(
+    agent_id: str,
+    result: CommandResultPayload,
+    *,
+    extras: dict[str, Any] | None = None,
+) -> Envelope:
+    """Create a command.result envelope.
+
+    ``extras`` are command-specific summary fields that ride at the top
+    level of the payload alongside the standard ``CommandResultPayload``
+    fields. Used by long-running commands (e.g. ``garage_bucket_clear``)
+    to deliver per-operation summary data — ``deleted_count``,
+    ``failed_count``, ``errors`` — without inventing a new message type.
+    Extras must not collide with standard ``CommandResultPayload`` field
+    names; collisions overwrite the standard field.
+    """
+    payload = asdict(result)
+    if extras:
+        payload = payload | extras
+    return _make_envelope(agent_id, MessageType.COMMAND_RESULT, payload)
+
+
+def make_command_progress(agent_id: str, progress: CommandProgressPayload) -> Envelope:
+    """Create a command.progress envelope."""
+    return _make_envelope(agent_id, MessageType.COMMAND_PROGRESS, asdict(progress))
 
 
 def make_log_batch(

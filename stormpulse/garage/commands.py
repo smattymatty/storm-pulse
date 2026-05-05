@@ -247,6 +247,47 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             timeout=30,
             description="Internal command — triggers immediate state collection and metrics push",
         ),
+        "garage_bucket_clear": CommandDef(
+            group="garage",
+            command=["garage_bucket_clear"],  # internal — handled by JobManager, not a subprocess
+            timeout=600,  # per-batch reference; long_running ignores it for total duration
+            description="Bulk-delete every object in a bucket via the local Garage S3 endpoint",
+            requires_confirmation=True,
+            sensitive_output=True,  # the secret arrives in params; never log them
+            long_running=True,
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket to clear",
+                ),
+                "s3_endpoint": ParamDef(
+                    placeholder="s3_endpoint",
+                    default=None,
+                    pattern=r"https?://[a-zA-Z0-9.-]+(:[0-9]+)?",
+                    description="Garage S3 endpoint URL (no path/query)",
+                ),
+                "region": ParamDef(
+                    placeholder="region",
+                    default=None,
+                    pattern=r"[a-zA-Z0-9_-]+",
+                    description="S3 region for SigV4 signing",
+                ),
+                "access_key_id": ParamDef(
+                    placeholder="access_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Customer S3 access key ID",
+                ),
+                "secret_access_key": ParamDef(
+                    placeholder="secret_access_key",
+                    default=None,
+                    pattern=r".+",
+                    description="Customer S3 secret. Held in agent process memory only for the job's lifetime.",
+                ),
+            },
+        ),
         "garage_bucket_deny": CommandDef(
             group="garage",
             command=[docker, "exec", container, garage, "bucket", "deny",

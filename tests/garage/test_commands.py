@@ -32,13 +32,14 @@ class TestBuildGarageCommands:
             "garage_bucket_deny",
             "garage_bucket_website_allow", "garage_bucket_website_deny",
             "garage_refresh",
+            "garage_bucket_clear",
         }
         assert set(cmds.keys()) == expected
 
     def test_all_commands_use_absolute_paths(self) -> None:
         cmds = build_garage_commands(_make_config())
         for name, cmd_def in cmds.items():
-            if name == "garage_refresh":
+            if name in {"garage_refresh", "garage_bucket_clear"}:
                 continue  # internal command, not a subprocess
             assert cmd_def.command[0].startswith("/"), (
                 f"{name} first arg must be absolute: {cmd_def.command[0]}"
@@ -69,10 +70,20 @@ class TestBuildGarageCommands:
         cmds = build_garage_commands(_make_config())
         assert cmds["garage_key_create"].sensitive_output is True
 
+    def test_bucket_clear_is_sensitive(self) -> None:
+        # Carries the customer's S3 secret in params; result must be filtered too.
+        cmds = build_garage_commands(_make_config())
+        assert cmds["garage_bucket_clear"].sensitive_output is True
+
+    def test_bucket_clear_is_long_running(self) -> None:
+        cmds = build_garage_commands(_make_config())
+        assert cmds["garage_bucket_clear"].long_running is True
+
     def test_other_commands_not_sensitive(self) -> None:
         cmds = build_garage_commands(_make_config())
+        sensitive_allowed = {"garage_key_create", "garage_bucket_clear"}
         for name, cmd_def in cmds.items():
-            if name != "garage_key_create":
+            if name not in sensitive_allowed:
                 assert cmd_def.sensitive_output is False, (
                     f"{name} should not be sensitive"
                 )

@@ -9,6 +9,7 @@ import pytest
 from dataclasses import asdict
 
 from stormpulse.protocol import (
+    CommandProgressPayload,
     CommandRequestPayload,
     CommandResultPayload,
     CommandSequencePayload,
@@ -19,6 +20,7 @@ from stormpulse.protocol import (
     MetricsPayload,
     ProtocolError,
     RegisterPayload,
+    make_command_progress,
     make_command_result,
     make_heartbeat,
     make_log_batch,
@@ -411,6 +413,58 @@ def test_payload_asdict_roundtrip() -> None:
     d = asdict(original)
     rebuilt = CommandResultPayload.from_dict(d)
     assert rebuilt == original
+
+
+def test_command_progress_payload_defaults() -> None:
+    payload = CommandProgressPayload(
+        request_id="req-9", command="garage_bucket_clear", group="garage",
+        stage="starting", current=0,
+    )
+    assert payload.total is None
+    assert payload.message == ""
+
+
+def test_command_progress_payload_from_dict() -> None:
+    data = {
+        "request_id": "req-9", "command": "garage_bucket_clear", "group": "garage",
+        "stage": "running", "current": 1000, "total": 5000, "message": "deleted batch 1",
+    }
+    payload = CommandProgressPayload.from_dict(data)
+    assert payload.stage == "running"
+    assert payload.current == 1000
+    assert payload.total == 5000
+
+
+def test_command_progress_payload_missing_required_raises() -> None:
+    with pytest.raises(ProtocolError):
+        CommandProgressPayload.from_dict({
+            "request_id": "req-9", "command": "x", "group": "g", "stage": "starting",
+        })
+
+
+def test_roundtrip_command_progress() -> None:
+    progress = CommandProgressPayload(
+        request_id="req-9", command="garage_bucket_clear", group="garage",
+        stage="running", current=2000, total=5000, message="batch 2/5",
+    )
+    original = make_command_progress("test-agent", progress)
+    rebuilt = Envelope.from_json(original.to_json())
+    assert rebuilt.type == MessageType.COMMAND_PROGRESS
+    assert rebuilt.payload["stage"] == "running"
+    assert rebuilt.payload["total"] == 5000
+    parsed = CommandProgressPayload.from_dict(rebuilt.payload)
+    assert parsed == progress
+
+
+def test_roundtrip_command_progress_unknown_total() -> None:
+    progress = CommandProgressPayload(
+        request_id="req-9", command="garage_bucket_clear", group="garage",
+        stage="starting", current=0,
+    )
+    original = make_command_progress("test-agent", progress)
+    rebuilt = Envelope.from_json(original.to_json())
+    assert rebuilt.payload["total"] is None
+    assert rebuilt.payload["message"] == ""
 
 
 def test_metrics_payload_asdict_roundtrip() -> None:

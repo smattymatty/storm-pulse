@@ -86,6 +86,7 @@ class CommandDef:
     requires_confirmation: bool = False
     description: str = ""
     sensitive_output: bool = False
+    long_running: bool = False
     params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
 
 
@@ -353,6 +354,13 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                 f"got {type(sensitive_output).__name__}"
             )
 
+        long_running = entry.get("long_running", False)
+        if not isinstance(long_running, bool):
+            raise ConfigError(
+                f"'long_running' in [{label}] must be bool, "
+                f"got {type(long_running).__name__}"
+            )
+
         description = entry.get("description", "")
         if not isinstance(description, str):
             raise ConfigError(
@@ -412,6 +420,7 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
             requires_confirmation=requires_confirmation,
             description=description,
             sensitive_output=sensitive_output,
+            long_running=long_running,
             params=param_defs,
         )
 
