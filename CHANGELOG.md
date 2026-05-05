@@ -29,11 +29,5 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* — current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-### Security
-
-- New runtime SigV4 path is in-process and skips the existing `shell=False` discipline because there is no shell call. Layers 1–3 (no listening port, mTLS, HMAC + timestamp + nonce) still apply unchanged. See [Security Architecture — Layer 4](storm-pulse.wiki/Security-Architecture.md#layer-4----execution) for the updated trust model.
-- Customer secrets in `garage_bucket_clear` params are documented as a known scope-limited exposure: the secret lives in agent memory for the job's duration, and the existing Layer 5 sandbox bounds the impact of in-process compromise. See [Security Architecture — What this architecture does NOT protect against](storm-pulse.wiki/Security-Architecture.md#what-this-architecture-does-not-protect-against).
-- Runtime dependencies unchanged: `websockets`, `psutil`, `cryptography`. SigV4 was deliberately written against stdlib + existing deps rather than pulling in a vendor S3 SDK.
-
 [Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.4...HEAD
 [0.1.4]: https://git.stormdevelopments.ca/official-public/storm-pulse/releases/tag/v0.1.4

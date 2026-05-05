@@ -227,6 +227,103 @@ async def test_send_now_puts_envelope_on_wire() -> None:
     assert wire.sent[0].type == MessageType.COMMAND_RESULT
 
 
+# ---------------------------------------------------------------------------
+# on_success callback fires only on successful completion
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_on_success_fires_after_terminal_result_when_outcome_succeeds() -> None:
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    callback_calls: list[str] = []
+
+    async def on_success() -> None:
+        callback_calls.append("fired")
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(success=True)
+
+    mgr.start("req-ok", "cmd", "test", handler, on_success=on_success)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    assert callback_calls == ["fired"]
+
+
+@pytest.mark.asyncio
+async def test_on_success_does_not_fire_on_failure_outcome() -> None:
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    callback_calls: list[str] = []
+
+    async def on_success() -> None:
+        callback_calls.append("should-not-fire")
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(success=False, failure_reason="auth_failed")
+
+    mgr.start("req-fail", "cmd", "test", handler, on_success=on_success)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    assert callback_calls == []
+
+
+@pytest.mark.asyncio
+async def test_on_success_does_not_fire_on_handler_exception() -> None:
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    callback_calls: list[str] = []
+
+    async def on_success() -> None:
+        callback_calls.append("should-not-fire")
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        raise RuntimeError("boom")
+
+    mgr.start("req-crash", "cmd", "test", handler, on_success=on_success)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    assert callback_calls == []
+
+
+@pytest.mark.asyncio
+async def test_on_success_does_not_fire_on_cancellation() -> None:
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    callback_calls: list[str] = []
+    started = asyncio.Event()
+
+    async def on_success() -> None:
+        callback_calls.append("should-not-fire")
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        started.set()
+        await asyncio.sleep(60)
+        return JobOutcome(success=True)
+
+    mgr.start("req-cancel", "cmd", "test", handler, on_success=on_success)
+    await started.wait()
+    await mgr.shutdown_all()
+    assert callback_calls == []
+
+
+@pytest.mark.asyncio
+async def test_on_success_callback_failure_does_not_crash_job() -> None:
+    """Job is already past the terminal-result send by the time the callback
+    runs. A bug in the callback must not propagate — log and move on."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    async def on_success() -> None:
+        raise RuntimeError("callback bug")
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(success=True)
+
+    mgr.start("req-cb-bug", "cmd", "test", handler, on_success=on_success)
+    # Should not raise out of gather
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    # Terminal result was still emitted
+    assert any(e.type == MessageType.COMMAND_RESULT for e in wire.sent)
+
+
 @pytest.mark.asyncio
 async def test_send_now_swallows_send_errors() -> None:
     wire = _FakeWire()

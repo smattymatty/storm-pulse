@@ -8,6 +8,7 @@ import random
 import ssl
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -628,10 +629,49 @@ class Agent:
             await self._job_manager.send_now(make_command_result(self._config.agent.id, failure))
             return
 
+        on_success = self._post_success_hook(cmd_def, payload.command)
         try:
-            self._job_manager.start(request_id, payload.command, cmd_def.group, handler)
+            self._job_manager.start(
+                request_id, payload.command, cmd_def.group, handler,
+                on_success=on_success,
+            )
         except ValueError:
             logger.warning("Duplicate dispatch for request %s", request_id)
+
+    def _post_success_hook(
+        self, cmd_def: CommandDef, command: str,
+    ) -> Callable[[], Awaitable[None]] | None:
+        """Build the after-success callback for a long-running command, or None.
+
+        Today: any successful long-running command in the ``garage`` group
+        triggers an immediate Garage state refresh + ``metrics.push``. This
+        prevents the next scheduled metrics push (which still carries
+        pre-mutation state up to ``state_push_interval_seconds`` later) from
+        overwriting the dashboard's just-updated bucket counts after a
+        ``garage_bucket_clear``. Same shape as the post-``garage_refresh``
+        hook on the synchronous dispatch path.
+        """
+        if cmd_def.group != "garage":
+            return None
+        gc = self._config.garage
+        if gc is None or not gc.enabled:
+            return None
+
+        async def refresh_and_push() -> None:
+            if self._job_manager is None:
+                return
+            state = await asyncio.to_thread(collect_garage_state, gc)
+            if state is not None:
+                self._garage_state = state
+            metrics = await asyncio.to_thread(collect_metrics, self._config)
+            garage_dict = self._garage_state.to_dict() if self._garage_state else None
+            envelope = make_metrics_push(
+                self._config.agent.id, metrics, garage=garage_dict,
+            )
+            await self._job_manager.send_now(envelope)
+            logger.info("Sent post-mutation metrics push for %s", command)
+
+        return refresh_and_push
 
     def _make_long_running_handler(
         self, command: str, params: dict[str, str],

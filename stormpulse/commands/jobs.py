@@ -107,8 +107,16 @@ class JobManager:
         command: str,
         group: str,
         handler: JobHandler,
+        on_success: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Spawn a background task for ``handler``.
+
+        ``on_success``, if provided, is awaited after the terminal
+        ``command.result`` is emitted, but only when the job completed
+        with ``outcome.success == True``. Used by the agent to fire
+        post-mutation hooks — e.g. refreshing Garage state and pushing
+        fresh metrics so a stale state push doesn't overwrite the
+        just-completed mutation.
 
         Raises ValueError if a job with this ``request_id`` is already
         running — duplicate dispatch is a caller bug, not something to
@@ -117,7 +125,7 @@ class JobManager:
         if request_id in self._jobs and not self._jobs[request_id].done():
             raise ValueError(f"Job already running: {request_id}")
         task = asyncio.create_task(
-            self._run(request_id, command, group, handler),
+            self._run(request_id, command, group, handler, on_success),
             name=f"job:{command}:{request_id}",
         )
         self._jobs[request_id] = task
@@ -176,6 +184,7 @@ class JobManager:
         command: str,
         group: str,
         handler: JobHandler,
+        on_success: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """Drive one job from spawn to terminal result."""
         start = time.monotonic()
@@ -224,6 +233,15 @@ class JobManager:
                 "Failed to send terminal command.result for %s", request_id,
                 exc_info=True,
             )
+
+        if outcome.success and on_success is not None:
+            try:
+                await on_success()
+            except Exception:
+                logger.warning(
+                    "on_success callback failed for %s", request_id,
+                    exc_info=True,
+                )
 
     def _make_progress_callback(
         self, request_id: str, command: str, group: str,
