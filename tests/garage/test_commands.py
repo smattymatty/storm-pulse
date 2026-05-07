@@ -36,6 +36,7 @@ class TestBuildGarageCommands:
             "garage_refresh",
             "garage_bucket_clear",
             "garage_provision_customer_bucket",
+            "garage_provision_additional_key",
             "garage_rotate_customer_key",
         }
         assert set(cmds.keys()) == expected
@@ -47,6 +48,7 @@ class TestBuildGarageCommands:
                 "garage_refresh",
                 "garage_bucket_clear",
                 "garage_provision_customer_bucket",
+                "garage_provision_additional_key",
                 "garage_rotate_customer_key",
             }:
                 continue  # internal command, not a subprocess
@@ -96,6 +98,7 @@ class TestBuildGarageCommands:
             "garage_key_create",
             "garage_bucket_clear",
             "garage_provision_customer_bucket",
+            "garage_provision_additional_key",
             "garage_rotate_customer_key",
         }
         for name, cmd_def in cmds.items():

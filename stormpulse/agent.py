@@ -709,6 +709,18 @@ class Agent:
             return make_rotate_customer_key_handler(
                 self._config.garage, params,
             )
+        if command == "garage_provision_additional_key":
+            from stormpulse.garage.provision_additional_key import (
+                make_provision_additional_key_handler,
+            )
+            if self._config.garage is None:
+                logger.error(
+                    "garage_provision_additional_key requires [garage] config",
+                )
+                return None
+            return make_provision_additional_key_handler(
+                self._config.garage, params,
+            )
         return None
 
     async def _handle_command_sequence(

@@ -339,7 +339,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             group="garage",
             command=["garage_provision_customer_bucket"],  # internal — handled by JobManager
             timeout=600,  # per-step reference; long_running ignores it for total duration
-            description="Orchestrated bucket provisioning: create bucket, three keys, attach local aliases. Atomic with rollback.",
+            description="Orchestrated bucket + admin key provisioning. Atomic with rollback. The rw/ro keys are added on demand via garage_provision_additional_key.",
             sensitive_output=True,  # secrets ride in stdout/extras
             long_running=True,
             params={
@@ -347,7 +347,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     placeholder="display_name",
                     default=None,
                     pattern=_BUCKET_NAME_PATTERN,
-                    description="Customer-facing bucket name; becomes the local alias on each key",
+                    description="Customer-facing bucket name; becomes the local alias on the admin key",
                 ),
                 "key_name_admin": ParamDef(
                     placeholder="key_name_admin",
@@ -355,17 +355,39 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     pattern=_KEY_NAME_PATTERN,
                     description="Garage key name for the admin (all-permissions) key",
                 ),
-                "key_name_rw": ParamDef(
-                    placeholder="key_name_rw",
+            },
+        ),
+        "garage_provision_additional_key": CommandDef(
+            group="garage",
+            command=["garage_provision_additional_key"],  # internal — handled by JobManager
+            timeout=120,
+            description="Orchestrated provisioning of an additional rw or ro key on an existing bucket. Atomic with rollback.",
+            sensitive_output=True,  # the new secret rides in stdout/extras
+            long_running=True,
+            params={
+                "new_key_name": ParamDef(
+                    placeholder="new_key_name",
                     default=None,
                     pattern=_KEY_NAME_PATTERN,
-                    description="Garage key name for the read-write key",
+                    description="Garage key name for the new tiered key",
                 ),
-                "key_name_ro": ParamDef(
-                    placeholder="key_name_ro",
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
                     default=None,
-                    pattern=_KEY_NAME_PATTERN,
-                    description="Garage key name for the read-only key",
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket UUID (16-char Garage ID) to attach the local alias to",
+                ),
+                "local_alias": ParamDef(
+                    placeholder="local_alias",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Local alias to attach on the new key (typically display_name)",
+                ),
+                "key_tier": ParamDef(
+                    placeholder="key_tier",
+                    default=None,
+                    pattern=r"(?:rw|ro)",
+                    description="Permission tier for the new key: 'rw' or 'ro'. Admin is created at provision time.",
                 ),
             },
         ),
