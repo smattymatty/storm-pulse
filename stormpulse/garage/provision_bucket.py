@@ -1,15 +1,29 @@
 """Handler for the ``garage_provision_customer_bucket`` long-running command.
 
-The dashboard dispatches a single ``command.request`` with the customer's
-bucket display name and the three key names (admin / rw / ro). This handler
-performs the full 11-step provisioning flow, captures the bucket UUID via
-``parse_bucket_info``, and returns the three key IDs and secrets in a
-single result. On any partial failure, it rolls back to the pre-call state.
+Creates a bucket and its admin key atomically. Additional keys (rw/ro)
+are added later via ``provision_additional_key``.
 
-The contract — step ordering, rollback table, failure-reason vocabulary,
-and idempotency rule — is documented in
+Step ordering:
+
+  1. bucket create <throwaway>
+  2. key create <admin name>
+  3. bucket allow --read --write --owner <throwaway> --key <admin id>
+  4. bucket alias --local <admin id> <throwaway> <display>
+  5. bucket unalias <throwaway>
+
+The throwaway alias is the bucket's only globally-unique handle
+during steps 1-4. Step 5 removes it; the admin's local alias
+satisfies Garage's "must have at least one alias" orphan rule.
+
+On any failure, atomic rollback runs in reverse order: detach local
+alias, revoke permissions, delete key, delete bucket. The throwaway
+is always still attached during rollback (it's removed only by the
+final step in the success path), so all rollback CLI calls reference
+the bucket by ``throwaway_alias``.
+
+The contract — step ordering, rollback table, failure-reason
+vocabulary, and idempotency rule — is documented in
 ``_architecture/specs/cellar-bucket-naming-foundation.md`` (Issue 4).
-This module implements that contract; deviations are bugs.
 """
 
 from __future__ import annotations
@@ -18,7 +32,7 @@ import asyncio
 import logging
 import secrets
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
@@ -37,7 +51,9 @@ logger = logging.getLogger(__name__)
 # block the whole job indefinitely.
 _STEP_TIMEOUT_SECONDS = 30
 
-_TOTAL_STEPS = 11
+_TOTAL_STEPS = 5
+
+_ADMIN_FLAGS = ("--read", "--write", "--owner")
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +69,7 @@ def make_provision_customer_bucket_handler(
     Returns ``None`` if a required param is missing — the caller emits a
     structured no-handler failure rather than crashing.
     """
-    required = ("display_name", "key_name_admin", "key_name_rw", "key_name_ro")
+    required = ("display_name", "key_name_admin")
     if not all(params.get(k) for k in required):
         logger.error(
             "garage_provision_customer_bucket missing required params: %s",
@@ -63,8 +79,6 @@ def make_provision_customer_bucket_handler(
 
     display_name = params["display_name"]
     key_name_admin = params["key_name_admin"]
-    key_name_rw = params["key_name_rw"]
-    key_name_ro = params["key_name_ro"]
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_provision_customer_bucket(
@@ -72,8 +86,6 @@ def make_provision_customer_bucket_handler(
             garage_config=garage_config,
             display_name=display_name,
             key_name_admin=key_name_admin,
-            key_name_rw=key_name_rw,
-            key_name_ro=key_name_ro,
         )
 
     return handler
@@ -92,24 +104,19 @@ class _ProvisionState:
     throwaway_alias: str
     bucket_uuid: str | None = None
     throwaway_attached: bool = False
-    keys_created: list[str] = field(default_factory=list)
-    permissions_granted: list[tuple[str, list[str]]] = field(
-        default_factory=list,
-    )
-    local_aliases_attached: list[str] = field(default_factory=list)
+    admin_key_id: str | None = None
+    admin_perms_granted: bool = False
+    admin_alias_attached: bool = False
     step_completed: str | None = None
 
 
 @dataclass(frozen=True)
-class _KeyTriple:
-    """Captured key info from steps 2-4."""
+class _AdminKey:
+    """Captured admin key info from step 2."""
 
     key_id: str
     secret_key: str
     key_name: str
-
-
-_KEY_LABELS = ("admin", "rw", "ro")
 
 
 # ---------------------------------------------------------------------------
@@ -162,14 +169,8 @@ async def run_provision_customer_bucket(
     garage_config: GarageConfig,
     display_name: str,
     key_name_admin: str,
-    key_name_rw: str,
-    key_name_ro: str,
 ) -> JobOutcome:
-    """Run the 11-step provisioning flow with rollback.
-
-    Tests inject ``garage_config`` pointing at a fake docker/garage path
-    plus a custom ``_run_garage`` (via monkeypatch) to simulate failures.
-    """
+    """Run the 5-step bucket + admin key flow with atomic rollback."""
     started_at = time.monotonic()
     # Throwaway alias used only for the create+rename dance. Must
     # satisfy S3 strict bucket naming (3-63 chars, lowercase
@@ -180,7 +181,6 @@ async def run_provision_customer_bucket(
     state = _ProvisionState(
         display_name=display_name, throwaway_alias=throwaway_alias,
     )
-    keys: list[_KeyTriple] = []
 
     # ---- Step 1: bucket create <throwaway> ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating bucket")
@@ -188,7 +188,6 @@ async def run_provision_customer_bucket(
         garage_config, "bucket", "create", throwaway_alias,
     )
     if rc != 0:
-        # Nothing was created. No rollback needed.
         return _failure(
             failure_reason="bucket_create_failed",
             step_failed="bucket_create",
@@ -201,8 +200,6 @@ async def run_provision_customer_bucket(
     try:
         info = parse_bucket_info(stdout)
     except GarageParseError as exc:
-        # The bucket exists but we can't extract the UUID. Best-effort
-        # cleanup by alias, then report.
         manual = await _delete_bucket_best_effort(
             garage_config, throwaway_alias,
         )
@@ -221,129 +218,104 @@ async def run_provision_customer_bucket(
     state.throwaway_attached = True
     state.step_completed = "bucket_create"
 
-    # ---- Steps 2-4: key creates ----
-    key_names = (key_name_admin, key_name_rw, key_name_ro)
-    for idx, key_name in enumerate(key_names):
-        label = _KEY_LABELS[idx]
-        await progress(
-            "running", 1 + idx, _TOTAL_STEPS, f"Creating {label} key",
-        )
-        rc, stdout, stderr = await _run_garage(
-            garage_config, "key", "create", key_name,
-        )
-        if rc != 0:
-            rollback = await _rollback(garage_config, state)
-            return _failure(
-                failure_reason="key_create_failed",
-                step_failed=f"key_create_{label}",
-                state=state,
-                stderr=stderr,
-                started_at=started_at,
-                rollback_status=rollback.status,
-                extras_extra={
-                    "step_index": idx,
-                    "manual_cleanup_required": rollback.manual_cleanup,
-                },
-            )
-        try:
-            key_result = parse_key_create(stdout)
-        except GarageParseError as exc:
-            # The key was created but we can't extract its ID. We can't
-            # delete it during rollback because we don't know the ID.
-            # Log it; the operator will have to clean it up by name.
-            rollback = await _rollback(garage_config, state)
-            manual = list(rollback.manual_cleanup)
-            manual.append({"type": "key_unknown_id", "name": key_name})
-            return _failure(
-                failure_reason="key_create_failed",
-                step_failed=f"key_create_{label}",
-                state=state,
-                stderr=f"Could not parse key ID: {exc}",
-                started_at=started_at,
-                rollback_status="partial",
-                extras_extra={
-                    "step_index": idx,
-                    "manual_cleanup_required": manual,
-                },
-            )
-        keys.append(_KeyTriple(
-            key_id=key_result.key_id,
-            secret_key=key_result.secret_key,
-            key_name=key_name,
-        ))
-        state.keys_created.append(key_result.key_id)
-        state.step_completed = f"key_create_{label}"
-
-    # ---- Steps 5-7: permission grants ----
-    perm_flags = (
-        ["--read", "--write", "--owner"],
-        ["--read", "--write"],
-        ["--read"],
+    # ---- Step 2: key create <admin> ----
+    await progress("running", 1, _TOTAL_STEPS, "Creating admin key")
+    rc, stdout, stderr = await _run_garage(
+        garage_config, "key", "create", key_name_admin,
     )
-    for idx, flags in enumerate(perm_flags):
-        label = _KEY_LABELS[idx]
-        await progress(
-            "running", 4 + idx, _TOTAL_STEPS,
-            f"Granting {label} permissions",
+    if rc != 0:
+        rollback = await _rollback(garage_config, state)
+        return _failure(
+            failure_reason="admin_key_create_failed",
+            step_failed="admin_key_create",
+            state=state,
+            stderr=stderr,
+            started_at=started_at,
+            rollback_status=rollback.status,
+            extras_extra={
+                "manual_cleanup_required": rollback.manual_cleanup,
+            },
         )
-        rc, _stdout, stderr = await _run_garage(
-            garage_config,
-            "bucket", "allow", *flags,
-            throwaway_alias, "--key", keys[idx].key_id,
+    try:
+        key_result = parse_key_create(stdout)
+    except GarageParseError as exc:
+        rollback = await _rollback(garage_config, state)
+        manual = list(rollback.manual_cleanup)
+        manual.append({"type": "key_unknown_id", "name": key_name_admin})
+        return _failure(
+            failure_reason="admin_key_create_failed",
+            step_failed="admin_key_create",
+            state=state,
+            stderr=f"Could not parse key ID: {exc}",
+            started_at=started_at,
+            rollback_status="partial",
+            extras_extra={
+                "manual_cleanup_required": manual,
+            },
         )
-        if rc != 0:
-            rollback = await _rollback(garage_config, state)
-            return _failure(
-                failure_reason="permission_grant_failed",
-                step_failed=f"permission_grant_{label}",
-                state=state,
-                stderr=stderr,
-                started_at=started_at,
-                rollback_status=rollback.status,
-                extras_extra={
-                    "step_index": idx,
-                    "manual_cleanup_required": rollback.manual_cleanup,
-                },
-            )
-        state.permissions_granted.append((keys[idx].key_id, list(flags)))
-        state.step_completed = f"permission_grant_{label}"
+    admin = _AdminKey(
+        key_id=key_result.key_id,
+        secret_key=key_result.secret_key,
+        key_name=key_name_admin,
+    )
+    state.admin_key_id = admin.key_id
+    state.step_completed = "admin_key_create"
 
-    # ---- Steps 8-10: local alias attaches ----
-    for idx in range(3):
-        label = _KEY_LABELS[idx]
-        await progress(
-            "running", 7 + idx, _TOTAL_STEPS,
-            f"Attaching {label} local alias",
-        )
-        rc, _stdout, stderr = await _run_garage(
-            garage_config,
-            "bucket", "alias", "--local", keys[idx].key_id,
-            throwaway_alias, display_name,
-        )
-        if rc != 0:
-            rollback = await _rollback(garage_config, state)
-            return _failure(
-                failure_reason="local_alias_attach_failed",
-                step_failed=f"local_alias_attach_{label}",
-                state=state,
-                stderr=stderr,
-                started_at=started_at,
-                rollback_status=rollback.status,
-                extras_extra={
-                    "step_index": idx,
-                    "manual_cleanup_required": rollback.manual_cleanup,
-                },
-            )
-        state.local_aliases_attached.append(keys[idx].key_id)
-        state.step_completed = f"local_alias_attach_{label}"
-
-    # ---- Step 11: bucket unalias <throwaway> (last step) ----
-    # The throwaway is the bucket's only global alias at this point;
-    # the 3 local aliases satisfy Garage's "must have at least one
-    # alias" orphan rule, so this unalias succeeds. If it does fail
-    # for some reason, atomic rollback runs (Change C).
+    # ---- Step 3: bucket allow <flags> <throwaway> --key <admin> ----
     await progress(
-        "running", 10, _TOTAL_STEPS, "Removing throwaway alias",
+        "running", 2, _TOTAL_STEPS, "Granting admin permissions",
+    )
+    rc, _stdout, stderr = await _run_garage(
+        garage_config,
+        "bucket", "allow", *_ADMIN_FLAGS,
+        throwaway_alias, "--key", admin.key_id,
+    )
+    if rc != 0:
+        rollback = await _rollback(garage_config, state)
+        return _failure(
+            failure_reason="admin_permission_grant_failed",
+            step_failed="admin_permission_grant",
+            state=state,
+            stderr=stderr,
+            started_at=started_at,
+            rollback_status=rollback.status,
+            extras_extra={
+                "manual_cleanup_required": rollback.manual_cleanup,
+            },
+        )
+    state.admin_perms_granted = True
+    state.step_completed = "admin_permission_grant"
+
+    # ---- Step 4: bucket alias --local <admin> <throwaway> <display> ----
+    await progress(
+        "running", 3, _TOTAL_STEPS, "Attaching admin local alias",
+    )
+    rc, _stdout, stderr = await _run_garage(
+        garage_config,
+        "bucket", "alias", "--local", admin.key_id,
+        throwaway_alias, display_name,
+    )
+    if rc != 0:
+        rollback = await _rollback(garage_config, state)
+        return _failure(
+            failure_reason="admin_local_alias_attach_failed",
+            step_failed="admin_local_alias_attach",
+            state=state,
+            stderr=stderr,
+            started_at=started_at,
+            rollback_status=rollback.status,
+            extras_extra={
+                "manual_cleanup_required": rollback.manual_cleanup,
+            },
+        )
+    state.admin_alias_attached = True
+    state.step_completed = "admin_local_alias_attach"
+
+    # ---- Step 5: bucket unalias <throwaway> (last step) ----
+    # The admin's local alias satisfies Garage's "must have at least
+    # one alias" orphan rule, so removing the throwaway succeeds.
+    await progress(
+        "running", 4, _TOTAL_STEPS, "Removing throwaway alias",
     )
     rc, _stdout, stderr = await _run_garage(
         garage_config, "bucket", "unalias", throwaway_alias,
@@ -357,7 +329,9 @@ async def run_provision_customer_bucket(
             stderr=stderr,
             started_at=started_at,
             rollback_status=rollback.status,
-            extras_extra={"manual_cleanup_required": rollback.manual_cleanup},
+            extras_extra={
+                "manual_cleanup_required": rollback.manual_cleanup,
+            },
         )
     state.throwaway_attached = False
     state.step_completed = "unalias_throwaway"
@@ -371,12 +345,10 @@ async def run_provision_customer_bucket(
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=_render_success_stdout(bucket_uuid_short, keys),
+        stdout=_render_success_stdout(bucket_uuid_short, admin),
         extras={
             "bucket_uuid": bucket_uuid_short,
-            "admin": _key_payload(keys[0]),
-            "rw": _key_payload(keys[1]),
-            "ro": _key_payload(keys[2]),
+            "admin": _key_payload(admin),
             "step_completed": state.step_completed,
             "step_failed": None,
             "rollback_status": "not_required",
@@ -404,70 +376,75 @@ async def _rollback(
     """Reverse-order cleanup. Halt on first cleanup failure.
 
     Order:
-      1. Detach any local aliases that were attached.
-      2. Revoke any permissions that were granted (deny).
-      3. Delete any keys that were created.
+      1. Detach the admin local alias if attached.
+      2. Revoke admin permissions if granted.
+      3. Delete the admin key if created.
       4. Delete the bucket if it exists.
 
-    The throwaway alias is still attached throughout rollback (it's
-    only removed by step 11 in the success path; rollback runs only
-    when an earlier step failed OR step 11 itself failed, in which
-    case the throwaway is also still attached). So bucket references
-    in rollback CLI calls always use ``throwaway_alias``.
+    The throwaway alias is still attached throughout rollback, so
+    bucket references in CLI calls always use ``throwaway_alias``.
 
     On any failure, halt and return what's still alive in
     ``manual_cleanup``.
     """
     manual: list[dict[str, Any]] = []
 
-    # 1. Detach local aliases
-    for key_id in state.local_aliases_attached:
+    # 1. Detach admin local alias
+    if state.admin_alias_attached and state.admin_key_id is not None:
         try:
             rc, _stdout, _stderr = await _run_garage(
                 garage_config,
-                "bucket", "unalias", "--local", key_id,
+                "bucket", "unalias", "--local", state.admin_key_id,
                 state.display_name,
             )
         except (asyncio.TimeoutError, OSError) as exc:
-            logger.warning("Rollback: unalias --local %s failed: %s", key_id, exc)
-            manual.extend(_remaining_after_alias_halt(state, key_id))
+            logger.warning(
+                "Rollback: unalias --local %s failed: %s",
+                state.admin_key_id, exc,
+            )
+            manual.extend(_remaining_after_alias_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
         if rc != 0:
-            manual.extend(_remaining_after_alias_halt(state, key_id))
+            manual.extend(_remaining_after_alias_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
-    # 2. Revoke permissions
-    for key_id, flags in state.permissions_granted:
+    # 2. Revoke admin permissions
+    if state.admin_perms_granted and state.admin_key_id is not None:
         try:
             rc, _stdout, _stderr = await _run_garage(
                 garage_config,
-                "bucket", "deny", *flags,
-                state.throwaway_alias, "--key", key_id,
+                "bucket", "deny", *_ADMIN_FLAGS,
+                state.throwaway_alias, "--key", state.admin_key_id,
             )
         except (asyncio.TimeoutError, OSError) as exc:
-            logger.warning("Rollback: bucket deny %s failed: %s", key_id, exc)
-            manual.extend(_remaining_after_perm_halt(state, key_id))
+            logger.warning(
+                "Rollback: bucket deny %s failed: %s",
+                state.admin_key_id, exc,
+            )
+            manual.extend(_remaining_after_perm_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
         if rc != 0:
-            manual.extend(_remaining_after_perm_halt(state, key_id))
+            manual.extend(_remaining_after_perm_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
-    # 3. Delete keys
-    for key_id in state.keys_created:
+    # 3. Delete admin key
+    if state.admin_key_id is not None:
         try:
             rc, _stdout, _stderr = await _run_garage(
-                garage_config, "key", "delete", "--yes", key_id,
+                garage_config, "key", "delete", "--yes", state.admin_key_id,
             )
         except (asyncio.TimeoutError, OSError) as exc:
-            logger.warning("Rollback: key delete %s failed: %s", key_id, exc)
-            manual.extend(_remaining_after_key_halt(state, key_id))
+            logger.warning(
+                "Rollback: key delete %s failed: %s",
+                state.admin_key_id, exc,
+            )
+            manual.extend(_remaining_after_key_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
         if rc != 0:
-            manual.extend(_remaining_after_key_halt(state, key_id))
+            manual.extend(_remaining_after_key_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
-    # 4. Delete bucket (always by throwaway alias; throwaway is
-    # always still attached during rollback).
+    # 4. Delete bucket (always by throwaway alias)
     if state.bucket_uuid is not None:
         try:
             rc, _stdout, _stderr = await _run_garage(
@@ -489,56 +466,53 @@ async def _rollback(
 
 
 def _remaining_after_alias_halt(
-    state: _ProvisionState, halted_at_key_id: str,
+    state: _ProvisionState,
 ) -> list[dict[str, Any]]:
-    """Manual-cleanup list when alias detachment halts at the given key."""
+    """Manual-cleanup list when alias detachment halts."""
     items: list[dict[str, Any]] = []
-    halt_idx = state.local_aliases_attached.index(halted_at_key_id)
-    # Aliases still attached (this one and onward)
-    for kid in state.local_aliases_attached[halt_idx:]:
-        items.append({"type": "local_alias", "key_id": kid,
-                      "alias": state.display_name})
-    # All permissions still granted (none have been revoked yet)
-    for kid, flags in state.permissions_granted:
-        items.append({"type": "permission_grant", "key_id": kid,
-                      "flags": flags})
-    # All keys still alive
-    for kid in state.keys_created:
-        items.append({"type": "key", "id": kid})
+    if state.admin_key_id is not None:
+        items.append({
+            "type": "local_alias",
+            "key_id": state.admin_key_id,
+            "alias": state.display_name,
+        })
+        if state.admin_perms_granted:
+            items.append({
+                "type": "permission_grant",
+                "key_id": state.admin_key_id,
+                "flags": list(_ADMIN_FLAGS),
+            })
+        items.append({"type": "key", "id": state.admin_key_id})
     if state.bucket_uuid is not None:
         items.append({"type": "bucket", "id": state.bucket_uuid[:16]})
     return items
 
 
 def _remaining_after_perm_halt(
-    state: _ProvisionState, halted_at_key_id: str,
+    state: _ProvisionState,
 ) -> list[dict[str, Any]]:
-    """Manual-cleanup list when permission revoke halts at the given key."""
+    """Manual-cleanup list when permission revoke halts."""
     items: list[dict[str, Any]] = []
-    halt_idx = next(
-        i for i, (kid, _) in enumerate(state.permissions_granted)
-        if kid == halted_at_key_id
-    )
-    # Permissions still granted (this one and onward)
-    for kid, flags in state.permissions_granted[halt_idx:]:
-        items.append({"type": "permission_grant", "key_id": kid,
-                      "flags": flags})
-    # All keys still alive
-    for kid in state.keys_created:
-        items.append({"type": "key", "id": kid})
+    if state.admin_key_id is not None:
+        if state.admin_perms_granted:
+            items.append({
+                "type": "permission_grant",
+                "key_id": state.admin_key_id,
+                "flags": list(_ADMIN_FLAGS),
+            })
+        items.append({"type": "key", "id": state.admin_key_id})
     if state.bucket_uuid is not None:
         items.append({"type": "bucket", "id": state.bucket_uuid[:16]})
     return items
 
 
 def _remaining_after_key_halt(
-    state: _ProvisionState, halted_at_key_id: str,
+    state: _ProvisionState,
 ) -> list[dict[str, Any]]:
-    """Manual-cleanup list when key deletion halts at the given key."""
+    """Manual-cleanup list when key deletion halts."""
     items: list[dict[str, Any]] = []
-    halt_idx = state.keys_created.index(halted_at_key_id)
-    for kid in state.keys_created[halt_idx:]:
-        items.append({"type": "key", "id": kid})
+    if state.admin_key_id is not None:
+        items.append({"type": "key", "id": state.admin_key_id})
     if state.bucket_uuid is not None:
         items.append({"type": "bucket", "id": state.bucket_uuid[:16]})
     return items
@@ -575,9 +549,6 @@ def _failure(
     extras_extra: dict[str, Any],
 ) -> JobOutcome:
     """Build a failure JobOutcome with the contracted extras shape."""
-    # Expose the 16-char prefix to downstream callers, matching the
-    # success path. Garage CLI accepts this as a bucket reference;
-    # the full 64-char form is rejected.
     bucket_uuid_short = (
         state.bucket_uuid[:16] if state.bucket_uuid else None
     )
@@ -591,9 +562,6 @@ def _failure(
         "duration_seconds": _elapsed(started_at),
     }
     extras.update(extras_extra)
-    # Per the contract: when rollback itself errors partway, the failure
-    # reason flips to ``rollback_failed`` and ``step_failed`` retains the
-    # originating step.
     final_reason = (
         "rollback_failed" if rollback_status == "partial" else failure_reason
     )
@@ -607,7 +575,7 @@ def _failure(
     )
 
 
-def _key_payload(key: _KeyTriple) -> dict[str, str]:
+def _key_payload(key: _AdminKey) -> dict[str, str]:
     return {
         "key_id": key.key_id,
         "secret": key.secret_key,
@@ -615,15 +583,12 @@ def _key_payload(key: _KeyTriple) -> dict[str, str]:
     }
 
 
-def _render_success_stdout(bucket_uuid: str | None, keys: list[_KeyTriple]) -> str:
+def _render_success_stdout(bucket_uuid: str, admin: _AdminKey) -> str:
     """Human-readable summary; the structured payload rides in extras."""
-    lines = [
+    return "\n".join([
         f"Bucket UUID: {bucket_uuid}",
-        f"Admin key: {keys[0].key_id}",
-        f"RW key: {keys[1].key_id}",
-        f"RO key: {keys[2].key_id}",
-    ]
-    return "\n".join(lines)
+        f"Admin key: {admin.key_id}",
+    ])
 
 
 def _elapsed(started_at: float) -> float:
