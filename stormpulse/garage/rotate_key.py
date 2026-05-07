@@ -295,7 +295,7 @@ async def _rollback(
             rc, _stdout, _stderr = await _run_garage(
                 garage_config,
                 "bucket", "unalias", "--local", state.new_key_id,
-                state.bucket_id, state.local_alias,
+                state.local_alias,
             )
         except (asyncio.TimeoutError, OSError) as exc:
             logger.warning(
