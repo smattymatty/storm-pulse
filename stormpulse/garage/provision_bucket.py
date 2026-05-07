@@ -168,7 +168,12 @@ async def run_provision_customer_bucket(
     plus a custom ``_run_garage`` (via monkeypatch) to simulate failures.
     """
     started_at = time.monotonic()
-    throwaway_alias = f"_provisioning_{secrets.token_hex(8)}"
+    # Throwaway alias used only for the create+rename dance. Must
+    # satisfy S3 strict bucket naming (3-63 chars, lowercase
+    # alphanumeric + hyphens, starts and ends alphanumeric) — Garage's
+    # bucket-create validator rejects names with leading underscores
+    # or any underscore at all on S3-strict deployments.
+    throwaway_alias = f"provisioning-{secrets.token_hex(8)}"
     state = _ProvisionState(
         display_name=display_name, throwaway_alias=throwaway_alias,
     )

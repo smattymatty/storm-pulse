@@ -199,7 +199,7 @@ async def test_happy_path_sequence_of_calls(monkeypatch: pytest.MonkeyPatch) -> 
     # Step 1: bucket create <throwaway>
     assert runner.calls[0][:2] == ("bucket", "create")
     throwaway = runner.calls[0][2]
-    assert throwaway.startswith("_provisioning_")
+    assert throwaway.startswith("provisioning-")
     # Step 2: bucket unalias <throwaway>
     assert runner.calls[1] == ("bucket", "unalias", throwaway)
     # Step 3-5: key create
