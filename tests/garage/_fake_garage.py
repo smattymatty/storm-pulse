@@ -83,6 +83,7 @@ class FailureSpec:
 
     rc: int = 1
     stderr: str = ""
+    skip_remaining: int = 0  # matching calls to let through before firing
 
 
 @dataclass
@@ -133,14 +134,30 @@ class FakeGarage:
         verb = self._verb_key(args)
         queue = self._failure_overrides.get(verb)
         if queue:
-            spec = queue.popleft()
-            return (spec.rc, "", spec.stderr)
+            spec = queue[0]
+            if spec.skip_remaining > 0:
+                spec.skip_remaining -= 1
+            else:
+                queue.popleft()
+                return (spec.rc, "", spec.stderr)
         return self._dispatch(args)
 
     def fail_next(
-        self, verb: str, *, rc: int = 1, stderr: str = "",
+        self,
+        verb: str,
+        *,
+        rc: int = 1,
+        stderr: str = "",
+        after: int = 0,
     ) -> None:
-        """Queue the next call matching ``verb`` to fail.
+        """Queue a failure for a future call matching ``verb``.
+
+        With ``after=0`` (default), the very next matching call fails.
+        With ``after=N``, the next ``N`` matching calls dispatch
+        normally and the (N+1)-th fails. Useful when an orchestrator
+        invokes the same verb several times in a row and the test
+        targets a specific occurrence (e.g., the second of three
+        ``key create`` calls).
 
         Verb keys: ``bucket_create``, ``bucket_unalias``,
         ``bucket_unalias_local``, ``bucket_alias``,
@@ -148,10 +165,10 @@ class FakeGarage:
         ``bucket_delete``, ``bucket_info``, ``key_create``,
         ``key_delete``.
 
-        Multiple ``fail_next`` calls for the same verb queue.
+        Multiple ``fail_next`` calls for the same verb queue in order.
         """
         self._failure_overrides.setdefault(verb, deque()).append(
-            FailureSpec(rc=rc, stderr=stderr),
+            FailureSpec(rc=rc, stderr=stderr, skip_remaining=after),
         )
 
     def add_bucket(self, alias: str) -> _Bucket:
