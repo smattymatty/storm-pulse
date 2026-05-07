@@ -11,6 +11,7 @@ from stormpulse.garage.parse import GarageParseError
 from stormpulse.garage.state import _run_garage, collect_garage_state
 from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT,
+    BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
     BUCKET_INFO_OUTPUT_WITH_QUOTAS,
     BUCKET_LIST_OUTPUT,
     BUCKET_LIST_OUTPUT_EMPTY,
@@ -290,27 +291,71 @@ class TestCollectGarageState:
         assert state is not None
         assert {b.alias for b in state.buckets} == {"obsidian-vault", "backups"}
 
-    def test_bucket_without_global_alias_is_skipped(self, tmp_path: Path) -> None:
-        """Buckets created via S3 API with no alias have empty global_alias → skipped."""
+    def test_bucket_without_global_alias_addressed_by_uuid(self, tmp_path: Path) -> None:
+        """Alias-less buckets (post-bucket-naming-refactor) must still be collected.
+
+        Most customer buckets won't have a global alias — only website-hosted ones
+        do. The agent addresses them by UUID (Garage CLI accepts a UUID anywhere
+        it accepts a global alias). The metrics push entry carries the UUID in
+        ``id`` (Cellar joins on this) and an empty ``alias``.
+        """
         cfg = _make_config(tmp_path)
         from stormpulse.garage.parse import GarageBucketListEntry
 
+        bucket_uuid = "a9b8c7d6e5f40321"
         outputs: dict[tuple[str, ...], str | None] = {
             ("status",): STATUS_OUTPUT,
             ("stats",): STATS_OUTPUT,
             ("key", "list"): KEY_LIST_OUTPUT,
             ("bucket", "list"): BUCKET_LIST_OUTPUT,
+            # Bucket info is addressed by UUID, not alias.
+            ("bucket", "info", bucket_uuid): BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
         }
         with patch(
             "stormpulse.garage.state._run_garage",
             side_effect=_mock_run_garage(outputs),
         ), patch(
             "stormpulse.garage.state.parse_bucket_list",
-            return_value=[GarageBucketListEntry(bucket_id="x", global_alias="")],
+            return_value=[GarageBucketListEntry(bucket_id=bucket_uuid, global_alias="")],
         ):
             state = collect_garage_state(cfg)
         assert state is not None
-        assert state.buckets == []
+        assert len(state.buckets) == 1
+        bucket = state.buckets[0]
+        # id is the full UUID parsed from bucket info (how Cellar joins).
+        assert bucket.id == "a9b8c7d6e5f4032110aabbccddeeff00112233445566778899aabbccddeeff00"
+        assert bucket.alias == ""
+        assert bucket.size_bytes == 5800
+        assert bucket.object_count == 2
+
+    def test_bucket_info_addressed_by_uuid_when_no_alias(self, tmp_path: Path) -> None:
+        """Verify the subprocess call uses the UUID, not an alias, for alias-less buckets."""
+        cfg = _make_config(tmp_path)
+        from stormpulse.garage.parse import GarageBucketListEntry
+
+        bucket_uuid = "a9b8c7d6e5f40321"
+        called_args: list[tuple[str, ...]] = []
+
+        def recording_run_garage(config: GarageConfig, *args: str) -> str | None:
+            called_args.append(args)
+            return {
+                ("status",): STATUS_OUTPUT,
+                ("stats",): STATS_OUTPUT,
+                ("key", "list"): KEY_LIST_OUTPUT,
+                ("bucket", "list"): BUCKET_LIST_OUTPUT,
+                ("bucket", "info", bucket_uuid): BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
+            }.get(args)
+
+        with patch(
+            "stormpulse.garage.state._run_garage",
+            side_effect=recording_run_garage,
+        ), patch(
+            "stormpulse.garage.state.parse_bucket_list",
+            return_value=[GarageBucketListEntry(bucket_id=bucket_uuid, global_alias="")],
+        ):
+            collect_garage_state(cfg)
+
+        assert ("bucket", "info", bucket_uuid) in called_args
 
     def test_unlinked_keys_appear_in_top_level(self, tmp_path: Path) -> None:
         """Keys in `key list` but not attached to any bucket still surface for the dashboard."""

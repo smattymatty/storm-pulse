@@ -148,11 +148,17 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
 
     buckets: list[GarageBucket] = []
     for entry in _try_parse(config, parse_bucket_list, "bucket", "list", what="bucket list") or []:
-        if not entry.global_alias:
+        # Address bucket info by global alias when present, otherwise by UUID.
+        # The Garage CLI accepts a bucket UUID anywhere it accepts a global alias.
+        # Post-bucket-naming-refactor most customer buckets won't have a global
+        # alias — only website-hosted ones do — so dropping alias-less buckets
+        # here would silently hide them from the dashboard.
+        bucket_ref = entry.global_alias or entry.bucket_id
+        if not bucket_ref:
             continue
         info = _try_parse(
-            config, parse_bucket_info, "bucket", "info", entry.global_alias,
-            what=f"bucket info for {entry.global_alias}",
+            config, parse_bucket_info, "bucket", "info", bucket_ref,
+            what=f"bucket info for {bucket_ref}",
         )
         if info is None:
             continue

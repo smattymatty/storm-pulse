@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from stormpulse.config import CommandDef, GarageConfig, ParamDef
 
-_BUCKET_NAME_PATTERN = r"[a-zA-Z0-9_-]+"
-_KEY_NAME_PATTERN = r"[a-zA-Z0-9_-]+"
+_BUCKET_NAME_PATTERN = r"[a-zA-Z0-9_][a-zA-Z0-9_-]*"
+_KEY_NAME_PATTERN = r"[a-zA-Z0-9_][a-zA-Z0-9_-]*"
 _KEY_ID_PATTERN = r"[a-zA-Z0-9]+"
 _DOCUMENT_PATTERN = r"[a-zA-Z0-9._/-]+"
 
@@ -240,12 +240,174 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_bucket_alias_global_add": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage, "bucket", "alias",
+                     "{bucket_name}", "{new_alias}"],
+            timeout=15,
+            description="Add a global alias to a bucket",
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket reference: existing global alias or hex UUID",
+                ),
+                "new_alias": ParamDef(
+                    placeholder="new_alias",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="New global alias to add",
+                ),
+            },
+        ),
+        "garage_bucket_alias_global_remove": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage, "bucket", "unalias",
+                     "{alias_name}"],
+            timeout=15,
+            requires_confirmation=True,
+            description="Remove a global alias from a bucket",
+            params={
+                "alias_name": ParamDef(
+                    placeholder="alias_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Global alias to remove",
+                ),
+            },
+        ),
+        "garage_bucket_alias_local_add": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage, "bucket", "alias",
+                     "--local", "{key_id}",
+                     "{bucket_name}", "{new_alias}"],
+            timeout=15,
+            description="Add a local alias scoped to an access key",
+            params={
+                "key_id": ParamDef(
+                    placeholder="key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Access key the local alias is scoped to",
+                ),
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket reference: existing global alias or hex UUID",
+                ),
+                "new_alias": ParamDef(
+                    placeholder="new_alias",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="New local alias to add",
+                ),
+            },
+        ),
+        "garage_bucket_alias_local_remove": CommandDef(
+            group="garage",
+            command=[docker, "exec", container, garage, "bucket", "unalias",
+                     "--local", "{key_id}",
+                     "{alias_name}"],
+            timeout=15,
+            requires_confirmation=True,
+            description="Remove a local alias scoped to an access key",
+            params={
+                "key_id": ParamDef(
+                    placeholder="key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Access key the local alias is scoped to",
+                ),
+                "alias_name": ParamDef(
+                    placeholder="alias_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Local alias to remove",
+                ),
+            },
+        ),
         # ----- Internal -----
         "garage_refresh": CommandDef(
             group="garage",
             command=["garage_refresh"],  # internal — not a subprocess
             timeout=30,
             description="Internal command — triggers immediate state collection and metrics push",
+        ),
+        "garage_provision_customer_bucket": CommandDef(
+            group="garage",
+            command=["garage_provision_customer_bucket"],  # internal — handled by JobManager
+            timeout=600,  # per-step reference; long_running ignores it for total duration
+            description="Orchestrated bucket provisioning: create bucket, three keys, attach local aliases. Atomic with rollback.",
+            sensitive_output=True,  # secrets ride in stdout/extras
+            long_running=True,
+            params={
+                "display_name": ParamDef(
+                    placeholder="display_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Customer-facing bucket name; becomes the local alias on each key",
+                ),
+                "key_name_admin": ParamDef(
+                    placeholder="key_name_admin",
+                    default=None,
+                    pattern=_KEY_NAME_PATTERN,
+                    description="Garage key name for the admin (all-permissions) key",
+                ),
+                "key_name_rw": ParamDef(
+                    placeholder="key_name_rw",
+                    default=None,
+                    pattern=_KEY_NAME_PATTERN,
+                    description="Garage key name for the read-write key",
+                ),
+                "key_name_ro": ParamDef(
+                    placeholder="key_name_ro",
+                    default=None,
+                    pattern=_KEY_NAME_PATTERN,
+                    description="Garage key name for the read-only key",
+                ),
+            },
+        ),
+        "garage_rotate_customer_key": CommandDef(
+            group="garage",
+            command=["garage_rotate_customer_key"],  # internal — handled by JobManager
+            timeout=120,
+            description="Orchestrated key rotation: create new key, attach local alias, delete old key. Atomic with rollback.",
+            sensitive_output=True,  # secrets ride in stdout/extras
+            long_running=True,
+            params={
+                "old_key_id": ParamDef(
+                    placeholder="old_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Garage ID of the key being rotated out",
+                ),
+                "new_key_name": ParamDef(
+                    placeholder="new_key_name",
+                    default=None,
+                    pattern=_KEY_NAME_PATTERN,
+                    description="Name for the replacement key",
+                ),
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket UUID the local alias is attached to",
+                ),
+                "local_alias": ParamDef(
+                    placeholder="local_alias",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Local alias to re-attach on the new key",
+                ),
+                "key_tier": ParamDef(
+                    placeholder="key_tier",
+                    default=None,
+                    pattern=r"(?:all|rw|ro)",
+                    description="Permission tier for the new key: 'all', 'rw', or 'ro'",
+                ),
+            },
         ),
         "garage_bucket_clear": CommandDef(
             group="garage",

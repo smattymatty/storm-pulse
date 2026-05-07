@@ -685,6 +685,30 @@ class Agent:
         if command == "garage_bucket_clear":
             from stormpulse.garage.clear_bucket import make_clear_bucket_handler
             return make_clear_bucket_handler(params)
+        if command == "garage_provision_customer_bucket":
+            from stormpulse.garage.provision_bucket import (
+                make_provision_customer_bucket_handler,
+            )
+            if self._config.garage is None:
+                logger.error(
+                    "garage_provision_customer_bucket requires [garage] config",
+                )
+                return None
+            return make_provision_customer_bucket_handler(
+                self._config.garage, params,
+            )
+        if command == "garage_rotate_customer_key":
+            from stormpulse.garage.rotate_key import (
+                make_rotate_customer_key_handler,
+            )
+            if self._config.garage is None:
+                logger.error(
+                    "garage_rotate_customer_key requires [garage] config",
+                )
+                return None
+            return make_rotate_customer_key_handler(
+                self._config.garage, params,
+            )
         return None
 
     async def _handle_command_sequence(
