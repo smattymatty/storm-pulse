@@ -16,6 +16,8 @@ temporary global alias (which gets removed as part of the deletion).
 **Step ordering:**
 
   1. bucket info <bucket_id>           — enumerate existing aliases
+                                         and the keys that had
+                                         permissions on this bucket
   2. bucket alias <bucket_id> <temp>   — add temp global (skipped if
                                          the bucket already has any
                                          global alias to use as the
@@ -26,9 +28,18 @@ temporary global alias (which gets removed as part of the deletion).
   5. bucket delete --yes <final-ref>   — final-ref is either the temp
                                          global from step 2 or the
                                          retained global from step 4
+  6. key info / key delete             — for each key from step 1,
+                                         check ``key info``; if the
+                                         key has zero remaining
+                                         buckets, delete it. Skip if
+                                         it still has buckets (shared
+                                         keys are left alone).
 
 **Rollback.** Reverse the operations performed before the failure
-point. No rollback after step 5 (delete is terminal).
+point. No rollback after step 5 (delete is terminal). Step 6 is
+best-effort: a failed key delete adds a ``manual_cleanup_required``
+entry but doesn't fail the orchestrator (the bucket itself is
+already gone).
 
 **Idempotency.** If the bucket doesn't exist (NoSuchBucket from step
 1), the orchestrator returns success — the goal state is reached.
@@ -51,13 +62,14 @@ from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import (
     GarageParseError,
     parse_bucket_info,
+    parse_key_info,
 )
 from stormpulse.garage.provision_bucket import _run_garage  # reuse helper
 
 logger = logging.getLogger(__name__)
 
 
-_TOTAL_STEPS = 5
+_TOTAL_STEPS = 6
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +116,11 @@ class _DeleteState:
     locals_detached: list[tuple[str, str]] = field(default_factory=list)
     globals_detached: list[str] = field(default_factory=list)
     final_ref: str | None = None
+    # Keys that had permissions on the bucket at step 1. Step 6
+    # iterates this list to clean up any that are now unmoored.
+    candidate_key_ids: list[str] = field(default_factory=list)
+    keys_deleted: list[str] = field(default_factory=list)
+    keys_skipped: list[str] = field(default_factory=list)
     step_completed: str | None = None
 
 
@@ -159,6 +176,11 @@ async def run_delete_provisioned_bucket(
         for k in info.keys
         if k.local_alias
     ]
+    # Capture every key that had permissions or a local alias on this
+    # bucket — step 6 will check each one with ``key info`` to decide
+    # whether to delete it or leave it alone (shared key on another
+    # bucket).
+    state.candidate_key_ids = [k.access_key_id for k in info.keys]
     state.step_completed = "bucket_info"
 
     # ---- Step 2: ensure at least one global alias ----
@@ -266,6 +288,59 @@ async def run_delete_provisioned_bucket(
         )
     state.step_completed = "bucket_delete"
 
+    # ---- Step 6: clean up unmoored keys (best-effort) ----
+    # The bucket is already gone. For each key that had access to it,
+    # check whether it has any other buckets. If not, the key is
+    # orphaned credential material — delete it. If it still has
+    # buckets (shared key, attached to multiple), leave it alone.
+    # Failures here don't fail the orchestrator; they accumulate in
+    # ``manual_cleanup_required``.
+    await progress(
+        "running", 5, _TOTAL_STEPS, "Cleaning up unmoored keys",
+    )
+    manual_key_cleanup: list[dict[str, Any]] = []
+    for key_id in state.candidate_key_ids:
+        try:
+            rc, stdout, _stderr = await _run_garage(
+                garage_config, "key", "info", key_id,
+            )
+        except (asyncio.TimeoutError, OSError) as exc:
+            logger.warning(
+                "Step 6: key info %s failed (%s); leaving key alone",
+                key_id, exc,
+            )
+            manual_key_cleanup.append({"type": "key", "id": key_id})
+            continue
+        if rc != 0:
+            # Key already gone or NoSuchKey — nothing to clean up.
+            state.keys_skipped.append(key_id)
+            continue
+        try:
+            key_info = parse_key_info(stdout)
+        except GarageParseError:
+            manual_key_cleanup.append({"type": "key", "id": key_id})
+            continue
+        if key_info.buckets:
+            # Key still has other buckets — preserve it.
+            state.keys_skipped.append(key_id)
+            continue
+        # Key has zero buckets — safe to delete.
+        try:
+            rc, _stdout, _stderr = await _run_garage(
+                garage_config, "key", "delete", "--yes", key_id,
+            )
+        except (asyncio.TimeoutError, OSError) as exc:
+            logger.warning(
+                "Step 6: key delete %s failed (%s)", key_id, exc,
+            )
+            manual_key_cleanup.append({"type": "key", "id": key_id})
+            continue
+        if rc != 0:
+            manual_key_cleanup.append({"type": "key", "id": key_id})
+            continue
+        state.keys_deleted.append(key_id)
+    state.step_completed = "key_cleanup"
+
     # ---- Success ----
     await progress("finalizing", _TOTAL_STEPS, _TOTAL_STEPS, "Bucket deleted")
     return JobOutcome(
@@ -277,7 +352,9 @@ async def run_delete_provisioned_bucket(
             "step_completed": state.step_completed,
             "step_failed": None,
             "rollback_status": "not_required",
-            "manual_cleanup_required": [],
+            "manual_cleanup_required": manual_key_cleanup,
+            "keys_deleted": state.keys_deleted,
+            "keys_skipped": state.keys_skipped,
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
         },

@@ -135,7 +135,7 @@ async def test_post_a_b_c_bucket_with_one_local_alias_deletes_cleanly(
 
     assert outcome.success is True
     assert outcome.failure_reason is None
-    assert outcome.extras["step_completed"] == "bucket_delete"
+    assert outcome.extras["step_completed"] == "key_cleanup"
     # Bucket actually gone from the cluster.
     assert bucket_id[:16] not in {b.bucket_id[:16] for b in fake.buckets.values()}
 
@@ -305,6 +305,85 @@ async def test_local_alias_detach_failure_rolls_back(
 # ---------------------------------------------------------------------------
 # Handler factory
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Step 6: key cleanup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_step_6_deletes_unmoored_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After bucket delete, the orchestrator iterates the keys that
+    had access to the bucket. Each key with zero remaining buckets
+    is deleted (orphan credential cleanup).
+    """
+    fake = FakeGarage()
+    bucket_id, locals_ = _setup_post_provision_bucket(fake, n_locals=1)
+    key_ids_before = set(fake.keys.keys())
+    assert len(key_ids_before) == 1
+
+    outcome = await _run(monkeypatch, fake, bucket_id)
+
+    assert outcome.success is True
+    # Key gone from fake state.
+    assert fake.keys == {}
+    # Orchestrator surfaces what it deleted vs. what it skipped.
+    assert outcome.extras["keys_deleted"] == list(key_ids_before)
+    assert outcome.extras["keys_skipped"] == []
+    # Step 6 actually issued key info + key delete for the key.
+    key_info_calls = [c for c in fake.calls if c[:2] == ("key", "info")]
+    key_delete_calls = [c for c in fake.calls if c[:2] == ("key", "delete")]
+    assert len(key_info_calls) == 1
+    assert len(key_delete_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_step_6_preserves_keys_with_other_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key that's shared between buckets (e.g. an ops-attached key
+    with permissions on multiple buckets) must NOT be deleted when one
+    of its buckets goes away. ``key info`` reports remaining buckets
+    and the orchestrator skips the delete.
+    """
+    fake = FakeGarage()
+    # Bucket A — the one we're about to delete. Has a local alias on
+    # the shared key.
+    bucket_a = fake.add_bucket("temp-provisioning-a")
+    bucket_a_id = bucket_a.bucket_id
+    shared_key = fake.add_key("shared-ops-key")
+    fake._bucket_allow_or_deny(
+        ("--read", "--write", "--owner",
+         "temp-provisioning-a", "--key", shared_key.key_id),
+        deny=False,
+    )
+    fake._bucket_alias_local(
+        shared_key.key_id, "temp-provisioning-a", "alias-on-a",
+    )
+    fake._bucket_unalias_global("temp-provisioning-a")
+
+    # Bucket B — survives. Same key has access here too.
+    bucket_b = fake.add_bucket("bucket-b")
+    fake._bucket_allow_or_deny(
+        ("--read", "--write", "--owner",
+         "bucket-b", "--key", shared_key.key_id),
+        deny=False,
+    )
+    fake.calls.clear()
+
+    outcome = await _run(monkeypatch, fake, bucket_a_id[:16])
+
+    assert outcome.success is True
+    # Bucket A gone, bucket B preserved.
+    assert bucket_a_id[:16] not in {b.bucket_id[:16] for b in fake.buckets.values()}
+    assert bucket_b.bucket_id in fake.buckets
+    # Shared key preserved — has remaining bucket.
+    assert shared_key.key_id in fake.keys
+    assert outcome.extras["keys_deleted"] == []
+    assert outcome.extras["keys_skipped"] == [shared_key.key_id]
 
 
 def test_handler_factory_returns_none_on_missing_bucket_id() -> None:

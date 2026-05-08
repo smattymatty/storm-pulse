@@ -215,6 +215,8 @@ class FakeGarage:
                 return "bucket_info"
             case ("key", "create", *_):
                 return "key_create"
+            case ("key", "info", *_):
+                return "key_info"
             case ("key", "delete", *_):
                 return "key_delete"
             case _:
@@ -291,6 +293,35 @@ class FakeGarage:
             lines.append(f"{perm_str}  {key_id}  {local}")
         return "\n".join(lines) + "\n"
 
+    def _render_key_info(self, key: "_Key") -> str:
+        """Render ``key info <id>`` stdout. Used by orchestrators that
+        need to check whether a key has any remaining buckets before
+        deciding to delete it.
+        """
+        lines = [
+            "==== KEY INFORMATION ====",
+            f"Key name:     {key.name}",
+            f"Key ID:       {key.key_id}",
+            "Secret key:   *redacted-by-fake*",
+            "",
+            "==== BUCKETS FOR THIS KEY ====",
+            "Permissions  Bucket ID         Global aliases  Local aliases",
+        ]
+        for bucket in self.buckets.values():
+            perms = key.permissions.get(bucket.bucket_id, set())
+            local_alias = bucket.local_aliases.get(key.key_id, "")
+            if not perms and not local_alias:
+                continue
+            global_alias = next(iter(sorted(bucket.global_aliases)), "")
+            perm_str = _render_perms(perms) if perms else "---"
+            line = f"{perm_str}  {bucket.bucket_id[:16]}"
+            if global_alias:
+                line += f"  {global_alias}"
+            if local_alias:
+                line += f"  {local_alias}"
+            lines.append(line)
+        return "\n".join(lines) + "\n"
+
     @staticmethod
     def _render_key_create(key_id: str, name: str, secret: str) -> str:
         return (
@@ -330,6 +361,8 @@ class FakeGarage:
                 return self._bucket_delete(ref)
             case ("key", "create", name):
                 return self._key_create(name)
+            case ("key", "info", key_id):
+                return self._key_info(key_id)
             case ("key", "delete", "--yes", key_id):
                 return self._key_delete(key_id)
             case _:
@@ -525,6 +558,11 @@ class FakeGarage:
             key.permissions.pop(bucket.bucket_id, None)
         del self.buckets[bucket.bucket_id]
         return (0, "", "")
+
+    def _key_info(self, key_id: str) -> tuple[int, str, str]:
+        if key_id not in self.keys:
+            return (1, "", f"NoSuchKey: {key_id}")
+        return (0, self._render_key_info(self.keys[key_id]), "")
 
     def _key_create(self, name: str) -> tuple[int, str, str]:
         key_id, secret = self._next_key_credentials()

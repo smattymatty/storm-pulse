@@ -451,6 +451,88 @@ def parse_key_list(stdout: str) -> list[GarageKeyListEntry]:
 
 
 # ---------------------------------------------------------------------------
+# garage key info
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class GarageKeyInfoBucketRef:
+    """A bucket entry from ``garage key info`` — what bucket(s) the key
+    has access to, with permissions and any local alias.
+    """
+
+    bucket_id: str
+    permissions: str
+    local_alias: str
+
+
+@dataclass(frozen=True, slots=True)
+class GarageKeyInfo:
+    """Parsed output from ``garage key info <id>``.
+
+    The key field of interest for the bucket-delete orchestrator is
+    ``buckets`` — empty list means the key is unmoored and safe to
+    delete after a bucket teardown.
+    """
+
+    key_id: str
+    name: str
+    buckets: list[GarageKeyInfoBucketRef]
+
+
+def parse_key_info(stdout: str) -> GarageKeyInfo:
+    """Parse ``garage key info`` stdout.
+
+    The output structure mirrors ``bucket info``: a header section with
+    key metadata, then a ``BUCKETS FOR THIS KEY`` table. An empty
+    table (just the header line) means the key has no associated
+    buckets — a safety signal for orchestrators that need to decide
+    whether to delete a key after its only bucket is gone.
+    """
+    key_id = ""
+    name = ""
+    buckets: list[GarageKeyInfoBucketRef] = []
+    in_buckets_section = False
+
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if "BUCKETS FOR THIS KEY" in stripped:
+            in_buckets_section = True
+            continue
+
+        if in_buckets_section:
+            # Skip header
+            if stripped.startswith("Permissions"):
+                continue
+            parts = stripped.split()
+            # Bucket rows: Permissions  Bucket ID  [Global aliases]  [Local aliases]
+            if len(parts) >= 2:
+                permissions = parts[0]
+                bucket_id = parts[1]
+                # Last column is local alias if present
+                local_alias = parts[-1] if len(parts) >= 3 else ""
+                buckets.append(GarageKeyInfoBucketRef(
+                    bucket_id=bucket_id,
+                    permissions=permissions,
+                    local_alias=local_alias,
+                ))
+            continue
+
+        if stripped.startswith("Key name:"):
+            name = stripped.split(":", 1)[1].strip()
+        elif stripped.startswith("Key ID:"):
+            key_id = stripped.split(":", 1)[1].strip()
+
+    if not key_id:
+        raise GarageParseError("Could not parse key ID from key info output")
+
+    return GarageKeyInfo(key_id=key_id, name=name, buckets=buckets)
+
+
+# ---------------------------------------------------------------------------
 # garage key create
 # ---------------------------------------------------------------------------
 
