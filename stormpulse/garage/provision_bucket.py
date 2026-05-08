@@ -213,6 +213,13 @@ async def run_provision_customer_bucket(
     rc, stdout, stderr = await _run_garage(
         garage_config, "bucket", "info", throwaway_alias,
     )
+    # DIAGNOSTIC: log raw bucket info stdout so we can see what real
+    # Garage outputs and whether parse_bucket_info reads it correctly.
+    # TODO remove once the auto-delete bug is resolved.
+    logger.info(
+        "provision_bucket bucket_info diagnostic: rc=%d stdout=%r",
+        rc, stdout,
+    )
     if rc != 0:
         manual = await _delete_bucket_best_effort(
             garage_config, throwaway_alias,
@@ -244,6 +251,14 @@ async def run_provision_customer_bucket(
             },
         )
     state.bucket_uuid = info.bucket_id
+    # DIAGNOSTIC: log the parsed UUID + what we'll send to Storm.
+    # TODO remove once the auto-delete bug is resolved.
+    logger.info(
+        "provision_bucket diagnostic: throwaway_alias=%s parsed_bucket_id=%r "
+        "uuid_len=%d uuid_will_send_to_storm=%r",
+        throwaway_alias, info.bucket_id, len(info.bucket_id),
+        info.bucket_id[:16],
+    )
     state.step_completed = "bucket_create"
 
     # ---- Step 2: key create <admin> ----
