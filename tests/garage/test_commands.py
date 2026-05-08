@@ -37,6 +37,7 @@ class TestBuildGarageCommands:
             "garage_bucket_clear",
             "garage_provision_customer_bucket",
             "garage_provision_additional_key",
+            "garage_delete_provisioned_bucket",
             "garage_rotate_customer_key",
         }
         assert set(cmds.keys()) == expected
@@ -49,6 +50,7 @@ class TestBuildGarageCommands:
                 "garage_bucket_clear",
                 "garage_provision_customer_bucket",
                 "garage_provision_additional_key",
+                "garage_delete_provisioned_bucket",
                 "garage_rotate_customer_key",
             }:
                 continue  # internal command, not a subprocess

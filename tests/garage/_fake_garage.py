@@ -498,6 +498,29 @@ class FakeGarage:
                 f"BucketNotEmpty: {ref} contains {bucket.object_count} "
                 f"objects",
             )
+        # Real Garage v2.2.0 rule: when the bucket is addressed by ID
+        # (16-char prefix), ``bucket delete --yes`` rejects if any
+        # local aliases remain. When addressed by global alias, the
+        # alias being deleted is implicitly removed as part of the
+        # bucket teardown — but lingering OTHER locals still trigger
+        # the rejection. Empirically observed on garage-one (v2.2.0):
+        # ``Bucket X still has other local aliases. Use bucket unalias
+        # to delete them one by one.``
+        addressed_by_global = ref in bucket.global_aliases
+        if bucket.local_aliases:
+            # Delete proceeds only if the alias being passed in is the
+            # last alias (which it would be only when no locals exist).
+            return (
+                1, "",
+                f"Bucket {bucket.bucket_id} still has other local "
+                f"aliases. Use `bucket unalias` to delete them one by "
+                f"one.",
+            )
+        # When addressed by global alias and that's the last alias on
+        # the bucket, real Garage allows the delete — the implicit
+        # alias-removal is part of the teardown. When addressed by ID
+        # with zero aliases attached, also allow.
+        del addressed_by_global  # documentation-only
         for key in self.keys.values():
             key.permissions.pop(bucket.bucket_id, None)
         del self.buckets[bucket.bucket_id]

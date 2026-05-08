@@ -357,6 +357,22 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_delete_provisioned_bucket": CommandDef(
+            group="garage",
+            command=["garage_delete_provisioned_bucket"],  # internal — handled by JobManager
+            timeout=120,
+            requires_confirmation=True,
+            description="Orchestrated bucket deletion: detaches all aliases (using a temp global to bypass the orphan-rule deadlock when only locals exist), then deletes. Atomic with rollback.",
+            long_running=True,
+            params={
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket UUID (16-char Garage ID) to delete",
+                ),
+            },
+        ),
         "garage_provision_additional_key": CommandDef(
             group="garage",
             command=["garage_provision_additional_key"],  # internal — handled by JobManager

@@ -721,6 +721,18 @@ class Agent:
             return make_provision_additional_key_handler(
                 self._config.garage, params,
             )
+        if command == "garage_delete_provisioned_bucket":
+            from stormpulse.garage.delete_provisioned_bucket import (
+                make_delete_provisioned_bucket_handler,
+            )
+            if self._config.garage is None:
+                logger.error(
+                    "garage_delete_provisioned_bucket requires [garage] config",
+                )
+                return None
+            return make_delete_provisioned_bucket_handler(
+                self._config.garage, params,
+            )
         return None
 
     async def _handle_command_sequence(
