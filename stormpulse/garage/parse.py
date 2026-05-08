@@ -242,8 +242,9 @@ def parse_bucket_list(stdout: str) -> list[GarageBucketListEntry]:
             continue
 
         bucket_id = parts[0]
-        # parts[1] is the created date, parts[2] is global alias (if present)
-        global_alias = parts[2] if len(parts) >= 3 else ""
+        global_alias = ""
+        if len(parts) >= 3 and ":" not in parts[2]:
+            global_alias = parts[2]
 
         buckets.append(GarageBucketListEntry(
             bucket_id=bucket_id,
