@@ -125,6 +125,35 @@ class TestParseBucketList:
         buckets = parse_bucket_list("")
         assert buckets == []
 
+    def test_bucket_info_v2_format_with_key_name_column(self) -> None:
+        """REGRESSION: Garage v2.2.0's ``bucket info`` keys table has
+        4 columns (Permissions | Access key | Key name | Local aliases),
+        not the 3-column shape the fixture assumes. Without column-
+        count-aware parsing, the parser reads parts[2] (the key name)
+        as the local alias — which then gets passed to
+        ``bucket unalias --local <key> <name>`` and Garage rejects with
+        ``No bucket called <key-name> in namespace of key <key>`` because
+        the actual alias is in parts[3]. Empirically observed on
+        garage-one (v2.2.0).
+        """
+        from stormpulse.garage.parse import parse_bucket_info
+        output = (
+            "==== BUCKET INFORMATION ====\n"
+            "Bucket:          5c8d6c0bb73f0770e5a7a7d471c0d434fb9b37098017d66f40ee3300a040bc3c\n"
+            "Created:         2026-05-08 00:00:00.000 +00:00\n"
+            "Size:            0 B\n"
+            "Objects:         0\n"
+            "Website access:  false\n"
+            "==== KEYS FOR THIS BUCKET ====\n"
+            "Permissions  Access key                  Key name              Local aliases\n"
+            "RWO          GK8559f761a01bf7716d6aa3d8  usr-1-obsidian-all    obsidian\n"
+        )
+        info = parse_bucket_info(output)
+        assert len(info.keys) == 1
+        assert info.keys[0].permissions == "RWO"
+        assert info.keys[0].access_key_id == "GK8559f761a01bf7716d6aa3d8"
+        assert info.keys[0].local_alias == "obsidian"
+
     def test_bucket_with_only_local_alias(self) -> None:
         """REGRESSION: when the bucket has no global alias but does have
         a local alias, ``str.split()`` collapses the empty Global-aliases

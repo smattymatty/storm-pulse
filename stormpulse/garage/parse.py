@@ -316,7 +316,18 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
             if len(parts) >= 2:
                 permissions = parts[0]
                 access_key_id = parts[1]
-                local_alias = parts[2] if len(parts) >= 3 else ""
+                # Garage's ``bucket info`` keys table has evolved:
+                #   v1.x (3 cols): Permissions | Access key | Local aliases
+                #   v2.x (4 cols): Permissions | Access key | Key name | Local aliases
+                # Detect by part count. The local alias is always the
+                # LAST column. If only 2 parts, the bucket has no local
+                # alias attached for this key.
+                if len(parts) >= 4:
+                    local_alias = parts[3]
+                elif len(parts) == 3:
+                    local_alias = parts[2]
+                else:
+                    local_alias = ""
                 keys.append(GarageBucketKeyEntry(
                     permissions=permissions,
                     access_key_id=access_key_id,
