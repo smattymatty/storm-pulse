@@ -184,7 +184,7 @@ async def run_provision_customer_bucket(
 
     # ---- Step 1: bucket create <throwaway> ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating bucket")
-    rc, stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await _run_garage(
         garage_config, "bucket", "create", throwaway_alias,
     )
     if rc != 0:
@@ -196,6 +196,35 @@ async def run_provision_customer_bucket(
             started_at=started_at,
             rollback_status="not_required",
             extras_extra={},
+        )
+    state.throwaway_attached = True
+
+    # Real Garage v2.2.0's ``bucket create`` stdout is a confirmation
+    # message, NOT a bucket-info dump — parsing it via
+    # ``parse_bucket_info`` extracts the throwaway alias name as the
+    # bucket_id, not the actual hex UUID. Storm-side that gets
+    # truncated to 16 chars and stored, then the manifest reports the
+    # real UUID and the join key never matches, so the reconciler
+    # nukes every just-provisioned bucket.
+    #
+    # Do an explicit ``bucket info <throwaway>`` call to get the
+    # canonical 64-char UUID. The throwaway alias is attached at this
+    # point and is the only way to address the bucket until step 11.
+    rc, stdout, stderr = await _run_garage(
+        garage_config, "bucket", "info", throwaway_alias,
+    )
+    if rc != 0:
+        manual = await _delete_bucket_best_effort(
+            garage_config, throwaway_alias,
+        )
+        return _failure(
+            failure_reason="bucket_create_failed",
+            step_failed="bucket_create",
+            state=state,
+            stderr=f"bucket info after create failed: {stderr}",
+            started_at=started_at,
+            rollback_status="complete" if not manual else "partial",
+            extras_extra={"manual_cleanup_required": manual},
         )
     try:
         info = parse_bucket_info(stdout)
@@ -215,7 +244,6 @@ async def run_provision_customer_bucket(
             },
         )
     state.bucket_uuid = info.bucket_id
-    state.throwaway_attached = True
     state.step_completed = "bucket_create"
 
     # ---- Step 2: key create <admin> ----

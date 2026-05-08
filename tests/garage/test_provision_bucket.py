@@ -108,24 +108,27 @@ async def test_happy_path_sequence_of_calls(
     outcome, fake = await _run(monkeypatch)
     admin_key = outcome.extras["admin"]["key_id"]
 
-    assert len(fake.calls) == 5
-    # Step 1: bucket create <throwaway>
+    # Step 1 is now create + info (real Garage's bucket create doesn't
+    # output the canonical UUID, so the orchestrator runs an explicit
+    # bucket info follow-up).
+    assert len(fake.calls) == 6
     assert fake.calls[0][:2] == ("bucket", "create")
     throwaway = fake.calls[0][2]
     assert throwaway.startswith("provisioning-")
+    assert fake.calls[1] == ("bucket", "info", throwaway)
     # Step 2: key create
-    assert fake.calls[1] == ("key", "create", "key-admin")
+    assert fake.calls[2] == ("key", "create", "key-admin")
     # Step 3: admin perm grant
-    assert fake.calls[2] == (
+    assert fake.calls[3] == (
         "bucket", "allow", "--read", "--write", "--owner",
         throwaway, "--key", admin_key,
     )
     # Step 4: admin local alias attach
-    assert fake.calls[3] == (
+    assert fake.calls[4] == (
         "bucket", "alias", "--local", admin_key, throwaway, "media",
     )
     # Step 5: unalias throwaway
-    assert fake.calls[4] == ("bucket", "unalias", throwaway)
+    assert fake.calls[5] == ("bucket", "unalias", throwaway)
 
 
 @pytest.mark.asyncio
@@ -186,8 +189,8 @@ async def test_step2_admin_key_create_failure_deletes_bucket(
     assert outcome.extras["step_completed"] == "bucket_create"
     assert outcome.extras["rollback_status"] == "complete"
     throwaway = fake.calls[0][2]
-    # Calls: create + key_create_fail + bucket_delete = 3
-    assert len(fake.calls) == 3
+    # Calls: create + info + key_create_fail + bucket_delete = 4
+    assert len(fake.calls) == 4
     assert fake.calls[-1] == ("bucket", "delete", "--yes", throwaway)
     assert not fake.buckets
     assert not fake.keys
@@ -207,8 +210,8 @@ async def test_step3_admin_perm_grant_failure_deletes_key_and_bucket(
     assert outcome.extras["step_completed"] == "admin_key_create"
     assert outcome.extras["rollback_status"] == "complete"
     throwaway = fake.calls[0][2]
-    # Calls: create + key_create + perm_fail + key_delete + bucket_delete = 5
-    assert len(fake.calls) == 5
+    # Calls: create + info + key_create + perm_fail + key_delete + bucket_delete = 6
+    assert len(fake.calls) == 6
     # No deny (no perms were granted), no unalias_local (no alias attached)
     assert all(c[:2] != ("bucket", "deny") for c in fake.calls)
     assert all(
