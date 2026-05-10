@@ -178,14 +178,6 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
             quota_max_objects=info.quota_max_objects,
         ))
 
-    # DIAGNOSTIC: log the bucket UUIDs being put on the manifest so we
-    # can compare against what Storm has stored.
-    # TODO remove once the auto-delete bug is resolved.
-    logger.info(
-        "state.collect diagnostic: %d bucket(s) in manifest, ids=%s",
-        len(buckets), [b.id for b in buckets],
-    )
-
     return GarageState(
         node_id=node.node_id,
         hostname=node.hostname,

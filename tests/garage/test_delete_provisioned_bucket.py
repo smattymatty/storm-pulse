@@ -308,12 +308,12 @@ async def test_local_alias_detach_failure_rolls_back(
 
 
 # ---------------------------------------------------------------------------
-# Step 6: key cleanup
+# Step 5: key cleanup
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_step_6_deletes_unmoored_keys(
+async def test_step_5_deletes_unmoored_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """After bucket delete, the orchestrator iterates the keys that
@@ -333,7 +333,7 @@ async def test_step_6_deletes_unmoored_keys(
     # Orchestrator surfaces what it deleted vs. what it skipped.
     assert outcome.extras["keys_deleted"] == list(key_ids_before)
     assert outcome.extras["keys_skipped"] == []
-    # Step 6 actually issued key info + key delete for the key.
+    # Step 5 actually issued key info + key delete for the key.
     key_info_calls = [c for c in fake.calls if c[:2] == ("key", "info")]
     key_delete_calls = [c for c in fake.calls if c[:2] == ("key", "delete")]
     assert len(key_info_calls) == 1
@@ -341,7 +341,7 @@ async def test_step_6_deletes_unmoored_keys(
 
 
 @pytest.mark.asyncio
-async def test_step_6_preserves_keys_with_other_buckets(
+async def test_step_5_preserves_keys_with_other_buckets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A key that's shared between buckets (e.g. an ops-attached key

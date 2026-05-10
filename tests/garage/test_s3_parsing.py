@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import pytest
 
+from xml.etree import ElementTree
+
 from stormpulse.garage.s3 import (
+    CorsRule,
     DeleteResult,
     GarageS3Client,
     S3AuthError,
     S3Error,
+    _build_cors_xml,
     _build_delete_xml,
     _parse_delete_response,
     _parse_error_response,
@@ -224,3 +228,97 @@ def test_auth_error_is_an_s3_error() -> None:
     assert isinstance(err, S3Error)
     assert err.status == 403
     assert err.code == "SignatureDoesNotMatch"
+
+
+# ---------------------------------------------------------------------------
+# PutBucketCors XML construction
+# ---------------------------------------------------------------------------
+
+
+def _parse_cors_xml(body: bytes) -> dict[str, list[str] | int]:
+    """Round-trip the bytes through ElementTree to verify shape."""
+    root = ElementTree.fromstring(body)
+    assert root.tag == "CORSConfiguration"
+    rules = list(root)
+    assert len(rules) == 1, "single-rule v1 contract"
+    rule = rules[0]
+    assert rule.tag == "CORSRule"
+    out: dict[str, list[str] | int] = {
+        "AllowedOrigin": [],
+        "AllowedMethod": [],
+        "AllowedHeader": [],
+        "ExposeHeader": [],
+    }
+    for child in rule:
+        if child.tag in out:
+            assert isinstance(child.text, str)
+            out[child.tag].append(child.text)  # type: ignore[union-attr]
+        elif child.tag == "MaxAgeSeconds":
+            assert child.text is not None
+            out["MaxAgeSeconds"] = int(child.text)
+    return out
+
+
+def test_build_cors_xml_emits_one_rule_with_all_fields() -> None:
+    rule = CorsRule(
+        allowed_origins=["https://stormdevelopments.ca"],
+        allowed_methods=["GET", "PUT", "HEAD", "POST"],
+        allowed_headers=[
+            "authorization",
+            "x-amz-date",
+            "x-amz-content-sha256",
+            "content-type",
+            "content-length",
+        ],
+        expose_headers=["ETag"],
+        max_age_seconds=3000,
+    )
+    body = _build_cors_xml(rule)
+    assert body.startswith(b'<?xml version="1.0" encoding="UTF-8"?>')
+
+    parsed = _parse_cors_xml(body)
+    assert parsed["AllowedOrigin"] == ["https://stormdevelopments.ca"]
+    assert parsed["AllowedMethod"] == ["GET", "PUT", "HEAD", "POST"]
+    assert parsed["AllowedHeader"] == [
+        "authorization",
+        "x-amz-date",
+        "x-amz-content-sha256",
+        "content-type",
+        "content-length",
+    ]
+    assert parsed["ExposeHeader"] == ["ETag"]
+    assert parsed["MaxAgeSeconds"] == 3000
+
+
+def test_build_cors_xml_handles_multiple_origins() -> None:
+    rule = CorsRule(
+        allowed_origins=["https://a.example", "https://b.example"],
+        allowed_methods=["GET"],
+        allowed_headers=[],
+        expose_headers=[],
+        max_age_seconds=60,
+    )
+    body = _build_cors_xml(rule)
+    parsed = _parse_cors_xml(body)
+    assert parsed["AllowedOrigin"] == ["https://a.example", "https://b.example"]
+    assert parsed["AllowedHeader"] == []
+    assert parsed["ExposeHeader"] == []
+    assert parsed["MaxAgeSeconds"] == 60
+
+
+def test_build_cors_xml_escapes_special_chars_in_origin() -> None:
+    """Defensive: ElementTree escaping handles & < > in origin values."""
+    rule = CorsRule(
+        allowed_origins=["https://x.example/?a=1&b=2"],
+        allowed_methods=["GET"],
+        allowed_headers=[],
+        expose_headers=[],
+        max_age_seconds=60,
+    )
+    body = _build_cors_xml(rule)
+    # Raw ampersand must not appear unescaped
+    assert b"a=1&b=2" not in body
+    assert b"a=1&amp;b=2" in body
+    # Round-trip parses back to the original
+    parsed = _parse_cors_xml(body)
+    assert parsed["AllowedOrigin"] == ["https://x.example/?a=1&b=2"]

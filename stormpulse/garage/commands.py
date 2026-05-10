@@ -12,7 +12,20 @@ from __future__ import annotations
 
 from stormpulse.config import CommandDef, GarageConfig, ParamDef
 
-_BUCKET_NAME_PATTERN = r"[a-zA-Z0-9_][a-zA-Z0-9_-]*"
+# S3-strict bucket name (which Garage's bucket-create validator
+# enforces): 3-63 chars, lowercase alphanumeric + hyphens, must start
+# AND end alphanumeric. Garage CLI rejects names with leading
+# underscores, uppercase, or any underscore at all on S3-strict
+# deployments — see ``provision_bucket.py``'s throwaway-alias comment
+# for the empirical lesson. Matches the 16-char bucket-UUID prefix
+# (lowercase hex) too, so this pattern serves both display-name
+# validation AND bucket_id-as-reference validation in commands like
+# ``garage_delete_provisioned_bucket``.
+_BUCKET_NAME_PATTERN = r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]"
+# Key names are not S3-bucket-shaped; Garage allows the broader set.
+# Storm provisions keys as ``usr-<pk>-<bucket>-<tier>`` which uses
+# hyphens only, but other ops paths may include underscores or mixed
+# case for descriptive names.
 _KEY_NAME_PATTERN = r"[a-zA-Z0-9_][a-zA-Z0-9_-]*"
 _KEY_ID_PATTERN = r"[a-zA-Z0-9]+"
 _DOCUMENT_PATTERN = r"[a-zA-Z0-9._/-]+"
@@ -465,7 +478,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "s3_endpoint": ParamDef(
                     placeholder="s3_endpoint",
                     default=None,
-                    pattern=r"https?://[a-zA-Z0-9.-]+(:[0-9]+)?",
+                    pattern=r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
                     description="Garage S3 endpoint URL (no path/query)",
                 ),
                 "region": ParamDef(
@@ -485,6 +498,56 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     default=None,
                     pattern=r".+",
                     description="Customer S3 secret. Held in agent process memory only for the job's lifetime.",
+                ),
+            },
+        ),
+        "garage_bucket_set_cors": CommandDef(
+            group="garage",
+            command=["garage_bucket_set_cors"],  # internal — handled by JobManager, not a subprocess
+            timeout=30,  # single API call; long_running ignores this for total duration
+            description="Apply the platform-default CORS rule to a bucket via the local Garage S3 endpoint",
+            sensitive_output=True,  # the secret arrives in params; never log them
+            long_running=True,
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket to apply CORS to",
+                ),
+                "s3_endpoint": ParamDef(
+                    placeholder="s3_endpoint",
+                    default=None,
+                    pattern=r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+                    description="Garage S3 endpoint URL (no path/query)",
+                ),
+                "region": ParamDef(
+                    placeholder="region",
+                    default=None,
+                    pattern=r"[a-zA-Z0-9_-]+",
+                    description="S3 region for SigV4 signing",
+                ),
+                "access_key_id": ParamDef(
+                    placeholder="access_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Customer S3 access key ID",
+                ),
+                "secret_access_key": ParamDef(
+                    placeholder="secret_access_key",
+                    default=None,
+                    pattern=r".+",
+                    description="Customer S3 secret. Held in agent process memory only for the job's lifetime.",
+                ),
+                "origins": ParamDef(
+                    placeholder="origins",
+                    default=None,
+                    pattern=r"^\[.+\]$",
+                    description=(
+                        "JSON-encoded list of allowed origins, e.g. "
+                        "'[\"https://stormdevelopments.ca\"]'. The handler "
+                        "decodes via json.loads and validates list[str]."
+                    ),
                 ),
             },
         ),

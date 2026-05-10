@@ -35,6 +35,7 @@ class TestBuildGarageCommands:
             "garage_bucket_alias_local_add", "garage_bucket_alias_local_remove",
             "garage_refresh",
             "garage_bucket_clear",
+            "garage_bucket_set_cors",
             "garage_provision_customer_bucket",
             "garage_provision_additional_key",
             "garage_delete_provisioned_bucket",
@@ -48,6 +49,7 @@ class TestBuildGarageCommands:
             if name in {
                 "garage_refresh",
                 "garage_bucket_clear",
+                "garage_bucket_set_cors",
                 "garage_provision_customer_bucket",
                 "garage_provision_additional_key",
                 "garage_delete_provisioned_bucket",
@@ -99,6 +101,7 @@ class TestBuildGarageCommands:
         sensitive_allowed = {
             "garage_key_create",
             "garage_bucket_clear",
+            "garage_bucket_set_cors",
             "garage_provision_customer_bucket",
             "garage_provision_additional_key",
             "garage_rotate_customer_key",
@@ -127,25 +130,48 @@ class TestBuildGarageCommands:
     def test_bucket_name_param_pattern(self) -> None:
         cmds = build_garage_commands(_make_config())
         param = cmds["garage_bucket_info"].params["bucket_name"]
-        assert param.pattern == r"[a-zA-Z0-9_][a-zA-Z0-9_-]*"
+        assert param.pattern == r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]"
         assert param.default is None
 
-    def test_bucket_name_pattern_rejects_leading_hyphen(self) -> None:
-        """Leading hyphen would let a value parse as a CLI flag.
+    def test_bucket_name_pattern_is_s3_strict(self) -> None:
+        """The pattern enforces S3-strict bucket naming: 3-63 chars,
+        lowercase alphanumeric + hyphens, must start/end alphanumeric.
+        Garage's bucket-create validator enforces the same; we close
+        a defense-in-depth gap so dashboard-supplied names that Garage
+        will reject get caught before dispatch instead of crashing
+        mid-orchestration.
 
-        Forbidding it closes a flag-smuggling state-divergence vector
-        for orchestrated commands that pass dashboard-supplied values
-        as positional args to the garage CLI.
+        Also forbids leading hyphens (CLI-flag smuggling) and
+        underscores/uppercase (S3 rejects), which the previous
+        permissive pattern allowed.
         """
         import re
         cmds = build_garage_commands(_make_config())
         pattern = cmds["garage_bucket_info"].params["bucket_name"].pattern
-        for bad in ("--help", "-c", "-h", "--rpc-host"):
+        # Flag-smuggling and S3-illegal names rejected.
+        for bad in (
+            "--help", "-c", "-h", "--rpc-host",  # flag smuggling
+            "_provisioning_abc",                 # leading underscore (S3 rejects)
+            "with_underscore",                   # any underscore (S3 rejects)
+            "UpperCase",                         # uppercase (S3 rejects)
+            "a",                                 # too short (min 3)
+            "ab",                                # too short (min 3)
+            "-leading",                          # leading hyphen
+            "trailing-",                         # trailing hyphen
+        ):
             assert re.fullmatch(pattern, bad) is None, (
                 f"pattern should reject {bad!r}"
             )
-        for good in ("media", "smattymatty-media", "_provisioning_abc",
-                     "a", "0bucket"):
+        # Valid S3-strict bucket names accepted (display names, alias
+        # references, and 16-char hex UUID prefixes).
+        for good in (
+            "media",
+            "smattymatty-media",
+            "obsidian",
+            "0bucket",
+            "provisioning-abc123",
+            "5c8d6c0bb73f0770",   # 16-char UUID prefix
+        ):
             assert re.fullmatch(pattern, good) is not None, (
                 f"pattern should accept {good!r}"
             )

@@ -685,6 +685,9 @@ class Agent:
         if command == "garage_bucket_clear":
             from stormpulse.garage.clear_bucket import make_clear_bucket_handler
             return make_clear_bucket_handler(params)
+        if command == "garage_bucket_set_cors":
+            from stormpulse.garage.set_cors import make_set_cors_handler
+            return make_set_cors_handler(params)
         if command == "garage_provision_customer_bucket":
             from stormpulse.garage.provision_bucket import (
                 make_provision_customer_bucket_handler,

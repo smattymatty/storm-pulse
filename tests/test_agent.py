@@ -1035,3 +1035,140 @@ async def test_long_running_dispatch_passes_validated_params_to_factory(agent: A
     }
 
     await agent._job_manager.shutdown_all()
+
+
+# ---------------------------------------------------------------------------
+# garage_bucket_set_cors dispatch integration
+#
+# Bridges the unit tests on run_set_cors (in tests/garage/test_set_cors.py)
+# and Garage-side smoke. These catch wired-up-wrong bugs in the dispatch
+# path: the agent's registry must validate the origins regex before the
+# handler factory runs, and validated params must reach the factory with
+# the JSON-string origins intact (the factory decodes; the dispatcher does
+# not).
+# ---------------------------------------------------------------------------
+
+
+_SET_CORS_VALID_PARAMS = {
+    "bucket_name": "media",
+    "s3_endpoint": "http://localhost:3900",
+    "region": "garage",
+    "access_key_id": "GK1",
+    "secret_access_key": "secret",
+    "origins": '["https://stormdevelopments.ca"]',
+}
+
+
+def _set_cors_cmd_def() -> CommandDef:
+    """Pull the real garage_bucket_set_cors CommandDef from the garage builder.
+
+    The agent fixture has no garage config so the registry doesn't include
+    garage commands by default. Same shape as how the precedent dispatch
+    tests inject a synthetic CommandDef — this just uses the production one.
+    """
+    from pathlib import Path
+    from stormpulse.config import GarageConfig
+    from stormpulse.garage.commands import build_garage_commands
+
+    cfg = GarageConfig(
+        enabled=True,
+        container_name="garaged",
+        garage_binary="/garage",
+        docker_binary="/usr/bin/docker",
+        config_path=Path("/opt/garage/garage.toml"),
+        state_push_interval_seconds=300,
+    )
+    return build_garage_commands(cfg)["garage_bucket_set_cors"]
+
+
+@pytest.mark.asyncio
+async def test_garage_bucket_set_cors_dispatch_validates_origins_pattern(
+    agent: Agent,
+) -> None:
+    """A non-bracketed origins value violates the registry pattern; the
+    dispatcher must emit a structured failure before the factory runs."""
+    from stormpulse.commands.jobs import JobManager
+    from stormpulse.protocol import CommandRequestPayload
+
+    cmd_def = _set_cors_cmd_def()
+    agent._registry["garage_bucket_set_cors"] = cmd_def
+
+    sent: list[Envelope] = []
+
+    async def fake_send(env: Envelope) -> None:
+        sent.append(env)
+
+    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+
+    factory_invocations: list[str] = []
+
+    def fake_factory(command: str, params: dict[str, str]) -> None:
+        factory_invocations.append(command)
+        return None
+
+    agent._make_long_running_handler = fake_factory  # type: ignore[method-assign]
+
+    bad_params = dict(_SET_CORS_VALID_PARAMS)
+    bad_params["origins"] = "not-bracketed"
+    payload = CommandRequestPayload(
+        command="garage_bucket_set_cors",
+        params=bad_params,
+        hmac="x",
+        nonce="x",
+    )
+    await agent._dispatch_long_running("req-bad-origins", payload, cmd_def)
+
+    assert factory_invocations == []
+    assert len(sent) == 1
+    failure = sent[0]
+    assert failure.type == MessageType.COMMAND_RESULT
+    assert failure.payload["request_id"] == "req-bad-origins"
+    assert failure.payload["success"] is False
+    assert failure.payload["failure_reason"] == "os_error"
+    assert "does not match pattern" in failure.payload["stderr"]
+
+    await agent._job_manager.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_garage_bucket_set_cors_dispatch_passes_json_origins_to_factory(
+    agent: Agent,
+) -> None:
+    """Valid params reach the factory with origins still as a JSON string —
+    the factory decodes; the dispatcher just shuttles strings."""
+    from stormpulse.commands.jobs import JobManager
+    from stormpulse.protocol import CommandRequestPayload
+
+    cmd_def = _set_cors_cmd_def()
+    agent._registry["garage_bucket_set_cors"] = cmd_def
+
+    async def fake_send(env: Envelope) -> None:
+        pass
+
+    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+
+    captured_params: dict[str, dict[str, str]] = {}
+
+    def fake_factory(command: str, params: dict[str, str]) -> None:
+        captured_params[command] = dict(params)
+        return None
+
+    agent._make_long_running_handler = fake_factory  # type: ignore[method-assign]
+
+    payload = CommandRequestPayload(
+        command="garage_bucket_set_cors",
+        params=dict(_SET_CORS_VALID_PARAMS),
+        hmac="x",
+        nonce="x",
+    )
+    await agent._dispatch_long_running("req-ok", payload, cmd_def)
+
+    assert "garage_bucket_set_cors" in captured_params
+    seen = captured_params["garage_bucket_set_cors"]
+    # All six params reach the factory verbatim
+    assert seen == _SET_CORS_VALID_PARAMS
+    # origins is still a JSON string at the dispatcher boundary
+    assert isinstance(seen["origins"], str)
+    assert seen["origins"].startswith("[") and seen["origins"].endswith("]")
+
+    await agent._job_manager.shutdown_all()

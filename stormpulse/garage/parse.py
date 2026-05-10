@@ -110,22 +110,39 @@ def parse_status(stdout: str) -> list[GaragePeer]:
     return nodes
 
 
+_SIZE_MULTIPLIERS: dict[str, int] = {
+    # SI (decimal). Garage uses these in the parenthesised
+    # human-readable side of size lines, e.g. ``Size: 5.7 kiB (5.8 KB)``.
+    "B":   1,
+    "KB":  1_000,
+    "MB":  1_000_000,
+    "GB":  1_000_000_000,
+    "TB":  1_000_000_000_000,
+    # IEC (binary). Garage uses these for the authoritative size in
+    # ``bucket info`` and ``garage status``.
+    "KIB": 1_024,
+    "MIB": 1_048_576,
+    "GIB": 1_073_741_824,
+    "TIB": 1_099_511_627_776,
+}
+
+
 def _parse_size_gb(value: str, unit: str) -> float:
-    """Convert a size value + unit to GB."""
+    """Convert a size value + unit to GB (decimal, 10^9 bytes).
+
+    Uses the same SI/IEC convention as ``_size_to_bytes`` — KB/MB/GB/TB
+    are decimal, KiB/MiB/GiB/TiB are binary. Without this alignment,
+    ``5 GB`` parsed by ``_parse_size_gb`` and ``_size_to_bytes`` would
+    disagree on byte count.
+    """
     try:
         num = float(value)
     except ValueError:
         return 0.0
-    unit_upper = unit.upper().rstrip(")")
-    if unit_upper == "TB":
-        return num * 1024
-    if unit_upper == "GB":
-        return num
-    if unit_upper == "MB":
-        return num / 1024
-    if unit_upper == "KB" or unit_upper == "KIB":
-        return num / (1024 * 1024)
-    return num
+    multiplier = _SIZE_MULTIPLIERS.get(unit.upper().rstrip(")"))
+    if multiplier is None:
+        return 0.0
+    return num * multiplier / 1_000_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -398,10 +415,15 @@ def _parse_size_bytes(s: str) -> int:
 
 
 def _size_to_bytes(num: float, unit: str) -> int:
-    """Convert a numeric value + unit to bytes."""
-    multipliers = {"B": 1, "KB": 1000, "KIB": 1024, "MB": 1_000_000, "MIB": 1_048_576,
-                   "GB": 1_000_000_000, "GIB": 1_073_741_824, "TB": 1_000_000_000_000}
-    return int(num * multipliers.get(unit, 1))
+    """Convert a numeric value + unit to bytes.
+
+    SI (KB/MB/GB/TB) are decimal (10^N); IEC (KiB/MiB/GiB/TiB) are
+    binary (2^N). Garage CLI output uses both, e.g.
+    ``Size: 5.7 kiB (5.8 KB)``. Falls back to a single byte multiplier
+    for unrecognised units so a malformed size string yields the
+    numeric portion as bytes rather than panicking.
+    """
+    return int(num * _SIZE_MULTIPLIERS.get(unit.upper(), 1))
 
 
 # ---------------------------------------------------------------------------

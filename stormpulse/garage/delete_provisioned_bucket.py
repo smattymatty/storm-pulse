@@ -23,12 +23,10 @@ temporary global alias (which gets removed as part of the deletion).
                                          global alias to use as the
                                          final delete reference)
   3. bucket unalias --local <key> <n>  — for each local alias
-  4. bucket unalias <global>           — for each global EXCEPT the
-                                         one we'll delete by
-  5. bucket delete --yes <final-ref>   — final-ref is either the temp
+  4. bucket delete --yes <final-ref>   — final-ref is either the temp
                                          global from step 2 or the
-                                         retained global from step 4
-  6. key info / key delete             — for each key from step 1,
+                                         existing global from step 1
+  5. key info / key delete             — for each key from step 1,
                                          check ``key info``; if the
                                          key has zero remaining
                                          buckets, delete it. Skip if
@@ -36,10 +34,17 @@ temporary global alias (which gets removed as part of the deletion).
                                          keys are left alone).
 
 **Rollback.** Reverse the operations performed before the failure
-point. No rollback after step 5 (delete is terminal). Step 6 is
+point. No rollback after step 4 (delete is terminal). Step 5 is
 best-effort: a failed key delete adds a ``manual_cleanup_required``
 entry but doesn't fail the orchestrator (the bucket itself is
 already gone).
+
+``parse_bucket_info`` exposes a single ``global_alias`` field, and
+the post-A+B+C provision flow attaches at most one global per bucket,
+so a "detach extra globals" step would be dead code today. If a
+multi-global bucket appears in the future (custom ops setup), the
+final ``bucket delete --yes`` will fail and rollback runs — that's
+the cue to add the missing step.
 
 **Idempotency.** If the bucket doesn't exist (NoSuchBucket from step
 1), the orchestrator returns success — the goal state is reached.
@@ -69,7 +74,7 @@ from stormpulse.garage.provision_bucket import _run_garage  # reuse helper
 logger = logging.getLogger(__name__)
 
 
-_TOTAL_STEPS = 6
+_TOTAL_STEPS = 5
 
 
 # ---------------------------------------------------------------------------
@@ -116,7 +121,7 @@ class _DeleteState:
     locals_detached: list[tuple[str, str]] = field(default_factory=list)
     globals_detached: list[str] = field(default_factory=list)
     final_ref: str | None = None
-    # Keys that had permissions on the bucket at step 1. Step 6
+    # Keys that had permissions on the bucket at step 1. Step 5
     # iterates this list to clean up any that are now unmoored.
     candidate_key_ids: list[str] = field(default_factory=list)
     keys_deleted: list[str] = field(default_factory=list)
@@ -177,7 +182,7 @@ async def run_delete_provisioned_bucket(
         if k.local_alias
     ]
     # Capture every key that had permissions or a local alias on this
-    # bucket — step 6 will check each one with ``key info`` to decide
+    # bucket — step 5 will check each one with ``key info`` to decide
     # whether to delete it or leave it alone (shared key on another
     # bucket).
     state.candidate_key_ids = [k.access_key_id for k in info.keys]
@@ -240,18 +245,9 @@ async def run_delete_provisioned_bucket(
         state.locals_detached.append((key_id, name))
     state.step_completed = "local_alias_detach"
 
-    # ---- Step 4: detach extra global aliases ----
-    # If the bucket had multiple globals (rare), peel off all but the
-    # one we'll delete by. parse_bucket_info only surfaces one global,
-    # so this is a near no-op today; left in for forward-compat.
+    # ---- Step 4: bucket delete --yes <final-ref> ----
     await progress(
-        "running", 3, _TOTAL_STEPS, "Detaching extra global aliases",
-    )
-    state.step_completed = "extra_global_detach"
-
-    # ---- Step 5: bucket delete --yes <final-ref> ----
-    await progress(
-        "running", 4, _TOTAL_STEPS, "Deleting bucket",
+        "running", 3, _TOTAL_STEPS, "Deleting bucket",
     )
     rc, _stdout, stderr = await _run_garage(
         garage_config, "bucket", "delete", "--yes", state.final_ref,
@@ -288,7 +284,7 @@ async def run_delete_provisioned_bucket(
         )
     state.step_completed = "bucket_delete"
 
-    # ---- Step 6: clean up unmoored keys (best-effort) ----
+    # ---- Step 5: clean up unmoored keys (best-effort) ----
     # The bucket is already gone. For each key that had access to it,
     # check whether it has any other buckets. If not, the key is
     # orphaned credential material — delete it. If it still has
@@ -296,7 +292,7 @@ async def run_delete_provisioned_bucket(
     # Failures here don't fail the orchestrator; they accumulate in
     # ``manual_cleanup_required``.
     await progress(
-        "running", 5, _TOTAL_STEPS, "Cleaning up unmoored keys",
+        "running", 4, _TOTAL_STEPS, "Cleaning up unmoored keys",
     )
     manual_key_cleanup: list[dict[str, Any]] = []
     for key_id in state.candidate_key_ids:
@@ -306,7 +302,7 @@ async def run_delete_provisioned_bucket(
             )
         except (asyncio.TimeoutError, OSError) as exc:
             logger.warning(
-                "Step 6: key info %s failed (%s); leaving key alone",
+                "Step 5: key info %s failed (%s); leaving key alone",
                 key_id, exc,
             )
             manual_key_cleanup.append({"type": "key", "id": key_id})
@@ -331,7 +327,7 @@ async def run_delete_provisioned_bucket(
             )
         except (asyncio.TimeoutError, OSError) as exc:
             logger.warning(
-                "Step 6: key delete %s failed (%s)", key_id, exc,
+                "Step 5: key delete %s failed (%s)", key_id, exc,
             )
             manual_key_cleanup.append({"type": "key", "id": key_id})
             continue
