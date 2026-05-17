@@ -68,12 +68,26 @@ class StorageConfig:
 
 @dataclass(frozen=True, slots=True)
 class ParamDef:
-    """Declares an overridable placeholder for a command."""
+    """Declares an overridable placeholder for a command.
+
+    Either ``pattern`` (regex for short identifiers) or ``max_bytes`` (size
+    cap for opaque content blobs like a Caddyfile fragment) must be set;
+    both can be set if a value must match both. Unvalidated params are
+    rejected at construction time to prevent footguns.
+    """
 
     placeholder: str
     default: str | None
-    pattern: str
+    pattern: str | None = None
     description: str = ""
+    max_bytes: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.pattern is None and self.max_bytes is None:
+            raise ValueError(
+                f"ParamDef {self.placeholder!r}: must set pattern or max_bytes "
+                f"(unvalidated params are a footgun)"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +144,22 @@ class GarageConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class CaddyConfig:
+    """Optional [caddy] section — Caddy admin API + drop-in management.
+
+    Present only on regional-VPS agents that host customer custom-domain
+    serving. The agent uses ``admin_url`` to POST Caddyfile fragments,
+    ``main_caddyfile`` for the boot-time import check, and ``drop_in_path``
+    as the persisted location of the per-region fragment.
+    """
+
+    enabled: bool
+    admin_url: str
+    main_caddyfile: Path
+    drop_in_path: Path
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Top-level configuration, mirrors stormpulse.toml structure."""
 
@@ -142,6 +172,7 @@ class Config:
     storage: StorageConfig
     commands: dict[str, CommandDef] = dataclasses.field(default_factory=dict)
     garage: GarageConfig | None = None
+    caddy: CaddyConfig | None = None
     log_groups: list[LogGroupConfig] = dataclasses.field(default_factory=list)
 
     def validate_paths(self) -> None:
@@ -166,6 +197,15 @@ class Config:
         if self.garage and self.garage.enabled:
             if not Path(self.garage.config_path).is_file():
                 missing.append(str(self.garage.config_path))
+        if self.caddy and self.caddy.enabled:
+            if not self.caddy.main_caddyfile.is_file():
+                missing.append(str(self.caddy.main_caddyfile))
+            # The drop-in file itself doesn't need to exist yet — we
+            # create it on first sync. Its parent directory must.
+            if not self.caddy.drop_in_path.parent.is_dir():
+                missing.append(
+                    f"{self.caddy.drop_in_path.parent} (directory for caddy drop-in)"
+                )
         if missing:
             raise ConfigError(f"Missing files/directories: {', '.join(missing)}")
 
@@ -464,6 +504,40 @@ def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
     )
 
 
+def _parse_caddy(raw: dict[str, Any]) -> CaddyConfig | None:
+    """Parse optional [caddy] section. Returns None if absent."""
+    section = raw.get("caddy")
+    if section is None:
+        return None
+    if not isinstance(section, dict):
+        raise ConfigError("[caddy] must be a table")
+
+    enabled = _require_key(section, "enabled", bool, "caddy")
+    admin_url = _require_key(section, "admin_url", str, "caddy")
+    if not admin_url.startswith(("http://", "https://")):
+        raise ConfigError(
+            f"'admin_url' in [caddy] must start with http:// or https://, "
+            f"got {admin_url!r}"
+        )
+    main_raw = _require_key(section, "main_caddyfile", str, "caddy")
+    if not main_raw.startswith("/"):
+        raise ConfigError(
+            f"'main_caddyfile' in [caddy] must be an absolute path, got {main_raw!r}"
+        )
+    drop_in_raw = _require_key(section, "drop_in_path", str, "caddy")
+    if not drop_in_raw.startswith("/"):
+        raise ConfigError(
+            f"'drop_in_path' in [caddy] must be an absolute path, got {drop_in_raw!r}"
+        )
+
+    return CaddyConfig(
+        enabled=enabled,
+        admin_url=admin_url,
+        main_caddyfile=Path(main_raw),
+        drop_in_path=Path(drop_in_raw),
+    )
+
+
 def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
     """Parse the optional [[log_groups]] array."""
     entries = raw.get("log_groups", [])
@@ -592,5 +666,6 @@ def load_config(path: Path) -> Config:
         storage=_parse_storage(raw),
         commands=_parse_commands(raw),
         garage=_parse_garage(raw),
+        caddy=_parse_caddy(raw),
         log_groups=_parse_log_groups(raw),
     )

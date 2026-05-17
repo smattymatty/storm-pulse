@@ -102,11 +102,23 @@ def validate_params(
             value = pdef.default
         else:
             continue  # no static default — config provides the fallback
-        if not re.fullmatch(pdef.pattern, value):
-            raise ParamValidationError(
-                f"Param {name!r} value {value!r} "
-                f"does not match pattern {pdef.pattern!r}"
-            )
+        # Regex validation: short identifiers, bucket names, key IDs.
+        if pdef.pattern is not None:
+            if not re.fullmatch(pdef.pattern, value):
+                raise ParamValidationError(
+                    f"Param {name!r} value {value!r} "
+                    f"does not match pattern {pdef.pattern!r}"
+                )
+        # Byte-cap validation: opaque content blobs like a Caddyfile
+        # fragment. Counts UTF-8 bytes (not characters) to match what
+        # actually traverses the wire.
+        if pdef.max_bytes is not None:
+            byte_size = len(value.encode("utf-8"))
+            if byte_size > pdef.max_bytes:
+                raise ParamValidationError(
+                    f"Param {name!r} is {byte_size} bytes, "
+                    f"exceeds max_bytes={pdef.max_bytes}"
+                )
         merged[name] = value
 
     return merged

@@ -227,8 +227,28 @@ class TestParseStormpulse:
         assert "secret_field" not in result
 
 
+# Captured 2026-05-16 from local Caddy 2.6.2 + internal CA spike at
+# ~/test/caddy_cert_spike/. See README.md there for the capture method.
+# These are the agent-side fixtures: the parser must pass them through
+# with cert-relevant fields preserved so Storm's _detect_caddy_cert_event
+# can classify them.
+_REAL_CERTMAGIC_OBTAINED = (
+    '{"level":"info","ts":1778971268.8574061,"logger":"tls.obtain",'
+    '"msg":"certificate obtained successfully","identifier":"spike.test"}'
+)
+_REAL_CERTMAGIC_LOCK = (
+    '{"level":"info","ts":1778971268.8517365,"logger":"tls.obtain",'
+    '"msg":"acquiring lock","identifier":"spike.test"}'
+)
+_REAL_CERTMAGIC_OCSP = (
+    '{"level":"warn","ts":1778971268.85788,"logger":"tls",'
+    '"msg":"stapling OCSP","error":"no OCSP stapling for [spike.test]: '
+    'no OCSP server specified in certificate","identifiers":["spike.test"]}'
+)
+
+
 class TestParseCaddyJson:
-    def test_valid_line(self) -> None:
+    def test_access_log_valid(self) -> None:
         line = json.dumps({
             "ts": "2026-04-10T13:00:00Z",
             "status": 200,
@@ -249,6 +269,64 @@ class TestParseCaddyJson:
     def test_malformed_rejected(self) -> None:
         assert parse_caddy_json("not json") is None
         assert parse_caddy_json("") is None
+
+    def test_cert_obtained_passes_through(self) -> None:
+        result = parse_caddy_json(_REAL_CERTMAGIC_OBTAINED)
+        assert result is not None
+        assert result["logger"] == "tls.obtain"
+        assert result["msg"] == "certificate obtained successfully"
+        assert result["identifier"] == "spike.test"
+        assert result["level"] == "info"
+        assert result["error"] == ""
+        # Numeric Caddy ts must be coerced to ISO 8601 with Z suffix.
+        assert result["ts"].endswith("Z")
+        assert result["ts"].startswith("20")
+        # Message field is what Storm puts on the ServerLog row.
+        assert result["message"] == "certificate obtained successfully"
+
+    def test_cert_lock_passes_through(self) -> None:
+        # Lock events are noise from Storm's classifier perspective, but
+        # the agent's job is to pass them through. Storm's
+        # _detect_caddy_cert_event returns None and the row becomes an
+        # unclassified ServerLog entry.
+        result = parse_caddy_json(_REAL_CERTMAGIC_LOCK)
+        assert result is not None
+        assert result["logger"] == "tls.obtain"
+        assert result["msg"] == "acquiring lock"
+        assert result["identifier"] == "spike.test"
+
+    def test_cert_ocsp_warning_passes_through(self) -> None:
+        result = parse_caddy_json(_REAL_CERTMAGIC_OCSP)
+        assert result is not None
+        assert result["logger"] == "tls"
+        assert result["msg"] == "stapling OCSP"
+        assert result["level"] == "warn"
+        # The error field must survive — Storm uses it for cert_failed
+        # detail. Even on non-failure events with error context, we ship
+        # it so the downstream classifier has the full picture.
+        assert "no OCSP stapling" in result["error"]
+
+    def test_cert_shape_without_ts_returns_none(self) -> None:
+        # A cert-shape line (tls logger, msg, no request) but missing
+        # ts cannot become a ServerLog row — Storm parses ts on ingest.
+        line = json.dumps({
+            "level": "info",
+            "logger": "tls.obtain",
+            "msg": "certificate obtained successfully",
+            "identifier": "example.com",
+        })
+        assert parse_caddy_json(line) is None
+
+    def test_non_tls_logger_returns_none(self) -> None:
+        # A line with no request AND a non-tls logger is neither an
+        # access log nor a cert event. Drop it.
+        line = json.dumps({
+            "ts": "2026-05-16T13:00:00Z",
+            "level": "info",
+            "logger": "http.handlers.reverse_proxy",
+            "msg": "upstream selected",
+        })
+        assert parse_caddy_json(line) is None
 
 
 class TestParseDockerRaw:

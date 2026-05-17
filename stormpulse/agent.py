@@ -16,6 +16,7 @@ from websockets.exceptions import ConnectionClosed
 
 from stormpulse import __version__
 from stormpulse.auth import AuthError, NonceStore, verify_envelope
+from stormpulse.caddy import build_caddy_commands, verify_drop_in_imported
 from stormpulse.commands import (
     CommandError,
     ParamValidationError,
@@ -25,7 +26,7 @@ from stormpulse.commands import (
 )
 from stormpulse.commands.jobs import JobHandler, JobManager
 from stormpulse.commands.registry import validate_params
-from stormpulse.config import CommandDef, Config, LogGroupConfig, ProjectConfig, TlsConfig
+from stormpulse.config import CommandDef, Config, ConfigError, LogGroupConfig, ProjectConfig, TlsConfig
 from stormpulse.garage.commands import build_garage_commands
 from stormpulse.garage.discover import discover_garage
 from stormpulse.garage.state import GarageState, collect_garage_state
@@ -151,6 +152,17 @@ class Agent:
         commands = dict(config.commands)
         if config.garage and config.garage.enabled:
             commands.update(build_garage_commands(config.garage))
+        # Merge caddy commands. Hard-fail at construction time if the
+        # main Caddyfile doesn't import our drop-in path — silent
+        # success here would mean fragments written but never served,
+        # which manifests as hung customer activations weeks later.
+        if config.caddy and config.caddy.enabled:
+            import_err = verify_drop_in_imported(
+                config.caddy.main_caddyfile, config.caddy.drop_in_path,
+            )
+            if import_err:
+                raise ConfigError(f"Caddy configuration invalid: {import_err}")
+            commands.update(build_caddy_commands(config.caddy))
         self._registry = build_registry(commands, config.agent.disabled_commands)
         self._garage_state: GarageState | None = None
         # Build log shippers for enabled groups
@@ -741,6 +753,14 @@ class Agent:
             return make_delete_provisioned_bucket_handler(
                 self._config.garage, params,
             )
+        if command == "cellar_custom_domain_caddy_sync":
+            from stormpulse.caddy.sync import make_caddy_sync_handler
+            if self._config.caddy is None:
+                logger.error(
+                    "cellar_custom_domain_caddy_sync requires [caddy] config",
+                )
+                return None
+            return make_caddy_sync_handler(self._config.caddy, params)
         return None
 
     async def _handle_command_sequence(
