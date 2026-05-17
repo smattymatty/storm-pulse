@@ -551,6 +551,66 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_walk_bucket_stats": CommandDef(
+            group="garage",
+            command=["garage_walk_bucket_stats"],  # internal — handled by JobManager
+            timeout=120,  # 100k objects ÷ 1000/page = 100 pages; ~1s/page p95
+            description=(
+                "Walk a bucket on the local Garage S3 endpoint to compute "
+                "per-prefix object count + byte sum. Customer credentials "
+                "in params; agent signs requests against loopback so the "
+                "customer's home IP doesn't appear in Garage's access log."
+            ),
+            sensitive_output=True,  # the secret arrives in params
+            long_running=True,
+            params={
+                "bucket_name": ParamDef(
+                    placeholder="bucket_name",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Bucket to walk (local alias = display_name)",
+                ),
+                "s3_endpoint": ParamDef(
+                    placeholder="s3_endpoint",
+                    default=None,
+                    pattern=r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+                    description="Garage S3 endpoint URL (no path/query)",
+                ),
+                "region": ParamDef(
+                    placeholder="region",
+                    default=None,
+                    pattern=r"[a-zA-Z0-9_-]+",
+                    description="S3 region for SigV4 signing",
+                ),
+                "access_key_id": ParamDef(
+                    placeholder="access_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Customer S3 access key ID (any tier)",
+                ),
+                "secret_access_key": ParamDef(
+                    placeholder="secret_access_key",
+                    default=None,
+                    pattern=r".+",
+                    description="Customer S3 secret. In agent memory only for the job lifetime.",
+                ),
+                "prefix": ParamDef(
+                    placeholder="prefix",
+                    default="",
+                    # S3 prefix — empty (root) or any path-safe sequence
+                    # ending in /. Validated stricter by the Storm-side
+                    # _validate_listing_prefix before dispatch reaches here.
+                    pattern=r"|[A-Za-z0-9_\-./]+/",
+                    description="Prefix to walk under; '' = bucket root",
+                ),
+                "max_objects": ParamDef(
+                    placeholder="max_objects",
+                    default="100000",
+                    pattern=r"[0-9]{1,7}",
+                    description="Cap; truncated=True returned if exceeded",
+                ),
+            },
+        ),
         "garage_bucket_deny": CommandDef(
             group="garage",
             command=[docker, "exec", container, garage, "bucket", "deny",

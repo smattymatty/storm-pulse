@@ -688,6 +688,11 @@ class Agent:
         if command == "garage_bucket_set_cors":
             from stormpulse.garage.set_cors import make_set_cors_handler
             return make_set_cors_handler(params)
+        if command == "garage_walk_bucket_stats":
+            from stormpulse.garage.walk_bucket_stats import (
+                make_walk_bucket_stats_handler,
+            )
+            return make_walk_bucket_stats_handler(params)
         if command == "garage_provision_customer_bucket":
             from stormpulse.garage.provision_bucket import (
                 make_provision_customer_bucket_handler,
