@@ -40,6 +40,7 @@ class TestBuildGarageCommands:
             "garage_provision_additional_key",
             "garage_delete_provisioned_bucket",
             "garage_rotate_customer_key",
+            "garage_walk_bucket_stats",
         }
         assert set(cmds.keys()) == expected
 
@@ -54,6 +55,7 @@ class TestBuildGarageCommands:
                 "garage_provision_additional_key",
                 "garage_delete_provisioned_bucket",
                 "garage_rotate_customer_key",
+                "garage_walk_bucket_stats",
             }:
                 continue  # internal command, not a subprocess
             assert cmd_def.command[0].startswith("/"), (
@@ -105,6 +107,7 @@ class TestBuildGarageCommands:
             "garage_provision_customer_bucket",
             "garage_provision_additional_key",
             "garage_rotate_customer_key",
+            "garage_walk_bucket_stats",
         }
         for name, cmd_def in cmds.items():
             if name not in sensitive_allowed:

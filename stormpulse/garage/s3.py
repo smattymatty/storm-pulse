@@ -254,11 +254,20 @@ class GarageS3Client:
         bucket: str,
         continuation_token: str | None = None,
         max_keys: int = 1000,
+        prefix: str | None = None,
     ) -> ListResult:
-        """One page of ListObjectsV2. Caller paginates via ``next_continuation_token``."""
+        """One page of ListObjectsV2. Caller paginates via ``next_continuation_token``.
+
+        ``prefix`` (optional) restricts results to keys under that prefix.
+        No ``delimiter`` parameter — callers wanting a recursive walk
+        (e.g. ``garage_walk_bucket_stats``) need every object beneath
+        the prefix, not just the immediate children.
+        """
         query: list[tuple[str, str]] = [("list-type", "2"), ("max-keys", str(max_keys))]
         if continuation_token:
             query.append(("continuation-token", continuation_token))
+        if prefix:
+            query.append(("prefix", prefix))
         body = self._signed_request("GET", f"/{bucket}", query, b"")
         return _parse_list_response(body)
 
