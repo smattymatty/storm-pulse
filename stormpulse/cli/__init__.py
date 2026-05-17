@@ -80,6 +80,10 @@ def main() -> None:
     from stormpulse.cli.garage import add_garage_subparser
     add_garage_subparser(subparsers)
 
+    # --- caddy subcommand group ---
+    from stormpulse.cli.caddy import add_caddy_subparser
+    add_caddy_subparser(subparsers)
+
     # --- logging subcommand group ---
     from stormpulse.cli.log import add_logging_subparser
     add_logging_subparser(subparsers)
@@ -114,6 +118,15 @@ def main() -> None:
             print("Subcommands:", file=sys.stderr)
             print("  init     Detect and configure Garage integration", file=sys.stderr)
             sys.exit(1)
+    elif args.command == "caddy":
+        if getattr(args, "caddy_command", None) == "init":
+            from stormpulse.cli.caddy import cmd_caddy_init
+            cmd_caddy_init(args)
+        else:
+            print("Usage: stormpulse caddy <subcommand>\n", file=sys.stderr)
+            print("Subcommands:", file=sys.stderr)
+            print("  init     Detect and configure Caddy integration", file=sys.stderr)
+            sys.exit(1)
     elif args.command == "logging":
         if getattr(args, "logging_command", None) == "init":
             from stormpulse.cli.log import cmd_logging_init
@@ -138,6 +151,7 @@ def main() -> None:
             print("  init     Generate config and systemd unit", file=sys.stderr)
             print("  status   Show agent status", file=sys.stderr)
             print("  garage   Garage S3 node management", file=sys.stderr)
+            print("  caddy    Caddy reverse-proxy integration", file=sys.stderr)
             print("  logging  Log shipping configuration", file=sys.stderr)
             print(
                 "\nRun 'stormpulse <command> --help' for details.",

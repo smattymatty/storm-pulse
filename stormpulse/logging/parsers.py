@@ -166,6 +166,7 @@ def parse_stormpulse(line: str) -> dict[str, Any] | None:
 
 
 _CADDY_REQUIRED = {"ts", "request", "status"}
+_CERT_LOGGER_PREFIX = "tls"
 _DOCKER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(.*)$")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _UA_BROWSER_RE = re.compile(r"(Firefox|Chrome|Safari|Edge|Opera|curl|wget|Go-http-client|python-requests)/[\d.]+")
@@ -203,6 +204,42 @@ def parse_caddy_json(line: str) -> dict[str, Any] | None:
     if not isinstance(parsed, dict):
         return None
     obj: dict[str, Any] = cast(dict[str, Any], parsed)
+
+    # Cert-event branch. certmagic logs lifecycle events under loggers
+    # like 'tls.obtain', 'tls.cache.maintenance', etc. They have 'msg'
+    # but no 'request'. Pass them through with cert-relevant fields
+    # preserved; Storm's _detect_caddy_cert_event classifies which ones
+    # are cert_obtained / cert_renewed / cert_failed downstream.
+    logger_name = obj.get("logger")
+    msg = obj.get("msg")
+    if (
+        "request" not in obj
+        and isinstance(logger_name, str)
+        and logger_name.startswith(_CERT_LOGGER_PREFIX)
+        and isinstance(msg, str)
+        and msg
+    ):
+        raw_ts = obj.get("ts")
+        if raw_ts is None:
+            return None
+        if isinstance(raw_ts, (int, float)):
+            ts_iso = datetime.fromtimestamp(float(raw_ts), tz=timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ",
+            )
+        else:
+            ts_iso = str(raw_ts)
+        names = obj.get("names")
+        return {
+            "ts": ts_iso,
+            "level": str(obj.get("level", "info")),
+            "message": msg,
+            "logger": logger_name,
+            "msg": msg,
+            "identifier": str(obj.get("identifier") or ""),
+            "names": names if isinstance(names, list) else None,
+            "error": str(obj.get("error") or ""),
+            "truncated": truncated,
+        }
 
     missing = _CADDY_REQUIRED - obj.keys()
     if missing:
