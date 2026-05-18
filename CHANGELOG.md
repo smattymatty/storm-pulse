@@ -9,16 +9,36 @@ This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroac
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-05-18
+
+Adds Storm Pulse's first Caddy integration, enabling per-region custom-domain hosting on regional VPS hosts.
+
 ### Added
 
-- **Caddy integration** (`stormpulse/caddy/`). Long-running command `cellar_custom_domain_caddy_sync` writes a per-region Caddyfile fragment via the admin HTTP API (single POST to `/load` with `Content-Type: text/caddyfile`) and atomically persists it to a drop-in path. Optional `[caddy]` config section: `admin_url`, `main_caddyfile`, `drop_in_path`. Reached via the admin API rather than `docker exec` — no docker-socket permissions, no docker_binary or container_name fields.
-- **Boot-time import verification** (`verify_drop_in_imported`). At agent boot, the main Caddyfile is parsed for `import` directives (exact paths or globs) resolving to the drop-in path. If no match is found, the agent refuses to start with a clear `ConfigError`. Catches silent "fragments written but never served" misconfiguration at start, not weeks later when a customer activation hangs.
-- **`stormpulse caddy init` subcommand** (`stormpulse/cli/caddy.py`, `stormpulse/caddy/init.py`). Detects an installed Caddy under common search paths (`/etc/caddy/Caddyfile`, `/opt/caddy/Caddyfile`, `/opt/garage/Caddyfile`), prompts for admin URL + drop-in path with sensible defaults, runs the same import-directive check the agent uses at boot, and appends the `[caddy]` section. `--main-caddyfile` overrides auto-detection; `--force` overwrites an existing section. Mirrors `stormpulse garage init` ergonomically — no more hand-editing TOML to enable Caddy on a new regional VPS.
-- **`ParamDef.max_bytes`** for opaque-content command params. The Caddyfile fragment param uses this (cap: 150 KB, ~1000 active custom domains per region) since regex validation can't sanely cover multi-line content with braces. `pattern` is now optional; `validate_params` requires at least one of `pattern` or `max_bytes` to prevent unvalidated-param footguns.
+- **Caddy integration.** New `[caddy]` config section enables Storm Cellar's per-region custom-domain hosting. Run `stormpulse caddy init` to set up. See [Caddy Integration](storm-pulse.wiki/Caddy-Integration.md).
+- **Boot-time Caddyfile import check.** The agent refuses to start if the main Caddyfile does not import the configured drop-in path — catches "fragment written but never served" misconfigurations at boot, not weeks later when a customer activation hangs.
+- **`caddy_json` parser ships TLS cert events.** Log lines from `tls.*` loggers now pass through with cert-lifecycle fields preserved (`logger`, `msg`, `identifier`, `names`, `error`). Previously: silently dropped.
 
 ### Changed
 
-- **`parse_caddy_json`** now passes cert-lifecycle log lines through instead of dropping them. Lines with a `logger` field starting with `tls` and a `msg` field (but no `request`/`status`) are preserved with `logger`, `msg`, `identifier`, `error`, `names` fields kept intact so the Storm-side `_detect_caddy_cert_event` classifier can route them. The agent does not classify event types — that's Storm's job. Includes real-captured fixture from a Caddy 2.6.2 + internal-CA spike (see `tests/logging/test_parsers.py`).
+- `ParamDef` now supports `max_bytes` for opaque-content params; declarations must set at least one of `pattern` or `max_bytes`. Affects custom-command authors only if they ship multi-line content params. See [Customize Commands — Parameters](storm-pulse.wiki/Customize--Commands.md#parameters).
+
+## [0.1.5] - 2026-05-18
+
+Adds customer bucket provisioning, alias management, and additional data-plane operations to the Garage integration. Lowers the default manifest cadence to 30 seconds.
+
+### Added
+
+- **Customer bucket provisioning commands.** `garage_provision_customer_bucket`, `garage_delete_provisioned_bucket`, `garage_provision_additional_key`, `garage_rotate_customer_key` — long-running, dispatched by Storm Cellar. See [Garage Integration — Customer bucket provisioning](storm-pulse.wiki/Garage-Integration.md#customer-bucket-provisioning).
+- **Data-plane commands.** `garage_bucket_set_cors` (configure CORS rules) and `garage_walk_bucket_stats` (count objects and bytes under a prefix). Long-running, use the SigV4 client introduced in 0.1.4.
+- **Alias management commands.** `garage_bucket_alias_global_add`, `garage_bucket_alias_global_remove`, `garage_bucket_alias_local_add`, `garage_bucket_alias_local_remove`. See [Garage Integration — Aliases](storm-pulse.wiki/Garage-Integration.md#aliases).
+- **Tiered permission commands.** `garage_bucket_allow_rw` and `garage_bucket_allow_ro` split the `garage_bucket_allow` flow by tier, avoiding a conditional `permissions` parameter.
+
+### Changed
+
+- **Manifest cadence default lowered to 30s** (was 300s). Out-of-band Garage changes now reconcile in ≤30s. Existing installs should edit `state_push_interval_seconds = 30` in `stormpulse.toml`, or re-run `stormpulse garage init`.
+- Provisioned bucket key names now use hyphens instead of underscores. Affects newly-provisioned keys only.
+- `garage_delete_provisioned_bucket` orchestration now handles local aliases (detaches them before deleting the bucket) and cleans up orphaned keys (deletes keys whose only access was to the deleted bucket).
 
 ## [0.1.4] - 2026-05-05
 
@@ -40,5 +60,7 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* — current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.4...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.6...HEAD
+[0.1.6]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.5...v0.1.6
+[0.1.5]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.4...v0.1.5
 [0.1.4]: https://git.stormdevelopments.ca/official-public/storm-pulse/releases/tag/v0.1.4
