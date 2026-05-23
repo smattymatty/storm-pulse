@@ -170,7 +170,7 @@ def test_all_dropped_ships_drop_count(tmp_path: Path) -> None:
 
 
 def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
-    """Confirm LogShipper works when handed a DockerTailer — to_position
+    """Confirm LogShipper works when handed a DockerTailer - to_position
     is a string timestamp (not int) and confirm_shipped accepts it."""
     store = LogPositionStore(tmp_path / "pos.db")
     group = LogGroupConfig(

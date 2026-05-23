@@ -1,32 +1,13 @@
-"""Handler for the ``garage_rotate_customer_key`` long-running command.
+"""Handler for ``garage_rotate_customer_key``.
 
-Four-step orchestrated key rotation:
+Four-step rotation: create new key, allow permissions, attach local alias,
+delete old key. Permissions are per-(bucket, key) in Garage, so the new key
+needs them granted explicitly - they can't be inherited.
 
-1. ``key create <new_key_name>`` — capture new key ID + secret
-2. ``bucket allow <perm-flags> <bucket_id> --key <new_key_id>`` —
-   grant the new key its (bucket, key) permissions before the old key
-   dies. Permissions are per-(bucket, key) in Garage, so they cannot
-   be inherited from the old key — they must be reissued or every S3
-   call from the new key returns AccessDenied.
-3. ``bucket alias --local <new_key_id> <bucket_id> <local_alias>`` —
-   both keys briefly hold the alias.
-4. ``key delete --yes <old_key_id>`` — old key's permissions and alias
-   die with it.
-
-Rollback contract:
-
-- Step 1 fail: nothing to clean up. Old key untouched.
-- Step 2 fail: delete the just-created new key. Old key untouched.
-- Step 3 fail: revoke permissions on the new key, delete the new key.
-  Old key still alive with its alias.
-- Step 4 fail: detach alias from new key, revoke permissions on new
-  key, delete new key. Old key never touched in any rollback path.
-
-The decision to fully roll back (rather than leave the new key alive)
-is forced by the dashboard data model: ``CustomerKey.garage_key_id`` is
-a single field per ``(bucket, key_type)`` slot. Two live keys in one
-slot is unrepresentable, and an orphan key with no Cellar-side row
-leaks namespace and billing.
+Atomic rollback on any failure (rather than leaving the new key alive) is
+forced by the dashboard data model: ``CustomerKey.garage_key_id`` is a
+single field per ``(bucket, key_type)`` slot, so two live keys in one slot
+is unrepresentable.
 """
 
 from __future__ import annotations
@@ -40,7 +21,7 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import GarageParseError, parse_key_create
-from stormpulse.garage.provision_bucket import _run_garage  # reuse subprocess helper
+from stormpulse.garage.runner import run_garage  # reuse subprocess helper
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +35,6 @@ _TIER_FLAGS: dict[str, list[str]] = {
     "rw": ["--read", "--write"],
     "ro": ["--read"],
 }
-
-
-# ---------------------------------------------------------------------------
-# Public entrypoint
-# ---------------------------------------------------------------------------
 
 
 def make_rotate_customer_key_handler(
@@ -103,11 +79,6 @@ def make_rotate_customer_key_handler(
     return handler
 
 
-# ---------------------------------------------------------------------------
-# State and rollback result
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class _RotateState:
     bucket_id: str
@@ -125,11 +96,6 @@ class _RotateState:
 class _RollbackResult:
     status: str  # "complete" | "partial"
     manual_cleanup: list[dict[str, str]]
-
-
-# ---------------------------------------------------------------------------
-# Core orchestration
-# ---------------------------------------------------------------------------
 
 
 async def run_rotate_customer_key(
@@ -153,7 +119,7 @@ async def run_rotate_customer_key(
 
     # ---- Step 1: key create <new_key_name> ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
-    rc, stdout, stderr = await _run_garage(
+    rc, stdout, stderr = await run_garage(
         garage_config, "key", "create", new_key_name,
     )
     if rc != 0:
@@ -191,7 +157,7 @@ async def run_rotate_customer_key(
 
     # ---- Step 2: bucket allow <perm-flags> <bucket_id> --key <new_key_id> ----
     await progress("running", 1, _TOTAL_STEPS, "Granting permissions to new key")
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config,
         "bucket", "allow", *perm_flags,
         bucket_id, "--key", state.new_key_id,
@@ -212,7 +178,7 @@ async def run_rotate_customer_key(
 
     # ---- Step 3: bucket alias --local <new_key_id> <bucket_id> <alias> ----
     await progress("running", 2, _TOTAL_STEPS, "Attaching local alias to new key")
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config,
         "bucket", "alias", "--local", state.new_key_id,
         bucket_id, local_alias,
@@ -233,7 +199,7 @@ async def run_rotate_customer_key(
 
     # ---- Step 4: key delete --yes <old_key_id> ----
     await progress("running", 3, _TOTAL_STEPS, "Deleting old key")
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config, "key", "delete", "--yes", old_key_id,
     )
     if rc != 0:
@@ -274,17 +240,12 @@ async def run_rotate_customer_key(
     )
 
 
-# ---------------------------------------------------------------------------
-# Rollback
-# ---------------------------------------------------------------------------
-
-
 async def _rollback(
     garage_config: GarageConfig, state: _RotateState,
 ) -> _RollbackResult:
     """Reverse-order cleanup: detach alias, revoke perms, delete new key.
 
-    Old key is never touched by rollback — the whole point of full
+    Old key is never touched by rollback - the whole point of full
     rollback is leaving the old key in its pre-call state.
     """
     manual: list[dict[str, str]] = []
@@ -292,7 +253,7 @@ async def _rollback(
     # 1. Detach new key's local alias if attached
     if state.new_alias_attached and state.new_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config,
                 "bucket", "unalias", "--local", state.new_key_id,
                 state.local_alias,
@@ -333,7 +294,7 @@ async def _rollback(
     # 2. Revoke permissions on the new key if granted
     if state.new_key_permissions_granted and state.new_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config,
                 "bucket", "deny", *state.perm_flags,
                 state.bucket_id, "--key", state.new_key_id,
@@ -362,7 +323,7 @@ async def _rollback(
     # 3. Delete new key
     if state.new_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config, "key", "delete", "--yes", state.new_key_id,
             )
         except (asyncio.TimeoutError, OSError) as exc:
@@ -376,11 +337,6 @@ async def _rollback(
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
     return _RollbackResult(status="complete", manual_cleanup=[])
-
-
-# ---------------------------------------------------------------------------
-# Result construction
-# ---------------------------------------------------------------------------
 
 
 def _failure(

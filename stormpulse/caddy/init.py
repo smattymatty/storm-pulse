@@ -1,40 +1,28 @@
-"""Caddy init — detect Caddy installation and append [caddy] to stormpulse.toml.
+"""``stormpulse caddy init`` - detect Caddy and append [caddy] to stormpulse.toml.
 
-Mirrors ``stormpulse/garage/init.py`` exactly in shape: search paths,
-TOML section management, interactive prompts, optional restart. The
-difference is that Caddy is reached via its admin HTTP API
-(``http://localhost:2019/load``) rather than ``docker exec``, so the
-generated section is shorter — four fields instead of six, no
-container_name or docker_binary.
-
-After writing the section, the orchestrator runs ``verify_drop_in_imported``
-against the user's chosen paths. The agent's boot check uses the same
-function, so an init that warns ``import directive missing`` is telling
-you the agent will refuse to start. Better to know now than at first
-restart.
+After writing the section, runs ``verify_drop_in_imported`` against the chosen
+paths. The agent's boot check uses the same function, so an ``import directive
+missing`` warning here means the agent will refuse to start.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
 
 from stormpulse.caddy.sync import verify_drop_in_imported
-from stormpulse.init import InitError, _prompt
+from stormpulse.init import InitError, prompt
+from stormpulse.init.prompts import prompt_confirm
+from stormpulse.init.system import restart_stormpulse
 
-
-# ---------------------------------------------------------------------------
-# Caddy detection
-# ---------------------------------------------------------------------------
 
 # Search paths in priority order:
-#   /etc/caddy/Caddyfile      — apt-installed default
-#   /opt/caddy/Caddyfile      — common manual-install convention
-#   /opt/garage/Caddyfile     — Caddy-co-located-with-Garage layout,
+#   /etc/caddy/Caddyfile      - apt-installed default
+#   /opt/caddy/Caddyfile      - common manual-install convention
+#   /opt/garage/Caddyfile     - Caddy-co-located-with-Garage layout,
 #                               which Storm uses on regional VPSes where
 #                               Caddy reverse-proxies to Garage on the
 #                               same host.
@@ -55,10 +43,6 @@ def find_caddy_main(override: str | None = None) -> Path | None:
             return p
     return None
 
-
-# ---------------------------------------------------------------------------
-# TOML section management
-# ---------------------------------------------------------------------------
 
 _CADDY_TOML_TEMPLATE = """\
 
@@ -157,10 +141,6 @@ def append_caddy_section(
         raise InitError(f"Cannot append to {config_path}: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# Interactive prompts
-# ---------------------------------------------------------------------------
-
 _DEFAULT_ADMIN_URL = "http://localhost:2019"
 
 
@@ -181,13 +161,13 @@ def prompt_caddy_values(
     )
 
     while True:
-        url = _prompt("Admin URL", default=admin_url)
+        url = prompt("Admin URL", default=admin_url)
         if url.startswith(("http://", "https://")):
             break
         print("  Must start with http:// or https://", file=sys.stderr)
 
     while True:
-        drop_in = _prompt("Drop-in file path", default=default_drop_in)
+        drop_in = prompt("Drop-in file path", default=default_drop_in)
         if drop_in.startswith("/"):
             break
         print("  Must be an absolute path", file=sys.stderr)
@@ -197,43 +177,6 @@ def prompt_caddy_values(
         "main_caddyfile": str(main_caddyfile),
         "drop_in_path": drop_in,
     }
-
-
-def prompt_confirm(message: str, *, default_yes: bool = True) -> bool:
-    """Yes/no prompt. Returns True for yes."""
-    hint = "Y/n" if default_yes else "y/N"
-    response = _prompt(f"{message} [{hint}]")
-    if not response:
-        return default_yes
-    return response.lower() in ("y", "yes")
-
-
-# ---------------------------------------------------------------------------
-# Service restart
-# ---------------------------------------------------------------------------
-
-
-def restart_stormpulse() -> bool:
-    """Restart the stormpulse systemd service. Returns True on success."""
-    try:
-        subprocess.run(
-            ["/usr/bin/systemctl", "restart", "stormpulse"],
-            check=True,
-            capture_output=True,
-        )
-        return True
-    except FileNotFoundError:
-        print("  systemctl not found", file=sys.stderr)
-        return False
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode("utf-8", errors="replace").strip()
-        print(f"  Restart failed: {stderr or exc}", file=sys.stderr)
-        return False
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator
-# ---------------------------------------------------------------------------
 
 
 def run_caddy_init(
@@ -320,12 +263,12 @@ def run_caddy_init(
     )
     print(f"\n  [caddy] section written to {config_path}", file=sys.stderr)
 
-    # If the import directive is missing, don't offer restart — the
+    # If the import directive is missing, don't offer restart - the
     # agent's boot check would crash. Surface the next step plainly
     # instead.
     if import_err:
         print(
-            "\n  Don't restart yet — fix the import directive above first.\n"
+            "\n  Don't restart yet - fix the import directive above first.\n"
             "  Then:    sudo systemctl restart stormpulse",
             file=sys.stderr,
         )

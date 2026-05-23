@@ -47,7 +47,7 @@ def cmd_enroll(args: argparse.Namespace) -> None:
     try:
         write_enroll_metadata(creds_dir, args.endpoint, args.agent_id)
     except EnrollError:
-        logger.warning("Could not write enroll.json — init defaults will be unavailable")
+        logger.warning("Could not write enroll.json - init defaults will be unavailable")
 
     logger.info("Enrollment complete:")
     logger.info("  Client cert: %s", creds.client_cert)

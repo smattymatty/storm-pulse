@@ -1,28 +1,17 @@
-"""Handler for the ``garage_walk_bucket_stats`` command.
+"""Handler for ``garage_walk_bucket_stats``.
 
-Computes per-prefix object count + byte sum by paginating ListObjectsV2
-against the local Garage S3 endpoint. The customer's transient secret
-rides in the dispatch params; we sign requests with it on loopback so
-the access log records the agent's local IP rather than the customer's
-home IP. This is the whole reason the dashboard's file browser routes
-stats through Pulse instead of doing browser-direct ListObjects —
-every folder navigation in the UI fires a stats request, and we don't
-want each navigation to pollute the customer's activity feed.
+Counts objects and bytes under a prefix by paginating ListObjectsV2 against
+the local Garage S3 endpoint. The customer's transient secret rides in
+dispatch params; signing on loopback means the access log records the
+agent's local IP rather than the customer's. Without this, every folder
+navigation in the dashboard's file browser would pollute the customer's
+activity feed.
 
-Short-running by job-infrastructure standards (one HeadBucket + a
-bounded number of list pages). We still ride the long-running handler
-plumbing because that's the dispatch path the dashboard uses for
-result fan-out via cellar_relay.
+Short-running, but uses the long-running plumbing because that's the
+dispatch path the dashboard uses for result fan-out via cellar_relay.
 
-Failure modes:
-
-- ``auth_failed``  — HeadBucket returned 401/403. The dashboard surfaces
-                     this as a credentials mismatch on the relay side.
-- ``os_error``     — list request failed at HTTP level (network, server
-                     error, malformed response).
-
-Truncation: if the page-walk reaches ``max_objects``, we stop and
-return ``truncated=True`` alongside the partial count + bytes.
+Failure reasons: ``auth_failed``, ``os_error``. Truncation at
+``max_objects`` returns ``truncated=True`` with the partial count + bytes.
 """
 
 from __future__ import annotations
@@ -47,7 +36,7 @@ _DEFAULT_MAX_OBJECTS = 100_000  # mirrors stormcellar._STATS_MAX_OBJECTS
 def make_walk_bucket_stats_handler(params: dict[str, str]) -> JobHandler | None:
     """Build a JobHandler for ``garage_walk_bucket_stats`` from runtime params.
 
-    Returns None if a required param is missing — the dispatcher emits
+    Returns None if a required param is missing - the dispatcher emits
     a structured no-handler failure rather than crashing.
     """
     required = ("bucket_name", "s3_endpoint", "region", "access_key_id", "secret_access_key")
@@ -63,7 +52,7 @@ def make_walk_bucket_stats_handler(params: dict[str, str]) -> JobHandler | None:
     region = params["region"]
     access_key = params["access_key_id"]
     secret_key = params["secret_access_key"]
-    # Empty prefix is legal — bucket-root walk.
+    # Empty prefix is legal - bucket-root walk.
     prefix = params.get("prefix", "") or ""
     try:
         max_objects = int(params.get("max_objects", "") or _DEFAULT_MAX_OBJECTS)

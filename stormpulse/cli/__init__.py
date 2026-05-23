@@ -1,4 +1,4 @@
-"""Storm Pulse CLI — argument parsing and command dispatch."""
+"""CLI argument parsing and command dispatch."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _DEFAULT_CREDS_DIR = "/etc/stormpulse"
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="stormpulse",
-        description="Storm Pulse agent — secure server management over WebSocket",
+        description="Storm Pulse agent - secure server management over WebSocket",
     )
     parser.add_argument(
         "--version", action="version", version=f"storm-pulse-agent v{__version__}",

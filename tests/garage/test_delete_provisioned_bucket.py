@@ -2,7 +2,7 @@
 
 The orchestrator deletes a provisioned bucket atomically, including
 its aliases. The interesting case is post-A+B+C buckets that have
-only local aliases — Garage v2.2.0's CLI deadlocks on these:
+only local aliases - Garage v2.2.0's CLI deadlocks on these:
 
 - ``bucket delete --yes <id>`` rejects with "still has other local
   aliases. Use ``bucket unalias`` to delete them one by one."
@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from stormpulse.commands.jobs import JobOutcome
 from stormpulse.config import GarageConfig
 from stormpulse.garage import delete_provisioned_bucket, provision_bucket
 from stormpulse.garage.delete_provisioned_bucket import (
@@ -57,14 +58,14 @@ def _setup_post_provision_bucket(
     N local aliases attached. Returns (bucket_id_16char, local_aliases)
     where local_aliases is a list of (key_id, alias_name) tuples.
 
-    Each key gets read+write+owner permission AND a local alias —
+    Each key gets read+write+owner permission AND a local alias -
     matching what the provision orchestrator does. The fake's
     ``bucket info`` rendering only surfaces keys that have permissions,
     so granting them is necessary for ``parse_bucket_info`` to see the
     locals.
 
     Uses the fake's internal helpers to skip orchestrator calls and
-    avoid recording them in fake.calls — keeps the test's call list
+    avoid recording them in fake.calls - keeps the test's call list
     clean for assertions.
     """
     bucket = fake.add_bucket("temp-provisioning-alias")
@@ -101,13 +102,13 @@ async def _run(
     monkeypatch: pytest.MonkeyPatch,
     fake: FakeGarage,
     bucket_id: str,
-) -> delete_provisioned_bucket.JobOutcome:
+) -> JobOutcome:
     monkeypatch.setattr(
-        delete_provisioned_bucket, "_run_garage", fake.run_garage,
+        delete_provisioned_bucket, "run_garage", fake.run_garage,
     )
-    # The orchestrator imports _run_garage from provision_bucket; patch
+    # The orchestrator imports run_garage from provision_bucket; patch
     # both call sites so the fake intercepts everything.
-    monkeypatch.setattr(provision_bucket, "_run_garage", fake.run_garage)
+    monkeypatch.setattr(provision_bucket, "run_garage", fake.run_garage)
     return await run_delete_provisioned_bucket(
         progress=_ProgressRecorder(),
         garage_config=_make_config(),
@@ -170,7 +171,7 @@ async def test_post_a_b_c_bucket_uses_temp_global_alias(
 async def test_three_local_aliases_all_detached_before_delete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Legacy 3-key buckets (admin/rw/ro) have 3 local aliases — all
+    """Legacy 3-key buckets (admin/rw/ro) have 3 local aliases - all
     must be detached before the final delete.
     """
     fake = FakeGarage()
@@ -197,7 +198,7 @@ async def test_bucket_with_global_alias_skips_temp_alias(
     fake = FakeGarage()
     bucket = fake.add_bucket("alice-site")  # has global "alice-site"
     bucket_id = bucket.bucket_id
-    # Attach a local alias too (mixed shape) — grant permissions so
+    # Attach a local alias too (mixed shape) - grant permissions so
     # the key surfaces in bucket info.
     key = fake.add_key("alice-site-all")
     fake._bucket_allow_or_deny(
@@ -229,7 +230,7 @@ async def test_already_absent_bucket_returns_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """If the bucket doesn't exist, the orchestrator returns success
-    (idempotent) — the goal state is reached.
+    (idempotent) - the goal state is reached.
     """
     fake = FakeGarage()
     nonexistent_id = "0" * 16
@@ -249,16 +250,21 @@ async def test_already_absent_bucket_returns_success(
 
 
 @pytest.mark.asyncio
-async def test_bucket_not_empty_failure_with_rollback(
+async def test_bucket_not_empty_exits_at_step_1_without_mutation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If the bucket has objects, the final delete fails with
-    BucketNotEmpty. Rollback re-attaches the locals and removes the
-    temp global so the bucket survives in its pre-call state.
+    """When ``bucket info`` reports objects, the orchestrator fails fast
+    at step 1 without attaching the temp alias or detaching any locals.
+
+    Cheaper (saves 2 + N Garage calls), simpler (no rollback runs), and
+    safer (the only Garage state read is ``bucket info``, so nothing can
+    leak if a later step's rollback itself fails). Late discovery -
+    ``bucket info`` reports zero but ``bucket delete`` still trips
+    ``BucketNotEmpty`` because objects landed in between - is covered by
+    the step-4 BucketNotEmpty handling further down.
     """
     fake = FakeGarage()
     bucket_id, _ = _setup_post_provision_bucket(fake, n_locals=1)
-    # Inject objects so bucket_delete reports BucketNotEmpty.
     bucket = next(iter(fake.buckets.values()))
     object.__setattr__(bucket, "object_count", 5)
 
@@ -266,12 +272,17 @@ async def test_bucket_not_empty_failure_with_rollback(
 
     assert outcome.success is False
     assert outcome.failure_reason == "bucket_not_empty"
-    # Bucket survived.
+    # Bucket and its 1 local alias survive untouched - no temp global
+    # was ever attached, no locals were ever detached.
     assert bucket_id[:16] in {b.bucket_id[:16] for b in fake.buckets.values()}
     surviving = next(iter(fake.buckets.values()))
-    # Local alias re-attached, temp global removed.
     assert len(surviving.local_aliases) == 1
-    assert "pulse-delete-" not in str(surviving.global_aliases)
+    assert all(
+        not g.startswith("pulse-delete-") for g in surviving.global_aliases
+    )
+    # Friendly stderr message names the count so the dashboard's toast
+    # can surface it verbatim.
+    assert "5 object" in outcome.stderr
 
 
 @pytest.mark.asyncio
@@ -350,7 +361,7 @@ async def test_step_5_preserves_keys_with_other_buckets(
     and the orchestrator skips the delete.
     """
     fake = FakeGarage()
-    # Bucket A — the one we're about to delete. Has a local alias on
+    # Bucket A - the one we're about to delete. Has a local alias on
     # the shared key.
     bucket_a = fake.add_bucket("temp-provisioning-a")
     bucket_a_id = bucket_a.bucket_id
@@ -365,7 +376,7 @@ async def test_step_5_preserves_keys_with_other_buckets(
     )
     fake._bucket_unalias_global("temp-provisioning-a")
 
-    # Bucket B — survives. Same key has access here too.
+    # Bucket B - survives. Same key has access here too.
     bucket_b = fake.add_bucket("bucket-b")
     fake._bucket_allow_or_deny(
         ("--read", "--write", "--owner",
@@ -380,7 +391,7 @@ async def test_step_5_preserves_keys_with_other_buckets(
     # Bucket A gone, bucket B preserved.
     assert bucket_a_id[:16] not in {b.bucket_id[:16] for b in fake.buckets.values()}
     assert bucket_b.bucket_id in fake.buckets
-    # Shared key preserved — has remaining bucket.
+    # Shared key preserved - has remaining bucket.
     assert shared_key.key_id in fake.keys
     assert outcome.extras["keys_deleted"] == []
     assert outcome.extras["keys_skipped"] == [shared_key.key_id]

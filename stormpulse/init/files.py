@@ -9,7 +9,7 @@ from pathlib import Path
 from stormpulse.init.checks import InitError
 
 
-def _write_file(path: Path, data: bytes, mode: int) -> None:
+def write_file(path: Path, data: bytes, mode: int) -> None:
     """Write data atomically with correct permissions."""
     tmp = path.with_suffix(".tmp")
     try:
@@ -26,8 +26,8 @@ def _write_file(path: Path, data: bytes, mode: int) -> None:
         raise InitError(f"Failed to write {path}: {exc}") from exc
 
 
-_CONFIG_PATH = Path("/etc/stormpulse/stormpulse.toml")
-_SYSTEMD_PATH = Path("/etc/systemd/system/stormpulse.service")
+CONFIG_PATH = Path("/etc/stormpulse/stormpulse.toml")
+SYSTEMD_PATH = Path("/etc/systemd/system/stormpulse.service")
 
 
 def write_config_file(path: Path, content: str, *, force: bool = False) -> None:
@@ -36,7 +36,7 @@ def write_config_file(path: Path, content: str, *, force: bool = False) -> None:
         raise InitError(
             f"{path} already exists. Use --force to overwrite."
         )
-    _write_file(path, content.encode("utf-8"), 0o640)
+    write_file(path, content.encode("utf-8"), 0o640)
     try:
         shutil.chown(path, "root", "stormpulse")
     except (LookupError, PermissionError):
@@ -51,4 +51,4 @@ def write_systemd_unit(
         raise InitError(
             f"{path} already exists. Use --force to overwrite."
         )
-    _write_file(path, content.encode("utf-8"), 0o644)
+    write_file(path, content.encode("utf-8"), 0o644)

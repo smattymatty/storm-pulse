@@ -1,4 +1,4 @@
-"""Pure parsers for Garage CLI stdout — no subprocess calls, fully unit testable."""
+"""Pure parsers for Garage CLI stdout - no subprocess calls, fully unit testable."""
 
 from __future__ import annotations
 
@@ -8,11 +8,6 @@ from dataclasses import dataclass
 
 class GarageParseError(Exception):
     """Raised when Garage CLI output cannot be parsed."""
-
-
-# ---------------------------------------------------------------------------
-# garage status
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,7 +62,7 @@ def parse_status(stdout: str) -> list[GaragePeer]:
         hostname = parts[1]
         address = parts[2]
 
-        # Tags field is like [] or [tag1,tag2] — find it and skip
+        # Tags field is like [] or [tag1,tag2] - find it and skip
         tags_idx = -1
         for i, p in enumerate(parts):
             if p.startswith("["):
@@ -130,7 +125,7 @@ _SIZE_MULTIPLIERS: dict[str, int] = {
 def _parse_size_gb(value: str, unit: str) -> float:
     """Convert a size value + unit to GB (decimal, 10^9 bytes).
 
-    Uses the same SI/IEC convention as ``_size_to_bytes`` — KB/MB/GB/TB
+    Uses the same SI/IEC convention as ``_size_to_bytes`` - KB/MB/GB/TB
     are decimal, KiB/MiB/GiB/TiB are binary. Without this alignment,
     ``5 GB`` parsed by ``_parse_size_gb`` and ``_size_to_bytes`` would
     disagree on byte count.
@@ -143,11 +138,6 @@ def _parse_size_gb(value: str, unit: str) -> float:
     if multiplier is None:
         return 0.0
     return num * multiplier / 1_000_000_000
-
-
-# ---------------------------------------------------------------------------
-# garage stats
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +171,7 @@ def parse_stats(stdout: str) -> GarageStats:
         if stripped.startswith("Database engine:"):
             db_engine = stripped.split(":", 1)[1].strip()
 
-        # Table stats section — object count is the Items column
+        # Table stats section - object count is the Items column
         elif stripped == "Table stats:":
             in_table_stats = True
         elif in_table_stats:
@@ -219,11 +209,6 @@ def _parse_int(s: str) -> int:
         return int(s.split()[0])
     except (ValueError, IndexError):
         return 0
-
-
-# ---------------------------------------------------------------------------
-# garage bucket list
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,11 +254,6 @@ def parse_bucket_list(stdout: str) -> list[GarageBucketListEntry]:
         ))
 
     return buckets
-
-
-# ---------------------------------------------------------------------------
-# garage bucket info <name>
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,11 +406,6 @@ def _size_to_bytes(num: float, unit: str) -> int:
     return int(num * _SIZE_MULTIPLIERS.get(unit.upper(), 1))
 
 
-# ---------------------------------------------------------------------------
-# garage key list
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class GarageKeyListEntry:
     """A single row from ``garage key list``."""
@@ -472,14 +447,9 @@ def parse_key_list(stdout: str) -> list[GarageKeyListEntry]:
     return keys
 
 
-# ---------------------------------------------------------------------------
-# garage key info
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class GarageKeyInfoBucketRef:
-    """A bucket entry from ``garage key info`` — what bucket(s) the key
+    """A bucket entry from ``garage key info`` - what bucket(s) the key
     has access to, with permissions and any local alias.
     """
 
@@ -493,7 +463,7 @@ class GarageKeyInfo:
     """Parsed output from ``garage key info <id>``.
 
     The key field of interest for the bucket-delete orchestrator is
-    ``buckets`` — empty list means the key is unmoored and safe to
+    ``buckets`` - empty list means the key is unmoored and safe to
     delete after a bucket teardown.
     """
 
@@ -508,7 +478,7 @@ def parse_key_info(stdout: str) -> GarageKeyInfo:
     The output structure mirrors ``bucket info``: a header section with
     key metadata, then a ``BUCKETS FOR THIS KEY`` table. An empty
     table (just the header line) means the key has no associated
-    buckets — a safety signal for orchestrators that need to decide
+    buckets - a safety signal for orchestrators that need to decide
     whether to delete a key after its only bucket is gone.
     """
     key_id = ""
@@ -554,11 +524,6 @@ def parse_key_info(stdout: str) -> GarageKeyInfo:
     return GarageKeyInfo(key_id=key_id, name=name, buckets=buckets)
 
 
-# ---------------------------------------------------------------------------
-# garage key create
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class GarageKeyCreateResult:
     """Parsed output from ``garage key create``.
@@ -579,7 +544,7 @@ def parse_key_create(stdout: str) -> GarageKeyCreateResult:
 
     WARNING: The returned ``secret_key`` must NEVER be logged at any level.
     The dashboard displays it once and discards it. This parser exists only
-    to validate the output structure — the raw stdout is returned to the
+    to validate the output structure - the raw stdout is returned to the
     dashboard via command.result as-is.
     """
     key_id = ""

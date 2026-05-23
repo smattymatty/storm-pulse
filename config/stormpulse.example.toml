@@ -40,9 +40,9 @@ db_path = "/opt/stormpulse/data/stormpulse.db"
 # Built-in commands: git_pull, docker_logs
 # Add your own commands below. Each [commands.<name>] defines a whitelisted
 # subprocess call. Use placeholders like {project_dir}, {compose_file},
-# {env_file}, and {docker_service_name} — they resolve from [project] config.
+# {env_file}, and {docker_service_name} - they resolve from [project] config.
 #
-# Deploy commands — uncomment and adjust for your stack:
+# Deploy commands - uncomment and adjust for your stack:
 #
 # [commands.docker_build]
 # group = "deploy"
@@ -101,7 +101,7 @@ db_path = "/opt/stormpulse/data/stormpulse.db"
 # description = "Number of log lines to show"
 
 # ---------------------------------------------------------------------------
-# Caddy (optional) — present on regional VPS agents that serve customer
+# Caddy (optional) - present on regional VPS agents that serve customer
 # custom-domain HTTPS via Caddy. Enables the
 # cellar_custom_domain_caddy_sync command. The agent hard-fails at boot
 # if main_caddyfile does not have an `import` directive resolving to

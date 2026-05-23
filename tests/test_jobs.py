@@ -201,7 +201,7 @@ async def test_progress_send_failure_does_not_crash_job() -> None:
     await asyncio.wait_for(completed.wait(), timeout=1.0)
     await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
     # No envelopes captured (every send raised), but the handler ran to
-    # completion — the failure was contained.
+    # completion - the failure was contained.
     assert wire.sent == []
 
 
@@ -307,7 +307,7 @@ async def test_on_success_does_not_fire_on_cancellation() -> None:
 @pytest.mark.asyncio
 async def test_on_success_callback_failure_does_not_crash_job() -> None:
     """Job is already past the terminal-result send by the time the callback
-    runs. A bug in the callback must not propagate — log and move on."""
+    runs. A bug in the callback must not propagate - log and move on."""
     wire = _FakeWire()
     mgr = JobManager("agent-1", wire.send)
 

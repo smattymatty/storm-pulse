@@ -26,7 +26,7 @@ def test_inode_zero_roundtrip(tmp_path: Path) -> None:
     store.set("storage", "/a.log", 0, 0)
     pos, inode = store.get("storage")
     assert pos == 0
-    assert inode == 0  # not None — zero is a valid inode
+    assert inode == 0  # not None - zero is a valid inode
     store.close()
 
 def test_position_zero_after_rotation(tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ def test_nanosecond_cursors_normalized_on_init(tmp_path: Path) -> None:
     )
     store._conn.commit()
     store.close()
-    # Re-open — _ensure_table should normalize
+    # Re-open - _ensure_table should normalize
     store2 = LogPositionStore(tmp_path / "pos.db")
     assert store2.get_docker_ts("nano") == "2026-04-16T15:37:00.600193Z"
     store2.close()

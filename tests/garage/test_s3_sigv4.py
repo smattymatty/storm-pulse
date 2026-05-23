@@ -3,7 +3,7 @@
 The end-to-end test uses AWS's published "get-vanilla" test vector from
 the AWS SigV4 test suite. The vector has known-correct values for the
 canonical request, string to sign, derived signing key, and final
-signature — if any step in our implementation drifts, the comparison
+signature - if any step in our implementation drifts, the comparison
 fails at the offending step.
 
 Reference: AWS Signature Version 4 test suite "get-vanilla" task

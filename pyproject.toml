@@ -4,18 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "storm-pulse-agent"
-version = "0.1.4"
+version = "0.1.6"
 description = "Secure server management agent for Storm Developments infrastructure"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
     "websockets>=14.0",
     "psutil>=6.0",
-    "cryptography>=44.0",
+    "cryptography>=48.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=1.0", "mypy>=1.13", "types-psutil>=6.0"]
+dev = ["pytest>=8.0", "pytest-asyncio>=1.0", "mypy>=1.13", "types-psutil>=6.0", "import-linter>=2.0"]
 
 [project.scripts]
 stormpulse = "stormpulse.cli:main"

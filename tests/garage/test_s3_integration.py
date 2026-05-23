@@ -1,7 +1,7 @@
 """Read-only integration smoke tests against a real local Garage.
 
 These tests run only when ``STORM_PULSE_GARAGE_TEST_ENDPOINT`` is set in
-the environment. Otherwise they're skipped — most CI runs won't have a
+the environment. Otherwise they're skipped - most CI runs won't have a
 Garage available, and the SigV4 + parsing unit tests already cover the
 cryptographic and response-shape correctness in isolation.
 

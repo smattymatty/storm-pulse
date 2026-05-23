@@ -1,12 +1,11 @@
-"""Structured JSON logger for Storm Pulse's own activity log.
+"""Structured JSON logger for the agent's own activity log.
 
-Writes one JSON object per line to /var/log/stormpulse/agent.log.
-Runs ALONGSIDE stdlib logging — stdlib goes to stderr/journald,
-this class ships structured events to disk for tailing and shipping
-back to the dashboard.
+One JSON object per line to ``/var/log/stormpulse/agent.log``. Runs alongside
+stdlib logging - stdlib goes to stderr/journald; this class ships structured
+events to disk for tailing and shipping back to the dashboard.
 
-Sensitive command output is NEVER written. ``log_command_result``
-omits stdout/stderr when ``sensitive=True``.
+Sensitive command output is never written: ``log_command_result`` omits
+stdout/stderr when ``sensitive=True``.
 """
 
 from __future__ import annotations
@@ -86,7 +85,7 @@ class PulseLogger:
 
         When ``sensitive=True``, ONLY the command name, success flag,
         and duration are recorded. stdout/stderr are never written here
-        regardless of this flag — the caller is responsible for never
+        regardless of this flag - the caller is responsible for never
         passing command output into a PulseLogger call.
         """
         detail: dict[str, Any] = {

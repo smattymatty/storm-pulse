@@ -1,4 +1,4 @@
-"""Storm Pulse configuration — TOML loading and validation."""
+"""TOML config loading and validation."""
 
 from __future__ import annotations
 
@@ -12,11 +12,6 @@ from typing import Any
 
 class ConfigError(Exception):
     """Raised when configuration is missing, invalid, or incomplete."""
-
-
-# ---------------------------------------------------------------------------
-# Config dataclasses — one per TOML section
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,7 +111,7 @@ _LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,50}")
 
 @dataclass(frozen=True, slots=True)
 class LogGroupConfig:
-    """A single [[log_groups]] entry — one tailed log source."""
+    """A single [[log_groups]] entry - one tailed log source."""
 
     name: str
     enabled: bool
@@ -133,7 +128,7 @@ class LogGroupConfig:
 
 @dataclass(frozen=True, slots=True)
 class GarageConfig:
-    """Optional [garage] section — Garage S3 node management."""
+    """Optional [garage] section - Garage S3 node management."""
 
     enabled: bool
     container_name: str
@@ -145,7 +140,7 @@ class GarageConfig:
 
 @dataclass(frozen=True, slots=True)
 class CaddyConfig:
-    """Optional [caddy] section — Caddy admin API + drop-in management.
+    """Optional [caddy] section - Caddy admin API + drop-in management.
 
     Present only on regional-VPS agents that host customer custom-domain
     serving. The agent uses ``admin_url`` to POST Caddyfile fragments,
@@ -200,7 +195,7 @@ class Config:
         if self.caddy and self.caddy.enabled:
             if not self.caddy.main_caddyfile.is_file():
                 missing.append(str(self.caddy.main_caddyfile))
-            # The drop-in file itself doesn't need to exist yet — we
+            # The drop-in file itself doesn't need to exist yet - we
             # create it on first sync. Its parent directory must.
             if not self.caddy.drop_in_path.parent.is_dir():
                 missing.append(
@@ -208,11 +203,6 @@ class Config:
                 )
         if missing:
             raise ConfigError(f"Missing files/directories: {', '.join(missing)}")
-
-
-# ---------------------------------------------------------------------------
-# Parsing helpers
-# ---------------------------------------------------------------------------
 
 
 def _require_section(raw: dict[str, Any], name: str) -> dict[str, Any]:
@@ -244,11 +234,6 @@ def _require_key(
             f"Key '{key}' in [{section_name}] must be {names}, got {type(value).__name__}"
         )
     return value
-
-
-# ---------------------------------------------------------------------------
-# Section parsers
-# ---------------------------------------------------------------------------
 
 
 def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
@@ -635,16 +620,11 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
     return result
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def load_config(path: Path) -> Config:
     """Load and validate configuration from a TOML file.
 
     Raises ConfigError if the file is missing, malformed, or incomplete.
-    Does not check that referenced paths (certs, keys, dirs) exist on disk —
+    Does not check that referenced paths (certs, keys, dirs) exist on disk -
     call Config.validate_paths() separately for that.
     """
     if not path.is_file():

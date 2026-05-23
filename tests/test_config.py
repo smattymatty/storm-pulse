@@ -912,7 +912,7 @@ def test_garage_interval_must_be_positive(write_config: Callable[[str], Path]) -
 
 
 # ---------------------------------------------------------------------------
-# log_groups — non-array + filter_contains type
+# log_groups - non-array + filter_contains type
 # ---------------------------------------------------------------------------
 
 

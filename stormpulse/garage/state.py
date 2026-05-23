@@ -1,4 +1,4 @@
-"""Garage state collection — structured dataclasses and subprocess runner."""
+"""Garage state collection - structured dataclasses and subprocess runner."""
 
 from __future__ import annotations
 
@@ -26,14 +26,9 @@ logger = logging.getLogger(__name__)
 _GARAGE_TIMEOUT = 15
 
 
-# ---------------------------------------------------------------------------
-# State dataclasses
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True, slots=True)
 class GarageKeyRef:
-    """Key reference within a bucket — ID and permissions only, never the secret."""
+    """Key reference within a bucket - ID and permissions only, never the secret."""
 
     key_id: str
     key_name: str
@@ -79,12 +74,7 @@ class GarageState:
         return asdict(self)
 
 
-# ---------------------------------------------------------------------------
-# Subprocess helper
-# ---------------------------------------------------------------------------
-
-
-def _run_garage(config: GarageConfig, *args: str) -> str | None:
+def run_garage(config: GarageConfig, *args: str) -> str | None:
     """Run a garage CLI command via docker exec. Returns stdout or None on failure."""
     cmd = [
         config.docker_binary, "exec", config.container_name,
@@ -107,7 +97,7 @@ def _run_garage(config: GarageConfig, *args: str) -> str | None:
 
     if proc.returncode != 0:
         logger.warning(
-            "Garage command failed (exit %d): %s — %s",
+            "Garage command failed (exit %d): %s - %s",
             proc.returncode, " ".join(args), proc.stderr.strip(),
         )
         return None
@@ -115,13 +105,8 @@ def _run_garage(config: GarageConfig, *args: str) -> str | None:
     return proc.stdout
 
 
-# ---------------------------------------------------------------------------
-# State collection
-# ---------------------------------------------------------------------------
-
-
 def _try_parse(config: GarageConfig, parser: Callable[[str], _T], *args: str, what: str) -> _T | None:
-    out = _run_garage(config, *args)
+    out = run_garage(config, *args)
     if out is None:
         return None
     try:
@@ -151,7 +136,7 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
         # Address bucket info by global alias when present, otherwise by UUID.
         # The Garage CLI accepts a bucket UUID anywhere it accepts a global alias.
         # Post-bucket-naming-refactor most customer buckets won't have a global
-        # alias — only website-hosted ones do — so dropping alias-less buckets
+        # alias - only website-hosted ones do - so dropping alias-less buckets
         # here would silently hide them from the dashboard.
         bucket_ref = entry.global_alias or entry.bucket_id
         if not bucket_ref:

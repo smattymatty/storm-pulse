@@ -1,14 +1,17 @@
 Metadata-Version: 2.4
 Name: storm-pulse-agent
-Version: 0.1.4
+Version: 0.1.6
 Summary: Secure server management agent for Storm Developments infrastructure
 License-Expression: MIT
 Requires-Python: >=3.12
+License-File: LICENSE
 Requires-Dist: websockets>=14.0
 Requires-Dist: psutil>=6.0
-Requires-Dist: cryptography>=44.0
+Requires-Dist: cryptography>=48.0.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=1.0; extra == "dev"
 Requires-Dist: mypy>=1.13; extra == "dev"
 Requires-Dist: types-psutil>=6.0; extra == "dev"
+Requires-Dist: import-linter>=2.0; extra == "dev"
+Dynamic: license-file

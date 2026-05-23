@@ -1,4 +1,4 @@
-"""Garage S3 node integration — discovery, state collection, and commands."""
+"""Garage S3 node integration - discovery, state collection, and commands."""
 
 from stormpulse.garage.commands import build_garage_commands
 from stormpulse.garage.discover import discover_garage

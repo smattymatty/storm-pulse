@@ -44,7 +44,7 @@ def test_first_run_uses_now_not_epoch(tmp_path: Path) -> None:
         args = mock_run.call_args.args[0]
         since_idx = args.index("--since")
         since = args[since_idx + 1]
-    # Must NOT be epoch — should be a recent timestamp starting with 20xx
+    # Must NOT be epoch - should be a recent timestamp starting with 20xx
     assert since.startswith("20")
     assert "1970" not in since
     store.close()

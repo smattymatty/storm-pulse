@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.state — state collection with mocked subprocess."""
+"""Tests for stormpulse.garage.state - state collection with mocked subprocess."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import GarageParseError
-from stormpulse.garage.state import _run_garage, collect_garage_state
+from stormpulse.garage.state import run_garage, collect_garage_state
 from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT,
     BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
@@ -37,7 +37,7 @@ def _make_config(tmp_path: Path) -> GarageConfig:
 
 
 def _mock_run_garage(outputs: dict[tuple[str, ...], str | None]) -> object:
-    """Create a side_effect function for _run_garage that maps args to outputs."""
+    """Create a side_effect function for run_garage that maps args to outputs."""
     def side_effect(config: GarageConfig, *args: str) -> str | None:
         return outputs.get(args)
     return side_effect
@@ -54,7 +54,7 @@ class TestCollectGarageState:
             ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             state = collect_garage_state(cfg)
@@ -102,7 +102,7 @@ class TestCollectGarageState:
             ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT_WITH_QUOTAS,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             state = collect_garage_state(cfg)
@@ -116,7 +116,7 @@ class TestCollectGarageState:
     def test_status_failure_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             return_value=None,
         ):
             assert collect_garage_state(cfg) is None
@@ -130,7 +130,7 @@ class TestCollectGarageState:
             ("bucket", "list"): None,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             state = collect_garage_state(cfg)
@@ -143,7 +143,7 @@ class TestCollectGarageState:
         cfg = _make_config(tmp_path)
         outputs: dict[tuple[str, ...], str | None] = {("status",): STATUS_OUTPUT}
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ), patch(
             "stormpulse.garage.state.parse_status",
@@ -160,7 +160,7 @@ class TestCollectGarageState:
             ("bucket", "list"): BUCKET_LIST_OUTPUT_EMPTY,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ), patch(
             "stormpulse.garage.state.parse_stats",
@@ -182,7 +182,7 @@ class TestCollectGarageState:
             ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ), patch(
             "stormpulse.garage.state.parse_key_list",
@@ -203,7 +203,7 @@ class TestCollectGarageState:
             ("bucket", "list"): BUCKET_LIST_OUTPUT,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ), patch(
             "stormpulse.garage.state.parse_bucket_list",
@@ -233,7 +233,7 @@ class TestCollectGarageState:
             return real_parse_bucket_info(out)
 
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ), patch(
             "stormpulse.garage.state.parse_bucket_info",
@@ -249,7 +249,7 @@ class TestCollectGarageState:
             ("status",): STATUS_OUTPUT_EMPTY,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             assert collect_garage_state(cfg) is None
@@ -263,7 +263,7 @@ class TestCollectGarageState:
             ("bucket", "list"): BUCKET_LIST_OUTPUT_EMPTY,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             state = collect_garage_state(cfg)
@@ -284,7 +284,7 @@ class TestCollectGarageState:
             ("bucket", "info", "backups"): BUCKET_INFO_OUTPUT_WITH_QUOTAS,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             state = collect_garage_state(cfg)
@@ -294,7 +294,7 @@ class TestCollectGarageState:
     def test_bucket_without_global_alias_addressed_by_uuid(self, tmp_path: Path) -> None:
         """Alias-less buckets (post-bucket-naming-refactor) must still be collected.
 
-        Most customer buckets won't have a global alias — only website-hosted ones
+        Most customer buckets won't have a global alias - only website-hosted ones
         do. The agent addresses them by UUID (Garage CLI accepts a UUID anywhere
         it accepts a global alias). The metrics push entry carries the UUID in
         ``id`` (Cellar joins on this) and an empty ``alias``.
@@ -312,7 +312,7 @@ class TestCollectGarageState:
             ("bucket", "info", bucket_uuid): BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ), patch(
             "stormpulse.garage.state.parse_bucket_list",
@@ -347,7 +347,7 @@ class TestCollectGarageState:
             }.get(args)
 
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=recording_run_garage,
         ), patch(
             "stormpulse.garage.state.parse_bucket_list",
@@ -368,7 +368,7 @@ class TestCollectGarageState:
             ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,  # uses 1 key
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             state = collect_garage_state(cfg)
@@ -387,7 +387,7 @@ class TestCollectGarageState:
             ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,
         }
         with patch(
-            "stormpulse.garage.state._run_garage",
+            "stormpulse.garage.state.run_garage",
             side_effect=_mock_run_garage(outputs),
         ):
             state = collect_garage_state(cfg)
@@ -403,7 +403,7 @@ class TestCollectGarageState:
 
 
 class TestRunGarage:
-    """Direct tests for _run_garage subprocess failure modes."""
+    """Direct tests for run_garage subprocess failure modes."""
 
     def test_returns_stdout_on_success(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -411,7 +411,7 @@ class TestRunGarage:
             args=[], returncode=0, stdout="hello\n", stderr="",
         )
         with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
-            assert _run_garage(cfg, "status") == "hello\n"
+            assert run_garage(cfg, "status") == "hello\n"
 
     def test_file_not_found_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -419,7 +419,7 @@ class TestRunGarage:
             "stormpulse.garage.state.subprocess.run",
             side_effect=FileNotFoundError(),
         ):
-            assert _run_garage(cfg, "status") is None
+            assert run_garage(cfg, "status") is None
 
     def test_timeout_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -427,7 +427,7 @@ class TestRunGarage:
             "stormpulse.garage.state.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="garage", timeout=15),
         ):
-            assert _run_garage(cfg, "status") is None
+            assert run_garage(cfg, "status") is None
 
     def test_nonzero_exit_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -435,4 +435,4 @@ class TestRunGarage:
             args=[], returncode=1, stdout="", stderr="boom\n",
         )
         with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
-            assert _run_garage(cfg, "status") is None
+            assert run_garage(cfg, "status") is None

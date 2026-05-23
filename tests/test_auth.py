@@ -53,7 +53,7 @@ def nonce_store(tmp_path: Path) -> Generator[NonceStore, None, None]:
 
 
 # ---------------------------------------------------------------------------
-# Helpers — build signed envelopes (mirrors dashboard signing)
+# Helpers - build signed envelopes (mirrors dashboard signing)
 # ---------------------------------------------------------------------------
 
 
@@ -280,7 +280,7 @@ def test_nonce_store_close_and_reopen(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# verify_envelope — command.request
+# verify_envelope - command.request
 # ---------------------------------------------------------------------------
 
 
@@ -324,7 +324,7 @@ def test_verify_command_request_replayed_nonce(nonce_store: NonceStore) -> None:
 
 
 # ---------------------------------------------------------------------------
-# verify_envelope — command.sequence
+# verify_envelope - command.sequence
 # ---------------------------------------------------------------------------
 
 
@@ -367,7 +367,7 @@ def test_verify_command_sequence_replayed_nonce(nonce_store: NonceStore) -> None
 
 
 # ---------------------------------------------------------------------------
-# verify_envelope — wrong message types
+# verify_envelope - wrong message types
 # ---------------------------------------------------------------------------
 
 

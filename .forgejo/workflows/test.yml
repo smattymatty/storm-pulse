@@ -31,3 +31,31 @@ jobs:
 
       - name: Type check
         run: mypy .
+
+  # CORE-001 fitness suite. Separate job for a separate signal:
+  # a red `fitness` means an architectural or security invariant was
+  # crossed, distinct from a behavioural test failure.
+  fitness:
+    runs-on: docker
+    container:
+      image: python:3.12-slim
+      volumes:
+        - pip-cache:/pip-cache
+
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout code
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+
+      - name: Install dependencies
+        run: pip install --cache-dir /pip-cache -e ".[dev]"
+
+      - name: Layer topology (import-linter - Function 1)
+        run: lint-imports
+
+      - name: Custom fitness checks (Functions 2-4)
+        run: python -m fitness

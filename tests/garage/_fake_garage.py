@@ -1,7 +1,7 @@
 """Stateful in-process fake of the garage CLI for tests.
 
 Replaces per-test scripted (rc, stdout, stderr) tuples with a fake that
-enforces the rules real Garage applies — discovered empirically and from
+enforces the rules real Garage applies - discovered empirically and from
 ``garage <subcommand> --help``. Tests assert against fake state (buckets,
 keys, aliases, permissions) instead of against their own scripted echoes.
 
@@ -9,46 +9,46 @@ Each ``FakeGarage()`` instance is fresh state. No buckets, no keys.
 
 ## Rules encoded
 
-1. ``bucket create <name>`` — S3-strict bucket name validation
+1. ``bucket create <name>`` - S3-strict bucket name validation
    (3-63 chars, lowercase alphanumeric + hyphens, must start/end
    alphanumeric). Atomically creates bucket and attaches ``<name>`` as
    global alias.
 
-2. ``bucket unalias <name>`` — orphan rule: refuse if removal would
+2. ``bucket unalias <name>`` - orphan rule: refuse if removal would
    leave the bucket with zero aliases. Locals count.
 
-3. ``bucket unalias --local <key> <name>`` — exactly ONE positional
+3. ``bucket unalias --local <key> <name>`` - exactly ONE positional
    after ``--local <key>`` (verified from ``bucket unalias --help``).
    Three-positional form returns USAGE error. Same orphan check.
 
-4. ``bucket alias --local <key> <existing> <new>`` — three positionals
+4. ``bucket alias --local <key> <existing> <new>`` - three positionals
    after ``--local <key>``. Resolves ``<existing>`` per rule 8.
 
-5. ``bucket allow/deny <flags> <ref> --key <key>`` — flags are subset
+5. ``bucket allow/deny <flags> <ref> --key <key>`` - flags are subset
    of ``--read``, ``--write``, ``--owner``. ``deny`` removes; ``allow``
    adds.
 
-6. ``bucket delete --yes <ref>`` — refuses on non-empty buckets with
+6. ``bucket delete --yes <ref>`` - refuses on non-empty buckets with
    ``BucketNotEmpty``. Otherwise deletes and revokes all key
    permissions referencing the bucket.
 
-7. ``key create <name>`` — generates deterministic ``GK<24-hex>`` ID
+7. ``key create <name>`` - generates deterministic ``GK<24-hex>`` ID
    and 64-char secret from a per-instance counter.
 
 8. **Bucket reference resolution.** Accept (a) any global alias, (b)
    the 16-char prefix of ``bucket_id``. Reject the full 64-char form
-   with ``NoSuchBucket`` — empirically confirmed against garage-one
+   with ``NoSuchBucket`` - empirically confirmed against garage-one
    v2.2.0. Local aliases are NOT globally addressable; they only
    resolve in their owning key's namespace.
 
-9. ``bucket info <ref>`` — renders the format
+9. ``bucket info <ref>`` - renders the format
    ``parse_bucket_info`` expects. The "KEYS FOR THIS BUCKET" table
    includes ONLY keys that have permissions on the bucket. Keys with a
    local alias attached but no permissions do not appear (empirically
    observed: ``bucket info`` showed an empty keys table after
    ``bucket alias --local`` succeeded but before ``bucket allow`` ran).
 
-10. ``key create`` stdout — renders the format ``parse_key_create``
+10. ``key create`` stdout - renders the format ``parse_key_create``
     expects: ``Key name: ...\\nKey ID: ...\\nSecret key: ...``.
 
 ## What the fake does NOT model
@@ -60,7 +60,7 @@ orchestrator code paths touch these.
 ## Unrecognized call shapes
 
 The dispatcher pattern-matches on the args tuple. Unknown shapes
-raise ``NotImplementedError(args)`` — fail loudly rather than silently
+raise ``NotImplementedError(args)`` - fail loudly rather than silently
 lie about the result.
 """
 
@@ -106,9 +106,9 @@ class _Key:
 class FakeGarage:
     """Stateful semantic fake of the garage CLI.
 
-    Drop-in for ``stormpulse.garage.provision_bucket._run_garage``:
+    Drop-in for ``stormpulse.garage.provision_bucket.run_garage``:
     monkeypatch the module-level binding to ``fake.run_garage`` and
-    every ``await _run_garage(config, *args)`` call routes through the
+    every ``await run_garage(config, *args)`` call routes through the
     fake's dispatcher.
     """
 
@@ -128,7 +128,7 @@ class FakeGarage:
         *args: str,
         timeout: float = 30,
     ) -> tuple[int, str, str]:
-        """Drop-in replacement for ``provision_bucket._run_garage``."""
+        """Drop-in replacement for ``provision_bucket.run_garage``."""
         del garage_config, timeout
         self.calls.append(args)
         verb = self._verb_key(args)
@@ -535,7 +535,7 @@ class FakeGarage:
         # (16-char prefix), ``bucket delete --yes`` rejects if any
         # local aliases remain. When addressed by global alias, the
         # alias being deleted is implicitly removed as part of the
-        # bucket teardown — but lingering OTHER locals still trigger
+        # bucket teardown - but lingering OTHER locals still trigger
         # the rejection. Empirically observed on garage-one (v2.2.0):
         # ``Bucket X still has other local aliases. Use bucket unalias
         # to delete them one by one.``
@@ -550,7 +550,7 @@ class FakeGarage:
                 f"one.",
             )
         # When addressed by global alias and that's the last alias on
-        # the bucket, real Garage allows the delete — the implicit
+        # the bucket, real Garage allows the delete - the implicit
         # alias-removal is part of the teardown. When addressed by ID
         # with zero aliases attached, also allow.
         del addressed_by_global  # documentation-only

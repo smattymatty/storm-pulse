@@ -1,9 +1,4 @@
-"""Caddy command registry — one entry for custom-domain Caddyfile sync.
-
-Mirrors the ``stormpulse/garage/commands.py`` shape: ``build_caddy_commands``
-returns a ``dict[str, CommandDef]`` that the agent merges into its registry
-when the optional ``[caddy]`` config section is present and enabled.
-"""
+"""Caddy command registry: one entry for custom-domain Caddyfile sync."""
 
 from __future__ import annotations
 
@@ -17,7 +12,7 @@ CELLAR_CUSTOM_DOMAIN_CADDY_SYNC = "cellar_custom_domain_caddy_sync"
 _REGION_PATTERN = r"[a-z0-9][a-z0-9-]{0,40}[a-z0-9]"
 
 # Fragment size cap. At ~150 bytes per server block (one domain), 150KB
-# headroom covers ~1000 active custom domains in a single region — well
+# headroom covers ~1000 active custom domains in a single region - well
 # beyond solo-founder-scale ops, with margin to spare. Hard cap exists
 # to prevent runaway memory / wire frame blowups from a misbehaving
 # Storm-side renderer.
@@ -30,7 +25,7 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
     Today this is exactly one command. Future Caddy-side operations
     (e.g. raw fragment removal for region migration) would land here.
 
-    The config parameter is currently unused — the handler reads paths
+    The config parameter is currently unused - the handler reads paths
     and admin URL from config at dispatch time, not from the registry
     metadata. Kept in the signature so the call site mirrors
     ``build_garage_commands(config.garage)`` and future config-derived
@@ -40,7 +35,7 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
     return {
         CELLAR_CUSTOM_DOMAIN_CADDY_SYNC: CommandDef(
             group="caddy",
-            command=[CELLAR_CUSTOM_DOMAIN_CADDY_SYNC],  # internal — JobManager
+            command=[CELLAR_CUSTOM_DOMAIN_CADDY_SYNC],  # internal - JobManager
             timeout=30,
             description=(
                 "Write the per-region Caddyfile fragment for "

@@ -1,4 +1,4 @@
-"""Storm Pulse agent loop — async WebSocket client with heartbeat, metrics, and command dispatch."""
+"""Async agent loop: WebSocket client with heartbeat, metrics, command dispatch."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ from stormpulse.protocol import (
 
 logger = logging.getLogger(__name__)
 
-# Dashboard acknowledgement types — received but not actionable.
+# Dashboard acknowledgement types - received but not actionable.
 _ACK_TYPES = {
     MessageType.REGISTER_OK,
     MessageType.HEARTBEAT_ACK,
@@ -153,7 +153,7 @@ class Agent:
         if config.garage and config.garage.enabled:
             commands.update(build_garage_commands(config.garage))
         # Merge caddy commands. Hard-fail at construction time if the
-        # main Caddyfile doesn't import our drop-in path — silent
+        # main Caddyfile doesn't import our drop-in path - silent
         # success here would mean fragments written but never served,
         # which manifests as hung customer activations weeks later.
         if config.caddy and config.caddy.enabled:
@@ -485,7 +485,7 @@ class Agent:
     async def _receive_loop(self, ws: ClientConnection) -> None:
         """Receive and dispatch inbound messages.
 
-        A malformed or buggy message must not kill the receive loop — the
+        A malformed or buggy message must not kill the receive loop - the
         agent drops it and keeps serving. Auth failures already return
         early without executing anything, so swallowing here cannot cause
         an unauthorized command to run; worst case is a logged bug.
@@ -691,7 +691,7 @@ class Agent:
         """Build the handler coroutine for a long-running command, or None.
 
         Returns ``None`` when the command name has no registered handler
-        or when required params are missing — the dispatcher then emits
+        or when required params are missing - the dispatcher then emits
         a structured no-handler failure.
         """
         if command == "garage_bucket_clear":

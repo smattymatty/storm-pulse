@@ -1,29 +1,12 @@
-"""Handler for the ``garage_provision_customer_bucket`` long-running command.
+"""Handler for ``garage_provision_customer_bucket``.
 
-Creates a bucket and its admin key atomically. Additional keys (rw/ro)
-are added later via ``provision_additional_key``.
+Creates a bucket and its admin key atomically. The throwaway alias is the
+bucket's only globally-unique handle during creation; it's removed once the
+admin's local alias is attached (Garage's orphan rule needs at least one
+alias). On any failure, atomic rollback runs in reverse order, always
+referencing the bucket by ``throwaway_alias`` (still attached until success).
 
-Step ordering:
-
-  1. bucket create <throwaway>
-  2. key create <admin name>
-  3. bucket allow --read --write --owner <throwaway> --key <admin id>
-  4. bucket alias --local <admin id> <throwaway> <display>
-  5. bucket unalias <throwaway>
-
-The throwaway alias is the bucket's only globally-unique handle
-during steps 1-4. Step 5 removes it; the admin's local alias
-satisfies Garage's "must have at least one alias" orphan rule.
-
-On any failure, atomic rollback runs in reverse order: detach local
-alias, revoke permissions, delete key, delete bucket. The throwaway
-is always still attached during rollback (it's removed only by the
-final step in the success path), so all rollback CLI calls reference
-the bucket by ``throwaway_alias``.
-
-The contract — step ordering, rollback table, failure-reason
-vocabulary, and idempotency rule — is documented in
-``_architecture/specs/cellar-bucket-naming-foundation.md`` (Issue 4).
+Additional keys (rw/ro) are added later via ``provision_additional_key``.
 """
 
 from __future__ import annotations
@@ -42,23 +25,14 @@ from stormpulse.garage.parse import (
     parse_bucket_info,
     parse_key_create,
 )
+from stormpulse.garage.runner import run_garage
 
 logger = logging.getLogger(__name__)
 
 
-# Per-step subprocess timeout. Garage CLI calls are typically <1s; the
-# generous bound covers cluster-load spikes without letting a hung call
-# block the whole job indefinitely.
-_STEP_TIMEOUT_SECONDS = 30
-
 _TOTAL_STEPS = 5
 
 _ADMIN_FLAGS = ("--read", "--write", "--owner")
-
-
-# ---------------------------------------------------------------------------
-# Public entrypoint — called by agent.py
-# ---------------------------------------------------------------------------
 
 
 def make_provision_customer_bucket_handler(
@@ -66,7 +40,7 @@ def make_provision_customer_bucket_handler(
 ) -> JobHandler | None:
     """Build a JobHandler from runtime params.
 
-    Returns ``None`` if a required param is missing — the caller emits a
+    Returns ``None`` if a required param is missing - the caller emits a
     structured no-handler failure rather than crashing.
     """
     required = ("display_name", "key_name_admin")
@@ -89,11 +63,6 @@ def make_provision_customer_bucket_handler(
         )
 
     return handler
-
-
-# ---------------------------------------------------------------------------
-# State tracking
-# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -119,51 +88,6 @@ class _AdminKey:
     key_name: str
 
 
-# ---------------------------------------------------------------------------
-# Subprocess helper
-# ---------------------------------------------------------------------------
-
-
-async def _run_garage(
-    garage_config: GarageConfig, *args: str, timeout: float = _STEP_TIMEOUT_SECONDS,
-) -> tuple[int, str, str]:
-    """Run ``docker exec <container> /garage <args>``.
-
-    Returns ``(returncode, stdout, stderr)``. On timeout, the subprocess is
-    killed and ``TimeoutError`` propagates.
-    """
-    cmd = [
-        garage_config.docker_binary,
-        "exec",
-        garage_config.container_name,
-        garage_config.garage_binary,
-        *args,
-    ]
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
-        raise
-    return (
-        proc.returncode if proc.returncode is not None else -1,
-        stdout_b.decode("utf-8", errors="replace"),
-        stderr_b.decode("utf-8", errors="replace"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Core orchestration
-# ---------------------------------------------------------------------------
-
-
 async def run_provision_customer_bucket(
     progress: ProgressCallback,
     garage_config: GarageConfig,
@@ -174,7 +98,7 @@ async def run_provision_customer_bucket(
     started_at = time.monotonic()
     # Throwaway alias used only for the create+rename dance. Must
     # satisfy S3 strict bucket naming (3-63 chars, lowercase
-    # alphanumeric + hyphens, starts and ends alphanumeric) — Garage's
+    # alphanumeric + hyphens, starts and ends alphanumeric) - Garage's
     # bucket-create validator rejects names with leading underscores
     # or any underscore at all on S3-strict deployments.
     throwaway_alias = f"provisioning-{secrets.token_hex(8)}"
@@ -184,7 +108,7 @@ async def run_provision_customer_bucket(
 
     # ---- Step 1: bucket create <throwaway> ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating bucket")
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config, "bucket", "create", throwaway_alias,
     )
     if rc != 0:
@@ -200,7 +124,7 @@ async def run_provision_customer_bucket(
     state.throwaway_attached = True
 
     # Real Garage v2.2.0's ``bucket create`` stdout is a confirmation
-    # message, NOT a bucket-info dump — parsing it via
+    # message, NOT a bucket-info dump - parsing it via
     # ``parse_bucket_info`` extracts the throwaway alias name as the
     # bucket_id, not the actual hex UUID. Storm-side that gets
     # truncated to 16 chars and stored, then the manifest reports the
@@ -210,7 +134,7 @@ async def run_provision_customer_bucket(
     # Do an explicit ``bucket info <throwaway>`` call to get the
     # canonical 64-char UUID. The throwaway alias is attached at this
     # point and is the only way to address the bucket until step 11.
-    rc, stdout, stderr = await _run_garage(
+    rc, stdout, stderr = await run_garage(
         garage_config, "bucket", "info", throwaway_alias,
     )
     if rc != 0:
@@ -248,7 +172,7 @@ async def run_provision_customer_bucket(
 
     # ---- Step 2: key create <admin> ----
     await progress("running", 1, _TOTAL_STEPS, "Creating admin key")
-    rc, stdout, stderr = await _run_garage(
+    rc, stdout, stderr = await run_garage(
         garage_config, "key", "create", key_name_admin,
     )
     if rc != 0:
@@ -293,7 +217,7 @@ async def run_provision_customer_bucket(
     await progress(
         "running", 2, _TOTAL_STEPS, "Granting admin permissions",
     )
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config,
         "bucket", "allow", *_ADMIN_FLAGS,
         throwaway_alias, "--key", admin.key_id,
@@ -318,7 +242,7 @@ async def run_provision_customer_bucket(
     await progress(
         "running", 3, _TOTAL_STEPS, "Attaching admin local alias",
     )
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config,
         "bucket", "alias", "--local", admin.key_id,
         throwaway_alias, display_name,
@@ -345,7 +269,7 @@ async def run_provision_customer_bucket(
     await progress(
         "running", 4, _TOTAL_STEPS, "Removing throwaway alias",
     )
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config, "bucket", "unalias", throwaway_alias,
     )
     if rc != 0:
@@ -366,7 +290,7 @@ async def run_provision_customer_bucket(
 
     # ---- Success ----
     await progress("finalizing", _TOTAL_STEPS, _TOTAL_STEPS, "Provisioning complete")
-    # Expose the 16-char prefix to downstream callers — Garage CLI
+    # Expose the 16-char prefix to downstream callers - Garage CLI
     # accepts it as a bucket reference, but rejects the full 64-char
     # form. Storm stores this in CustomerBucket.garage_bucket_id.
     bucket_uuid_short = state.bucket_uuid[:16]
@@ -385,11 +309,6 @@ async def run_provision_customer_bucket(
             "duration_seconds": _elapsed(started_at),
         },
     )
-
-
-# ---------------------------------------------------------------------------
-# Rollback
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -420,7 +339,7 @@ async def _rollback(
     # 1. Detach admin local alias
     if state.admin_alias_attached and state.admin_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config,
                 "bucket", "unalias", "--local", state.admin_key_id,
                 state.display_name,
@@ -439,7 +358,7 @@ async def _rollback(
     # 2. Revoke admin permissions
     if state.admin_perms_granted and state.admin_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config,
                 "bucket", "deny", *_ADMIN_FLAGS,
                 state.throwaway_alias, "--key", state.admin_key_id,
@@ -458,7 +377,7 @@ async def _rollback(
     # 3. Delete admin key
     if state.admin_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config, "key", "delete", "--yes", state.admin_key_id,
             )
         except (asyncio.TimeoutError, OSError) as exc:
@@ -475,7 +394,7 @@ async def _rollback(
     # 4. Delete bucket (always by throwaway alias)
     if state.bucket_uuid is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config,
                 "bucket", "delete", "--yes", state.throwaway_alias,
             )
@@ -551,7 +470,7 @@ async def _delete_bucket_best_effort(
 ) -> list[dict[str, str]]:
     """Try to delete a bucket; return manual-cleanup list if it fails."""
     try:
-        rc, _stdout, _stderr = await _run_garage(
+        rc, _stdout, _stderr = await run_garage(
             garage_config, "bucket", "delete", "--yes", alias_or_uuid,
         )
     except (asyncio.TimeoutError, OSError):
@@ -559,11 +478,6 @@ async def _delete_bucket_best_effort(
     if rc != 0:
         return [{"type": "bucket", "id": alias_or_uuid}]
     return []
-
-
-# ---------------------------------------------------------------------------
-# Result construction
-# ---------------------------------------------------------------------------
 
 
 def _failure(

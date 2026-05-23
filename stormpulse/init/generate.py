@@ -20,7 +20,7 @@ class InitConfig:
     env_file: Path | None
 
 
-_TOML_TEMPLATE = """\
+TOML_TEMPLATE = """\
 [agent]
 id = "{agent_id}"
 pulse_token = "{pulse_token}"
@@ -59,7 +59,7 @@ def generate_toml(config: InitConfig) -> str:
     env_line = ""
     if config.env_file is not None:
         env_line = f'env_file = "{config.env_file}"\n'
-    return _TOML_TEMPLATE.format(
+    return TOML_TEMPLATE.format(
         agent_id=config.agent_id,
         pulse_token=config.pulse_token,
         dashboard_url=config.dashboard_url,
@@ -71,7 +71,7 @@ def generate_toml(config: InitConfig) -> str:
     )
 
 
-_SYSTEMD_UNIT_TEMPLATE = """\
+SYSTEMD_UNIT_TEMPLATE = """\
 [Unit]
 Description=Storm Pulse Agent
 After=network-online.target docker.service
@@ -111,4 +111,4 @@ def render_systemd_unit(project_dir: Path) -> str:
     Uses ``str.replace`` rather than ``str.format`` so paths containing
     ``{`` or ``}`` can't trigger KeyError or unintended substitution.
     """
-    return _SYSTEMD_UNIT_TEMPLATE.replace("{project_dir}", str(project_dir))
+    return SYSTEMD_UNIT_TEMPLATE.replace("{project_dir}", str(project_dir))

@@ -151,6 +151,7 @@ class TestBuildGarageCommands:
         import re
         cmds = build_garage_commands(_make_config())
         pattern = cmds["garage_bucket_info"].params["bucket_name"].pattern
+        assert pattern is not None
         # Flag-smuggling and S3-illegal names rejected.
         for bad in (
             "--help", "-c", "-h", "--rpc-host",  # flag smuggling
@@ -179,10 +180,50 @@ class TestBuildGarageCommands:
                 f"pattern should accept {good!r}"
             )
 
+    def test_bucket_id_pattern_accepts_full_and_truncated_garage_uuids(self) -> None:
+        """``bucket_id`` is a Garage internal UUID, distinct from a
+        display-name alias. The full form is 64 lowercase hex chars; the
+        CLI displays a 16-char unique prefix and accepts either as a
+        reference. The ``garage_state`` snapshot pushed to Storm carries
+        the full form, so anywhere bucket_id rides as a parameter from
+        the dashboard, it arrives at full length. Match both.
+        """
+        import re
+        cmds = build_garage_commands(_make_config())
+        for cmd_name in (
+            "garage_delete_provisioned_bucket",
+            "garage_provision_additional_key",
+            "garage_rotate_customer_key",
+        ):
+            pattern = cmds[cmd_name].params["bucket_id"].pattern
+            assert pattern is not None
+            # Both Garage UUID forms accepted.
+            for good in (
+                "d05213985bdf79da",  # 16-char CLI prefix
+                "d05213985bdf79da9fa8faed05f01e44c5344d2600736d8402b46755e7fb3980",  # 64-char internal
+            ):
+                assert re.fullmatch(pattern, good) is not None, (
+                    f"{cmd_name}.bucket_id should accept {good!r}"
+                )
+            # Non-hex, uppercase, and out-of-range lengths rejected.
+            for bad in (
+                "",                       # empty
+                "abc",                    # too short (min 16)
+                "G" * 32,                 # non-hex (uppercase/non-hex)
+                "d05213985bdf79DA",       # uppercase hex
+                "d05213985bdf79da-bad",   # contains hyphen
+                "x" * 65,                 # too long (max 64)
+                "--help",                 # flag smuggling
+            ):
+                assert re.fullmatch(pattern, bad) is None, (
+                    f"{cmd_name}.bucket_id should reject {bad!r}"
+                )
+
     def test_key_name_pattern_rejects_leading_hyphen(self) -> None:
         import re
         cmds = build_garage_commands(_make_config())
         pattern = cmds["garage_key_create"].params["key_name"].pattern
+        assert pattern is not None
         for bad in ("--help", "-c"):
             assert re.fullmatch(pattern, bad) is None
         for good in ("usr-1-media-all", "key_admin"):

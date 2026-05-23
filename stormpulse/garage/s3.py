@@ -1,28 +1,13 @@
 """Purpose-built S3 client for Garage's localhost data plane.
 
-Storm Pulse intentionally avoids boto3 — a 30MB vendor library is the wrong
-shape for an agent that runs alongside Garage on the same host. The agent
-needs exactly two S3 operations: list every object in a bucket, and bulk-
-delete a batch of keys. Plus one helper, ``head_bucket``, for credential
-pre-flight.
+Two operations (``list_objects_v2``, ``delete_objects``) plus ``head_bucket``
+for credential pre-flight. Path-style addressing, HTTP by default, no
+retries, no pagination beyond caller-driven loops. boto3 is intentionally
+avoided: a 30MB vendor dep is the wrong shape for an on-host agent.
 
-Scope and non-features:
-
-- Path-style addressing only (``http://host:port/bucket/key``). Virtual-
-  host style is not supported and not needed against a local Garage.
-- HTTP, not HTTPS, by default. The agent talks to Garage on ``localhost``
-  on the same node — TLS is unnecessary overhead. HTTPS works if the
-  endpoint URL says ``https``.
-- No retries, no backoff, no pagination beyond what the caller asks for.
-  Caller drives the loop.
-- No bucket creation, no object upload, no copy, no multipart, no
-  versioning, no lifecycle, no presigning. Add only what the agent's
-  command handlers need.
-
-SigV4 signing is implemented from the AWS-published spec using the stdlib
-plus ``cryptography`` (already a runtime dependency for HMAC). Verified
-against AWS's published "GET-vanilla" canonical-request and signing-key
-test vectors in ``tests/garage/test_s3_sigv4.py``.
+SigV4 signing is hand-rolled on stdlib + ``cryptography``, verified against
+the AWS-published ``GET-vanilla`` test vectors in
+``tests/garage/test_s3_sigv4.py``.
 """
 
 from __future__ import annotations
@@ -43,11 +28,6 @@ _S3_NS = "http://s3.amazonaws.com/doc/2006-03-01/"
 _ALGORITHM = "AWS4-HMAC-SHA256"
 _SERVICE = "s3"
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
-
-
-# ---------------------------------------------------------------------------
-# Result / error types
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +61,7 @@ class S3ErrorEntry:
 class DeleteResult:
     """Result of one DeleteObjects request.
 
-    ``errors`` is the load-bearing field — DeleteObjects returns HTTP 200
+    ``errors`` is the load-bearing field - DeleteObjects returns HTTP 200
     even when individual objects failed. Callers MUST inspect ``errors``
     before treating the operation as successful.
     """
@@ -117,11 +97,6 @@ class S3Error(Exception):
 
 class S3AuthError(S3Error):
     """Raised specifically for 403 / SignatureDoesNotMatch / InvalidAccessKeyId."""
-
-
-# ---------------------------------------------------------------------------
-# SigV4 signing primitives (pure, testable)
-# ---------------------------------------------------------------------------
 
 
 def _hmac_sha256(key: bytes, msg: str) -> bytes:
@@ -209,16 +184,11 @@ def _build_authorization(
     )
 
 
-# ---------------------------------------------------------------------------
-# Client
-# ---------------------------------------------------------------------------
-
-
 class GarageS3Client:
     """Synchronous S3 client narrow-scoped to the agent's needs.
 
     Synchronous because http.client is. Async callers wrap method calls
-    in ``loop.run_in_executor`` — the methods are CPU-light and I/O-bound
+    in ``loop.run_in_executor`` - the methods are CPU-light and I/O-bound
     against localhost, so executor wrapping is appropriate.
     """
 
@@ -259,7 +229,7 @@ class GarageS3Client:
         """One page of ListObjectsV2. Caller paginates via ``next_continuation_token``.
 
         ``prefix`` (optional) restricts results to keys under that prefix.
-        No ``delimiter`` parameter — callers wanting a recursive walk
+        No ``delimiter`` parameter - callers wanting a recursive walk
         (e.g. ``garage_walk_bucket_stats``) need every object beneath
         the prefix, not just the immediate children.
         """
@@ -374,16 +344,11 @@ class GarageS3Client:
         raise S3Error(full_message, status=status, code=code)
 
 
-# ---------------------------------------------------------------------------
-# XML helpers
-# ---------------------------------------------------------------------------
-
-
 def _build_delete_xml(keys: list[str]) -> bytes:
     """Build the DeleteObjects request body."""
     parts = ['<?xml version="1.0" encoding="UTF-8"?>', "<Delete>"]
     for k in keys:
-        # Minimal escaping — keys must not contain raw < > & in S3 anyway,
+        # Minimal escaping - keys must not contain raw < > & in S3 anyway,
         # but we use ElementTree's text-escaping to be defensive.
         elem = ElementTree.Element("Key")
         elem.text = k

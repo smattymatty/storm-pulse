@@ -198,7 +198,7 @@ def test_collect_metrics_containers_disabled(
 
 
 # ---------------------------------------------------------------------------
-# Container collection — NDJSON
+# Container collection - NDJSON
 # ---------------------------------------------------------------------------
 
 
@@ -215,7 +215,7 @@ def test_collect_containers_ndjson(mock_run: MagicMock) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Container collection — JSON array
+# Container collection - JSON array
 # ---------------------------------------------------------------------------
 
 
@@ -231,7 +231,7 @@ def test_collect_containers_json_array(mock_run: MagicMock) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Container collection — error handling
+# Container collection - error handling
 # ---------------------------------------------------------------------------
 
 

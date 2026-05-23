@@ -1,0 +1,30 @@
+; CORE-001 Function 1: layer topology.
+;
+; Enforces the four-layer import discipline declared in
+; _architecture/adrs/core/000-internal-module-architecture.md.
+;
+; Layer ordering (top -> bottom; higher MAY import lower, never the inverse):
+;
+;   Entry      (agent, cli, __main__)       - composition roots; ":" linked
+;                                             because __main__ imports cli.
+;   Features   (garage, caddy, logging,     - capability surfaces; "|" forbids
+;               metrics, enroll, status)      sibling-feature imports.
+;   Framework  (commands, init, auth)       - shared infrastructure; "|" -
+;                                             these modules do not import
+;                                             each other.
+;   Foundation (protocol, config)           - wire-format + config contracts;
+;                                             "|" - independent.
+;
+; Tests are outside the stormpulse package, so no ignore_imports needed.
+
+[importlinter]
+root_package = stormpulse
+
+[importlinter:contract:layered]
+name = CORE-000 four-layer topology
+type = layers
+layers =
+    stormpulse.__main__ : stormpulse.cli : stormpulse.agent
+    stormpulse.status | stormpulse.enroll | stormpulse.metrics | stormpulse.logging | stormpulse.caddy | stormpulse.garage
+    stormpulse.auth | stormpulse.init | stormpulse.commands
+    stormpulse.config | stormpulse.protocol

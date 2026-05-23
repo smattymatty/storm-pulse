@@ -8,3 +8,4 @@ build/
 .mypy_cache/
 _temp/
 storm-pulse.wiki/
+.env
