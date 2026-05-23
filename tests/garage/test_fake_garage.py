@@ -1,6 +1,6 @@
 """Unit tests for FakeGarage itself.
 
-Without these the fake becomes an unverified single point of trust —
+Without these the fake becomes an unverified single point of trust -
 all the orchestrator tests would rely on its rules being correct, but
 no test would pin those rules. Every rule the fake encodes has a
 positive case (rule satisfied → success) and a negative case (rule
@@ -38,7 +38,7 @@ def _config() -> GarageConfig:
 
 
 # ---------------------------------------------------------------------------
-# Rule 1: bucket create — S3-strict name validation
+# Rule 1: bucket create - S3-strict name validation
 # ---------------------------------------------------------------------------
 
 
@@ -88,7 +88,7 @@ async def test_bucket_create_rejects_duplicate_global_alias() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rule 2: bucket unalias <name> — orphan rule
+# Rule 2: bucket unalias <name> - orphan rule
 # ---------------------------------------------------------------------------
 
 
@@ -143,7 +143,7 @@ async def test_bucket_unalias_global_rejects_when_only_alias() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rule 3: bucket unalias --local — one positional, orphan check
+# Rule 3: bucket unalias --local - one positional, orphan check
 # ---------------------------------------------------------------------------
 
 
@@ -182,7 +182,7 @@ async def test_bucket_unalias_local_three_positional_form_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rule 4: bucket alias --local — three positionals
+# Rule 4: bucket alias --local - three positionals
 # ---------------------------------------------------------------------------
 
 
@@ -216,7 +216,7 @@ async def test_bucket_alias_local_unknown_key_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rule 5: bucket allow / deny — flag handling
+# Rule 5: bucket allow / deny - flag handling
 # ---------------------------------------------------------------------------
 
 
@@ -274,7 +274,7 @@ async def test_bucket_allow_with_no_flags_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rule 6: bucket delete --yes — empty check
+# Rule 6: bucket delete --yes - empty check
 # ---------------------------------------------------------------------------
 
 
@@ -322,7 +322,7 @@ async def test_bucket_delete_revokes_referencing_permissions() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Rule 7: key create — deterministic output, parseable
+# Rule 7: key create - deterministic output, parseable
 # ---------------------------------------------------------------------------
 
 
@@ -383,7 +383,7 @@ async def test_resolve_by_16_char_prefix() -> None:
 async def test_resolve_by_64_char_rejected() -> None:
     """Floor reproduction #2: full hex rejected with NoSuchBucket.
 
-    Empirically confirmed against garage-one v2.2.0 — `bucket info`
+    Empirically confirmed against garage-one v2.2.0 - `bucket info`
     with the full 64-char hash returns NoSuchBucket. The conservative
     fake matches that behavior.
     """
@@ -458,7 +458,7 @@ async def test_bucket_info_includes_keys_with_permissions() -> None:
 
 
 # ---------------------------------------------------------------------------
-# key delete — strips local aliases
+# key delete - strips local aliases
 # ---------------------------------------------------------------------------
 
 
@@ -516,7 +516,7 @@ async def test_fail_next_queues_per_verb() -> None:
 
     assert "first" in stderr1
     assert "second" in stderr2
-    # Third call is no longer overridden — dispatches normally.
+    # Third call is no longer overridden - dispatches normally.
     assert rc3 == 0
     assert "third-bucket" in {
         a for b in fake.buckets.values() for a in b.global_aliases

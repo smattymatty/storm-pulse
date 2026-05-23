@@ -1,0 +1,60 @@
+---
+adr:
+  id: "CORE-002"
+  title: "Release and publishing: manual, from the maker's workstation"
+  status: "Accepted"
+  date: "2026-05-22"
+  tags: ["release", "pypi"]
+---
+
+# ADR: Release and publishing
+
+**Status:** Accepted
+
+## Context
+
+storm-pulse ships as `pip install storm-pulse-agent` from PyPI. The agent runs as root on every VPS Storm operates, which makes a compromised PyPI credential the worst class of supply-chain attack: anyone who can publish storm-pulse-agent owns every host that installs it.
+
+Project-scoping limits the blast radius of a leaked credential to one package, but here that one package is the one that matters. The strongest mitigation is to keep no standing PyPI credential on any server. Publishing happens by hand, from my workstation.
+
+## Decision
+
+**Release is a four-step act on my machine:**
+
+1. Bump `[project].version` in `pyproject.toml` and add the matching entry to `CHANGELOG.md`.
+2. Commit. Push.
+3. Locally: `make check` for the codebase, then `make pre-release-check` to assert `[project].version` and the top `CHANGELOG.md` entry agree.
+4. `uv build && uv publish`. Pre-publish, smoke-test the wheel in a fresh venv: `pip install dist/storm_pulse_agent-*.whl && stormpulse --version`. Catches install-time breakage before PyPI's immutability eats you.
+
+**Version is static, in `pyproject.toml`.** Single source of truth, one line to edit. `setuptools-scm` is not adopted: a build-time dep and a layer of indirection to save editing one line.
+
+**Token never on a server.** The PyPI API token is project-scoped to `storm-pulse-agent` and stored only on my workstation (env var / keyring). Compromise scope: my dev machine. Rotation: whenever I want, no shared secret to coordinate.
+
+**Lockfile is hand-rolled.** `uv lock` is run when I bump a dependency or want to refresh, never on a schedule. The supply chain doesn't move without me.
+
+## Consequences
+
+**Positive:**
+
+- No standing PyPI credential on any server I operate.
+- No release-specific machinery to maintain. No tag-triggered workflow, no release secret in any store but my own.
+- The version-consistency check is a Python script I own and run, not a YAML step at a moment I can't see.
+- Release is a conscious moment: green checks are permission to publish, not the publish itself.
+- One toolchain (uv) for build, lock, and publish.
+
+**Negative:**
+
+- Not a one-action release. The push is step 2 of 4; the publish is step 4. For a low release cadence this is fine; for daily releases it would be friction.
+- No machine-enforced gate between "code is shippable" and "uv publish ran." If I publish broken code, broken code goes up. The human-in-the-loop is the design, but it is a real cost.
+- No provenance link between any external record and the PyPI artifact. The audit trail is `CHANGELOG.md` plus `git log -- pyproject.toml`, joined by version number.
+
+## Governance
+
+**Automated enforcement.** None at release time. `make pre-release-check` is local, run by the maker, not gated.
+
+**Manual review.** Any proposal to publish from a server, to store a PyPI token on a server, or to add a release-triggered workflow that gates publish requires a new ADR.
+
+**Related ADRs:**
+
+- [CORE-001 Fitness functions](001-fitness-functions.md) - the `make fitness` suite invoked by `make check`.
+- [CORE-000 Internal module architecture](000-internal-module-architecture.md) - the package structure that ships.

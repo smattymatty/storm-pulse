@@ -1,5 +1,9 @@
 # Storm Pulse Agent
 
+[![CI](https://git.stormdevelopments.ca/official-public/storm-pulse/actions/workflows/test.yml/badge.svg)](https://git.stormdevelopments.ca/official-public/storm-pulse/actions)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Typed: mypy strict](https://img.shields.io/badge/mypy-strict-blue.svg)](https://mypy-lang.org/)
+
 Secure server management agent for [Storm Developments](https://stormdevelopments.ca). Connects outbound to a Django dashboard over WebSocket with mTLS, pushes system metrics, and executes whitelisted deploy commands. Zero listening ports.
 
 ## How It Works
@@ -26,6 +30,12 @@ See the [Security Architecture](https://git.stormdevelopments.ca/official-public
 ## Setup
 
 Requires Python 3.12+. Three runtime deps: `websockets`, `psutil`, `cryptography`.
+
+Install from PyPI:
+
+```bash
+pip install storm-pulse-agent
+```
 
 For full setup instructions (system user, permissions, systemd, firewall), see the [Setup Guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Setup-Guide).
 
@@ -55,7 +65,7 @@ stormpulse --version
 
 ## Configuration
 
-See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all options. Key settings:
+Run `stormpulse init` to generate a config interactively - see the [Setup Guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Setup-Guide). Key settings:
 
 | Section | Field | Description |
 |---------|-------|-------------|
@@ -84,13 +94,14 @@ See [`config/stormpulse.example.toml`](config/stormpulse.example.toml) for all o
 ## Develop
 
 ```bash
-git clone <repo-url> && cd storm-pulse
+git clone https://git.stormdevelopments.ca/official-public/storm-pulse.git && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest          # 632 tests
+pytest
 mypy .          # strict
+make fitness    # architecture + security invariants
 ```
 
 ## License
 
-MIT
+MIT - see [LICENSE](LICENSE).

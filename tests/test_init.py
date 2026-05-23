@@ -39,6 +39,8 @@ from stormpulse.init import (
     write_config_file,
     write_systemd_unit,
 )
+from stormpulse.init.prompts import prompt_confirm
+from stormpulse.init.system import restart_stormpulse
 
 
 # ---------------------------------------------------------------------------
@@ -642,7 +644,7 @@ class TestRunFindApply:
     def test_builds_find_with_prune_args(
         self, mock_popen: MagicMock, tmp_path: Path,
     ) -> None:
-        from stormpulse.init import _run_find_apply
+        from stormpulse.init import run_find_apply
 
         mock_find = MagicMock()
         mock_find.stdout = MagicMock()
@@ -658,7 +660,7 @@ class TestRunFindApply:
         vol1 = tmp_path / "data"
         vol2 = tmp_path / "logs"
 
-        result = _run_find_apply(
+        result = run_find_apply(
             tmp_path, [vol1, vol2],
             ["/usr/bin/chown", "root:stormpulse"],
             description="test chown",
@@ -682,7 +684,7 @@ class TestRunFindApply:
     def test_returns_false_on_find_failure(
         self, mock_popen: MagicMock, tmp_path: Path,
     ) -> None:
-        from stormpulse.init import _run_find_apply
+        from stormpulse.init import run_find_apply
 
         mock_find = MagicMock()
         mock_find.stdout = MagicMock()
@@ -695,7 +697,7 @@ class TestRunFindApply:
 
         mock_popen.side_effect = [mock_find, mock_xargs]
 
-        result = _run_find_apply(
+        result = run_find_apply(
             tmp_path, [],
             ["/usr/bin/chown", "root:stormpulse"],
             description="test",
@@ -706,11 +708,11 @@ class TestRunFindApply:
     def test_returns_false_on_missing_binary(
         self, mock_popen: MagicMock, tmp_path: Path,
     ) -> None:
-        from stormpulse.init import _run_find_apply
+        from stormpulse.init import run_find_apply
 
         mock_popen.side_effect = FileNotFoundError(2, "No such file", "/usr/bin/find")
 
-        result = _run_find_apply(
+        result = run_find_apply(
             tmp_path, [],
             ["/usr/bin/chown", "root:stormpulse"],
             description="test",
@@ -744,7 +746,7 @@ class TestRunSystemSetup:
         assert "-R" in chown_calls[0]
         assert "root:stormpulse" in chown_calls[0]
 
-    @patch("stormpulse.init.system._run_find_apply", return_value=True)
+    @patch("stormpulse.init.system.run_find_apply", return_value=True)
     @patch("stormpulse.init.system.subprocess.run")
     def test_with_volumes_uses_find_prune(
         self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
@@ -760,7 +762,7 @@ class TestRunSystemSetup:
 
         run_system_setup(project, compose)
 
-        # _run_find_apply called twice (chown + chmod)
+        # run_find_apply called twice (chown + chmod)
         assert mock_find_apply.call_count == 2
 
         # First call: chown with volume excluded
@@ -781,7 +783,7 @@ class TestRunSystemSetup:
         ]
         assert len(project_chowns) == 0
 
-    @patch("stormpulse.init.system._run_find_apply", return_value=True)
+    @patch("stormpulse.init.system.run_find_apply", return_value=True)
     @patch("stormpulse.init.system.subprocess.run")
     def test_volume_dirs_never_chowned(
         self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
@@ -847,7 +849,7 @@ class TestRunSystemSetup:
         # Should not raise
         run_system_setup(project, compose)
 
-    @patch("stormpulse.init.system._run_find_apply", return_value=False)
+    @patch("stormpulse.init.system.run_find_apply", return_value=False)
     @patch("stormpulse.init.system.subprocess.run")
     def test_returns_early_on_chown_failure_with_volumes(
         self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
@@ -904,7 +906,7 @@ class TestRunInit:
         with pytest.raises(InitError, match="not found"):
             run_init(tmp_path / "nonexistent")
 
-    @patch("stormpulse.logging.init.detect_docker_containers", return_value=[])
+    @patch("stormpulse.init.orchestrator.registered_init_steps", return_value=[])
     @patch("stormpulse.init.orchestrator.run_daemon_reload")
     @patch("stormpulse.init.orchestrator.run_system_setup")
     @patch("stormpulse.init.orchestrator.write_systemd_unit")
@@ -919,7 +921,7 @@ class TestRunInit:
         mock_write_unit: MagicMock,
         mock_setup: MagicMock,
         mock_reload: MagicMock,
-        _mock_containers: MagicMock,
+        _mock_steps: MagicMock,
         tmp_path: Path,
     ) -> None:
         creds = _make_creds_dir(tmp_path, cn="happy-agent")
@@ -954,3 +956,133 @@ class TestRunInit:
         mock_write_unit.assert_called_once()
         mock_setup.assert_called_once()
         mock_reload.assert_called_once()
+
+    @patch("stormpulse.init.orchestrator.run_daemon_reload")
+    @patch("stormpulse.init.orchestrator.run_system_setup")
+    @patch("stormpulse.init.orchestrator.write_systemd_unit")
+    @patch("stormpulse.init.orchestrator.write_config_file")
+    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
+    @patch("builtins.input")
+    def test_runs_registered_steps(
+        self,
+        mock_input: MagicMock,
+        _mock_root: MagicMock,
+        _mock_write_config: MagicMock,
+        _mock_write_unit: MagicMock,
+        _mock_setup: MagicMock,
+        _mock_reload: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """run_init runs each registered feature step with the config path."""
+        import json
+
+        creds = _make_creds_dir(tmp_path, cn="step-agent")
+        (creds / "enroll.json").write_text(json.dumps({
+            "endpoint": "https://example.com/api/enroll/",
+            "agent_id": "step-agent",
+        }))
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "docker-compose.yml").write_text(
+            "services:\n  web:\n    image: test\n"
+        )
+        mock_input.side_effect = [
+            "a1b2c3d4-5678-9abc-def0-111111111111",  # pulse_token
+            "",  # dashboard_url
+            str(project),  # project_dir
+            "y",  # compose confirm
+            "",  # docker service default
+            "skip",  # env_file
+        ]
+
+        step = MagicMock()
+        with patch(
+            "stormpulse.init.orchestrator.registered_init_steps",
+            return_value=[step],
+        ):
+            run_init(creds, force=True)
+
+        step.assert_called_once()
+        assert isinstance(step.call_args.args[0], Path)
+
+
+# ---------------------------------------------------------------------------
+# TestInitRegistry
+# ---------------------------------------------------------------------------
+
+
+class TestInitRegistry:
+    def test_register_then_listed(self) -> None:
+        from stormpulse.init.registry import (
+            register_init_step,
+            registered_init_steps,
+        )
+
+        def _step(_path: Path) -> None:
+            pass
+
+        before = registered_init_steps()
+        register_init_step(_step)
+        after = registered_init_steps()
+        assert _step in after
+        assert len(after) == len(before) + 1
+
+    def test_returns_a_copy(self) -> None:
+        from stormpulse.init.registry import registered_init_steps
+
+        snapshot = registered_init_steps()
+        snapshot.append(lambda _path: None)
+        # Mutating the returned list must not affect the registry.
+        assert len(registered_init_steps()) == len(snapshot) - 1
+
+
+# ---------------------------------------------------------------------------
+# TestPromptConfirm
+# ---------------------------------------------------------------------------
+
+
+class TestPromptConfirm:
+    @patch("stormpulse.init.prompts.prompt", return_value="")
+    def test_empty_input_default_yes(self, _mock: MagicMock) -> None:
+        assert prompt_confirm("Continue?") is True
+
+    @patch("stormpulse.init.prompts.prompt", return_value="")
+    def test_empty_input_default_no(self, _mock: MagicMock) -> None:
+        assert prompt_confirm("Continue?", default_yes=False) is False
+
+    @patch("stormpulse.init.prompts.prompt", return_value="y")
+    def test_y_returns_true(self, _mock: MagicMock) -> None:
+        assert prompt_confirm("Continue?", default_yes=False) is True
+
+    @patch("stormpulse.init.prompts.prompt", return_value="n")
+    def test_n_returns_false(self, _mock: MagicMock) -> None:
+        assert prompt_confirm("Continue?") is False
+
+
+# ---------------------------------------------------------------------------
+# TestRestartStormpulse
+# ---------------------------------------------------------------------------
+
+
+class TestRestartStormpulse:
+    @patch("stormpulse.init.system.subprocess.run")
+    def test_success(self, mock_run: MagicMock) -> None:
+        assert restart_stormpulse() is True
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert args[0].endswith("systemctl")
+        assert "restart" in args
+        assert "stormpulse" in args
+
+    @patch("stormpulse.init.system.subprocess.run", side_effect=FileNotFoundError())
+    def test_missing_systemctl(self, _mock: MagicMock) -> None:
+        assert restart_stormpulse() is False
+
+    @patch("stormpulse.init.system.subprocess.run")
+    def test_failed_call(self, mock_run: MagicMock) -> None:
+        import subprocess as sp
+
+        mock_run.side_effect = sp.CalledProcessError(
+            1, "systemctl", stderr=b"failed"
+        )
+        assert restart_stormpulse() is False

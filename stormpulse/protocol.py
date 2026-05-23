@@ -1,4 +1,4 @@
-"""Storm Pulse protocol — message definitions, serialization, validation."""
+"""Wire protocol: message types, envelope, serialization."""
 
 from __future__ import annotations
 
@@ -38,11 +38,6 @@ class MessageType(StrEnum):
     ERROR = "error"
 
 
-# ---------------------------------------------------------------------------
-# Generic deserialization helper (Rule of Generation)
-# ---------------------------------------------------------------------------
-
-
 def _payload_from_dict[T](cls: type[T], data: Any, *, nested: dict[str, type] | None = None) -> T:
     """Validate required fields and construct a payload dataclass.
 
@@ -75,11 +70,6 @@ def _payload_from_dict[T](cls: type[T], data: Any, *, nested: dict[str, type] | 
             filtered[f.name] = val
 
     return cls(**filtered)
-
-
-# ---------------------------------------------------------------------------
-# Payload dataclasses
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,11 +210,6 @@ class LogBatchPayload:
         return _payload_from_dict(cls, data)
 
 
-# ---------------------------------------------------------------------------
-# Timestamp helpers
-# ---------------------------------------------------------------------------
-
-
 def _parse_timestamp(raw: Any) -> datetime:
     """Parse an ISO 8601 timestamp string, requiring timezone info."""
     if not isinstance(raw, str):
@@ -243,10 +228,6 @@ def format_timestamp(ts: datetime) -> str:
     return ts.isoformat().replace("+00:00", "Z")
 
 
-# ---------------------------------------------------------------------------
-# Envelope
-# ---------------------------------------------------------------------------
-
 _ENVELOPE_FIELDS = {"v", "type", "id", "ts", "agent_id", "payload"}
 
 
@@ -255,7 +236,7 @@ class Envelope:
     """The universal message envelope.
 
     Every message on the wire is an Envelope serialized to JSON.
-    The payload is stored as a raw dict — consuming code parses it
+    The payload is stored as a raw dict - consuming code parses it
     into typed payload dataclasses after matching on ``type``.
     """
 
@@ -332,11 +313,6 @@ class Envelope:
         }
 
 
-# ---------------------------------------------------------------------------
-# Factory functions
-# ---------------------------------------------------------------------------
-
-
 def _make_envelope(agent_id: str, msg_type: MessageType, payload: dict[str, Any]) -> Envelope:
     """Internal helper to build an Envelope with fresh id and timestamp."""
     return Envelope(
@@ -395,8 +371,8 @@ def make_command_result(
     ``extras`` are command-specific summary fields that ride at the top
     level of the payload alongside the standard ``CommandResultPayload``
     fields. Used by long-running commands (e.g. ``garage_bucket_clear``)
-    to deliver per-operation summary data — ``deleted_count``,
-    ``failed_count``, ``errors`` — without inventing a new message type.
+    to deliver per-operation summary data - ``deleted_count``,
+    ``failed_count``, ``errors`` - without inventing a new message type.
     Extras must not collide with standard ``CommandResultPayload`` field
     names; collisions overwrite the standard field.
     """

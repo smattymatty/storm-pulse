@@ -1,0 +1,10 @@
+# CORE-001 fitness baseline.
+#
+# Each non-comment, non-blank line is an exact match against a
+# violation line as printed by `python -m fitness`. Entries here
+# suppress known violations.
+#
+# The baseline only shrinks - a new violation is fixed, not parked.
+#
+# Currently empty: the 23 violations found by the 2026-05-22 AST scan
+# were all cleared by follow-ups #1-#5 (see CORE-000 Governance).

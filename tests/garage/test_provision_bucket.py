@@ -13,7 +13,7 @@ Step ordering:
 
 On any failure, atomic rollback runs in reverse order: detach local
 alias, revoke permissions, delete key, delete bucket. Throwaway is
-the bucket reference throughout — it's still attached during rollback
+the bucket reference throughout - it's still attached during rollback
 because step 5 is where it would have been removed.
 """
 
@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from stormpulse.commands.jobs import JobOutcome
 from stormpulse.config import GarageConfig
 from stormpulse.garage import provision_bucket
 from stormpulse.garage.provision_bucket import (
@@ -60,9 +61,9 @@ class _ProgressRecorder:
 async def _run(
     monkeypatch: pytest.MonkeyPatch,
     fake: FakeGarage | None = None,
-) -> tuple[provision_bucket.JobOutcome, FakeGarage]:
+) -> tuple[JobOutcome, FakeGarage]:
     fake = fake or FakeGarage()
-    monkeypatch.setattr(provision_bucket, "_run_garage", fake.run_garage)
+    monkeypatch.setattr(provision_bucket, "run_garage", fake.run_garage)
     outcome = await run_provision_customer_bucket(
         progress=_ProgressRecorder(),
         garage_config=_make_config(),
@@ -96,7 +97,7 @@ async def test_happy_path_returns_full_payload(
     assert outcome.extras["step_failed"] is None
     assert outcome.extras["rollback_status"] == "not_required"
     assert outcome.extras["manual_cleanup_required"] == []
-    # No rw / ro fields — those are separate orchestrator territory now
+    # No rw / ro fields - those are separate orchestrator territory now
     assert "rw" not in outcome.extras
     assert "ro" not in outcome.extras
 
@@ -153,7 +154,7 @@ async def test_happy_path_end_state(
 
 
 # ---------------------------------------------------------------------------
-# Failure-point tests — one per step
+# Failure-point tests - one per step
 # ---------------------------------------------------------------------------
 
 

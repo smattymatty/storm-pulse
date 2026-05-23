@@ -1,4 +1,4 @@
-"""Storm Pulse authentication — HMAC verification, nonce tracking, timestamp freshness."""
+"""HMAC verification, nonce tracking, timestamp freshness."""
 
 from __future__ import annotations
 
@@ -32,11 +32,6 @@ class AuthError(Exception):
 _CLOCK_SKEW_TOLERANCE_SECONDS = 5
 
 
-# ---------------------------------------------------------------------------
-# HMAC secret loading
-# ---------------------------------------------------------------------------
-
-
 def load_hmac_secret(path: Path) -> bytes:
     """Read the shared HMAC secret from a file.
 
@@ -49,11 +44,6 @@ def load_hmac_secret(path: Path) -> bytes:
     if not raw:
         raise AuthError(f"HMAC secret file is empty: {path}")
     return raw
-
-
-# ---------------------------------------------------------------------------
-# Canonical message construction
-# ---------------------------------------------------------------------------
 
 
 def canonicalize_params(params: dict[str, str]) -> str:
@@ -93,11 +83,6 @@ def canonical_command_sequence(
     return f"v1\n{sequence_id}\n{commands_csv}\n{stop_str}\n{nonce}\n{timestamp}"
 
 
-# ---------------------------------------------------------------------------
-# Signing (used by dashboard and tests)
-# ---------------------------------------------------------------------------
-
-
 def sign(message: str, secret: bytes) -> str:
     """Compute HMAC-SHA256 hex digest over a canonical message."""
     return hmac_mod.new(secret, message.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -106,11 +91,6 @@ def sign(message: str, secret: bytes) -> str:
 def generate_nonce() -> str:
     """Generate a cryptographically secure nonce (URL-safe, 32 bytes of entropy)."""
     return secrets.token_urlsafe(32)
-
-
-# ---------------------------------------------------------------------------
-# Nonce store (SQLite)
-# ---------------------------------------------------------------------------
 
 
 class NonceStore:
@@ -154,7 +134,7 @@ class NonceStore:
                 ).fetchone()
                 if row is not None:
                     # Raising here rolls back both the DELETE and any INSERT.
-                    # Pruning work is lost but harmless — next call re-prunes.
+                    # Pruning work is lost but harmless - next call re-prunes.
                     raise AuthError(f"Nonce already seen: {nonce!r}")
                 self._conn.execute(
                     "INSERT INTO seen_nonces (nonce, seen_at) VALUES (?, ?)",
@@ -166,11 +146,6 @@ class NonceStore:
     def close(self) -> None:
         """Close the database connection."""
         self._conn.close()
-
-
-# ---------------------------------------------------------------------------
-# High-level verification
-# ---------------------------------------------------------------------------
 
 
 def verify_envelope(
@@ -200,7 +175,7 @@ def verify_envelope(
             f"Cannot verify non-command message type: {envelope.type.value}"
         )
 
-    # 2. Timestamp freshness — directional: reject future-dated commands
+    # 2. Timestamp freshness - directional: reject future-dated commands
     # beyond a small skew tolerance so a future ts can't extend the replay
     # window past nonce eviction.
     now = datetime.now(timezone.utc)

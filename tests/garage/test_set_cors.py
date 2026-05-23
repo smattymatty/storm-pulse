@@ -69,7 +69,7 @@ _VALID_PARAMS = {
 
 
 # ---------------------------------------------------------------------------
-# run_set_cors — happy path
+# run_set_cors - happy path
 # ---------------------------------------------------------------------------
 
 
@@ -118,7 +118,7 @@ async def test_happy_path_with_multiple_origins() -> None:
 
 
 # ---------------------------------------------------------------------------
-# run_set_cors — failure paths
+# run_set_cors - failure paths
 # ---------------------------------------------------------------------------
 
 
@@ -165,7 +165,7 @@ async def test_no_such_bucket_surfaces_in_extras_error() -> None:
 
 
 # ---------------------------------------------------------------------------
-# make_set_cors_handler — origins decoding
+# make_set_cors_handler - origins decoding
 # ---------------------------------------------------------------------------
 
 
@@ -217,7 +217,7 @@ def test_origins_param_rejects_malformed_json() -> None:
 
 
 # ---------------------------------------------------------------------------
-# make_set_cors_handler — missing params
+# make_set_cors_handler - missing params
 # ---------------------------------------------------------------------------
 
 

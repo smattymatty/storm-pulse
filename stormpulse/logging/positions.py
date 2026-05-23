@@ -1,10 +1,8 @@
 """SQLite-backed log position store.
 
-Shares the same database file as the NonceStore. For file-based log
-groups, each group's last-read byte position and the file's inode are
-persisted so the agent can resume tailing across restarts and detect
-rotation. For Docker-based log groups, the timestamp of the last line
-received is persisted instead.
+Shares the database file with the NonceStore. File-based log groups persist
+last-read byte position + inode (so rotation is detectable); Docker-based
+groups persist the timestamp of the last line received.
 """
 
 from __future__ import annotations

@@ -145,7 +145,7 @@ class TestParseGarageS3:
 
     def test_injection_attempt_rejected(self) -> None:
         # Lines with shell metacharacters but wrong format are dropped as
-        # normal — they don't match the fullmatch regex.
+        # normal - they don't match the fullmatch regex.
         line = "'; DROP TABLE users; --"
         assert parse_garage_s3(line) is None
 
@@ -163,7 +163,7 @@ class TestParseGarageS3:
             f"1.2.3.4 (via [::1]:1234) (key GKabc123) GET {long_path}"
         )
         result = parse_garage_s3(line)
-        # Truncation alters the path so regex may not match — acceptable.
+        # Truncation alters the path so regex may not match - acceptable.
         # The important invariant: no crash, no injection.
         assert result is None or result["truncated"] is True
 
@@ -301,14 +301,14 @@ class TestParseCaddyJson:
         assert result["logger"] == "tls"
         assert result["msg"] == "stapling OCSP"
         assert result["level"] == "warn"
-        # The error field must survive — Storm uses it for cert_failed
+        # The error field must survive - Storm uses it for cert_failed
         # detail. Even on non-failure events with error context, we ship
         # it so the downstream classifier has the full picture.
         assert "no OCSP stapling" in result["error"]
 
     def test_cert_shape_without_ts_returns_none(self) -> None:
         # A cert-shape line (tls logger, msg, no request) but missing
-        # ts cannot become a ServerLog row — Storm parses ts on ingest.
+        # ts cannot become a ServerLog row - Storm parses ts on ingest.
         line = json.dumps({
             "level": "info",
             "logger": "tls.obtain",

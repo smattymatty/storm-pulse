@@ -14,9 +14,9 @@ that surface real orchestrator bugs are marked
 fake is **not** weakened to make them pass.
 
 Important: ``rotate_key.py:43`` does
-``from stormpulse.garage.provision_bucket import _run_garage``, which
-creates a local binding ``rotate_key._run_garage`` distinct from
-``provision_bucket._run_garage``. This file patches ``rotate_key``
+``from stormpulse.garage.provision_bucket import run_garage``, which
+creates a local binding ``rotate_key.run_garage`` distinct from
+``provision_bucket.run_garage``. This file patches ``rotate_key``
 directly. ``test_provision_bucket.py`` patches ``provision_bucket``.
 """
 
@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from stormpulse.commands.jobs import JobOutcome
 from stormpulse.config import GarageConfig
 from stormpulse.garage import rotate_key
 from stormpulse.garage.rotate_key import (
@@ -64,7 +65,7 @@ class _ProgressRecorder:
 def _setup_fake() -> tuple[FakeGarage, str, str]:
     """Create a fake with the bucket and old key already provisioned.
 
-    Returns (fake, bucket_alias, old_key_id) — both are the references
+    Returns (fake, bucket_alias, old_key_id) - both are the references
     to pass into run_rotate_customer_key. The bucket alias is the
     real-world reference shape (we rely on rule 8: alias is a valid
     bucket reference).
@@ -82,8 +83,8 @@ async def _run(
     old_key_id: str,
     *,
     key_tier: str = "all",
-) -> rotate_key.JobOutcome:
-    monkeypatch.setattr(rotate_key, "_run_garage", fake.run_garage)
+) -> JobOutcome:
+    monkeypatch.setattr(rotate_key, "run_garage", fake.run_garage)
     return await run_rotate_customer_key(
         progress=_ProgressRecorder(),
         garage_config=_make_config(),
@@ -293,7 +294,7 @@ async def test_rollback_partial_when_unalias_fails(
 ) -> None:
     """Step 4 fails, then rollback's first step (unalias) is also injected
     to fail. ``fail_next`` short-circuits the fake's dispatcher, so the
-    underlying Change D 3-positional bug is masked here — this test
+    underlying Change D 3-positional bug is masked here - this test
     verifies the orchestrator's rollback-failure handling, not the
     unalias signature.
     """

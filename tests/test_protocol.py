@@ -141,7 +141,7 @@ def register_dict() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Envelope parsing — happy path
+# Envelope parsing - happy path
 # ---------------------------------------------------------------------------
 
 
@@ -804,7 +804,7 @@ def test_register_with_log_groups() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Gap coverage — garage merging, ack round-trips, version post_init,
+# Gap coverage - garage merging, ack round-trips, version post_init,
 # LogBatch.lines invalid items
 # ---------------------------------------------------------------------------
 

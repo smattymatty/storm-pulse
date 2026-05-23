@@ -1,4 +1,4 @@
-"""Storm Pulse init — interactive setup wizard after enrollment."""
+"""Interactive setup wizard, run after enrollment."""
 
 from __future__ import annotations
 
@@ -16,23 +16,23 @@ from stormpulse.init.compose import (
     parse_volume_mounts,
 )
 from stormpulse.init.files import (
-    _CONFIG_PATH,
-    _SYSTEMD_PATH,
-    _write_file,
+    CONFIG_PATH,
+    SYSTEMD_PATH,
+    write_file,
     write_config_file,
     write_systemd_unit,
 )
 from stormpulse.init.generate import (
-    _SYSTEMD_UNIT_TEMPLATE,
-    _TOML_TEMPLATE,
+    SYSTEMD_UNIT_TEMPLATE,
+    TOML_TEMPLATE,
     InitConfig,
     generate_toml,
     render_systemd_unit,
 )
 from stormpulse.init.orchestrator import run_init
 from stormpulse.init.prompts import (
-    _prompt,
-    _UUID_RE,
+    prompt,
+    UUID_RE,
     prompt_compose_file,
     prompt_dashboard_url,
     prompt_docker_service,
@@ -41,8 +41,8 @@ from stormpulse.init.prompts import (
     prompt_pulse_token,
 )
 from stormpulse.init.system import (
-    _run_cmd,
-    _run_find_apply,
+    run_cmd,
+    run_find_apply,
     run_daemon_reload,
     run_system_setup,
 )
@@ -50,15 +50,15 @@ from stormpulse.init.system import (
 __all__ = [
     "InitConfig",
     "InitError",
-    "_CONFIG_PATH",
-    "_SYSTEMD_PATH",
-    "_SYSTEMD_UNIT_TEMPLATE",
-    "_TOML_TEMPLATE",
-    "_UUID_RE",
-    "_prompt",
-    "_run_cmd",
-    "_run_find_apply",
-    "_write_file",
+    "CONFIG_PATH",
+    "SYSTEMD_PATH",
+    "SYSTEMD_UNIT_TEMPLATE",
+    "TOML_TEMPLATE",
+    "UUID_RE",
+    "prompt",
+    "run_cmd",
+    "run_find_apply",
+    "write_file",
     "check_credentials",
     "check_root",
     "derive_dashboard_url",

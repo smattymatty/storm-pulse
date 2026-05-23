@@ -1,4 +1,4 @@
-"""Storm Pulse enrollment — CSR-based certificate provisioning."""
+"""CSR-based certificate provisioning."""
 
 from __future__ import annotations
 
@@ -34,11 +34,6 @@ class Credentials:
     hmac_key: Path
 
 
-# ---------------------------------------------------------------------------
-# Key generation + CSR
-# ---------------------------------------------------------------------------
-
-
 def generate_keypair() -> tuple[ec.EllipticCurvePrivateKey, bytes]:
     """Generate an EC P-256 keypair for mTLS client authentication.
 
@@ -67,11 +62,6 @@ def build_csr(private_key: ec.EllipticCurvePrivateKey, agent_id: str) -> bytes:
         .sign(private_key, hashes.SHA256())
     )
     return csr.public_bytes(serialization.Encoding.PEM)
-
-
-# ---------------------------------------------------------------------------
-# Enrollment HTTP request
-# ---------------------------------------------------------------------------
 
 
 def _friendly_http_error(exc: urllib.error.HTTPError) -> str:
@@ -121,7 +111,7 @@ def request_certificate(
     """
     if endpoint.startswith("http://"):
         logger.warning(
-            "Enrollment endpoint uses plain HTTP — credentials will be sent "
+            "Enrollment endpoint uses plain HTTP - credentials will be sent "
             "unencrypted. Use https:// in production."
         )
 
@@ -146,7 +136,7 @@ def request_certificate(
     except urllib.error.URLError as exc:
         reason = str(exc.reason) if exc.reason else str(exc)
         raise EnrollError(
-            f"Cannot reach {endpoint} — {reason}. "
+            f"Cannot reach {endpoint} - {reason}. "
             f"Is the dashboard running? Is the URL correct?"
         ) from exc
     except OSError as exc:
@@ -169,15 +159,10 @@ def request_certificate(
     return data
 
 
-# ---------------------------------------------------------------------------
-# Credential file writing
-# ---------------------------------------------------------------------------
-
-
 def _write_file(path: Path, data: bytes, mode: int) -> None:
     """Write data and set permissions atomically.
 
-    Writes to a .tmp file, sets permissions, then renames — so the
+    Writes to a .tmp file, sets permissions, then renames - so the
     target path never exists with wrong permissions.
     """
     tmp = path.with_suffix(".tmp")
@@ -241,7 +226,7 @@ def write_credentials(
     except (binascii.Error, ValueError) as exc:
         raise EnrollError(
             f"Dashboard returned an invalid HMAC key (bad base64). "
-            f"This may indicate a dashboard bug — contact the admin."
+            f"This may indicate a dashboard bug - contact the admin."
         ) from exc
 
     _write_file(paths.client_key, key_pem, 0o640)

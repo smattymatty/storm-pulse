@@ -1,4 +1,4 @@
-"""Storm Pulse status — local inspection of agent state."""
+"""Local inspection of agent state."""
 
 from __future__ import annotations
 
@@ -24,11 +24,6 @@ class StatusInfo:
     db_path: Path
     db_entry_count: int | None
     pid: int | None
-
-
-# ---------------------------------------------------------------------------
-# Collection helpers — each returns None on failure
-# ---------------------------------------------------------------------------
 
 
 def _read_cert_expiry(cert_path: Path) -> datetime | None:
@@ -68,13 +63,8 @@ def _find_agent_pid() -> int | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-
 def collect_status(config_path: Path) -> StatusInfo:
-    """Collect all status fields. Never raises — graceful degradation."""
+    """Collect all status fields. Never raises - graceful degradation."""
     from stormpulse import __version__
     from stormpulse.config import ConfigError, load_config
 

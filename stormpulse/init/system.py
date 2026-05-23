@@ -10,7 +10,7 @@ from stormpulse.init.checks import InitError
 from stormpulse.init.compose import parse_volume_mounts
 
 
-def _run_cmd(args: list[str], *, description: str) -> bool:
+def run_cmd(args: list[str], *, description: str) -> bool:
     """Run a system command, printing status. Returns True on success."""
     print(f"  {description}...", file=sys.stderr)
     try:
@@ -25,7 +25,7 @@ def _run_cmd(args: list[str], *, description: str) -> bool:
         return False
 
 
-def _run_find_apply(
+def run_find_apply(
     root: Path,
     exclude: list[Path],
     cmd_args: list[str],
@@ -75,11 +75,11 @@ def run_system_setup(
     compose_file: Path,
 ) -> None:
     """Best-effort system setup: docker group, git safe.directory, permissions."""
-    _run_cmd(
+    run_cmd(
         ["/usr/sbin/usermod", "-aG", "docker", "stormpulse"],
         description="Adding stormpulse to docker group",
     )
-    _run_cmd(
+    run_cmd(
         ["/usr/bin/git", "config", "--system", "--add", "safe.directory", str(project_dir)],
         description=f"Marking {project_dir} as git safe.directory",
     )
@@ -95,14 +95,14 @@ def run_system_setup(
             file=sys.stderr,
         )
     elif volume_dirs:
-        if not _run_find_apply(
+        if not run_find_apply(
             project_dir, volume_dirs,
             ["/usr/bin/chown", "root:stormpulse"],
             description=f"chown root:stormpulse {project_dir} (excluding {len(volume_dirs)} volume(s))",
         ):
             print("    Cannot set project directory permissions.", file=sys.stderr)
             return
-        _run_find_apply(
+        run_find_apply(
             project_dir, volume_dirs,
             ["/usr/bin/chmod", "g+w"],
             description=f"chmod g+w {project_dir} (excluding {len(volume_dirs)} volume(s))",
@@ -111,13 +111,13 @@ def run_system_setup(
         if existing:
             print(f"  Excluded {len(existing)} Docker volume(s) from ownership changes.", file=sys.stderr)
     else:
-        if not _run_cmd(
+        if not run_cmd(
             ["/usr/bin/chown", "-R", "root:stormpulse", str(project_dir)],
             description=f"chown -R root:stormpulse {project_dir}",
         ):
             print("    Cannot set project directory permissions.", file=sys.stderr)
             return
-        _run_cmd(
+        run_cmd(
             ["/usr/bin/chmod", "-R", "g+w", str(project_dir)],
             description=f"chmod -R g+w {project_dir}",
         )
@@ -125,8 +125,26 @@ def run_system_setup(
 
 def run_daemon_reload() -> None:
     """Reload systemd to pick up the new unit file."""
-    if not _run_cmd(
+    if not run_cmd(
         ["/usr/bin/systemctl", "daemon-reload"],
         description="Reloading systemd",
     ):
         raise InitError("systemctl daemon-reload failed")
+
+
+def restart_stormpulse() -> bool:
+    """Restart the stormpulse systemd service. Returns True on success."""
+    try:
+        subprocess.run(
+            ["/usr/bin/systemctl", "restart", "stormpulse"],
+            check=True,
+            capture_output=True,
+        )
+        return True
+    except FileNotFoundError:
+        print("  systemctl not found", file=sys.stderr)
+        return False
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode("utf-8", errors="replace").strip()
+        print(f"  Restart failed: {stderr or exc}", file=sys.stderr)
+        return False

@@ -1,3 +1,4 @@
+LICENSE
 README.md
 pyproject.toml
 storm_pulse_agent.egg-info/PKG-INFO
@@ -15,7 +16,12 @@ stormpulse/enroll.py
 stormpulse/metrics.py
 stormpulse/protocol.py
 stormpulse/status.py
+stormpulse/caddy/__init__.py
+stormpulse/caddy/commands.py
+stormpulse/caddy/init.py
+stormpulse/caddy/sync.py
 stormpulse/cli/__init__.py
+stormpulse/cli/caddy.py
 stormpulse/cli/enroll.py
 stormpulse/cli/garage.py
 stormpulse/cli/init.py
@@ -29,11 +35,18 @@ stormpulse/commands/registry.py
 stormpulse/garage/__init__.py
 stormpulse/garage/clear_bucket.py
 stormpulse/garage/commands.py
+stormpulse/garage/delete_provisioned_bucket.py
 stormpulse/garage/discover.py
 stormpulse/garage/init.py
 stormpulse/garage/parse.py
+stormpulse/garage/provision_additional_key.py
+stormpulse/garage/provision_bucket.py
+stormpulse/garage/rotate_key.py
+stormpulse/garage/runner.py
 stormpulse/garage/s3.py
+stormpulse/garage/set_cors.py
 stormpulse/garage/state.py
+stormpulse/garage/walk_bucket_stats.py
 stormpulse/init/__init__.py
 stormpulse/init/checks.py
 stormpulse/init/compose.py
@@ -41,6 +54,7 @@ stormpulse/init/files.py
 stormpulse/init/generate.py
 stormpulse/init/orchestrator.py
 stormpulse/init/prompts.py
+stormpulse/init/registry.py
 stormpulse/init/system.py
 stormpulse/logging/__init__.py
 stormpulse/logging/init.py

@@ -461,7 +461,7 @@ async def test_metrics_loop_survives_collection_error(
 
 
 # ---------------------------------------------------------------------------
-# Dispatch — command request
+# Dispatch - command request
 # ---------------------------------------------------------------------------
 
 
@@ -507,7 +507,7 @@ async def test_dispatch_bad_hmac(agent: Agent) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dispatch — command sequence
+# Dispatch - command sequence
 # ---------------------------------------------------------------------------
 
 
@@ -782,7 +782,7 @@ async def test_log_batch_ack_advances_position(agent: Agent) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sequence — continue-through-failure + invalid command
+# Sequence - continue-through-failure + invalid command
 # ---------------------------------------------------------------------------
 
 
@@ -842,7 +842,7 @@ async def test_command_result_logged_to_pulse_logger(
 
 
 # ---------------------------------------------------------------------------
-# Reconnect loop — ConnectionClosed and generic Exception branches
+# Reconnect loop - ConnectionClosed and generic Exception branches
 # ---------------------------------------------------------------------------
 
 
@@ -1064,7 +1064,7 @@ def _set_cors_cmd_def() -> CommandDef:
 
     The agent fixture has no garage config so the registry doesn't include
     garage commands by default. Same shape as how the precedent dispatch
-    tests inject a synthetic CommandDef — this just uses the production one.
+    tests inject a synthetic CommandDef - this just uses the production one.
     """
     from pathlib import Path
     from stormpulse.config import GarageConfig
@@ -1134,7 +1134,7 @@ async def test_garage_bucket_set_cors_dispatch_validates_origins_pattern(
 async def test_garage_bucket_set_cors_dispatch_passes_json_origins_to_factory(
     agent: Agent,
 ) -> None:
-    """Valid params reach the factory with origins still as a JSON string —
+    """Valid params reach the factory with origins still as a JSON string -
     the factory decodes; the dispatcher just shuttles strings."""
     from stormpulse.commands.jobs import JobManager
     from stormpulse.protocol import CommandRequestPayload

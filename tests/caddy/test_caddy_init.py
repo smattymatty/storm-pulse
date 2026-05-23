@@ -7,6 +7,7 @@ tests with mocked input/root/restart.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -98,7 +99,7 @@ class TestRemoveCaddySection:
         out = remove_caddy_section(lines)
         assert "[caddy]\n" not in out
         assert 'enabled = true\n' not in out
-        # The preceding blank line was eaten — no stacked blanks.
+        # The preceding blank line was eaten - no stacked blanks.
         assert out[-1] == 'id = "x"\n'
 
     def test_removes_section_in_middle(self) -> None:
@@ -216,10 +217,10 @@ class TestRunCaddyInit:
                     run_caddy_init(cfg)
 
     @staticmethod
-    def _prompt_mock(responses: list[str]):
-        """Build a mock _prompt that respects the ``default=`` kwarg.
+    def _prompt_mock(responses: list[str]) -> Callable[..., str]:
+        """Build a mock prompt that respects the ``default=`` kwarg.
 
-        The real ``_prompt`` returns the default when the user presses
+        The real ``prompt`` returns the default when the user presses
         enter on an empty line; a naive ``side_effect`` doesn't, which
         would exhaust the iterator inside validation loops that retry
         on empty input.
@@ -236,7 +237,7 @@ class TestRunCaddyInit:
     ) -> None:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
-        # Main Caddyfile that imports the conf.d glob — passes the
+        # Main Caddyfile that imports the conf.d glob - passes the
         # verify_drop_in_imported check so the orchestrator takes the
         # "Enable Caddy integration?" path, not the warn-and-bail path.
         caddyfile = tmp_path / "Caddyfile"
@@ -249,10 +250,9 @@ class TestRunCaddyInit:
                 "stormpulse.caddy.init.find_caddy_main",
                 return_value=caddyfile,
             ):
-                with patch(
-                    "stormpulse.caddy.init._prompt",
-                    side_effect=self._prompt_mock(["", "", "y", "n"]),
-                ):
+                mock_prompt = self._prompt_mock(["", "", "y", "n"])
+                with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
+                     patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
                     run_caddy_init(cfg)
 
         content = cfg.read_text()
@@ -269,7 +269,7 @@ class TestRunCaddyInit:
     ) -> None:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
-        # Main Caddyfile WITHOUT any import — verify_drop_in_imported
+        # Main Caddyfile WITHOUT any import - verify_drop_in_imported
         # returns an error message, the orchestrator switches to the
         # warn-with-default-no path. We answer 'n' to "write anyway?"
         # to confirm the abort.
@@ -281,10 +281,9 @@ class TestRunCaddyInit:
                 "stormpulse.caddy.init.find_caddy_main",
                 return_value=caddyfile,
             ):
-                with patch(
-                    "stormpulse.caddy.init._prompt",
-                    side_effect=self._prompt_mock(["", "", "n"]),
-                ):
+                mock_prompt = self._prompt_mock(["", "", "n"])
+                with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
+                     patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
                     run_caddy_init(cfg)
 
         # The [caddy] section was NOT written.
@@ -305,16 +304,15 @@ class TestRunCaddyInit:
                 "stormpulse.caddy.init.find_caddy_main",
                 return_value=caddyfile,
             ):
-                with patch(
-                    "stormpulse.caddy.init._prompt",
-                    side_effect=self._prompt_mock(["", "", "y"]),
-                ):
+                mock_prompt = self._prompt_mock(["", "", "y"])
+                with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
+                     patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
                     with patch(
                         "stormpulse.caddy.init.restart_stormpulse",
                     ) as mock_restart:
                         run_caddy_init(cfg)
 
-        # Section written but restart NEVER called — fix-import-first
+        # Section written but restart NEVER called - fix-import-first
         # path skips the restart prompt entirely.
         assert "[caddy]" in cfg.read_text()
         mock_restart.assert_not_called()

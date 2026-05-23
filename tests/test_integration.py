@@ -1,4 +1,4 @@
-"""Integration tests — real WebSocket server, real auth, real protocol parsing."""
+"""Integration tests - real WebSocket server, real auth, real protocol parsing."""
 
 from __future__ import annotations
 
@@ -224,11 +224,11 @@ async def test_nonce_replay_rejected(tmp_path: Path, free_port: int) -> None:
 
         msg = sign_command_request("git_pull", nonce=fixed_nonce)
 
-        # First send — should succeed
+        # First send - should succeed
         await ws.send(msg)
         first_results.extend(await _collect_results(ws, count=1, timeout=2.0))
 
-        # Replay — should be silently rejected
+        # Replay - should be silently rejected
         await ws.send(msg)
         replay_results.extend(await _drain_non_results(ws, timeout=0.5))
 
@@ -298,7 +298,7 @@ async def test_stale_timestamp_rejected(tmp_path: Path, free_port: int) -> None:
 
 @pytest.mark.asyncio
 async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
-    """3-command sequence where 2nd fails — only 2 results sent."""
+    """3-command sequence where 2nd fails - only 2 results sent."""
     config = build_config(tmp_path, free_port)
     store = NonceStore(tmp_path / "nonces.db")
     shutdown = asyncio.Event()
@@ -314,7 +314,7 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
         )
         await ws.send(msg)
 
-        # Collect results — expect exactly 1 (2nd skipped due to 1st failure)
+        # Collect results - expect exactly 1 (2nd skipped due to 1st failure)
         results.extend(await _collect_results(ws, count=2, timeout=3.0))
         server_done.set()
 
@@ -346,7 +346,7 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
 
 @pytest.mark.asyncio
 async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
-    """2-command sequence where all succeed — 2 results in order."""
+    """2-command sequence where all succeed - 2 results in order."""
     config = build_config(tmp_path, free_port)
     store = NonceStore(tmp_path / "nonces.db")
     shutdown = asyncio.Event()
@@ -393,7 +393,7 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
 
 @pytest.mark.asyncio
 async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
-    """Sequence with a bogus command name — pre-validation blocks all execution."""
+    """Sequence with a bogus command name - pre-validation blocks all execution."""
     config = build_config(tmp_path, free_port)
     store = NonceStore(tmp_path / "nonces.db")
     shutdown = asyncio.Event()
@@ -545,7 +545,7 @@ async def test_reconnect_after_disconnect(tmp_path: Path, free_port: int) -> Non
 
 @pytest.mark.asyncio
 async def test_shutdown_during_backoff(tmp_path: Path, free_port: int) -> None:
-    """Shutdown event during reconnect backoff — agent exits without hanging."""
+    """Shutdown event during reconnect backoff - agent exits without hanging."""
     config = build_config(tmp_path, free_port)
     store = NonceStore(tmp_path / "nonces.db")
     shutdown = asyncio.Event()

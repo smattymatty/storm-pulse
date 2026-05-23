@@ -1,4 +1,4 @@
-"""Storm Pulse Agent — secure server management over WebSocket."""
+"""Storm Pulse Agent - secure server management over WebSocket."""
 
 from importlib.metadata import version
 

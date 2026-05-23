@@ -58,7 +58,7 @@ class LogShipper:
         - All new lines were filtered out (not relevant to this group).
 
         Returns a Batch with ``lines=[]`` and ``dropped > 0`` when lines
-        were read but all failed to parse — the dashboard needs this signal
+        were read but all failed to parse - the dashboard needs this signal
         to detect a source producing unparseable output.
 
         Caller is responsible for invoking this from a thread.
@@ -75,7 +75,7 @@ class LogShipper:
 
         for line in raw_lines:
             if filter_substr and filter_substr not in line:
-                # Silent skip — not a drop; just not relevant to this group.
+                # Silent skip - not a drop; just not relevant to this group.
                 continue
             any_matched_filter = True
             entry = self._parser(line)
@@ -84,7 +84,7 @@ class LogShipper:
                 continue
             parsed.append(entry)
 
-        # Nothing matched the filter — not our business, nothing to ship.
+        # Nothing matched the filter - not our business, nothing to ship.
         if filter_substr and not any_matched_filter:
             return None
 

@@ -1,11 +1,8 @@
 """Garage-specific whitelisted commands.
 
-Most commands resolve to: docker exec <container> /garage <subcommand>
-with absolute paths and shell=False.
-
-Exception: ``garage_refresh`` is an internal command handled directly
-by the agent — it triggers immediate state collection and metrics push
-without executing a subprocess.
+Most resolve to ``docker exec <container> /garage <subcommand>``, shell=False.
+``garage_refresh`` is the exception: an internal command handled directly by
+the agent, triggering immediate state collection without a subprocess.
 """
 
 from __future__ import annotations
@@ -16,12 +13,15 @@ from stormpulse.config import CommandDef, GarageConfig, ParamDef
 # enforces): 3-63 chars, lowercase alphanumeric + hyphens, must start
 # AND end alphanumeric. Garage CLI rejects names with leading
 # underscores, uppercase, or any underscore at all on S3-strict
-# deployments — see ``provision_bucket.py``'s throwaway-alias comment
-# for the empirical lesson. Matches the 16-char bucket-UUID prefix
-# (lowercase hex) too, so this pattern serves both display-name
-# validation AND bucket_id-as-reference validation in commands like
-# ``garage_delete_provisioned_bucket``.
+# deployments - see ``provision_bucket.py``'s throwaway-alias comment
+# for the empirical lesson.
 _BUCKET_NAME_PATTERN = r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]"
+# Garage internal bucket UUID. The full form is 64 lowercase hex chars;
+# the CLI displays a 16-char unique prefix and accepts either form as a
+# bucket reference. The ``garage_state`` snapshot pushed to Storm carries
+# the full 64-char form, so anywhere bucket_id rides as a parameter from
+# the dashboard, it arrives at full length. Match both.
+_BUCKET_ID_PATTERN = r"[a-f0-9]{16,64}"
 # Key names are not S3-bucket-shaped; Garage allows the broader set.
 # Storm provisions keys as ``usr-<pk>-<bucket>-<tier>`` which uses
 # hyphens only, but other ops paths may include underscores or mixed
@@ -344,13 +344,13 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         # ----- Internal -----
         "garage_refresh": CommandDef(
             group="garage",
-            command=["garage_refresh"],  # internal — not a subprocess
+            command=["garage_refresh"],  # internal - not a subprocess
             timeout=30,
-            description="Internal command — triggers immediate state collection and metrics push",
+            description="Internal command - triggers immediate state collection and metrics push",
         ),
         "garage_provision_customer_bucket": CommandDef(
             group="garage",
-            command=["garage_provision_customer_bucket"],  # internal — handled by JobManager
+            command=["garage_provision_customer_bucket"],  # internal - handled by JobManager
             timeout=600,  # per-step reference; long_running ignores it for total duration
             description="Orchestrated bucket + admin key provisioning. Atomic with rollback. The rw/ro keys are added on demand via garage_provision_additional_key.",
             sensitive_output=True,  # secrets ride in stdout/extras
@@ -372,7 +372,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_delete_provisioned_bucket": CommandDef(
             group="garage",
-            command=["garage_delete_provisioned_bucket"],  # internal — handled by JobManager
+            command=["garage_delete_provisioned_bucket"],  # internal - handled by JobManager
             timeout=120,
             requires_confirmation=True,
             description="Orchestrated bucket deletion: detaches all aliases (using a temp global to bypass the orphan-rule deadlock when only locals exist), then deletes. Atomic with rollback.",
@@ -381,14 +381,14 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
                     default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="Bucket UUID (16-char Garage ID) to delete",
+                    pattern=_BUCKET_ID_PATTERN,
+                    description="Bucket UUID (16 or 64-char Garage ID) to delete",
                 ),
             },
         ),
         "garage_provision_additional_key": CommandDef(
             group="garage",
-            command=["garage_provision_additional_key"],  # internal — handled by JobManager
+            command=["garage_provision_additional_key"],  # internal - handled by JobManager
             timeout=120,
             description="Orchestrated provisioning of an additional rw or ro key on an existing bucket. Atomic with rollback.",
             sensitive_output=True,  # the new secret rides in stdout/extras
@@ -403,8 +403,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
                     default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="Bucket UUID (16-char Garage ID) to attach the local alias to",
+                    pattern=_BUCKET_ID_PATTERN,
+                    description="Bucket UUID (16 or 64-char Garage ID) to attach the local alias to",
                 ),
                 "local_alias": ParamDef(
                     placeholder="local_alias",
@@ -422,7 +422,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_rotate_customer_key": CommandDef(
             group="garage",
-            command=["garage_rotate_customer_key"],  # internal — handled by JobManager
+            command=["garage_rotate_customer_key"],  # internal - handled by JobManager
             timeout=120,
             description="Orchestrated key rotation: create new key, attach local alias, delete old key. Atomic with rollback.",
             sensitive_output=True,  # secrets ride in stdout/extras
@@ -443,8 +443,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
                     default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="Bucket UUID the local alias is attached to",
+                    pattern=_BUCKET_ID_PATTERN,
+                    description="Bucket UUID (16 or 64-char Garage ID) the local alias is attached to",
                 ),
                 "local_alias": ParamDef(
                     placeholder="local_alias",
@@ -462,7 +462,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_clear": CommandDef(
             group="garage",
-            command=["garage_bucket_clear"],  # internal — handled by JobManager, not a subprocess
+            command=["garage_bucket_clear"],  # internal - handled by JobManager, not a subprocess
             timeout=600,  # per-batch reference; long_running ignores it for total duration
             description="Bulk-delete every object in a bucket via the local Garage S3 endpoint",
             requires_confirmation=True,
@@ -503,7 +503,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_set_cors": CommandDef(
             group="garage",
-            command=["garage_bucket_set_cors"],  # internal — handled by JobManager, not a subprocess
+            command=["garage_bucket_set_cors"],  # internal - handled by JobManager, not a subprocess
             timeout=30,  # single API call; long_running ignores this for total duration
             description="Apply the platform-default CORS rule to a bucket via the local Garage S3 endpoint",
             sensitive_output=True,  # the secret arrives in params; never log them
@@ -553,7 +553,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_walk_bucket_stats": CommandDef(
             group="garage",
-            command=["garage_walk_bucket_stats"],  # internal — handled by JobManager
+            command=["garage_walk_bucket_stats"],  # internal - handled by JobManager
             timeout=120,  # 100k objects ÷ 1000/page = 100 pages; ~1s/page p95
             description=(
                 "Walk a bucket on the local Garage S3 endpoint to compute "
@@ -597,7 +597,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "prefix": ParamDef(
                     placeholder="prefix",
                     default="",
-                    # S3 prefix — empty (root) or any path-safe sequence
+                    # S3 prefix - empty (root) or any path-safe sequence
                     # ending in /. Validated stricter by the Storm-side
                     # _validate_listing_prefix before dispatch reaches here.
                     pattern=r"|[A-Za-z0-9_\-./]+/",

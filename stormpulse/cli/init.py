@@ -11,6 +11,11 @@ logger = logging.getLogger("stormpulse")
 
 
 def cmd_init(args: argparse.Namespace) -> None:
+    # Import feature init modules for their registration side effects: each
+    # registers an install step the orchestrator runs without importing it.
+    # See CORE-000 and stormpulse/init/registry.py.
+    import stormpulse.garage.init  # noqa: F401
+    import stormpulse.logging.init  # noqa: F401
     from stormpulse.init import InitError, run_init
 
     try:

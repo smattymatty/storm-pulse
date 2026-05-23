@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.init — detection, compose parsing, TOML writing."""
+"""Tests for stormpulse.garage.init - detection, compose parsing, TOML writing."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from stormpulse.init import InitError
 from stormpulse.garage.init import (
     append_garage_section,
     find_garage_config,
+    garage_init_step,
     has_garage_section,
     parse_garage_container_name,
     remove_garage_section,
@@ -321,3 +322,58 @@ class TestRunGarageInit:
             ):
                 with pytest.raises(InitError, match="No Garage installation"):
                     run_garage_init(tmp_path / "stormpulse.toml")
+
+
+# ---------------------------------------------------------------------------
+# Init step (registered with the orchestrator)
+# ---------------------------------------------------------------------------
+
+
+class TestGarageInitStep:
+    def test_no_garage_skips(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "stormpulse.toml"
+        cfg.write_text(_BASE_TOML)
+        with patch(
+            "stormpulse.garage.init.find_garage_config",
+            return_value=None,
+        ):
+            garage_init_step(cfg)
+        assert has_garage_section(cfg) is False
+
+    def test_declined_skips(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "stormpulse.toml"
+        cfg.write_text(_BASE_TOML)
+        gcfg = tmp_path / "garage.toml"
+        gcfg.write_text("[s3_api]\n")
+        with patch(
+            "stormpulse.garage.init.find_garage_config", return_value=gcfg
+        ), patch(
+            "stormpulse.garage.init.prompt_confirm", return_value=False
+        ):
+            garage_init_step(cfg)
+        assert has_garage_section(cfg) is False
+
+    def test_accepted_appends_section(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "stormpulse.toml"
+        cfg.write_text(_BASE_TOML)
+        gcfg = tmp_path / "garage.toml"
+        gcfg.write_text("[s3_api]\n")
+        values: dict[str, str | int] = {
+            "container_name": "garaged",
+            "garage_binary": "/garage",
+            "docker_binary": "/usr/bin/docker",
+            "garage_config_path": str(gcfg),
+            "state_push_interval_seconds": 30,
+        }
+        with patch(
+            "stormpulse.garage.init.find_garage_config", return_value=gcfg
+        ), patch(
+            "stormpulse.garage.init.prompt_confirm", return_value=True
+        ), patch(
+            "stormpulse.garage.init.prompt_garage_values", return_value=values
+        ):
+            garage_init_step(cfg)
+        with open(cfg, "rb") as f:
+            raw = tomllib.load(f)
+        assert raw["garage"]["enabled"] is True
+        assert raw["garage"]["container_name"] == "garaged"

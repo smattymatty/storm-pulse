@@ -1,11 +1,10 @@
 """Synchronous file tailer.
 
-Reads new lines from a log file starting at the last-recorded byte
-position. Detects rotation by comparing inode. Caller is responsible
-for running this in a thread via ``asyncio.to_thread``.
+Reads new lines from the last-recorded byte position; rotation detected by
+inode comparison. Caller runs this in a thread via ``asyncio.to_thread``.
 
-Position is NOT advanced until the caller confirms the batch has been
-shipped. This ensures at-least-once delivery across restarts.
+Position is NOT advanced until the caller confirms the batch shipped - this
+is the at-least-once delivery guarantee across restarts.
 """
 
 from __future__ import annotations
@@ -42,11 +41,11 @@ class LogTailer:
 
         Returns a tuple of (lines, from_position, to_position).
         ``from_position`` is the byte offset at the start of the read;
-        ``to_position`` is after the last line actually read — unread
+        ``to_position`` is after the last line actually read - unread
         lines beyond ``max_lines`` stay in the file and are picked up
         on the next call.
 
-        Does NOT advance the stored position — call ``confirm_shipped``
+        Does NOT advance the stored position - call ``confirm_shipped``
         to persist ``to_position`` after the batch is acknowledged.
         """
         path = self._group.source_path
@@ -124,7 +123,7 @@ def _advance_nanos(ts: str) -> str:
     or Docker will return the same line forever next cycle.
 
     Docker's ``--since`` flag only parses up to **microsecond** precision
-    — nanosecond-precision values silently return an empty result. So we
+    - nanosecond-precision values silently return an empty result. So we
     truncate the input to microseconds, add 1µs, and reformat. The
     smallest effective resolution is 1µs, which is plenty: we're past
     any Docker log line that shared the same microsecond window.
@@ -165,7 +164,7 @@ class DockerTailer:
         Returns ``(lines, from_ts, to_ts)``. ``from_ts`` is the stored
         last_ts (or the current time on first run, to avoid replaying
         the entire container history). ``to_ts`` is the timestamp of
-        the last line received — stays equal to ``from_ts`` when no
+        the last line received - stays equal to ``from_ts`` when no
         new lines arrive so we don't advance past unseen output.
 
         Never raises: missing binary, missing container, timeout, and
@@ -177,7 +176,7 @@ class DockerTailer:
             # Persist the seed immediately so the next interval actually
             # queries a back-window. Without this, every call would re-seed
             # to "now" and nothing would ever be shipped until the first
-            # confirmed batch — and the first batch can't happen if the
+            # confirmed batch - and the first batch can't happen if the
             # window is empty.
             self._store.set_docker_ts(
                 self._group.name, self._group.container_name, from_ts,
@@ -454,5 +453,5 @@ class StreamingDockerTailer:
 
 
 def _inode(path: str) -> int:
-    """Public-ish helper for tests — returns the current inode of a path."""
+    """Public-ish helper for tests - returns the current inode of a path."""
     return os.stat(path).st_ino

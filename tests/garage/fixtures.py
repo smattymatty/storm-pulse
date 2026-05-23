@@ -1,4 +1,4 @@
-"""Real stdout captured from Garage CLI commands — used as test fixtures."""
+"""Real stdout captured from Garage CLI commands - used as test fixtures."""
 
 STATUS_OUTPUT = """\
 ==== HEALTHY NODES ====

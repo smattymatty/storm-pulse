@@ -1,26 +1,15 @@
-"""Handler for the ``garage_bucket_set_cors`` long-running command.
+"""Handler for ``garage_bucket_set_cors``.
 
-The dashboard dispatches a ``command.request`` carrying the customer's
-admin S3 secret in the params plus a JSON-encoded list of allowed origins.
-This handler:
+Issues one ``PutBucketCors`` with a platform-default rule (methods, headers,
+expose-headers, max-age hardcoded; only origins varies). The customer's
+admin secret rides in dispatch params, lives in process memory for the job's
+lifetime, and is never persisted or logged.
 
-1. Decodes ``origins`` from a JSON-string param. The Pulse params layer is
-   string-keyed-string-valued (see ``stormpulse.protocol.CommandRequestPayload``);
-   ``origins`` is the only command today that needs a list value, so it
-   crosses the wire as ``'["https://stormdevelopments.ca"]'`` and is
-   decoded here. Decode failure or wrong shape -> the factory returns
-   ``None`` (same disposition as a missing required param).
-2. Constructs a ``GarageS3Client`` with the per-call credentials. The
-   secret lives in agent process memory only for the duration of the job;
-   it is never persisted, never logged, and dropped when the function
-   returns.
-3. Issues one ``PutBucketCors`` against the local Garage S3 endpoint with
-   the platform-default rule shape (methods, headers, expose-headers,
-   max-age are hardcoded; only origins varies). Garage accepts this
-   without ``Content-MD5`` (verified via spike-of-a-spike 2026-05-10).
-4. Returns ``JobOutcome`` matching the ``clear_bucket`` failure-reason
-   vocabulary: ``auth_failed`` on 401/403, ``os_error`` on other HTTP
-   failures, success-with-rule-echoed-in-extras on 2xx.
+Pulse params are string-keyed-string-valued, so ``origins`` is JSON-encoded
+on the wire and decoded here. Decode failure or wrong shape returns ``None``
+from the factory - same disposition as a missing required param.
+
+Failure reasons mirror ``clear_bucket``: ``auth_failed``, ``os_error``.
 """
 
 from __future__ import annotations
@@ -55,17 +44,12 @@ EXPOSE_HEADERS: list[str] = ["ETag"]
 MAX_AGE_SECONDS: int = 3000
 
 
-# ---------------------------------------------------------------------------
-# Public entrypoint — called by agent.py to wire into JobManager
-# ---------------------------------------------------------------------------
-
-
 def make_set_cors_handler(params: dict[str, str]) -> JobHandler | None:
     """Build a JobHandler for ``garage_bucket_set_cors`` from runtime params.
 
     Returns None if a required param is missing, ``origins`` fails to
     decode as a non-empty ``list[str]``, or the S3 endpoint is malformed
-    — the caller emits a structured no-handler failure rather than crashing.
+    - the caller emits a structured no-handler failure rather than crashing.
     """
     required = (
         "bucket_name",
@@ -133,11 +117,6 @@ def _decode_origins(raw: str) -> list[str] | None:
         )
         return None
     return decoded
-
-
-# ---------------------------------------------------------------------------
-# Core logic — directly testable with a fake client
-# ---------------------------------------------------------------------------
 
 
 async def run_set_cors(

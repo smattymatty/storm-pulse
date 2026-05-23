@@ -1,32 +1,13 @@
-"""Handler for the ``garage_bucket_clear`` long-running command.
+"""Handler for ``garage_bucket_clear``.
 
-The dashboard dispatches a ``command.request`` with the customer's admin
-S3 secret in the params. This handler:
+Bulk-deletes every object in a bucket via the local Garage S3 endpoint.
+The customer's admin secret rides in dispatch params, lives in process
+memory for the job's lifetime only, and is never persisted or logged.
+HeadBucket validates credentials before any delete; per-object errors
+from DeleteObjects fail the whole job (the bug class the Django path
+got wrong - 200 OK with non-empty Errors silently treated as success).
 
-1. Constructs a ``GarageS3Client`` with those credentials. The secret
-   lives in agent process memory only for the duration of the job; it is
-   never persisted, never logged, and dropped when the function returns.
-2. Validates the credentials with a HeadBucket pre-flight. Bad creds
-   produce a clean ``failure_reason="auth_failed"`` outcome before any
-   delete happens.
-3. Paginates the bucket contents to compute an accurate total. Until the
-   list is complete, progress events report ``total=None``.
-4. Deletes in batches of 1000 (the S3 DeleteObjects upper bound),
-   inspecting per-object errors after each batch — this is the bug class
-   that the Django path got wrong (200 OK with non-empty ``Errors`` array
-   silently treated as success). The contract here is strict: any
-   per-object error fails the whole job with ``failure_reason="partial_failure"``.
-5. Emits ``stage="finalizing"`` while computing the summary, then
-   returns a ``JobOutcome`` carrying the summary as extras.
-
-Failure modes and their ``failure_reason`` values:
-
-- ``auth_failed``      — HeadBucket returned 403 / SignatureDoesNotMatch.
-- ``partial_failure``  — DeleteObjects reported per-object errors. The
-                          dashboard treats this as overall failure (P1
-                          contract): bucket counts stay where they were.
-- ``os_error``         — list/delete request failed at HTTP level
-                          (network, server error, etc.).
+Failure reasons: ``auth_failed``, ``partial_failure``, ``os_error``.
 """
 
 from __future__ import annotations
@@ -50,15 +31,10 @@ _BATCH_SIZE = 1000  # S3 DeleteObjects accepts at most 1000 keys per call.
 _MAX_REPORTED_ERRORS = 10  # Trim the errors array on the wire to keep messages small.
 
 
-# ---------------------------------------------------------------------------
-# Public entrypoint — called by agent.py to wire into JobManager
-# ---------------------------------------------------------------------------
-
-
 def make_clear_bucket_handler(params: dict[str, str]) -> JobHandler | None:
     """Build a JobHandler for ``garage_bucket_clear`` from runtime params.
 
-    Returns None if a required param is missing — the caller emits a
+    Returns None if a required param is missing - the caller emits a
     structured no-handler failure rather than crashing.
     """
     required = ("bucket_name", "s3_endpoint", "region", "access_key_id", "secret_access_key")
@@ -90,11 +66,6 @@ def make_clear_bucket_handler(params: dict[str, str]) -> JobHandler | None:
         return await run_clear_bucket(progress, client, bucket)
 
     return handler
-
-
-# ---------------------------------------------------------------------------
-# Core logic — directly testable with a fake client
-# ---------------------------------------------------------------------------
 
 
 async def run_clear_bucket(
@@ -171,7 +142,7 @@ async def run_clear_bucket(
 
     total = len(all_keys)
     if total == 0:
-        # Nothing to delete — succeed with zero counts.
+        # Nothing to delete - succeed with zero counts.
         return JobOutcome(
             success=True,
             exit_code=0,

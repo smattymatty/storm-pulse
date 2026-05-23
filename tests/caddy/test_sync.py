@@ -21,6 +21,7 @@ import pytest
 from stormpulse.caddy.sync import (
     _atomic_write_or_remove,
     _post_caddy_load,
+    _read_and_absolutize_imports,
     make_caddy_sync_handler,
 )
 from stormpulse.config import CaddyConfig
@@ -31,11 +32,20 @@ from stormpulse.config import CaddyConfig
 # ---------------------------------------------------------------------------
 
 
-def _make_config(tmp_path: Path) -> CaddyConfig:
+def _make_config(tmp_path: Path, main_caddyfile_content: str = "# stub\n") -> CaddyConfig:
+    """Build a CaddyConfig and write the main Caddyfile to disk.
+
+    Handler reads the main Caddyfile during reload; tests need it to
+    exist. Default content is a comment - Caddy accepts an empty/
+    comment-only config, which is enough for the reload mock to be
+    exercised without coupling tests to a specific Caddyfile shape.
+    """
+    main_caddyfile = tmp_path / "Caddyfile"
+    main_caddyfile.write_text(main_caddyfile_content)
     return CaddyConfig(
         enabled=True,
         admin_url="http://localhost:2019",
-        main_caddyfile=tmp_path / "Caddyfile",
+        main_caddyfile=main_caddyfile,
         drop_in_path=tmp_path / "conf.d" / "cellar-custom-domains.caddy",
     )
 
@@ -51,7 +61,7 @@ async def _run_handler(handler: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# _atomic_write_or_remove — pure file I/O, no mocks needed
+# _atomic_write_or_remove - pure file I/O, no mocks needed
 # ---------------------------------------------------------------------------
 
 
@@ -86,7 +96,7 @@ class TestAtomicWriteOrRemove:
 
 
 # ---------------------------------------------------------------------------
-# _post_caddy_load — mocked HTTPConnection
+# _post_caddy_load - mocked HTTPConnection
 # ---------------------------------------------------------------------------
 
 
@@ -180,7 +190,7 @@ class TestPostCaddyLoad:
 
 
 # ---------------------------------------------------------------------------
-# make_caddy_sync_handler — wires _post_caddy_load + _atomic_write
+# make_caddy_sync_handler - wires _post_caddy_load + _atomic_write
 # ---------------------------------------------------------------------------
 
 
@@ -223,10 +233,11 @@ class TestCaddySyncHandler:
         assert not cfg.drop_in_path.exists()
         assert outcome.extras["removed"] is True
 
-    def test_load_failure_does_not_write_fragment(self, tmp_path: Path) -> None:
+    def test_reload_failure_leaves_disk_updated(self, tmp_path: Path) -> None:
+        """Persist happens first; reload failure leaves disk newer than live."""
         cfg = _make_config(tmp_path)
         cfg.drop_in_path.parent.mkdir()
-        cfg.drop_in_path.write_text("previous good content")
+        cfg.drop_in_path.write_text("previous content")
 
         mock_conn = _make_mock_connection(
             status=400, body="syntax error",
@@ -236,26 +247,25 @@ class TestCaddySyncHandler:
             return_value=mock_conn,
         ):
             handler = make_caddy_sync_handler(
-                cfg, {"region": "vancouver-1", "fragment": "broken"},
+                cfg, {"region": "vancouver-1", "fragment": "new content"},
             )
             outcome = asyncio.run(_run_handler(handler))
 
         assert outcome.success is False
         assert outcome.failure_reason == "reload_failed"
-        # On-disk fragment unchanged — eventually consistent.
-        assert cfg.drop_in_path.read_text() == "previous good content"
+        # Drop-in WAS updated - disk-truth even when live didn't accept.
+        # Next successful sync (or operator-initiated restart) restores
+        # consistency.
+        assert cfg.drop_in_path.read_text() == "new content"
 
-    def test_persist_failure_surfaces_after_successful_reload(
-        self, tmp_path: Path,
-    ) -> None:
+    def test_persist_failure_skips_reload(self, tmp_path: Path) -> None:
+        """If persist fails, reload is never attempted."""
         cfg = _make_config(tmp_path)
-        # Don't create parent dir — write will fail.
+        # Don't create parent dir - write will fail.
 
-        mock_conn = _make_mock_connection(status=200)
         with patch(
             "stormpulse.caddy.sync.http.client.HTTPConnection",
-            return_value=mock_conn,
-        ):
+        ) as mock_conn_cls:
             handler = make_caddy_sync_handler(
                 cfg, {"region": "vancouver-1", "fragment": "x"},
             )
@@ -263,11 +273,137 @@ class TestCaddySyncHandler:
 
         assert outcome.success is False
         assert outcome.failure_reason == "persist_failed"
+        # Reload was never attempted - no HTTPConnection construction.
+        mock_conn_cls.assert_not_called()
+
+    def test_post_body_is_main_caddyfile_not_fragment(
+        self, tmp_path: Path,
+    ) -> None:
+        """The /load body is the composed main Caddyfile, not the fragment.
+
+        Posting just the fragment would replace the whole running config
+        (Caddy /load is full-config). The agent must POST the main
+        Caddyfile so Caddy re-adapts the composed config from disk.
+        """
+        main_content = (
+            "{\n"
+            "    admin localhost:2019\n"
+            "}\n"
+            "\n"
+            "import /tmp/storm/conf.d/*.caddy\n"
+        )
+        cfg = _make_config(tmp_path, main_caddyfile_content=main_content)
+        cfg.drop_in_path.parent.mkdir()
+
+        mock_conn = _make_mock_connection(status=200)
+        with patch(
+            "stormpulse.caddy.sync.http.client.HTTPConnection",
+            return_value=mock_conn,
+        ):
+            handler = make_caddy_sync_handler(
+                cfg, {"region": "vancouver-1", "fragment": "example.com { }\n"},
+            )
+            outcome = asyncio.run(_run_handler(handler))
+
+        assert outcome.success is True
+        posted_body = mock_conn.request.call_args.kwargs["body"]
+        # Main Caddyfile content is in the body…
+        assert b"admin localhost:2019" in posted_body
+        # …and the per-region fragment is NOT (it lives on disk).
+        assert b"example.com" not in posted_body
+
+    def test_main_caddyfile_read_failure_returns_reload_failed(
+        self, tmp_path: Path,
+    ) -> None:
+        """If main Caddyfile is missing at reload time, surfaces reload_failed.
+
+        Drop-in is still written (disk-truth) - the next sync or
+        operator-fixed Caddyfile recovers cleanly.
+        """
+        cfg = CaddyConfig(
+            enabled=True,
+            admin_url="http://localhost:2019",
+            main_caddyfile=tmp_path / "missing-Caddyfile",
+            drop_in_path=tmp_path / "conf.d" / "drop-in.caddy",
+        )
+        cfg.drop_in_path.parent.mkdir()
+
+        handler = make_caddy_sync_handler(
+            cfg, {"region": "vancouver-1", "fragment": "x"},
+        )
+        outcome = asyncio.run(_run_handler(handler))
+
+        assert outcome.success is False
+        assert outcome.failure_reason == "reload_failed"
+        # Drop-in was still written - disk-truth.
+        assert cfg.drop_in_path.read_text() == "x"
+
+
+# ---------------------------------------------------------------------------
+# _read_and_absolutize_imports - pure string transform, no mocks
+# ---------------------------------------------------------------------------
+
+
+class TestReadAndAbsolutizeImports:
+    def test_absolute_imports_unchanged(self, tmp_path: Path) -> None:
+        path = tmp_path / "Caddyfile"
+        path.write_text("import /etc/caddy/conf.d/*.caddy\n")
+        result = _read_and_absolutize_imports(path)
+        assert result == "import /etc/caddy/conf.d/*.caddy\n"
+
+    def test_relative_imports_absolutized(self, tmp_path: Path) -> None:
+        path = tmp_path / "Caddyfile"
+        path.write_text("import conf.d/*.caddy\n")
+        result = _read_and_absolutize_imports(path)
+        assert result == f"import {tmp_path.as_posix()}/conf.d/*.caddy\n"
+
+    def test_comments_unchanged(self, tmp_path: Path) -> None:
+        path = tmp_path / "Caddyfile"
+        content = "# import this.caddy\n# import that.caddy\n"
+        path.write_text(content)
+        result = _read_and_absolutize_imports(path)
+        assert result == content
+
+    def test_non_import_lines_unchanged(self, tmp_path: Path) -> None:
+        path = tmp_path / "Caddyfile"
+        content = (
+            "{\n"
+            "    admin localhost:2019\n"
+            "}\n"
+            "\n"
+            'example.com {\n'
+            '    respond "ok"\n'
+            "}\n"
+        )
+        path.write_text(content)
+        result = _read_and_absolutize_imports(path)
+        assert result == content
+
+    def test_mixed_absolute_and_relative(self, tmp_path: Path) -> None:
+        path = tmp_path / "Caddyfile"
+        path.write_text(
+            "import /etc/caddy/global.caddy\n"
+            "import conf.d/*.caddy\n"
+            'respond "hi"\n'
+        )
+        result = _read_and_absolutize_imports(path)
+        expected = (
+            "import /etc/caddy/global.caddy\n"
+            f"import {tmp_path.as_posix()}/conf.d/*.caddy\n"
+            'respond "hi"\n'
+        )
+        assert result == expected
+
+    def test_empty_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "Caddyfile"
+        path.write_text("")
+        result = _read_and_absolutize_imports(path)
+        assert result == ""
 
 
 # ---------------------------------------------------------------------------
 # Integration: real http.server in a thread.
-# Belt-and-suspenders on the mocked tests above — confirms URL routing,
+# Belt-and-suspenders on the mocked tests above - confirms URL routing,
 # content-type, and body encoding survive a real socket round-trip.
 # ---------------------------------------------------------------------------
 
@@ -277,7 +413,7 @@ class _CaddyAdminStub(BaseHTTPRequestHandler):
 
     captured: dict[str, Any] = {}
 
-    def do_POST(self) -> None:  # noqa: N802 — required by BaseHTTPRequestHandler
+    def do_POST(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
         length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(length).decode("utf-8")
         # Stash for assertion.

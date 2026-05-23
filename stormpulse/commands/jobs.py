@@ -1,20 +1,10 @@
 """Background-task substrate for long-running commands.
 
-Long-running commands cannot complete inside the normal request-response
-flow. They produce one or more ``command.progress`` events while running and
-exactly one terminal ``command.result`` when done. This module owns the
-lifecycle: spawning the task, wiring the progress callback to the wire,
-catching exceptions, and emitting the terminal result.
-
-Standing decisions encoded here (see ``_architecture/specs`` for context):
-
-- Jobs do not survive an agent reconnect. On WebSocket close the manager
-  cancels every in-flight task; the dashboard sees the disconnect and
-  treats the pending row as ``agent_disconnected``.
-- Cancellation does **not** emit a terminal ``command.result``. The
-  dashboard infers failure from the disconnect.
-- Handler exceptions other than ``CancelledError`` are caught and converted
-  to a failure result with ``failure_reason="os_error"``.
+Jobs do not survive an agent reconnect: on WebSocket close every in-flight
+task is cancelled, no terminal ``command.result`` is emitted, and the
+dashboard infers failure from the disconnect. Handler exceptions other
+than ``CancelledError`` become a failure result with
+``failure_reason="os_error"``.
 """
 
 from __future__ import annotations
@@ -37,11 +27,6 @@ from stormpulse.protocol import (
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Public types
-# ---------------------------------------------------------------------------
-
-
 ProgressCallback = Callable[[str, int, int | None, str], Awaitable[None]]
 """(stage, current, total, message) -> awaitable.
 
@@ -59,7 +44,7 @@ class JobOutcome:
     Handlers stay focused on what they actually computed.
 
     ``extras`` is for command-specific summary fields that ride at the top
-    level of the wire payload — e.g. ``garage_bucket_clear`` reports
+    level of the wire payload - e.g. ``garage_bucket_clear`` reports
     ``deleted_count``, ``failed_count``, ``errors``, ``error``. Keys must
     not collide with standard ``CommandResultPayload`` field names; the
     job manager merges them via ``make_command_result(extras=...)``.
@@ -83,11 +68,6 @@ construct or send envelopes itself.
 
 SendCallback = Callable[[Envelope], Awaitable[None]]
 """How the manager puts a message on the wire."""
-
-
-# ---------------------------------------------------------------------------
-# JobManager
-# ---------------------------------------------------------------------------
 
 
 class JobManager:
@@ -114,12 +94,12 @@ class JobManager:
         ``on_success``, if provided, is awaited after the terminal
         ``command.result`` is emitted, but only when the job completed
         with ``outcome.success == True``. Used by the agent to fire
-        post-mutation hooks — e.g. refreshing Garage state and pushing
+        post-mutation hooks - e.g. refreshing Garage state and pushing
         fresh metrics so a stale state push doesn't overwrite the
         just-completed mutation.
 
         Raises ValueError if a job with this ``request_id`` is already
-        running — duplicate dispatch is a caller bug, not something to
+        running - duplicate dispatch is a caller bug, not something to
         silently swallow.
         """
         if request_id in self._jobs and not self._jobs[request_id].done():
@@ -140,7 +120,7 @@ class JobManager:
 
         Used by the agent to emit one-off results (e.g. a synthetic failure
         when a long-running command has no registered handler). Logs and
-        swallows send failures — the caller is in a non-recoverable path.
+        swallows send failures - the caller is in a non-recoverable path.
         """
         try:
             await self._send(envelope)
@@ -160,7 +140,7 @@ class JobManager:
 
         Called when the WebSocket connection closes. Jobs that were running
         will receive ``CancelledError`` and exit without emitting a terminal
-        result — the dashboard will see the disconnect and reconcile.
+        result - the dashboard will see the disconnect and reconcile.
         """
         active = [t for t in self._jobs.values() if not t.done()]
         if not active:
@@ -194,7 +174,7 @@ class JobManager:
             outcome = await handler(progress)
         except asyncio.CancelledError:
             # Agent disconnect or explicit shutdown. Do NOT emit a terminal
-            # result — the dashboard infers failure from the disconnect.
+            # result - the dashboard infers failure from the disconnect.
             self._jobs.pop(request_id, None)
             raise
         except Exception as exc:
@@ -264,7 +244,7 @@ class JobManager:
             try:
                 await self._send(envelope)
             except Exception:
-                # Don't crash the job if a single progress send fails — the
+                # Don't crash the job if a single progress send fails - the
                 # job will keep working and hit the next progress event or
                 # the terminal result, where send-failure is logged again.
                 logger.warning(

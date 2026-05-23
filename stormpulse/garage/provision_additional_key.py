@@ -1,25 +1,12 @@
-"""Handler for the ``garage_provision_additional_key`` command.
+"""Handler for ``garage_provision_additional_key``.
 
-Adds a new tiered key (rw or ro) to an existing bucket. The bucket
-must already exist with at least one alias (typically the admin key's
-local alias from ``provision_customer_bucket``).
+Adds a new tiered (rw or ro) key to an existing bucket: create key, allow
+permissions, attach local alias. Atomic rollback runs in reverse order; the
+bucket is never touched by rollback (this handler owns the new key only).
 
-Step ordering:
-
-  1. key create <new_key_name>
-  2. bucket allow <tier-flags> <bucket_id> --key <new_key_id>
-  3. bucket alias --local <new_key_id> <bucket_id> <local_alias>
-
-On failure, atomic rollback runs in reverse order (revoke perms,
-delete key). The bucket is never touched by rollback — this
-orchestrator does not own the bucket, only the new key.
-
-The bucket reference is the 16-char UUID prefix that Storm stores in
-``CustomerBucket.garage_bucket_id``. Garage CLI accepts that as a
-bucket reference; the full 64-char form is rejected.
-
-This is the ``rotate_key`` shape minus the old-key-deletion step:
-identical scaffolding, simpler completion contract.
+The bucket reference is the 16-char UUID prefix stored in
+``CustomerBucket.garage_bucket_id``; the full 64-char form is rejected by
+the Garage CLI.
 """
 
 from __future__ import annotations
@@ -33,7 +20,7 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import GarageParseError, parse_key_create
-from stormpulse.garage.provision_bucket import _run_garage  # reuse helper
+from stormpulse.garage.runner import run_garage  # reuse helper
 
 logger = logging.getLogger(__name__)
 
@@ -46,11 +33,6 @@ _TIER_FLAGS: dict[str, tuple[str, ...]] = {
     "rw": ("--read", "--write"),
     "ro": ("--read",),
 }
-
-
-# ---------------------------------------------------------------------------
-# Public entrypoint — called by agent.py
-# ---------------------------------------------------------------------------
 
 
 def make_provision_additional_key_handler(
@@ -94,11 +76,6 @@ def make_provision_additional_key_handler(
     return handler
 
 
-# ---------------------------------------------------------------------------
-# State tracking
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class _AdditionalKeyState:
     """What's been created so far, for rollback."""
@@ -109,11 +86,6 @@ class _AdditionalKeyState:
     new_key_id: str | None = None
     perms_granted: bool = False
     step_completed: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Core orchestration
-# ---------------------------------------------------------------------------
 
 
 async def run_provision_additional_key(
@@ -154,7 +126,7 @@ async def run_provision_additional_key(
 
     # ---- Step 1: key create <new_key_name> ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
-    rc, stdout, stderr = await _run_garage(
+    rc, stdout, stderr = await run_garage(
         garage_config, "key", "create", new_key_name,
     )
     if rc != 0:
@@ -192,7 +164,7 @@ async def run_provision_additional_key(
         "running", 1, _TOTAL_STEPS,
         f"Granting {key_tier} permissions",
     )
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config,
         "bucket", "allow", *flags,
         bucket_id, "--key", state.new_key_id,
@@ -217,7 +189,7 @@ async def run_provision_additional_key(
     await progress(
         "running", 2, _TOTAL_STEPS, "Attaching local alias",
     )
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config,
         "bucket", "alias", "--local", state.new_key_id,
         bucket_id, local_alias,
@@ -258,11 +230,6 @@ async def run_provision_additional_key(
     )
 
 
-# ---------------------------------------------------------------------------
-# Rollback
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class _RollbackResult:
     status: str  # "complete" | "partial"
@@ -278,7 +245,7 @@ async def _rollback(
       1. Revoke permissions if granted.
       2. Delete the new key if created.
 
-    The bucket is never touched — this orchestrator does not own it.
+    The bucket is never touched - this orchestrator does not own it.
     There is no alias-detach phase because step 3 (alias attach) is
     the final forward step; if it fails the alias was never attached,
     and if it succeeds there's nothing to roll back from.
@@ -289,7 +256,7 @@ async def _rollback(
     # 1. Revoke permissions
     if state.perms_granted and state.new_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config,
                 "bucket", "deny", *flags,
                 state.bucket_id, "--key", state.new_key_id,
@@ -308,7 +275,7 @@ async def _rollback(
     # 3. Delete new key
     if state.new_key_id is not None:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config, "key", "delete", "--yes", state.new_key_id,
             )
         except (asyncio.TimeoutError, OSError) as exc:
@@ -338,11 +305,6 @@ def _remaining_after_perm_halt(
             })
         items.append({"type": "key", "id": state.new_key_id})
     return items
-
-
-# ---------------------------------------------------------------------------
-# Result construction
-# ---------------------------------------------------------------------------
 
 
 def _failure(

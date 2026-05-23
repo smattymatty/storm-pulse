@@ -1,4 +1,4 @@
-"""Storm Pulse command subsystem — whitelist, execution, deploy sequences."""
+"""Command whitelist, execution, and deploy sequences."""
 
 from stormpulse.config import CommandDef
 

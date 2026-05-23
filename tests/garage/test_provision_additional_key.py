@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from stormpulse.commands.jobs import JobOutcome
 from stormpulse.config import GarageConfig
 from stormpulse.garage import provision_additional_key
 from stormpulse.garage.provision_additional_key import (
@@ -61,9 +62,9 @@ async def _run(
     new_key_name: str = "new-rw-key",
     local_alias: str = "media",
     key_tier: str = "rw",
-) -> provision_additional_key.JobOutcome:
+) -> JobOutcome:
     monkeypatch.setattr(
-        provision_additional_key, "_run_garage", fake.run_garage,
+        provision_additional_key, "run_garage", fake.run_garage,
     )
     return await run_provision_additional_key(
         progress=_ProgressRecorder(),
@@ -239,7 +240,7 @@ async def test_rollback_partial_when_perm_revoke_fails(
                  for item in cleanup}
     assert ("permission_grant", new_key_id) in types_ids
     assert ("key", new_key_id) in types_ids
-    # Bucket itself never appears in cleanup — this orchestrator doesn't own it
+    # Bucket itself never appears in cleanup - this orchestrator doesn't own it
     assert not any(t == "bucket" for t, _ in types_ids)
 
 
@@ -262,7 +263,7 @@ async def test_rollback_partial_when_key_delete_fails(
     types_ids = {(item["type"], item.get("key_id") or item.get("id"))
                  for item in cleanup}
     assert ("key", new_key_id) in types_ids
-    # No permission_grant entry — perms were never granted
+    # No permission_grant entry - perms were never granted
     assert not any(t == "permission_grant" for t, _ in types_ids)
 
 

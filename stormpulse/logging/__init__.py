@@ -1,4 +1,4 @@
-"""Storm Pulse log shipping — tailing, parsing, batching, and shipping log lines."""
+"""Log shipping: tail, parse, batch, ship."""
 
 from stormpulse.logging.parsers import (
     parse_caddy_json,

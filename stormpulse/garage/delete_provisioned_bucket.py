@@ -1,56 +1,13 @@
-"""Handler for the ``garage_delete_provisioned_bucket`` long-running command.
+"""Handler for ``garage_delete_provisioned_bucket``.
 
-Deletes a provisioned bucket atomically, including its aliases.
+Garage v2.2.0's CLI has a deadlock: ``bucket delete --yes`` rejects buckets
+with local aliases, and ``bucket unalias`` rejects detaching the last alias
+as an orphan. We break it by attaching a temporary global alias, detaching
+every local, then deleting via the global (which goes with the bucket).
 
-**Why this exists.** Garage v2.2.0's CLI ``bucket delete --yes`` rejects
-buckets that still have local aliases ("Bucket X still has other local
-aliases. Use ``bucket unalias`` to delete them one by one."), AND the
-orphan rule blocks unaliasing the last remaining alias ("Bucket X
-doesn't have other aliases, please delete it instead of just
-unaliasing"). For a post-A+B+C bucket with only local aliases, those
-two rules deadlock. The orchestrator breaks the deadlock by attaching
-a temporary global alias first, which lets us detach every local alias
-without tripping the orphan rule, then deletes the bucket via the
-temporary global alias (which gets removed as part of the deletion).
-
-**Step ordering:**
-
-  1. bucket info <bucket_id>           — enumerate existing aliases
-                                         and the keys that had
-                                         permissions on this bucket
-  2. bucket alias <bucket_id> <temp>   — add temp global (skipped if
-                                         the bucket already has any
-                                         global alias to use as the
-                                         final delete reference)
-  3. bucket unalias --local <key> <n>  — for each local alias
-  4. bucket delete --yes <final-ref>   — final-ref is either the temp
-                                         global from step 2 or the
-                                         existing global from step 1
-  5. key info / key delete             — for each key from step 1,
-                                         check ``key info``; if the
-                                         key has zero remaining
-                                         buckets, delete it. Skip if
-                                         it still has buckets (shared
-                                         keys are left alone).
-
-**Rollback.** Reverse the operations performed before the failure
-point. No rollback after step 4 (delete is terminal). Step 5 is
-best-effort: a failed key delete adds a ``manual_cleanup_required``
-entry but doesn't fail the orchestrator (the bucket itself is
-already gone).
-
-``parse_bucket_info`` exposes a single ``global_alias`` field, and
-the post-A+B+C provision flow attaches at most one global per bucket,
-so a "detach extra globals" step would be dead code today. If a
-multi-global bucket appears in the future (custom ops setup), the
-final ``bucket delete --yes`` will fail and rollback runs — that's
-the cue to add the missing step.
-
-**Idempotency.** If the bucket doesn't exist (NoSuchBucket from step
-1), the orchestrator returns success — the goal state is reached.
-
-The contract — step ordering, rollback, failure-reason vocabulary —
-mirrors ``provision_bucket.py``.
+Idempotent on NoSuchBucket. Step 5 (orphaned key cleanup) is best-effort:
+failures accumulate in ``manual_cleanup_required`` rather than failing the
+orchestrator.
 """
 
 from __future__ import annotations
@@ -69,17 +26,12 @@ from stormpulse.garage.parse import (
     parse_bucket_info,
     parse_key_info,
 )
-from stormpulse.garage.provision_bucket import _run_garage  # reuse helper
+from stormpulse.garage.runner import run_garage  # reuse helper
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 5
-
-
-# ---------------------------------------------------------------------------
-# Public entrypoint — called by agent.py
-# ---------------------------------------------------------------------------
 
 
 def make_delete_provisioned_bucket_handler(
@@ -106,11 +58,6 @@ def make_delete_provisioned_bucket_handler(
     return handler
 
 
-# ---------------------------------------------------------------------------
-# State tracking
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class _DeleteState:
     """What's been done so far, for rollback."""
@@ -129,11 +76,6 @@ class _DeleteState:
     step_completed: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Core orchestration
-# ---------------------------------------------------------------------------
-
-
 async def run_delete_provisioned_bucket(
     progress: ProgressCallback,
     garage_config: GarageConfig,
@@ -145,7 +87,7 @@ async def run_delete_provisioned_bucket(
 
     # ---- Step 1: bucket info ----
     await progress("starting", 0, _TOTAL_STEPS, "Reading bucket state")
-    rc, stdout, stderr = await _run_garage(
+    rc, stdout, stderr = await run_garage(
         garage_config, "bucket", "info", bucket_id,
     )
     if rc != 0:
@@ -172,6 +114,26 @@ async def run_delete_provisioned_bucket(
             rollback_status="not_required",
         )
 
+    # Early exit: non-empty buckets cannot be deleted. Fail here before
+    # mutating any Garage state (no temp alias attached, no locals
+    # detached), so the only side effect of the call is the bucket-info
+    # read. Without this, the orchestrator would do steps 2-3 of state
+    # changes, then trip ``BucketNotEmpty`` at step 4 and rollback - same
+    # outcome, more work, more chances for the rollback itself to leave
+    # residue.
+    if info.object_count > 0:
+        return _failure(
+            failure_reason="bucket_not_empty",
+            step_failed="bucket_info",
+            state=state,
+            stderr=(
+                f"Bucket has {info.object_count} object(s). "
+                f"Clear the bucket before deleting."
+            ),
+            started_at=started_at,
+            rollback_status="not_required",
+        )
+
     # Enumerate aliases. parse_bucket_info exposes a single global_alias
     # field (rare to have more than one); locals come from the keys
     # list with non-empty local_alias.
@@ -182,7 +144,7 @@ async def run_delete_provisioned_bucket(
         if k.local_alias
     ]
     # Capture every key that had permissions or a local alias on this
-    # bucket — step 5 will check each one with ``key info`` to decide
+    # bucket - step 5 will check each one with ``key info`` to decide
     # whether to delete it or leave it alone (shared key on another
     # bucket).
     state.candidate_key_ids = [k.access_key_id for k in info.keys]
@@ -201,7 +163,7 @@ async def run_delete_provisioned_bucket(
         state.final_ref = existing_global
     else:
         state.temp_global = f"pulse-delete-{secrets.token_hex(6)}"
-        rc, _stdout, stderr = await _run_garage(
+        rc, _stdout, stderr = await run_garage(
             garage_config,
             "bucket", "alias", bucket_id, state.temp_global,
         )
@@ -225,7 +187,7 @@ async def run_delete_provisioned_bucket(
         "running", 2, _TOTAL_STEPS, "Detaching local aliases",
     )
     for key_id, name in local_aliases:
-        rc, _stdout, stderr = await _run_garage(
+        rc, _stdout, stderr = await run_garage(
             garage_config,
             "bucket", "unalias", "--local", key_id, name,
         )
@@ -249,11 +211,11 @@ async def run_delete_provisioned_bucket(
     await progress(
         "running", 3, _TOTAL_STEPS, "Deleting bucket",
     )
-    rc, _stdout, stderr = await _run_garage(
+    rc, _stdout, stderr = await run_garage(
         garage_config, "bucket", "delete", "--yes", state.final_ref,
     )
     if rc != 0:
-        # BucketNotEmpty is a customer-actionable error — surface it
+        # BucketNotEmpty is a customer-actionable error - surface it
         # without rolling back partial alias state, since rolling back
         # would re-attach the locals and the customer needs to clear
         # the bucket first anyway.
@@ -287,7 +249,7 @@ async def run_delete_provisioned_bucket(
     # ---- Step 5: clean up unmoored keys (best-effort) ----
     # The bucket is already gone. For each key that had access to it,
     # check whether it has any other buckets. If not, the key is
-    # orphaned credential material — delete it. If it still has
+    # orphaned credential material - delete it. If it still has
     # buckets (shared key, attached to multiple), leave it alone.
     # Failures here don't fail the orchestrator; they accumulate in
     # ``manual_cleanup_required``.
@@ -297,7 +259,7 @@ async def run_delete_provisioned_bucket(
     manual_key_cleanup: list[dict[str, Any]] = []
     for key_id in state.candidate_key_ids:
         try:
-            rc, stdout, _stderr = await _run_garage(
+            rc, stdout, _stderr = await run_garage(
                 garage_config, "key", "info", key_id,
             )
         except (asyncio.TimeoutError, OSError) as exc:
@@ -308,7 +270,7 @@ async def run_delete_provisioned_bucket(
             manual_key_cleanup.append({"type": "key", "id": key_id})
             continue
         if rc != 0:
-            # Key already gone or NoSuchKey — nothing to clean up.
+            # Key already gone or NoSuchKey - nothing to clean up.
             state.keys_skipped.append(key_id)
             continue
         try:
@@ -317,12 +279,12 @@ async def run_delete_provisioned_bucket(
             manual_key_cleanup.append({"type": "key", "id": key_id})
             continue
         if key_info.buckets:
-            # Key still has other buckets — preserve it.
+            # Key still has other buckets - preserve it.
             state.keys_skipped.append(key_id)
             continue
-        # Key has zero buckets — safe to delete.
+        # Key has zero buckets - safe to delete.
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config, "key", "delete", "--yes", key_id,
             )
         except (asyncio.TimeoutError, OSError) as exc:
@@ -357,11 +319,6 @@ async def run_delete_provisioned_bucket(
     )
 
 
-# ---------------------------------------------------------------------------
-# Rollback
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class _RollbackResult:
     status: str  # "complete" | "partial"
@@ -381,7 +338,7 @@ async def _rollback(
     # 1. Re-attach local aliases (LIFO)
     for key_id, name in reversed(state.locals_detached):
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config,
                 "bucket", "alias", "--local", key_id,
                 state.bucket_id, name,
@@ -405,7 +362,7 @@ async def _rollback(
     # 2. Drop temp global if we attached one
     if state.temp_global_attached and state.temp_global:
         try:
-            rc, _stdout, _stderr = await _run_garage(
+            rc, _stdout, _stderr = await run_garage(
                 garage_config, "bucket", "unalias", state.temp_global,
             )
         except (asyncio.TimeoutError, OSError) as exc:
@@ -427,11 +384,6 @@ async def _rollback(
     if manual:
         return _RollbackResult(status="partial", manual_cleanup=manual)
     return _RollbackResult(status="complete", manual_cleanup=[])
-
-
-# ---------------------------------------------------------------------------
-# Result construction
-# ---------------------------------------------------------------------------
 
 
 def _success_already_gone(

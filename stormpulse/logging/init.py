@@ -1,4 +1,4 @@
-"""Logging init — detect Docker containers and append [[log_groups]] blocks."""
+"""Logging init - detect Docker containers and append [[log_groups]] blocks."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from stormpulse.garage.init import prompt_confirm, restart_stormpulse
-from stormpulse.init import InitError, _prompt
+from stormpulse.init import InitError, prompt
+from stormpulse.init.prompts import prompt_confirm
+from stormpulse.init.registry import register_init_step
+from stormpulse.init.system import restart_stormpulse
 
 _DEFAULT_DOCKER_BINARY = "/usr/bin/docker"
 
@@ -104,10 +106,10 @@ def prompt_logging_setup(
     if not enabled:
         return []
 
-    docker_binary_input = _prompt("Docker binary", default=docker_binary)
+    docker_binary_input = prompt("Docker binary", default=docker_binary)
 
     while True:
-        interval_str = _prompt("Ship interval seconds", default="10")
+        interval_str = prompt("Ship interval seconds", default="10")
         try:
             interval = int(interval_str)
             if interval >= 5:
@@ -230,3 +232,31 @@ def run_logging_init(config_path: Path) -> None:
             "    sudo systemctl restart stormpulse",
             file=sys.stderr,
         )
+
+
+def logging_init_step(config_path: Path) -> None:
+    """Init step: detect Docker containers, prompt, append [[log_groups]].
+
+    Registered with the init orchestrator (see stormpulse.init.registry).
+    ``run_init`` calls this after the base config file is written.
+    """
+    print("\nChecking for log sources...", file=sys.stderr)
+    containers = detect_docker_containers()
+    if not containers:
+        print("  No running containers found. Skipping.", file=sys.stderr)
+        return
+
+    print(
+        f"  Found {len(containers)} running container(s): {', '.join(containers)}",
+        file=sys.stderr,
+    )
+    log_groups = prompt_logging_setup(containers, existing_groups=[])
+    if not log_groups:
+        return
+
+    append_log_groups(config_path, log_groups)
+    for g in log_groups:
+        print(f"  Added: {g['name']} (docker)", file=sys.stderr)
+
+
+register_init_step(logging_init_step)

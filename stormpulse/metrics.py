@@ -1,4 +1,4 @@
-"""System metrics collection — CPU, memory, disk, containers."""
+"""System metrics collection - CPU, memory, disk, containers."""
 
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ def _parse_container_objects(raw_objects: list[dict[str, object]]) -> list[Conta
 def _collect_containers(compose_file: Path) -> list[ContainerInfo]:
     """Query Docker Compose for running container status.
 
-    Returns an empty list on any failure — metrics must not crash
+    Returns an empty list on any failure - metrics must not crash
     because docker is down or unavailable.
     """
     try:
@@ -87,7 +87,7 @@ def _collect_containers(compose_file: Path) -> list[ContainerInfo]:
 def collect_metrics(config: Config) -> MetricsPayload:
     """Collect current system metrics.
 
-    Uses non-blocking psutil.cpu_percent(interval=None) — call
+    Uses non-blocking psutil.cpu_percent(interval=None) - call
     prime_cpu_percent() once at agent startup for meaningful values.
     """
     cpu = psutil.cpu_percent(interval=None)

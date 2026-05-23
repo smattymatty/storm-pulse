@@ -22,10 +22,6 @@ class ParamValidationError(Exception):
     """Raised when runtime params fail validation."""
 
 
-# ---------------------------------------------------------------------------
-# The whitelist — data, not code (Rule of Representation)
-# ---------------------------------------------------------------------------
-
 COMMAND_REGISTRY: dict[str, CommandDef] = {
     "git_pull": CommandDef(
         group="deploy",
@@ -73,11 +69,6 @@ def build_registry(
     return {k: v for k, v in merged.items() if k not in disabled}
 
 
-# ---------------------------------------------------------------------------
-# Resolution and lookup
-# ---------------------------------------------------------------------------
-
-
 def validate_params(
     cmd_def: CommandDef,
     runtime_params: dict[str, str],
@@ -101,7 +92,7 @@ def validate_params(
         elif pdef.default is not None:
             value = pdef.default
         else:
-            continue  # no static default — config provides the fallback
+            continue  # no static default - config provides the fallback
         # Regex validation: short identifiers, bucket names, key IDs.
         if pdef.pattern is not None:
             if not re.fullmatch(pdef.pattern, value):
@@ -172,11 +163,6 @@ def get_command(name: str, *, registry: dict[str, CommandDef]) -> CommandDef:
     except KeyError:
         valid = ", ".join(sorted(registry))
         raise CommandError(f"Unknown command: {name!r}. Valid commands: {valid}")
-
-
-# ---------------------------------------------------------------------------
-# Execution
-# ---------------------------------------------------------------------------
 
 
 def execute_command(

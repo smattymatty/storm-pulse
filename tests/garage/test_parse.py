@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.parse — pure parsers, no subprocess."""
+"""Tests for stormpulse.garage.parse - pure parsers, no subprocess."""
 
 from __future__ import annotations
 
@@ -130,7 +130,7 @@ class TestParseBucketList:
         4 columns (Permissions | Access key | Key name | Local aliases),
         not the 3-column shape the fixture assumes. Without column-
         count-aware parsing, the parser reads parts[2] (the key name)
-        as the local alias — which then gets passed to
+        as the local alias - which then gets passed to
         ``bucket unalias --local <key> <name>`` and Garage rejects with
         ``No bucket called <key-name> in namespace of key <key>`` because
         the actual alias is in parts[3]. Empirically observed on
@@ -159,7 +159,7 @@ class TestParseBucketList:
         a local alias, ``str.split()`` collapses the empty Global-aliases
         column and the local alias (format ``<key_id>:<name>``) lands
         in parts[2]. Without colon-detection the parser would
-        misidentify it as a global alias — Storm-side state.py would
+        misidentify it as a global alias - Storm-side state.py would
         then run ``bucket info <key>:<name>`` which Garage rejects, the
         bucket would be silently dropped from the manifest, and the
         Storm reconciler would nuke the legitimate CustomerBucket row.

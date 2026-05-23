@@ -1,4 +1,4 @@
-"""Deploy sequence runner — executes a series of whitelisted commands."""
+"""Deploy sequence runner - executes a series of whitelisted commands."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def run_deploy_sequence(
     Validates all command names upfront before executing anything.
     Each step gets a unique request_id; all share the sequence_id.
     """
-    # Validate all names first — fail fast on typos
+    # Validate all names first - fail fast on typos
     for name in commands:
         get_command(name, registry=registry)
 

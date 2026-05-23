@@ -1,20 +1,18 @@
-"""Garage init — detect Garage installation and append [garage] to stormpulse.toml."""
+"""Garage init - detect Garage installation and append [garage] to stormpulse.toml."""
 
 from __future__ import annotations
 
 import os
 import re
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
 
-from stormpulse.init import InitError, _prompt
+from stormpulse.init import InitError, prompt
+from stormpulse.init.prompts import prompt_confirm
+from stormpulse.init.registry import register_init_step
+from stormpulse.init.system import restart_stormpulse
 
-
-# ---------------------------------------------------------------------------
-# Garage detection
-# ---------------------------------------------------------------------------
 
 _GARAGE_CONFIG_SEARCH_PATHS = [
     Path("/opt/garage/garage.toml"),
@@ -72,7 +70,7 @@ def parse_garage_container_name(compose_path: Path) -> str:
             indent_level = 2
             continue
 
-        # Inside a service — check for garage image
+        # Inside a service - check for garage image
         content = stripped.lstrip()
         current_indent = len(stripped) - len(content)
 
@@ -87,11 +85,6 @@ def parse_garage_container_name(compose_path: Path) -> str:
                     return m.group(1)
 
     return "garaged"
-
-
-# ---------------------------------------------------------------------------
-# TOML section management
-# ---------------------------------------------------------------------------
 
 
 _GARAGE_TOML_TEMPLATE = """\
@@ -199,11 +192,6 @@ def append_garage_section(
         raise InitError(f"Cannot append to {config_path}: {exc}") from exc
 
 
-# ---------------------------------------------------------------------------
-# Interactive prompts
-# ---------------------------------------------------------------------------
-
-
 def prompt_garage_values(
     *,
     container_name: str = "garaged",
@@ -213,12 +201,12 @@ def prompt_garage_values(
     state_push_interval_seconds: int = 30,
 ) -> dict[str, str | int]:
     """Prompt user for Garage config values with defaults."""
-    container_name = _prompt("Container name", default=container_name)
-    garage_binary = _prompt("Garage binary", default=garage_binary)
-    docker_binary = _prompt("Docker binary", default=docker_binary)
+    container_name = prompt("Container name", default=container_name)
+    garage_binary = prompt("Garage binary", default=garage_binary)
+    docker_binary = prompt("Docker binary", default=docker_binary)
 
     while True:
-        interval_str = _prompt(
+        interval_str = prompt(
             "State push interval seconds",
             default=str(state_push_interval_seconds),
         )
@@ -237,43 +225,6 @@ def prompt_garage_values(
         "garage_config_path": garage_config_path,
         "state_push_interval_seconds": interval,
     }
-
-
-def prompt_confirm(message: str, *, default_yes: bool = True) -> bool:
-    """Yes/no prompt. Returns True for yes."""
-    hint = "Y/n" if default_yes else "y/N"
-    response = _prompt(f"{message} [{hint}]")
-    if not response:
-        return default_yes
-    return response.lower() in ("y", "yes")
-
-
-# ---------------------------------------------------------------------------
-# Service restart
-# ---------------------------------------------------------------------------
-
-
-def restart_stormpulse() -> bool:
-    """Restart the stormpulse systemd service. Returns True on success."""
-    try:
-        subprocess.run(
-            ["/usr/bin/systemctl", "restart", "stormpulse"],
-            check=True,
-            capture_output=True,
-        )
-        return True
-    except FileNotFoundError:
-        print("  systemctl not found", file=sys.stderr)
-        return False
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode("utf-8", errors="replace").strip()
-        print(f"  Restart failed: {stderr or exc}", file=sys.stderr)
-        return False
-
-
-# ---------------------------------------------------------------------------
-# Orchestrator
-# ---------------------------------------------------------------------------
 
 
 def run_garage_init(
@@ -372,3 +323,45 @@ def run_garage_init(
             "    sudo systemctl restart stormpulse",
             file=sys.stderr,
         )
+
+
+def garage_init_step(config_path: Path) -> None:
+    """Init step: detect Garage, prompt, append a [garage] section.
+
+    Registered with the init orchestrator (see stormpulse.init.registry).
+    ``run_init`` calls this after the base config file is written.
+    """
+    print("\nChecking for Garage installation...", file=sys.stderr)
+    garage_config = find_garage_config()
+    if garage_config is None:
+        print("  No Garage installation found. Skipping.", file=sys.stderr)
+        return
+
+    print(f"  Found: {garage_config}", file=sys.stderr)
+    if not prompt_confirm("\nEnable Garage integration?"):
+        return
+
+    # Detect container name from a sibling compose file
+    garage_dir = garage_config.parent
+    container = "garaged"
+    for name in ("docker-compose.yml", "docker-compose.yaml"):
+        cp = garage_dir / name
+        if cp.is_file():
+            container = parse_garage_container_name(cp)
+            break
+
+    values = prompt_garage_values(
+        container_name=container,
+        garage_config_path=str(garage_config),
+    )
+    append_garage_section(
+        config_path,
+        container_name=str(values["container_name"]),
+        garage_binary=str(values["garage_binary"]),
+        docker_binary=str(values["docker_binary"]),
+        garage_config_path=str(values["garage_config_path"]),
+        state_push_interval_seconds=int(values["state_push_interval_seconds"]),
+    )
+
+
+register_init_step(garage_init_step)

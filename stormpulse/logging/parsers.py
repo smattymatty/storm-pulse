@@ -1,9 +1,7 @@
 """Strict per-format parsers for log lines.
 
-Each parser takes one raw line and returns a parsed dict or ``None``
-if the line is invalid, malformed, or unrecognised. Parsers NEVER
-eval, exec, or interpret line content — they extract fields via
-regex or structured JSON only.
+Each parser takes one raw line and returns a parsed dict or ``None``.
+Regex or structured JSON only - never eval, exec, or interpret content.
 """
 
 from __future__ import annotations
@@ -41,7 +39,7 @@ _GARAGE_ADMIN_RE = re.compile(
 )
 
 # Only ship mutating admin operations. The agent's own garage_refresh
-# polls GetBucketInfo/ListKeys/GetClusterStatus every 30s — that's
+# polls GetBucketInfo/ListKeys/GetClusterStatus every 30s - that's
 # noise, not operator-initiated activity worth tracking.
 _GARAGE_ADMIN_MUTATIONS: frozenset[str] = frozenset({
     "CreateBucket", "DeleteBucket", "UpdateBucket",
@@ -101,7 +99,7 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
         }
 
     # Fall back to mutating admin API operations only.
-    # Read-only polls (GetBucketInfo, ListKeys, etc.) are dropped — the
+    # Read-only polls (GetBucketInfo, ListKeys, etc.) are dropped - the
     # agent's own garage_refresh generates these every 30s.
     am = _GARAGE_ADMIN_RE.fullmatch(truncated_line)
     if am is not None:
@@ -298,7 +296,7 @@ def parse_docker_raw(line: str) -> dict[str, Any] | None:
     Docker prefixes each line with an RFC3339Nano timestamp followed by
     whitespace and the container's original log output. Returns ``None``
     when the leading timestamp is missing. ANSI escape sequences in the
-    message body are stripped — many containers emit terminal colors
+    message body are stripped - many containers emit terminal colors
     that are unreadable in a web UI.
     """
     stripped = line.rstrip("\r\n")

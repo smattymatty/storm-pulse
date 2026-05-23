@@ -1,4 +1,4 @@
-"""Garage node discovery — checks if this agent manages a Garage node."""
+"""Garage node discovery - checks if this agent manages a Garage node."""
 
 from __future__ import annotations
 

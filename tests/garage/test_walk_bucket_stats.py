@@ -46,7 +46,7 @@ class _FakeS3Client:
         ]
         self._page_index = 0
         self._list_raises = list_raises
-        self.list_calls: list[dict] = []
+        self.list_calls: list[dict[str, object]] = []
 
     def head_bucket(self, bucket: str) -> None:
         if self._head_raises is not None:
@@ -72,7 +72,7 @@ class _FakeS3Client:
         return page
 
 
-async def _noop_progress(*args, **kwargs) -> None:
+async def _noop_progress(*args: object, **kwargs: object) -> None:
     pass
 
 
@@ -91,7 +91,7 @@ async def test_auth_failed_short_circuits_before_list() -> None:
     assert outcome.failure_reason == "auth_failed"
     assert outcome.extras["count"] == 0
     assert outcome.extras["bytes"] == 0
-    # Did not proceed to list — fake records zero list calls.
+    # Did not proceed to list - fake records zero list calls.
     assert client.list_calls == []
 
 
@@ -175,7 +175,7 @@ async def test_paginated_walk_follows_continuation_token() -> None:
 
 @pytest.mark.asyncio
 async def test_max_objects_cap_returns_truncated_true_with_partial_counts() -> None:
-    # max_objects=2 — should stop after the 2nd object even though the
+    # max_objects=2 - should stop after the 2nd object even though the
     # page has 3, and even though is_truncated would have continued.
     page = ListResult(
         contents=[
@@ -263,7 +263,7 @@ def test_factory_constructs_handler_when_params_complete() -> None:
 
 
 def test_factory_invalid_max_objects_falls_back_to_default() -> None:
-    # max_objects="not-a-number" — handler shouldn't crash; falls back
+    # max_objects="not-a-number" - handler shouldn't crash; falls back
     # to the default cap. We can't easily test the value without running
     # the handler, but at least constructing it must succeed.
     handler = make_walk_bucket_stats_handler({

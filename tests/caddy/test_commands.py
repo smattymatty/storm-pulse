@@ -83,7 +83,7 @@ class TestValidateParams:
             CELLAR_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         validated = validate_params(cmd, {"region": "vancouver-1"})
-        # Default is empty string — meaning "remove the drop-in file."
+        # Default is empty string - meaning "remove the drop-in file."
         assert validated["fragment"] == ""
 
     def test_bad_region_rejected(self) -> None:

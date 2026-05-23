@@ -1,15 +1,12 @@
 """Caddy sync handler + boot-time drop-in import verification.
 
-The handler atomically reloads Caddy via the admin API and persists the
-fragment to disk. The verifier guards against the silent failure mode
-where the main Caddyfile doesn't import the drop-in path — without it,
-fragments get written but never served.
+Sync writes the fragment atomically (disk-authoritative), then POSTs the
+absolutised main Caddyfile to ``/load`` so Caddy re-adapts. Persist failure
+leaves Caddy untouched; reload failure leaves disk newer than live,
+eventually consistent on the next successful sync.
 
-Single POST to ``/load`` with ``Content-Type: text/caddyfile``: Caddy
-validates and commits atomically. Non-2xx fails the sync; the on-disk
-fragment stays unchanged (eventually consistent on next successful
-sync). On 2xx, the fragment is written to the drop-in path via an
-atomic rename (write-tmp-then-replace).
+The verifier catches the silent failure where the main Caddyfile doesn't
+import the drop-in path - fragments would land on disk but never serve.
 """
 
 from __future__ import annotations
@@ -31,11 +28,6 @@ logger = logging.getLogger(__name__)
 _LOAD_TIMEOUT_SECONDS = 20
 
 
-# ---------------------------------------------------------------------------
-# Boot-time import verification
-# ---------------------------------------------------------------------------
-
-
 def verify_drop_in_imported(
     main_caddyfile: Path,
     drop_in_path: Path,
@@ -43,13 +35,13 @@ def verify_drop_in_imported(
     """Check that the main Caddyfile imports the drop-in path.
 
     Returns ``None`` if a matching import directive is found. Returns
-    a human-readable error message if not. Called at agent boot — a
+    a human-readable error message if not. Called at agent boot - a
     non-None result must hard-fail the agent so the operator fixes
     Caddy before the agent is ever asked to sync.
 
     Matches both exact paths and globs. Imports are resolved relative
     to the main Caddyfile's directory (per Caddy's documented behavior).
-    Glob matching uses ``fnmatch`` against the drop-in filename — we
+    Glob matching uses ``fnmatch`` against the drop-in filename - we
     deliberately don't require the drop-in file to exist on disk, so
     the boot check works before the first cert lifecycle event fires.
     """
@@ -101,11 +93,6 @@ def verify_drop_in_imported(
     )
 
 
-# ---------------------------------------------------------------------------
-# Sync handler
-# ---------------------------------------------------------------------------
-
-
 def make_caddy_sync_handler(
     caddy: CaddyConfig,
     params: dict[str, str],
@@ -114,18 +101,19 @@ def make_caddy_sync_handler(
 
     Workflow:
 
-    1. POST the fragment body to ``{admin_url}/load`` with
-       ``Content-Type: text/caddyfile``. Caddy adapts internally and
-       atomically rejects on syntax error. Non-2xx fails the sync;
-       the on-disk drop-in stays unchanged (eventually consistent).
-    2. On 2xx: atomically write the fragment to the drop-in path
+    1. Atomically write the fragment to the drop-in path
        (write-to-tmp then ``os.replace``). Empty fragment removes the
-       file instead.
+       file instead. Disk is now authoritative.
+    2. POST the main Caddyfile (with relative ``import`` paths
+       absolutised) to ``{admin_url}/load`` as text/caddyfile. Caddy
+       re-adapts the composed config from source - picking up the
+       drop-in we just wrote alongside everything else the operator
+       declared in the main Caddyfile.
 
-    A persist-after-reload failure surfaces as a failed sync even
-    though the running Caddy is correct — operators need to know the
-    on-disk state diverged from the live config (a Caddy restart
-    would lose the new fragment).
+    A reload-after-persist failure surfaces as a failed sync with the
+    disk in the new state and the running Caddy in the old state.
+    The next successful sync (or operator-initiated reload) restores
+    consistency.
     """
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
@@ -136,28 +124,9 @@ def make_caddy_sync_handler(
             "starting", 0, 3, f"syncing Caddy for region {region}",
         )
 
-        # ----- Step 1: POST to admin /load -----
+        # ----- Step 1: atomic write to drop-in path (disk-truth) -----
         await progress(
-            "running", 1, 3, "POSTing fragment to admin /load",
-        )
-        ok, err = await asyncio.to_thread(
-            _post_caddy_load, caddy.admin_url, fragment,
-        )
-        if not ok:
-            logger.warning(
-                "caddy_sync: /load rejected fragment for region=%s: %s",
-                region, err,
-            )
-            return JobOutcome(
-                success=False,
-                exit_code=-1,
-                stderr=f"Caddy admin /load rejected fragment: {err}",
-                failure_reason="reload_failed",
-            )
-
-        # ----- Step 2: atomic write to drop-in path -----
-        await progress(
-            "running", 2, 3, "persisting drop-in fragment to disk",
+            "running", 1, 3, "persisting drop-in fragment to disk",
         )
         try:
             await asyncio.to_thread(
@@ -165,18 +134,61 @@ def make_caddy_sync_handler(
             )
         except OSError as exc:
             logger.error(
-                "caddy_sync: reload succeeded but persist failed for "
-                "region=%s path=%s: %s",
+                "caddy_sync: persist failed for region=%s path=%s: %s",
                 region, caddy.drop_in_path, exc,
             )
             return JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=(
-                    f"Caddy reload succeeded but failed to persist "
-                    f"fragment to {caddy.drop_in_path}: {exc}"
+                    f"Failed to persist fragment to "
+                    f"{caddy.drop_in_path}: {exc}"
                 ),
                 failure_reason="persist_failed",
+            )
+
+        # ----- Step 2: reload Caddy via admin /load -----
+        # POST the main Caddyfile so Caddy re-adapts the composed
+        # config from disk. Posting just the fragment would replace
+        # the entire running config (Caddy /load is a full-config
+        # endpoint), wiping every other site the main Caddyfile
+        # declares until the next operator-initiated restart.
+        await progress(
+            "running", 2, 3, "reloading Caddy via admin /load",
+        )
+        try:
+            load_body = await asyncio.to_thread(
+                _read_and_absolutize_imports, caddy.main_caddyfile,
+            )
+        except OSError as exc:
+            logger.error(
+                "caddy_sync: drop-in persisted but could not read main "
+                "Caddyfile %s for reload: %s",
+                caddy.main_caddyfile, exc,
+            )
+            return JobOutcome(
+                success=False,
+                exit_code=-1,
+                stderr=(
+                    f"Drop-in persisted but main Caddyfile read "
+                    f"failed: {exc}"
+                ),
+                failure_reason="reload_failed",
+            )
+        ok, err = await asyncio.to_thread(
+            _post_caddy_load, caddy.admin_url, load_body,
+        )
+        if not ok:
+            logger.warning(
+                "caddy_sync: drop-in persisted but Caddy reload "
+                "failed for region=%s: %s",
+                region, err,
+            )
+            return JobOutcome(
+                success=False,
+                exit_code=-1,
+                stderr=f"Caddy admin /load rejected reload: {err}",
+                failure_reason="reload_failed",
             )
 
         await progress("finalizing", 3, 3, "sync complete")
@@ -238,7 +250,7 @@ def _post_caddy_load(admin_url: str, fragment: str) -> tuple[bool, str]:
 def _atomic_write_or_remove(drop_in_path: Path, fragment: str) -> None:
     """Write fragment atomically, or remove file if fragment is empty.
 
-    Empty fragment is the "no domains active in this region" case —
+    Empty fragment is the "no domains active in this region" case -
     the drop-in file should not linger as a stale empty import target.
     """
     if not fragment:
@@ -251,3 +263,35 @@ def _atomic_write_or_remove(drop_in_path: Path, fragment: str) -> None:
     tmp_path = drop_in_path.with_suffix(drop_in_path.suffix + ".tmp")
     tmp_path.write_text(fragment, encoding="utf-8")
     os.replace(tmp_path, drop_in_path)
+
+
+def _read_and_absolutize_imports(main_caddyfile: Path) -> str:
+    """Read the main Caddyfile and absolutise any relative ``import`` paths.
+
+    Caddy's /load endpoint resolves relative imports against Caddy's
+    current working directory, not the source file's location. When
+    we POST a Caddyfile that was authored to be read from disk
+    (where imports resolve relative to the file), relative targets
+    may resolve to the wrong place. Absolutising them in place
+    sidesteps this - the running Caddy sees the same import targets
+    it would resolve on a disk-based load.
+    """
+    content = main_caddyfile.read_text(encoding="utf-8")
+    base_dir = main_caddyfile.parent
+    out: list[str] = []
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            out.append(line)
+            continue
+        code_part = stripped.split("#", 1)[0].strip()
+        if not code_part.startswith("import "):
+            out.append(line)
+            continue
+        target = code_part[len("import "):].strip()
+        if not target or Path(target).is_absolute():
+            out.append(line)
+            continue
+        abs_target = (base_dir / target).as_posix()
+        out.append(line.replace(target, abs_target, 1))
+    return "".join(out)
