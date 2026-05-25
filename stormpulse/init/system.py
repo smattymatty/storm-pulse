@@ -8,6 +8,7 @@ from pathlib import Path
 
 from stormpulse.init.checks import InitError
 from stormpulse.init.compose import parse_volume_mounts
+from stormpulse.init.mode import InstallMode
 
 
 def run_cmd(args: list[str], *, description: str) -> bool:
@@ -73,8 +74,29 @@ def run_find_apply(
 def run_system_setup(
     project_dir: Path,
     compose_file: Path,
+    mode: InstallMode = InstallMode.SYSTEM,
 ) -> None:
-    """Best-effort system setup: docker group, git safe.directory, permissions."""
+    """Best-effort system setup: docker group, git safe.directory, permissions.
+
+    In ``USER`` mode, all the steps that need root (usermod, system
+    git safe.directory, recursive chown root:stormpulse) are skipped
+    because the agent runs as the unprivileged user that already owns
+    the project directory and has no need to join a docker group
+    (rootless docker is per-user). See ADR CORE-003.
+    """
+    if mode is InstallMode.USER:
+        # User mode: the agent runs as the operator. The operator
+        # already owns project_dir, already reaches rootless docker via
+        # its per-user socket, and doesn't need a system-wide git
+        # safe.directory rule. Set a user-scoped git safe.directory in
+        # case the agent does git operations from a unit it didn't
+        # check out itself.
+        run_cmd(
+            ["/usr/bin/git", "config", "--global", "--add", "safe.directory", str(project_dir)],
+            description=f"Marking {project_dir} as git safe.directory (user)",
+        )
+        return
+
     run_cmd(
         ["/usr/sbin/usermod", "-aG", "docker", "stormpulse"],
         description="Adding stormpulse to docker group",
@@ -130,6 +152,36 @@ def run_daemon_reload() -> None:
         description="Reloading systemd",
     ):
         raise InitError("systemctl daemon-reload failed")
+
+
+def run_user_daemon_reload() -> None:
+    """Reload the user systemd to pick up the new user unit file."""
+    if not run_cmd(
+        ["/usr/bin/systemctl", "--user", "daemon-reload"],
+        description="Reloading user systemd",
+    ):
+        raise InitError("systemctl --user daemon-reload failed")
+
+
+def check_linger_enabled() -> bool:
+    """Return True if the current user has linger enabled.
+
+    User systemd units only survive logout when ``loginctl
+    enable-linger`` is set for the user. Without linger, the unit
+    stops when the operator logs out -- which makes the agent useless.
+    """
+    import os
+    user = os.environ.get("USER") or ""
+    if not user:
+        return False
+    try:
+        result = subprocess.run(
+            ["/usr/bin/loginctl", "show-user", user, "--property=Linger"],
+            capture_output=True, text=True, check=False,
+        )
+        return "Linger=yes" in result.stdout
+    except (FileNotFoundError, OSError):
+        return False
 
 
 def restart_stormpulse() -> bool:

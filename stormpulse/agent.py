@@ -53,6 +53,7 @@ from stormpulse.protocol import (
     make_metrics_push,
     make_register,
 )
+from stormpulse.system_inventory import collect_system_inventory
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +222,12 @@ class Agent:
                             garage_dict = self._garage_state.to_dict()
 
                     log_group_names = sorted(self._shippers.keys()) or None
+
+                    # Collect best-effort system inventory off the event loop.
+                    system_inventory = await asyncio.to_thread(
+                        collect_system_inventory,
+                    ) or None
+
                     register = make_register(
                         agent_id, __version__, self._config.agent.pulse_token,
                         commands=_build_commands_metadata(
@@ -228,6 +235,7 @@ class Agent:
                         ),
                         garage=garage_dict,
                         log_groups=log_group_names,
+                        system_inventory=system_inventory,
                     )
                     await ws.send(register.to_json())
                     logger.info("Sent register (v%s)", __version__)

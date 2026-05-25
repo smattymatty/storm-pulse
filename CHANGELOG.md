@@ -9,6 +9,24 @@ This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroac
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-05-25
+
+Adds rootless / user-mode install so Storm-hardened boxes (rootless docker, no `docker` group) can run the agent without weakening the hardening posture. See ADR CORE-003.
+
+### Added
+
+- **User-mode install.** `stormpulse init` now auto-detects rootless docker via `$XDG_RUNTIME_DIR/docker.sock` and installs as a user systemd unit at `~/.config/systemd/user/stormpulse.service`. Config + creds live under `~/.config/stormpulse/`, data under `~/.local/share/stormpulse/`. The user unit sets `DOCKER_HOST=unix://%t/docker.sock` so the agent's `docker compose` calls reach the per-user rootless dockerd. Force the mode with `--user` or `--system` flags.
+- **`stormpulse migrate-to-rootless` subcommand.** Converts an existing system install in-place: stops the system unit via sudo, copies creds from `/etc/stormpulse/` to `~/.config/stormpulse/` and re-chowns to the invoking user, translates the TOML paths, writes the user systemd unit, and starts it. Cryptographic identity is preserved — no re-enrollment. Old install left in place for rollback (`sudo systemctl enable --now stormpulse`); operator removes it manually once the new agent is verified healthy.
+- **Linger check.** The init wizard warns if `loginctl enable-linger $USER` is not set, since user units stop at logout without it. Playbook `001-ubuntu-baseline` already enables linger for the admin user.
+- **`stormpulse.init.mode`**: `InstallMode` enum (SYSTEM, USER), `detect_mode()`, `resolve_mode()`, `validate_mode_for_euid()`. Public surface for future tooling that needs to know how the agent is installed.
+
+### Changed
+
+- **`stormpulse init` mismatch errors are clearer.** Running `stormpulse init --user` as root now fails with *"Rerun without sudo for user mode. The user systemd unit must be owned by the unprivileged user that runs rootless docker."* Running `stormpulse init` (no flags) on a system without root or rootless docker fails with a message that points at the right resolution (sudo for system, or pass `--user`).
+- **`run_init()` signature**: gains an optional `mode: InstallMode | None` parameter (default `None`, which auto-detects). Existing callers that omit it keep working.
+- **`render_systemd_unit()` signature**: gains optional `mode`, `agent_bin`, `config_path` keyword arguments. The original positional `project_dir` call still produces the system unit unchanged.
+- **`run_system_setup()` signature**: gains optional `mode` parameter. In user mode, skips the docker-group `usermod` and the recursive `root:stormpulse` chown — the agent runs as the operator who already owns the project directory.
+
 ## [0.1.6] - 2026-05-18
 
 Adds Storm Pulse's first Caddy integration, enabling per-region custom-domain hosting on regional VPS hosts.

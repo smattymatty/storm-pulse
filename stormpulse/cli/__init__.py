@@ -66,6 +66,32 @@ def main() -> None:
         action="store_true",
         help="overwrite existing config and systemd unit",
     )
+    mode_group = init_parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--system",
+        dest="mode",
+        action="store_const",
+        const="system",
+        help="force system install (legacy rootful path)",
+    )
+    mode_group.add_argument(
+        "--user",
+        dest="mode",
+        action="store_const",
+        const="user",
+        help="force user install (rootless / user systemd unit)",
+    )
+
+    # --- migrate-to-rootless subcommand ---
+    migrate_parser = subparsers.add_parser(
+        "migrate-to-rootless",
+        help="convert an existing system install to user (rootless) mode",
+    )
+    migrate_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing user-mode files if a previous migration left them",
+    )
 
     # --- status subcommand ---
     status_parser = subparsers.add_parser("status", help="show agent status")
@@ -103,6 +129,9 @@ def main() -> None:
     elif args.command == "init":
         from stormpulse.cli.init import cmd_init
         cmd_init(args)
+    elif args.command == "migrate-to-rootless":
+        from stormpulse.cli.migrate import cmd_migrate_to_rootless
+        cmd_migrate_to_rootless(args)
     elif args.command == "run":
         from stormpulse.cli.run import cmd_run
         cmd_run(args)
@@ -146,13 +175,14 @@ def main() -> None:
         else:
             print("Usage: stormpulse <command> [options]\n", file=sys.stderr)
             print("Commands:", file=sys.stderr)
-            print("  run      Start the agent", file=sys.stderr)
-            print("  enroll   Enroll this agent with the dashboard", file=sys.stderr)
-            print("  init     Generate config and systemd unit", file=sys.stderr)
-            print("  status   Show agent status", file=sys.stderr)
-            print("  garage   Garage S3 node management", file=sys.stderr)
-            print("  caddy    Caddy reverse-proxy integration", file=sys.stderr)
-            print("  logging  Log shipping configuration", file=sys.stderr)
+            print("  run                  Start the agent", file=sys.stderr)
+            print("  enroll               Enroll this agent with the dashboard", file=sys.stderr)
+            print("  init                 Generate config and systemd unit", file=sys.stderr)
+            print("  migrate-to-rootless  Convert system install to user mode", file=sys.stderr)
+            print("  status               Show agent status", file=sys.stderr)
+            print("  garage               Garage S3 node management", file=sys.stderr)
+            print("  caddy                Caddy reverse-proxy integration", file=sys.stderr)
+            print("  logging              Log shipping configuration", file=sys.stderr)
             print(
                 "\nRun 'stormpulse <command> --help' for details.",
                 file=sys.stderr,

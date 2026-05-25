@@ -16,6 +16,7 @@ stormpulse/enroll.py
 stormpulse/metrics.py
 stormpulse/protocol.py
 stormpulse/status.py
+stormpulse/system_inventory.py
 stormpulse/caddy/__init__.py
 stormpulse/caddy/commands.py
 stormpulse/caddy/init.py
@@ -26,6 +27,7 @@ stormpulse/cli/enroll.py
 stormpulse/cli/garage.py
 stormpulse/cli/init.py
 stormpulse/cli/log.py
+stormpulse/cli/migrate.py
 stormpulse/cli/run.py
 stormpulse/cli/status.py
 stormpulse/commands/__init__.py
@@ -52,6 +54,8 @@ stormpulse/init/checks.py
 stormpulse/init/compose.py
 stormpulse/init/files.py
 stormpulse/init/generate.py
+stormpulse/init/migrate.py
+stormpulse/init/mode.py
 stormpulse/init/orchestrator.py
 stormpulse/init/prompts.py
 stormpulse/init/registry.py
@@ -72,5 +76,7 @@ tests/test_init.py
 tests/test_integration.py
 tests/test_jobs.py
 tests/test_metrics.py
+tests/test_migrate.py
+tests/test_mode.py
 tests/test_protocol.py
 tests/test_status.py

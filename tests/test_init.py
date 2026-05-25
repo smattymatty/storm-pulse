@@ -896,15 +896,19 @@ class TestRunDaemonReload:
 
 
 class TestRunInit:
-    @patch("stormpulse.init.checks.os.geteuid", return_value=1000)
+    @patch("stormpulse.init.mode.os.geteuid", return_value=1000)
     def test_aborts_not_root(self, _mock: MagicMock, tmp_path: Path) -> None:
-        with pytest.raises(InitError, match="must be run as root"):
-            run_init(tmp_path)
+        # Force system mode (would otherwise auto-detect to user when
+        # the rootless socket is present on the test host).
+        from stormpulse.init import InstallMode
+        with pytest.raises(InitError, match="needs root|must be run as root"):
+            run_init(tmp_path, mode=InstallMode.SYSTEM)
 
-    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
+    @patch("stormpulse.init.mode.os.geteuid", return_value=0)
     def test_aborts_missing_creds(self, _mock: MagicMock, tmp_path: Path) -> None:
+        from stormpulse.init import InstallMode
         with pytest.raises(InitError, match="not found"):
-            run_init(tmp_path / "nonexistent")
+            run_init(tmp_path / "nonexistent", mode=InstallMode.SYSTEM)
 
     @patch("stormpulse.init.orchestrator.registered_init_steps", return_value=[])
     @patch("stormpulse.init.orchestrator.run_daemon_reload")

@@ -187,6 +187,7 @@ class RegisterPayload:
     commands: dict[str, Any] | None = None
     garage: dict[str, Any] | None = None
     log_groups: list[str] | None = None
+    system_inventory: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -337,6 +338,7 @@ def make_register(
     commands: dict[str, Any] | None = None,
     garage: dict[str, Any] | None = None,
     log_groups: list[str] | None = None,
+    system_inventory: dict[str, Any] | None = None,
 ) -> Envelope:
     """Create a register envelope."""
     return _make_envelope(
@@ -344,6 +346,7 @@ def make_register(
         asdict(RegisterPayload(
             version=version, pulse_token=pulse_token,
             commands=commands, garage=garage, log_groups=log_groups,
+            system_inventory=system_inventory,
         )),
     )
 
