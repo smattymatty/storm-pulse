@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from stormpulse.init.mode import InstallMode
+
 
 @dataclass(frozen=True, slots=True)
 class InitConfig:
@@ -18,6 +20,13 @@ class InitConfig:
     compose_file: Path
     docker_service_name: str
     env_file: Path | None
+    # Mode defaults to SYSTEM so existing callers (and the
+    # rootful test suite) keep working without code changes.
+    mode: InstallMode = InstallMode.SYSTEM
+    # User-mode data dir. Ignored in system mode (which uses
+    # /opt/stormpulse/data). Set explicitly in user mode so the
+    # generated TOML embeds the right path.
+    data_dir: Path | None = None
 
 
 TOML_TEMPLATE = """\
@@ -59,7 +68,7 @@ def generate_toml(config: InitConfig) -> str:
     env_line = ""
     if config.env_file is not None:
         env_line = f'env_file = "{config.env_file}"\n'
-    return TOML_TEMPLATE.format(
+    rendered = TOML_TEMPLATE.format(
         agent_id=config.agent_id,
         pulse_token=config.pulse_token,
         dashboard_url=config.dashboard_url,
@@ -69,6 +78,16 @@ def generate_toml(config: InitConfig) -> str:
         docker_service_name=config.docker_service_name,
         env_file_line=env_line,
     )
+    # In user mode, point [storage].db_path at the user-scoped data
+    # location (default ``~/.local/share/stormpulse/stormpulse.db``)
+    # instead of the hardcoded /opt/stormpulse/data/stormpulse.db.
+    if config.mode is InstallMode.USER and config.data_dir is not None:
+        user_db = config.data_dir / "stormpulse.db"
+        rendered = rendered.replace(
+            'db_path = "/opt/stormpulse/data/stormpulse.db"',
+            f'db_path = "{user_db}"',
+        )
+    return rendered
 
 
 SYSTEMD_UNIT_TEMPLATE = """\
@@ -104,11 +123,62 @@ ProtectControlGroups=yes
 WantedBy=multi-user.target
 """
 
+# User systemd unit. Runs under the operator's user (whichever user
+# invoked `systemctl --user`), so no `User=`/`Group=` directives.
+# Drops `ProtectHome=yes` because under a user unit the user's home IS
+# the sandbox; locking it out would also lock out the agent's own
+# config + data. `Environment=DOCKER_HOST=unix://%t/docker.sock`
+# points the docker CLI at the rootless dockerd socket (`%t` is
+# systemd's substitution for the unit's runtime dir, i.e.
+# $XDG_RUNTIME_DIR). `default.target` is the user-session equivalent
+# of multi-user.target.
+USER_SYSTEMD_UNIT_TEMPLATE = """\
+[Unit]
+Description=Storm Pulse Agent (user mode)
+After=default.target
 
-def render_systemd_unit(project_dir: Path) -> str:
-    """Render the systemd unit with ``project_dir`` substituted.
+[Service]
+Type=simple
+Environment=DOCKER_HOST=unix://%t/docker.sock
+ExecStart={agent_bin} run {config_path}
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+KillMode=mixed
 
-    Uses ``str.replace`` rather than ``str.format`` so paths containing
+# Sandboxing. Less strict than the system unit because user units
+# don't run privileged; the gain of ProtectHome / ProtectSystem is
+# marginal and would block access to the agent's own files under ~.
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def render_systemd_unit(
+    project_dir: Path,
+    mode: InstallMode = InstallMode.SYSTEM,
+    *,
+    agent_bin: Path | None = None,
+    config_path: Path | None = None,
+) -> str:
+    """Render a systemd unit string for the requested install mode.
+
+    System mode: substitutes the project_dir into the existing template.
+    User mode: substitutes the agent binary path + config path. Both
+    use ``str.replace`` rather than ``str.format`` so paths containing
     ``{`` or ``}`` can't trigger KeyError or unintended substitution.
     """
+    if mode is InstallMode.USER:
+        if agent_bin is None or config_path is None:
+            raise ValueError(
+                "render_systemd_unit(mode=USER) requires agent_bin and config_path",
+            )
+        return (
+            USER_SYSTEMD_UNIT_TEMPLATE
+            .replace("{agent_bin}", str(agent_bin))
+            .replace("{config_path}", str(config_path))
+        )
     return SYSTEMD_UNIT_TEMPLATE.replace("{project_dir}", str(project_dir))

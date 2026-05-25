@@ -10,17 +10,36 @@ from urllib.parse import urlparse
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 
+from stormpulse.init.mode import InstallMode, ModeError, validate_mode_for_euid
+
 
 class InitError(Exception):
     """Raised when init fails."""
 
 
 def check_root() -> None:
-    """Verify running as root. Raises InitError if not."""
+    """Verify running as root. Raises InitError if not.
+
+    Kept for backward compatibility with the rootful-only init flow.
+    New code should call ``check_euid_for_mode(mode)`` which handles
+    both user and system modes.
+    """
     if os.geteuid() != 0:
         raise InitError(
             "stormpulse init must be run as root (sudo stormpulse init)"
         )
+
+
+def check_euid_for_mode(mode: InstallMode) -> None:
+    """Verify EUID matches the requested install mode.
+
+    Converts ``ModeError`` to ``InitError`` so the orchestrator's
+    single-exception-type contract is preserved.
+    """
+    try:
+        validate_mode_for_euid(mode)
+    except ModeError as exc:
+        raise InitError(str(exc)) from exc
 
 
 _REQUIRED_CRED_FILES = ("agent.pem", "agent-key.pem", "ca.pem", "hmac.key")

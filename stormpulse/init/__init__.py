@@ -5,10 +5,19 @@ from __future__ import annotations
 from stormpulse.init.checks import (
     InitError,
     check_credentials,
+    check_euid_for_mode,
     check_root,
     derive_dashboard_url,
     extract_agent_id,
     load_enroll_metadata,
+)
+from stormpulse.init.mode import (
+    InstallMode,
+    ModeError,
+    detect_mode,
+    resolve_mode,
+    rootless_socket_path,
+    validate_mode_for_euid,
 )
 from stormpulse.init.compose import (
     detect_compose_files,
@@ -18,9 +27,15 @@ from stormpulse.init.compose import (
 from stormpulse.init.files import (
     CONFIG_PATH,
     SYSTEMD_PATH,
+    user_config_dir,
+    user_config_path,
+    user_data_dir,
+    user_systemd_path,
     write_file,
     write_config_file,
     write_systemd_unit,
+    write_user_config_file,
+    write_user_systemd_unit,
 )
 from stormpulse.init.generate import (
     SYSTEMD_UNIT_TEMPLATE,
@@ -41,15 +56,19 @@ from stormpulse.init.prompts import (
     prompt_pulse_token,
 )
 from stormpulse.init.system import (
+    check_linger_enabled,
     run_cmd,
     run_find_apply,
     run_daemon_reload,
     run_system_setup,
+    run_user_daemon_reload,
 )
 
 __all__ = [
     "InitConfig",
     "InitError",
+    "InstallMode",
+    "ModeError",
     "CONFIG_PATH",
     "SYSTEMD_PATH",
     "SYSTEMD_UNIT_TEMPLATE",
@@ -60,9 +79,12 @@ __all__ = [
     "run_find_apply",
     "write_file",
     "check_credentials",
+    "check_euid_for_mode",
+    "check_linger_enabled",
     "check_root",
     "derive_dashboard_url",
     "detect_compose_files",
+    "detect_mode",
     "extract_agent_id",
     "generate_toml",
     "render_systemd_unit",
@@ -75,9 +97,19 @@ __all__ = [
     "prompt_env_file",
     "prompt_project_dir",
     "prompt_pulse_token",
+    "resolve_mode",
+    "rootless_socket_path",
     "run_daemon_reload",
     "run_init",
     "run_system_setup",
+    "run_user_daemon_reload",
+    "user_config_dir",
+    "user_config_path",
+    "user_data_dir",
+    "user_systemd_path",
+    "validate_mode_for_euid",
     "write_config_file",
     "write_systemd_unit",
+    "write_user_config_file",
+    "write_user_systemd_unit",
 ]

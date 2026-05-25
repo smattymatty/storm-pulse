@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "storm-pulse-agent"
-version = "0.1.6"
+version = "0.1.7"
 description = "Secure server management agent for Storm Developments infrastructure"
 readme = "README.md"
 requires-python = ">=3.12"
