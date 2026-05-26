@@ -9,7 +9,7 @@ This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroac
 
 ## [Unreleased]
 
-## [0.1.9] - Unreleased
+## [0.1.9] - 2026-05-26
 
 Fixes the rootless-install footgun where `stormpulse enroll` and `stormpulse init` defaulted `--creds-dir` to `/etc/stormpulse`, regardless of who was running them. On a hardened box (no `stormpulse` system user, no write to `/etc/`), enrollment would sign the CSR successfully, mark the token used on the dashboard, then fail locally with `PermissionError` — burning the token and forcing the operator to issue a fresh one for every retry. See ADR CORE-003 for the rootless posture this is catching up to.
 
@@ -17,6 +17,7 @@ Fixes the rootless-install footgun where `stormpulse enroll` and `stormpulse ini
 
 - **`--creds-dir` defaults are now EUID-aware.** Root → `/etc/stormpulse` (legacy system install). Non-root → `$XDG_CONFIG_HOME/stormpulse` (defaulting to `~/.config/stormpulse`). Applies to both `enroll` and `init`. `--creds-dir` still overrides.
 - **`stormpulse enroll` no longer burns the token on local write failures.** The CLI now preflights `creds_dir` (creates it at 0o700 if missing, writes and deletes a marker file) before POSTing the CSR. A local-only failure raises before the network call, so the enrollment token is still valid on retry.
+- **`stormpulse init` mode auto-detection is now EUID-based, not probe-based.** Previously `detect_mode()` probed `$XDG_RUNTIME_DIR/docker.sock` to decide between user and system mode. On fresh hardened boxes the probe races the install flow -- rootless dockerd isn't necessarily up yet -- so it would return SYSTEM and `validate_mode_for_euid` would then reject the install with "needs root". Detection now keys off `os.geteuid()` alone: root → SYSTEM, non-root → USER. `--user` / `--system` still override. Matches the `--creds-dir` fix above.
 
 ### Added
 
@@ -107,7 +108,8 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* - current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.6...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.9...HEAD
+[0.1.9]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.8...v0.1.9
 [0.1.6]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.5...v0.1.6
 [0.1.5]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.4...v0.1.5
 [0.1.4]: https://git.stormdevelopments.ca/official-public/storm-pulse/releases/tag/v0.1.4

@@ -45,16 +45,23 @@ def rootless_socket_path() -> Path | None:
 
 
 def detect_mode() -> InstallMode:
-    """Probe the environment and return the install mode that fits.
+    """Return the install mode that matches the operator's EUID.
 
-    Returns USER if the rootless docker socket is present and readable
-    by the current user. Otherwise SYSTEM. Never raises -- mismatch
-    validation happens later in ``validate_mode_for_euid``.
+    Root → SYSTEM (legacy install path). Non-root → USER (rootless,
+    the documented default on hardened boxes).
+
+    Why EUID and not a docker.sock probe: the probe races the install
+    flow. Operators install the agent before bringing up their project's
+    rootless dockerd, so $XDG_RUNTIME_DIR/docker.sock often isn't there
+    yet -- the probe would falsely return SYSTEM, and the EUID check
+    below would then reject the install with "needs root". EUID is a
+    deterministic signal of operator intent ("am I root?" → "do I want
+    a system unit?") and matches what ``validate_mode_for_euid`` will
+    accept, so detect + validate never disagree.
     """
-    sock = rootless_socket_path()
-    if sock is not None and sock.exists() and os.access(sock, os.R_OK):
-        return InstallMode.USER
-    return InstallMode.SYSTEM
+    if os.geteuid() == 0:
+        return InstallMode.SYSTEM
+    return InstallMode.USER
 
 
 def resolve_mode(forced: InstallMode | None) -> InstallMode:
