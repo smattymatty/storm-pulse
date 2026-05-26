@@ -127,9 +127,10 @@ def run_init(
         write_systemd_unit(systemd_path, unit_content, force=force)
     print(f"  Systemd: {systemd_path}", file=sys.stderr)
 
-    # Feature install steps (Garage, logging, ...). Features register their
-    # step with stormpulse.init.registry; the orchestrator runs them here
-    # without importing any feature - the CORE-000 dependency inversion.
+    # Feature install steps (Garage, logging, signoff, ...). Features
+    # register their step with stormpulse.init.registry; the orchestrator
+    # runs them here without importing any feature - the CORE-000
+    # dependency inversion.
     for step in registered_init_steps():
         step(config_path)
 

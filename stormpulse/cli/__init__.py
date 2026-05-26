@@ -114,6 +114,10 @@ def main() -> None:
     from stormpulse.cli.log import add_logging_subparser
     add_logging_subparser(subparsers)
 
+    # --- signoff subcommand group ---
+    from stormpulse.cli.signoff import add_signoff_subparser
+    add_signoff_subparser(subparsers)
+
     args = parser.parse_args()
 
     log_level = os.environ.get("STORMPULSE_LOG_LEVEL", "INFO").upper()
@@ -165,6 +169,24 @@ def main() -> None:
             print("Subcommands:", file=sys.stderr)
             print("  init     Detect containers and configure log shipping", file=sys.stderr)
             sys.exit(1)
+    elif args.command == "signoff":
+        signoff_cmd = getattr(args, "signoff_command", None)
+        if signoff_cmd == "status":
+            from stormpulse.cli.signoff import cmd_signoff_status
+            cmd_signoff_status(args)
+        elif signoff_cmd == "seal":
+            from stormpulse.cli.signoff import cmd_signoff_seal
+            cmd_signoff_seal(args)
+        elif signoff_cmd == "unseal":
+            from stormpulse.cli.signoff import cmd_signoff_unseal
+            cmd_signoff_unseal(args)
+        else:
+            print("Usage: stormpulse signoff <subcommand>\n", file=sys.stderr)
+            print("Subcommands:", file=sys.stderr)
+            print("  status   Show whether verify-block dispatch is sealed", file=sys.stderr)
+            print("  seal     Disable verify-block dispatch on this agent", file=sys.stderr)
+            print("  unseal   Re-enable verify-block dispatch on this agent", file=sys.stderr)
+            sys.exit(1)
     elif args.command is None:
         # Detect old syntax: stormpulse /path/to/config
         if len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
@@ -183,6 +205,7 @@ def main() -> None:
             print("  garage               Garage S3 node management", file=sys.stderr)
             print("  caddy                Caddy reverse-proxy integration", file=sys.stderr)
             print("  logging              Log shipping configuration", file=sys.stderr)
+            print("  signoff              Manage the verify-block seal (ADR CORE-004)", file=sys.stderr)
             print(
                 "\nRun 'stormpulse <command> --help' for details.",
                 file=sys.stderr,

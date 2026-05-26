@@ -188,6 +188,18 @@ class RegisterPayload:
     garage: dict[str, Any] | None = None
     log_groups: list[str] | None = None
     system_inventory: dict[str, Any] | None = None
+    # Whether the dashboard's verify-block hatch is currently disabled.
+    # See stormpulse.signoff and ADR CORE-004. None on agents that
+    # predate the seal feature.
+    signoff_sealed: bool | None = None
+    # ISO-8601 UTC timestamp at which the agent transitioned to
+    # unsealed. None when sealed, when the agent predates the marker,
+    # or when an operator removed the seal file by hand without going
+    # through the CLI. Dashboard uses this for "unsealed for X" displays
+    # and for the "unsealed > N hours" pager trigger — the agent owns
+    # the authoritative wall-clock so the dashboard doesn't have to
+    # guess from its own register history.
+    unsealed_since: str | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -339,6 +351,8 @@ def make_register(
     garage: dict[str, Any] | None = None,
     log_groups: list[str] | None = None,
     system_inventory: dict[str, Any] | None = None,
+    signoff_sealed: bool | None = None,
+    unsealed_since: str | None = None,
 ) -> Envelope:
     """Create a register envelope."""
     return _make_envelope(
@@ -347,6 +361,8 @@ def make_register(
             version=version, pulse_token=pulse_token,
             commands=commands, garage=garage, log_groups=log_groups,
             system_inventory=system_inventory,
+            signoff_sealed=signoff_sealed,
+            unsealed_since=unsealed_since,
         )),
     )
 

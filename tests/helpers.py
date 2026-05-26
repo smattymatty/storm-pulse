@@ -23,6 +23,7 @@ from stormpulse.config import (
     StorageConfig,
     TlsConfig,
 )
+from stormpulse.garage.state import GarageState
 from stormpulse.protocol import (
     CommandResultPayload,
     Envelope,
@@ -53,6 +54,23 @@ FAKE_METRICS = MetricsPayload(
     containers=[],
 )
 
+DUMMY_PROJECT = ProjectConfig(
+    project_dir=Path("/opt/myapp"),
+    compose_file=Path("/opt/myapp/docker-compose.yml"),
+    docker_service_name="web",
+)
+
+
+def make_fake_garage_state() -> GarageState:
+    """A minimal GarageState for tests that just need the shape."""
+    return GarageState(
+        node_id="n1", hostname="h", zone="z",
+        capacity_gb=1.0, data_avail_gb=1.0,
+        version="v", healthy=True, db_engine="x",
+        object_count=0, block_count=0,
+        buckets=[], keys=[], peers=[],
+    )
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -60,10 +78,14 @@ FAKE_METRICS = MetricsPayload(
 
 def build_config(
     tmp_path: Path,
-    port: int,
+    port: int = 0,
     garage: GarageConfig | None = None,
 ) -> Config:
-    """Build a Config pointing at ws://localhost:{port}/ws/ with fast intervals."""
+    """Build a Config pointing at ws://localhost:{port}/ws/ with fast intervals.
+
+    ``port=0`` is fine for unit tests that don't actually connect — the URL
+    is only consulted by the websocket client, which the tests mock.
+    """
     return Config(
         agent=AgentConfig(id=AGENT_ID, pulse_token=PULSE_TOKEN),
         dashboard=DashboardConfig(

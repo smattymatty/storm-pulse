@@ -21,6 +21,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     from stormpulse.config import ConfigError, load_config
     from stormpulse.logging import LogPositionStore, PulseLogger
     from stormpulse.metrics import prime_cpu_percent
+    from stormpulse.signoff import SignoffState, state_dir_from_db_path
 
     config_path = Path(args.config)
     try:
@@ -62,10 +63,14 @@ def cmd_run(args: argparse.Namespace) -> None:
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, shutdown.set)
 
+        signoff_state = SignoffState(
+            state_dir_from_db_path(config.storage.db_path),
+        )
         agent = Agent(
             config, secret, nonce_store, ssl_ctx, shutdown,
             log_position_store=log_position_store,
             pulse_logger=pulse_logger,
+            signoff_state=signoff_state,
         )
         await agent.run()
 
