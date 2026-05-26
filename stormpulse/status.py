@@ -13,7 +13,12 @@ from cryptography import x509
 
 @dataclass(frozen=True, slots=True)
 class StatusInfo:
-    """Structured status data, testable without parsing output."""
+    """Structured status data, testable without parsing output.
+
+    ``signoff_sealed`` and ``unsealed_duration`` are populated by the
+    CLI (which is the only place allowed to import the signoff Feature
+    per CORE-000 layering). This module just renders what it's given.
+    """
 
     version: str
     agent_id: str
@@ -24,6 +29,11 @@ class StatusInfo:
     db_path: Path
     db_entry_count: int | None
     pid: int | None
+    # ``None`` when seal state was not collected; otherwise a real bool.
+    signoff_sealed: bool | None = None
+    # Pre-formatted "3h 12m" string for the unsealed-for display. ``None``
+    # when sealed or when seal collection was skipped.
+    unsealed_duration: str | None = None
 
 
 def _read_cert_expiry(cert_path: Path) -> datetime | None:
@@ -64,7 +74,12 @@ def _find_agent_pid() -> int | None:
 
 
 def collect_status(config_path: Path) -> StatusInfo:
-    """Collect all status fields. Never raises - graceful degradation."""
+    """Collect all status fields. Never raises - graceful degradation.
+
+    Does NOT collect sign-off seal state — that lives in the signoff
+    Feature, which sibling Features can't import (CORE-000). The CLI
+    enriches the returned StatusInfo with seal data before printing.
+    """
     from stormpulse import __version__
     from stormpulse.config import ConfigError, load_config
 
@@ -140,3 +155,20 @@ def print_status(info: StatusInfo) -> None:
     else:
         pid_str = f"{info.pid} (running)"
     row("PID", pid_str)
+
+    row("Sign-off", _format_signoff(info))
+
+
+def _format_signoff(info: StatusInfo) -> str:
+    """Render the seal status row, with terminal colour when on a TTY."""
+    import sys
+
+    if info.signoff_sealed is None:
+        return "unknown (state not collected)"
+    if info.signoff_sealed:
+        return "SEALED (verify-block disabled)"
+    duration = info.unsealed_duration or "unknown"
+    label = f"⚠ UNSEALED  (for {duration}) — reseal with: stormpulse signoff seal"
+    if sys.stdout.isatty():
+        return f"\033[1;31m{label}\033[0m"
+    return label

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from stormpulse.commands.jobs import LongRunningFactory
 from stormpulse.config import CaddyConfig, CommandDef, ParamDef
 
 CELLAR_CUSTOM_DOMAIN_CADDY_SYNC = "cellar_custom_domain_caddy_sync"
@@ -61,5 +62,16 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
                     ),
                 ),
             },
+        ),
+    }
+
+
+def long_running_factories(config: CaddyConfig) -> dict[str, LongRunningFactory]:
+    """Return the Caddy long-running command name → handler-factory map."""
+    from stormpulse.caddy.sync import make_caddy_sync_handler
+
+    return {
+        CELLAR_CUSTOM_DOMAIN_CADDY_SYNC: (
+            lambda params: make_caddy_sync_handler(config, params)
         ),
     }

@@ -16,6 +16,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     # See CORE-000 and stormpulse/init/registry.py.
     import stormpulse.garage.init  # noqa: F401
     import stormpulse.logging.init  # noqa: F401
+    import stormpulse.signoff.init  # noqa: F401
     from stormpulse.init import InitError, InstallMode, run_init
 
     mode: InstallMode | None = None

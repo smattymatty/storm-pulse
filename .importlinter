@@ -8,7 +8,8 @@
 ;   Entry      (agent, cli, __main__)       - composition roots; ":" linked
 ;                                             because __main__ imports cli.
 ;   Features   (garage, caddy, logging,     - capability surfaces; "|" forbids
-;               metrics, enroll, status)      sibling-feature imports.
+;               metrics, enroll, status,      sibling-feature imports.
+;               signoff, system_inventory)
 ;   Framework  (commands, init, auth)       - shared infrastructure; "|" -
 ;                                             these modules do not import
 ;                                             each other.
@@ -25,6 +26,6 @@ name = CORE-000 four-layer topology
 type = layers
 layers =
     stormpulse.__main__ : stormpulse.cli : stormpulse.agent
-    stormpulse.status | stormpulse.enroll | stormpulse.metrics | stormpulse.logging | stormpulse.caddy | stormpulse.garage
+    stormpulse.status | stormpulse.enroll | stormpulse.metrics | stormpulse.logging | stormpulse.caddy | stormpulse.garage | stormpulse.signoff | stormpulse.system_inventory
     stormpulse.auth | stormpulse.init | stormpulse.commands
     stormpulse.config | stormpulse.protocol

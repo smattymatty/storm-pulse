@@ -9,17 +9,21 @@ This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroac
 
 ## [Unreleased]
 
-## [0.1.8] - 2026-05-25
+## [0.1.8] - 2026-05-26
 
-Adds `run_verify_block`: a new whitelisted command that lets the dashboard execute sign-off verify shell on the agent. Powers the Storm Developments website's sign-off checklist auto-check feature.
+Adds `run_verify_block`, the dashboard-driven verify hatch that powers the Storm Developments website's sign-off checklist auto-check feature, **and** the operator-owned seal that bounds it. The hatch is wide on purpose — the agent runs whatever HMAC-signed shell the dashboard sends — and the seal is how the operator closes it once onboarding is done so it isn't open forever. See ADR CORE-004.
 
 ### Added
 
 - **`run_verify_block` command.** Registered in the standard command registry alongside `git_pull` and `docker_logs`. Template `["/bin/bash", "-c", "{verify_command}"]`; the shell text arrives as a parameter (4 KiB cap, no regex restriction). Group `signoff`, 30s default timeout.
+- **Sign-off seal.** `stormpulse signoff seal` writes a flag file in the agent's state directory; the agent then excludes `run_verify_block` from its registry and refuses any inbound dispatch of it, returning `failure_reason="signoff_sealed"`. `stormpulse signoff unseal` removes the flag for re-verification; `stormpulse signoff status` reports the current state. The flag is operator-owned by filesystem permissions — neither the dashboard nor a `run_verify_block` payload can flip it.
+- **Dispatch-time recheck.** The seal is re-stat'd on every incoming `command.request` and `command.sequence`, so an operator sealing mid-run takes effect for the next command without an agent restart.
+- **Register-payload `signoff_sealed` flag.** Agents that have shipped the seal report current state to the dashboard on every (re)connect, so the dashboard's verify UI can reflect it without a separate poll.
+- **`stormpulse.signoff` module.** `SignoffState` and `state_dir_from_db_path`. Co-located with the nonce DB.
 
 ### Changed
 
-- **Trust boundary, intentional.** This is the first registered command whose shell text travels on the wire (HMAC-signed by the dashboard) rather than being baked into the agent. The previous built-ins ship templated shell with operator-supplied parameters filling pre-defined slots (`docker_service_name`, `tail_lines`); `run_verify_block` accepts a full opaque shell string from the dashboard. The trust chain is unchanged in shape — the agent only executes what an HMAC-signed envelope tells it to — but the practical reach of "what an HMAC-signed envelope can ask for" widens from "any pre-blessed template" to "any shell". A compromised dashboard already wins under the old model (it can dispatch `git_pull` to mutate the project, or `docker_logs` to leak stdout); this change makes that compromise more dangerous in degree but not in kind. The dashboard side is expected to refuse to dispatch `run_verify_block` for any block whose `kind != verify` so this stays a read-only mechanism in practice.
+- **Trust boundary, named and bounded.** This is the first registered command whose shell text travels on the wire (HMAC-signed by the dashboard) rather than being baked into the agent. Older built-ins ship templated shell with operator-supplied parameters filling pre-defined slots (`docker_service_name`, `tail_lines`); `run_verify_block` accepts a full opaque shell string from the dashboard. The seal bounds this in time: while unsealed (the onboarding window) the dashboard can dispatch any verify shell; once sealed (post-onboarding) the registry has the same shape it had pre-0.1.8 and the hatch is gone until the operator unseals on the host. The trust shift is now an explicit, operator-controlled window rather than a perpetual capability. ADR CORE-004 records the rationale and follow-ups (notably optional `bwrap` confinement of the verify shell).
 
 ## [0.1.7] - 2026-05-25
 

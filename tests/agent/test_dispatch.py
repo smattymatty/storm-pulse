@@ -1,0 +1,235 @@
+"""Tests for the inbound message dispatcher."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import uuid
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from stormpulse.agent import Agent
+from stormpulse.auth import NonceStore
+from stormpulse.config import Config
+from stormpulse.protocol import Envelope, MessageType, make_heartbeat
+
+from tests.helpers import (
+    AGENT_ID,
+    SECRET,
+    make_failed_result,
+    make_successful_result,
+    sign_command_request,
+    sign_command_sequence,
+)
+
+
+# ---------------------------------------------------------------------------
+# Single command request
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_command_request(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    mock_exec.return_value = make_successful_result()
+    ws = AsyncMock()
+
+    await agent._dispatch(ws, sign_command_request())
+
+    mock_exec.assert_called_once()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bad_json(agent: Agent) -> None:
+    ws = AsyncMock()
+    await agent._dispatch(ws, "not json{{{")
+    ws.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bad_hmac(agent: Agent) -> None:
+    ws = AsyncMock()
+    envelope = Envelope(
+        v=1,
+        type=MessageType.COMMAND_REQUEST,
+        id=str(uuid.uuid4()),
+        ts=datetime.now(timezone.utc),
+        agent_id=AGENT_ID,
+        payload={"command": "git_pull", "params": {}, "hmac": "bad", "nonce": "n"},
+    )
+    await agent._dispatch(ws, envelope.to_json())
+    ws.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_unexpected_type(agent: Agent) -> None:
+    ws = AsyncMock()
+    heartbeat = make_heartbeat(AGENT_ID)
+    await agent._dispatch(ws, heartbeat.to_json())
+    ws.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ack_type", [
+    MessageType.REGISTER_OK,
+    MessageType.HEARTBEAT_ACK,
+    MessageType.METRICS_ACK,
+    MessageType.COMMAND_RESULT_ACK,
+    MessageType.ERROR,
+])
+async def test_dispatch_ack_types_ignored(
+    agent: Agent, ack_type: MessageType,
+) -> None:
+    ws = AsyncMock()
+    envelope = Envelope(
+        v=1,
+        type=ack_type,
+        id=str(uuid.uuid4()),
+        ts=datetime.now(timezone.utc),
+        agent_id=AGENT_ID,
+        payload={},
+    )
+    await agent._dispatch(ws, envelope.to_json())
+    ws.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Command sequence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_command_sequence(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    mock_exec.return_value = make_successful_result()
+    ws = AsyncMock()
+
+    await agent._dispatch(ws, sign_command_sequence(["git_pull", "docker_logs"]))
+
+    assert mock_exec.call_count == 2
+    assert ws.send.call_count == 2
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_sequence_stop_on_failure(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    mock_exec.return_value = make_failed_result(command="git_pull")
+    ws = AsyncMock()
+
+    await agent._dispatch(
+        ws, sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=True),
+    )
+
+    assert mock_exec.call_count == 1
+    assert ws.send.call_count == 1
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_sequence_continues_past_failure(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    mock_exec.return_value = make_failed_result(command="git_pull")
+    ws = AsyncMock()
+
+    await agent._dispatch(
+        ws, sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=False),
+    )
+
+    assert mock_exec.call_count == 2
+    assert ws.send.call_count == 2
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_sequence_invalid_command_aborts(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    ws = AsyncMock()
+    await agent._dispatch(ws, sign_command_sequence(["this_command_does_not_exist"]))
+    mock_exec.assert_not_called()
+    ws.send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# log.batch.ack
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_missing_batch_id(agent: Agent) -> None:
+    envelope = Envelope(
+        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
+        ts=datetime.now(timezone.utc), agent_id=AGENT_ID,
+        payload={},
+    )
+    # Should not raise
+    await agent._handle_log_batch_ack(envelope)
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_unknown_batch_is_noop(agent: Agent) -> None:
+    envelope = Envelope(
+        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
+        ts=datetime.now(timezone.utc), agent_id=AGENT_ID,
+        payload={"batch_id": "never-sent"},
+    )
+    await agent._handle_log_batch_ack(envelope)
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_advances_position(agent: Agent) -> None:
+    fake_shipper = MagicMock()
+    fake_shipper.tailer.confirm_shipped = MagicMock()
+    agent._shippers["grp"] = fake_shipper
+    agent._pending_batches.add("bid-1", "grp", 4242)
+
+    envelope = Envelope(
+        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
+        ts=datetime.now(timezone.utc), agent_id=AGENT_ID,
+        payload={"batch_id": "bid-1"},
+    )
+    await agent._handle_log_batch_ack(envelope)
+
+    fake_shipper.tailer.confirm_shipped.assert_called_once_with(4242)
+    assert "bid-1" not in agent._pending_batches
+
+
+# ---------------------------------------------------------------------------
+# PulseLogger integration on command result
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_command_result_logged_to_pulse_logger(
+    mock_exec: MagicMock,
+    config: Config,
+    nonce_store: NonceStore,
+    ssl_ctx: MagicMock,
+    shutdown: asyncio.Event,
+) -> None:
+    mock_exec.return_value = make_successful_result()
+    pulse_logger = MagicMock()
+    ag = Agent(
+        config, SECRET, nonce_store, ssl_ctx, shutdown,
+        pulse_logger=pulse_logger,
+    )
+    ws = AsyncMock()
+    await ag._dispatch(ws, sign_command_request())
+    pulse_logger.log_command_result.assert_called_once()
+    kwargs = pulse_logger.log_command_result.call_args.kwargs
+    assert kwargs["command"] == "git_pull"
+    assert kwargs["success"] is True

@@ -83,14 +83,26 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
 def build_registry(
     config_commands: dict[str, CommandDef],
     disabled: frozenset[str] = frozenset(),
+    *,
+    signoff_sealed: bool = False,
 ) -> dict[str, CommandDef]:
     """Merge built-in commands with config-defined commands.
 
     Config commands override built-ins on name collision.
     Commands in *disabled* are removed from the final registry.
+
+    When ``signoff_sealed`` is true, ``run_verify_block`` is also
+    excluded — a sealed agent advertises (and accepts) the same
+    pre-0.1.8 capability set, so the dashboard's verify hatch is gone
+    until the operator unseals on the host. See ``stormpulse.signoff``
+    and ADR CORE-004.
     """
     merged = {**COMMAND_REGISTRY, **config_commands}
-    return {k: v for k, v in merged.items() if k not in disabled}
+    auto_disabled = {"run_verify_block"} if signoff_sealed else set()
+    return {
+        k: v for k, v in merged.items()
+        if k not in disabled and k not in auto_disabled
+    }
 
 
 def validate_params(

@@ -3,11 +3,21 @@
 Most resolve to ``docker exec <container> /garage <subcommand>``, shell=False.
 ``garage_refresh`` is the exception: an internal command handled directly by
 the agent, triggering immediate state collection without a subprocess.
+
+Long-running commands (bucket clear, provisioning, key rotation, CORS) are
+declared here as well via ``long_running_factories``; each factory is bound
+to a Garage config so the bootstrap can compose a flat name→factory map
+without the agent knowing each handler module by name.
 """
 
 from __future__ import annotations
 
+import logging
+
+from stormpulse.commands.jobs import LongRunningFactory
 from stormpulse.config import CommandDef, GarageConfig, ParamDef
+
+logger = logging.getLogger(__name__)
 
 # S3-strict bucket name (which Garage's bucket-create validator
 # enforces): 3-63 chars, lowercase alphanumeric + hyphens, must start
@@ -633,5 +643,46 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     description="Key to revoke access for",
                 ),
             },
+        ),
+    }
+
+
+def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory]:
+    """Return the Garage long-running command name → handler-factory map.
+
+    Each factory accepts the validated runtime params and returns a
+    ``JobHandler`` coroutine. Imports its handler module lazily so the
+    agent process doesn't load handler code for features that aren't
+    installed on a given host.
+    """
+    from stormpulse.garage.clear_bucket import make_clear_bucket_handler
+    from stormpulse.garage.delete_provisioned_bucket import (
+        make_delete_provisioned_bucket_handler,
+    )
+    from stormpulse.garage.provision_additional_key import (
+        make_provision_additional_key_handler,
+    )
+    from stormpulse.garage.provision_bucket import (
+        make_provision_customer_bucket_handler,
+    )
+    from stormpulse.garage.rotate_key import make_rotate_customer_key_handler
+    from stormpulse.garage.set_cors import make_set_cors_handler
+    from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
+
+    return {
+        "garage_bucket_clear": make_clear_bucket_handler,
+        "garage_bucket_set_cors": make_set_cors_handler,
+        "garage_walk_bucket_stats": make_walk_bucket_stats_handler,
+        "garage_provision_customer_bucket": (
+            lambda params: make_provision_customer_bucket_handler(config, params)
+        ),
+        "garage_rotate_customer_key": (
+            lambda params: make_rotate_customer_key_handler(config, params)
+        ),
+        "garage_provision_additional_key": (
+            lambda params: make_provision_additional_key_handler(config, params)
+        ),
+        "garage_delete_provisioned_bucket": (
+            lambda params: make_delete_provisioned_bucket_handler(config, params)
         ),
     }

@@ -125,9 +125,8 @@ class TestGarageLoopEnabled:
         )
 
         async def run_loop() -> None:
-            # Patch where agent.py imports it
             with patch(
-                "stormpulse.agent.collect_garage_state",
+                "stormpulse.agent.loops.collect_garage_state",
                 return_value=fake_state,
             ):
                 task = asyncio.create_task(agent._garage_loop(ws))
@@ -174,7 +173,7 @@ class TestGarageLoopEnabled:
 
         async def run_loop() -> None:
             with patch(
-                "stormpulse.agent.collect_garage_state",
+                "stormpulse.agent.loops.collect_garage_state",
                 return_value=fake_state,
             ) as mock_collect:
                 task = asyncio.create_task(agent._garage_loop(ws))
@@ -241,7 +240,7 @@ class TestGarageRefresh:
             object_count=5, block_count=10, buckets=[], keys=[], peers=[],
         )
         with patch(
-            "stormpulse.agent.collect_garage_state",
+            "stormpulse.agent.garage_actions.collect_garage_state",
             return_value=fake_state,
         ):
             result = await agent._handle_garage_refresh("req-1")
@@ -268,7 +267,7 @@ class TestGarageRefresh:
         agent, _ = _make_agent(config, tmp_path)
 
         with patch(
-            "stormpulse.agent.collect_garage_state",
+            "stormpulse.agent.garage_actions.collect_garage_state",
             return_value=None,
         ):
             result = await agent._handle_garage_refresh("req-1")
