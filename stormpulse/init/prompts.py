@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import grp
+import os
 import pwd
 import re
 import sys
@@ -64,45 +65,67 @@ def prompt_project_dir() -> Path:
     before the project itself exists. Re-prompting forever made them
     drop the wizard, mkdir in another shell, and start over.
 
-    On a missing path we offer to create it. If the parent isn't
-    writable (e.g. ``/opt`` owned by root), we don't escalate -- we
-    print the exact ``sudo`` line the operator can paste in another
-    shell and re-prompt. Keeps the agent's privilege surface at zero.
+    Two missing-path branches keyed off the deepest existing ancestor:
+
+    - Ancestor writable by us → ``Create it? [Y/n]``. On yes, ``mkdir
+      -p`` and report owner.
+    - Ancestor not writable → skip the ``Create it?`` prompt (it would
+      be a no-op) and print the exact ``sudo`` line. The retry prompt
+      defaults to the same path so the operator can run sudo in
+      another shell and just press Enter, keeping their answer.
+
+    Never escalates -- no subprocess sudo, no password capture. The
+    agent's privilege surface stays at zero.
     """
-    default = str(Path.cwd())
+    value = prompt("Project directory", default=str(Path.cwd()))
     while True:
-        value = prompt("Project directory", default=default)
         p = Path(value)
         if p.is_dir():
             return p.resolve()
         print(f"  Directory {value} does not exist.", file=sys.stderr)
-        if not prompt_confirm("  Create it?", default_yes=True):
-            continue
-        try:
+        ancestor = p
+        while not ancestor.exists() and ancestor.parent != ancestor:
+            ancestor = ancestor.parent
+        if ancestor.exists() and os.access(ancestor, os.W_OK):
+            if not prompt_confirm("  Create it?", default_yes=True):
+                value = prompt("Project directory", default=str(Path.cwd()))
+                continue
             p.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
-            print(
-                f"  Cannot create {value} -- parent directory not writable.",
-                file=sys.stderr,
-            )
-            print("  Run this in another shell, then retry:", file=sys.stderr)
-            print(
-                f"    sudo mkdir -p {value} && sudo chown $USER:$USER {value}",
-                file=sys.stderr,
-            )
-            continue
-        try:
-            st = p.stat()
-            owner = pwd.getpwuid(st.st_uid).pw_name
-            group = grp.getgrgid(st.st_gid).gr_name
-            print(f"  Created {p} (owner: {owner}:{group})", file=sys.stderr)
-        except KeyError:
-            print(f"  Created {p}", file=sys.stderr)
-        return p.resolve()
+            try:
+                st = p.stat()
+                owner = pwd.getpwuid(st.st_uid).pw_name
+                group = grp.getgrgid(st.st_gid).gr_name
+                print(f"  Created {p} (owner: {owner}:{group})", file=sys.stderr)
+            except KeyError:
+                print(f"  Created {p}", file=sys.stderr)
+            return p.resolve()
+        print(
+            f"  Cannot create {value} -- parent directory not writable.",
+            file=sys.stderr,
+        )
+        print("  Run this in another shell:", file=sys.stderr)
+        print(
+            f"    sudo mkdir -p {value} && sudo chown $USER:$USER {value}",
+            file=sys.stderr,
+        )
+        value = prompt(
+            f"  Press Enter once {value} exists, or type a different path",
+            default=value,
+        )
 
 
 def prompt_compose_file(project_dir: Path) -> Path:
-    """Auto-detect compose files, let user pick or enter manually."""
+    """Auto-detect compose files, let user pick or enter manually.
+
+    On a fresh agent-first install, the compose file often doesn't
+    exist yet (the operator is wiring the agent before installing the
+    project's docker stack). When ``detect_compose_files`` returns
+    nothing and the project dir is writable, we offer to scaffold a
+    placeholder with one service block so the wizard can finish.
+    The placeholder uses ``image: placeholder:latest`` -- a
+    deliberately non-resolvable image so ``docker compose up`` fails
+    loudly until the operator replaces it.
+    """
     found = detect_compose_files(project_dir)
     if len(found) == 1:
         confirm = prompt(f"Compose file: {found[0]}? (y/n)", default="y")
@@ -120,14 +143,63 @@ def prompt_compose_file(project_dir: Path) -> Path:
             if p.is_file():
                 return p.resolve()
             print(f"  Not found: {choice}", file=sys.stderr)
+    else:
+        scaffolded = _offer_compose_scaffold(project_dir)
+        if scaffolded is not None:
+            return scaffolded
 
-    # No auto-detect or user declined
+    # Manual entry: declined single auto-detect, or scaffold declined/unavailable.
     while True:
         value = prompt("Path to docker-compose file")
         p = Path(value)
         if p.is_file():
             return p.resolve()
         print(f"  File not found: {value}", file=sys.stderr)
+
+
+def _offer_compose_scaffold(project_dir: Path) -> Path | None:
+    """Offer to write a placeholder ``docker-compose.yml`` in project_dir.
+
+    Returns the resolved path on success, or ``None`` if the operator
+    declined or the project dir isn't writable (in which case the
+    caller falls through to manual entry). Never escalates: if the
+    dir is not writable we skip the offer rather than try sudo.
+    """
+    target = project_dir / "docker-compose.yml"
+    print(f"  No compose file found in {project_dir}.", file=sys.stderr)
+    if not os.access(project_dir, os.W_OK):
+        # Can't write here -- don't offer something we can't do.
+        # Manual entry remains the escape hatch.
+        return None
+    if not prompt_confirm(
+        f"  Scaffold a placeholder at {target}?", default_yes=True,
+    ):
+        return None
+    default_service = project_dir.name or "app"
+    service_name = prompt("  Service name", default=default_service)
+    if not service_name:
+        service_name = default_service
+    target.write_text(
+        "# stormpulse init placeholder -- replace before starting the service.\n"
+        "services:\n"
+        f"  {service_name}:\n"
+        "    image: placeholder:latest\n"
+    )
+    try:
+        st = target.stat()
+        owner = pwd.getpwuid(st.st_uid).pw_name
+        group = grp.getgrgid(st.st_gid).gr_name
+        print(
+            f"  Wrote placeholder {target} (owner: {owner}:{group})",
+            file=sys.stderr,
+        )
+    except KeyError:
+        print(f"  Wrote placeholder {target}", file=sys.stderr)
+    print(
+        "  NOTE: replace before `systemctl --user enable --now stormpulse`.",
+        file=sys.stderr,
+    )
+    return target.resolve()
 
 
 def prompt_docker_service(compose_path: Path) -> str:
