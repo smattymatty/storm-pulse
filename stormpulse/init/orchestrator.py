@@ -77,7 +77,13 @@ def run_init(
     if meta.get("endpoint"):
         dashboard_default = derive_dashboard_url(meta["endpoint"])
 
-    pulse_token = prompt_pulse_token()
+    # Where any previous run's config would live. Used both as the
+    # source for the pulse-token recall default below and the
+    # overwrite-confirm target after the wizard finishes.
+    config_path = user_config_path() if resolved_mode is InstallMode.USER else CONFIG_PATH
+    systemd_path = user_systemd_path() if resolved_mode is InstallMode.USER else SYSTEMD_PATH
+
+    pulse_token = prompt_pulse_token(remembered_from=config_path)
     dashboard_url = prompt_dashboard_url(default=dashboard_default)
     project_dir = prompt_project_dir()
     compose_file = prompt_compose_file(project_dir)
@@ -96,9 +102,6 @@ def run_init(
         mode=resolved_mode,
         data_dir=user_data_dir() if resolved_mode is InstallMode.USER else None,
     )
-
-    config_path = user_config_path() if resolved_mode is InstallMode.USER else CONFIG_PATH
-    systemd_path = user_systemd_path() if resolved_mode is InstallMode.USER else SYSTEMD_PATH
 
     # Check for existing config
     if config_path.is_file() and not force:

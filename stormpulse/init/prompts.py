@@ -7,6 +7,7 @@ import os
 import pwd
 import re
 import sys
+import tomllib
 from pathlib import Path
 
 from stormpulse.init.checks import InitError
@@ -38,10 +39,41 @@ UUID_RE = re.compile(
 )
 
 
-def prompt_pulse_token() -> str:
-    """Prompt for the pulse token (UUID format)."""
+def _read_existing_pulse_token(config_path: Path | None) -> str | None:
+    """Return the previously-configured pulse token, if any.
+
+    On re-runs of ``stormpulse init`` the token rarely changes but the
+    operator otherwise has to dig it out of the dashboard and retype it
+    every time. We read ``[agent].pulse_token`` from a prior config and
+    validate it against ``UUID_RE`` -- a stale or hand-edited token
+    that wouldn't pass the prompt's validation either is skipped so
+    the operator isn't fooled into pressing Enter on a broken default.
+    Returns None on any failure; the caller falls back to no default.
+    """
+    if config_path is None or not config_path.is_file():
+        return None
+    try:
+        with config_path.open("rb") as fh:
+            data = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+    token = data.get("agent", {}).get("pulse_token")
+    if isinstance(token, str) and UUID_RE.match(token):
+        return token
+    return None
+
+
+def prompt_pulse_token(remembered_from: Path | None = None) -> str:
+    """Prompt for the pulse token (UUID format).
+
+    If a previous config exists at ``remembered_from`` and contains a
+    valid pulse token, offer it as the default so a re-run of
+    ``stormpulse init`` only needs an Enter press to keep the same
+    token.
+    """
+    default = _read_existing_pulse_token(remembered_from)
     while True:
-        value = prompt("Pulse token (from dashboard)")
+        value = prompt("Pulse token (from dashboard)", default=default)
         if UUID_RE.match(value):
             return value
         print("  Invalid format - expected a UUID (e.g. a1b2c3d4-5678-...)", file=sys.stderr)
@@ -59,20 +91,23 @@ def prompt_dashboard_url(default: str | None = None) -> str:
 
 
 def prompt_project_dir() -> Path:
-    """Prompt for the project directory; offer to create it if missing.
+    """Prompt for the project directory; resolve missing or unowned paths.
 
     Fresh-box workflow: the operator is often installing the agent
-    before the project itself exists. Re-prompting forever made them
-    drop the wizard, mkdir in another shell, and start over.
+    before the project itself exists, or just after ``sudo mkdir``'d
+    the dir without remembering to chown it. Re-prompting silently
+    made them drop the wizard and start over.
 
-    Two missing-path branches keyed off the deepest existing ancestor:
+    Three branches:
 
-    - Ancestor writable by us → ``Create it? [Y/n]``. On yes, ``mkdir
-      -p`` and report owner.
-    - Ancestor not writable → skip the ``Create it?`` prompt (it would
-      be a no-op) and print the exact ``sudo`` line. The retry prompt
-      defaults to the same path so the operator can run sudo in
-      another shell and just press Enter, keeping their answer.
+    - Path exists and is writable → return it.
+    - Path exists but is *not* writable (e.g. ``sudo mkdir`` without
+      chown) → print ``sudo chown -R $USER:$USER <path>`` and a
+      Press-Enter-to-retry prompt defaulting to the same path.
+    - Path doesn't exist → check the deepest existing ancestor.
+      Writable → ``Create it? [Y/n]`` → ``mkdir -p`` + report owner.
+      Not writable → print ``sudo mkdir -p ... && sudo chown ...``
+      and the same Press-Enter retry.
 
     Never escalates -- no subprocess sudo, no password capture. The
     agent's privilege surface stays at zero.
@@ -81,7 +116,24 @@ def prompt_project_dir() -> Path:
     while True:
         p = Path(value)
         if p.is_dir():
-            return p.resolve()
+            if os.access(p, os.W_OK):
+                return p.resolve()
+            # Exists but the operator can't write to it. Downstream
+            # steps (scaffold compose, write systemd unit drop-in,
+            # etc.) all assume project_dir is theirs. Catch it here
+            # with the same chown + Press-Enter pattern used for
+            # missing dirs -- consistent UX, no escalation.
+            print(
+                f"  Directory {value} exists but is not writable by you.",
+                file=sys.stderr,
+            )
+            print("  Run this in another shell:", file=sys.stderr)
+            print(f"    sudo chown -R $USER:$USER {value}", file=sys.stderr)
+            value = prompt(
+                f"  Press Enter once {value} is yours, or type a different path",
+                default=value,
+            )
+            continue
         print(f"  Directory {value} does not exist.", file=sys.stderr)
         ancestor = p
         while not ancestor.exists() and ancestor.parent != ancestor:
@@ -227,7 +279,15 @@ def prompt_docker_service(compose_path: Path) -> str:
 
 
 def prompt_env_file(project_dir: Path) -> Path | None:
-    """Detect .env file, offer to use it or skip."""
+    """Detect ``.env``, accept it, offer to create an empty one, or skip.
+
+    On agent-first installs the project's ``.env`` often doesn't
+    exist yet -- the operator will fill in ``KEY=value`` pairs when
+    they install the project software. When ``project_dir`` is
+    writable, offer to create an empty file so the wizard can move
+    on without a manual ``touch``. Decline or unwritable dir falls
+    through to the existing manual-entry / skip path.
+    """
     env_path = project_dir / ".env"
     if env_path.is_file():
         choice = prompt(f"Found {env_path}. Use as env_file? (y/n/skip)", default="y")
@@ -235,6 +295,17 @@ def prompt_env_file(project_dir: Path) -> Path | None:
             return env_path
         if choice.lower() in ("n", "no", "skip", "s"):
             return None
+    elif os.access(project_dir, os.W_OK):
+        if prompt_confirm(f"  Create empty {env_path}?", default_yes=True):
+            env_path.touch()
+            try:
+                st = env_path.stat()
+                owner = pwd.getpwuid(st.st_uid).pw_name
+                group = grp.getgrgid(st.st_gid).gr_name
+                print(f"  Wrote {env_path} (owner: {owner}:{group})", file=sys.stderr)
+            except KeyError:
+                print(f"  Wrote {env_path}", file=sys.stderr)
+            return env_path.resolve()
     choice = prompt("Path to .env file (or 'skip')", default="skip")
     if choice.lower() in ("skip", "s", ""):
         return None
