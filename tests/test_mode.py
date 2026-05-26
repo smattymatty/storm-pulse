@@ -30,41 +30,36 @@ class TestRootlessSocketPath:
 
 
 class TestDetectMode:
-    def test_returns_user_when_rootless_socket_present(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Create a real file at the simulated socket path. os.access(R_OK)
-        # will succeed because the file exists and we own it.
-        runtime = tmp_path / "runtime"
-        runtime.mkdir()
-        sock = runtime / "docker.sock"
-        sock.touch()
-        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    @patch("stormpulse.init.mode.os.geteuid", return_value=0)
+    def test_returns_system_as_root(self, _mock: object) -> None:
+        assert detect_mode() is InstallMode.SYSTEM
+
+    @patch("stormpulse.init.mode.os.geteuid", return_value=1000)
+    def test_returns_user_as_non_root(self, _mock: object) -> None:
         assert detect_mode() is InstallMode.USER
 
-    def test_returns_system_when_no_xdg_runtime_dir(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @patch("stormpulse.init.mode.os.geteuid", return_value=1000)
+    def test_user_default_ignores_missing_docker_socket(self, _mock: object, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Regression: pre-0.1.9 the probe would return SYSTEM here and
+        # then validate_mode_for_euid would reject the install. Detect
+        # must now key off EUID alone so a fresh box -- where rootless
+        # dockerd isn't up yet -- still defaults to user mode.
         monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-        assert detect_mode() is InstallMode.SYSTEM
-
-    def test_returns_system_when_socket_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # XDG_RUNTIME_DIR is set but the socket file isn't there.
-        monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
-        assert detect_mode() is InstallMode.SYSTEM
+        assert detect_mode() is InstallMode.USER
 
 
 class TestResolveMode:
-    def test_forced_user_overrides_detection(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    @patch("stormpulse.init.mode.os.geteuid", return_value=0)
+    def test_forced_user_overrides_detection(self, _mock: object) -> None:
         assert resolve_mode(InstallMode.USER) is InstallMode.USER
 
-    def test_forced_system_overrides_detection(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        runtime = tmp_path / "runtime"
-        runtime.mkdir()
-        (runtime / "docker.sock").touch()
-        monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    @patch("stormpulse.init.mode.os.geteuid", return_value=1000)
+    def test_forced_system_overrides_detection(self, _mock: object) -> None:
         assert resolve_mode(InstallMode.SYSTEM) is InstallMode.SYSTEM
 
-    def test_none_falls_through_to_detect(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
-        assert resolve_mode(None) is InstallMode.SYSTEM
+    @patch("stormpulse.init.mode.os.geteuid", return_value=1000)
+    def test_none_falls_through_to_detect(self, _mock: object) -> None:
+        assert resolve_mode(None) is InstallMode.USER
 
 
 class TestValidateModeForEuid:
