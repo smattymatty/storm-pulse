@@ -111,6 +111,42 @@ def main() -> None:
         help="overwrite existing user-mode files if a previous migration left them",
     )
 
+    # --- update subcommand ---
+    update_parser = subparsers.add_parser(
+        "update",
+        help="reinstall the agent via pipx and restart the unit",
+    )
+    update_parser.add_argument(
+        "--source",
+        choices=["git", "pip"],
+        default="git",
+        help="install source: git (default, tracks latest fixes) or pip (pypi)",
+    )
+    update_parser.add_argument(
+        "--branch",
+        default=None,
+        help="git branch to install (only with --source git; default: main)",
+    )
+    update_parser.add_argument(
+        "--version",
+        default=None,
+        help="pypi version to install (only with --source pip; default: latest)",
+    )
+    restart_group = update_parser.add_mutually_exclusive_group()
+    restart_group.add_argument(
+        "--restart",
+        dest="restart",
+        action="store_true",
+        default=True,
+        help="restart the systemd unit after install (default)",
+    )
+    restart_group.add_argument(
+        "--no-restart",
+        dest="restart",
+        action="store_false",
+        help="skip the restart; print the restart command instead",
+    )
+
     # --- status subcommand ---
     status_parser = subparsers.add_parser("status", help="show agent status")
     status_parser.add_argument(
@@ -160,6 +196,9 @@ def main() -> None:
     elif args.command == "status":
         from stormpulse.cli.status import cmd_status
         cmd_status(args)
+    elif args.command == "update":
+        from stormpulse.cli.update import cmd_update
+        cmd_update(args)
     elif args.command == "garage":
         if getattr(args, "garage_command", None) == "init":
             from stormpulse.cli.garage import cmd_garage_init
@@ -220,6 +259,7 @@ def main() -> None:
             print("  init                 Generate config and systemd unit", file=sys.stderr)
             print("  migrate-to-rootless  Convert system install to user mode", file=sys.stderr)
             print("  status               Show agent status", file=sys.stderr)
+            print("  update               Reinstall via pipx and restart", file=sys.stderr)
             print("  garage               Garage S3 node management", file=sys.stderr)
             print("  caddy                Caddy reverse-proxy integration", file=sys.stderr)
             print("  logging              Log shipping configuration", file=sys.stderr)
