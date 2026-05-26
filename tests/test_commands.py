@@ -44,12 +44,12 @@ def project_config() -> ProjectConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_two_commands() -> None:
-    assert len(COMMAND_REGISTRY) == 2
+def test_registry_has_three_commands() -> None:
+    assert len(COMMAND_REGISTRY) == 3
 
 
 def test_all_expected_commands_present() -> None:
-    expected = {"git_pull", "docker_logs"}
+    expected = {"git_pull", "docker_logs", "run_verify_block"}
     assert set(COMMAND_REGISTRY.keys()) == expected
 
 
@@ -426,7 +426,8 @@ def test_build_registry_adds_custom_command() -> None:
         description="Restart Caddy",
     )
     registry = build_registry({"restart_caddy": custom})
-    assert len(registry) == 3
+    # 3 built-ins (git_pull, docker_logs, run_verify_block) + 1 custom.
+    assert len(registry) == 4
     assert registry["restart_caddy"] is custom
     assert registry["git_pull"] is COMMAND_REGISTRY["git_pull"]
 
@@ -438,7 +439,8 @@ def test_build_registry_overrides_builtin() -> None:
         timeout=120,
     )
     registry = build_registry({"git_pull": custom_git})
-    assert len(registry) == 2
+    # Override collapses git_pull into one entry; the other two built-ins stay.
+    assert len(registry) == 3
     assert registry["git_pull"] is custom_git
     assert registry["git_pull"].timeout == 120
 
@@ -446,7 +448,8 @@ def test_build_registry_overrides_builtin() -> None:
 def test_build_registry_disables_builtin() -> None:
     registry = build_registry({}, disabled=frozenset({"docker_logs"}))
     assert "docker_logs" not in registry
-    assert len(registry) == 1
+    # git_pull + run_verify_block remain.
+    assert len(registry) == 2
 
 
 def test_build_registry_disables_custom_command() -> None:
@@ -457,19 +460,23 @@ def test_build_registry_disables_custom_command() -> None:
     )
     registry = build_registry({"restart_caddy": custom}, disabled=frozenset({"restart_caddy"}))
     assert "restart_caddy" not in registry
-    assert len(registry) == 2
+    # Three built-ins, custom is disabled away.
+    assert len(registry) == 3
 
 
 def test_build_registry_disables_multiple() -> None:
-    registry = build_registry({}, disabled=frozenset({"git_pull", "docker_logs"}))
+    registry = build_registry(
+        {}, disabled=frozenset({"git_pull", "docker_logs", "run_verify_block"}),
+    )
     assert "git_pull" not in registry
     assert "docker_logs" not in registry
+    assert "run_verify_block" not in registry
     assert len(registry) == 0
 
 
 def test_build_registry_disabled_unknown_is_harmless() -> None:
     registry = build_registry({}, disabled=frozenset({"nonexistent_command"}))
-    assert len(registry) == 2
+    assert len(registry) == 3
 
 
 def test_build_registry_does_not_mutate_original() -> None:
@@ -593,3 +600,57 @@ def test_resolve_param_overrides_alongside_config_placeholders(
         "/usr/bin/docker", "compose", "-f", "/opt/myapp/docker-compose.yml",
         "logs", "worker",
     ]
+
+
+# ---------------------------------------------------------------------------
+# run_verify_block - dashboard-driven verify-block execution for the
+# sign-off checklist feature in the Storm Developments website.
+# ---------------------------------------------------------------------------
+
+
+def test_run_verify_block_registered() -> None:
+    assert "run_verify_block" in COMMAND_REGISTRY
+    cmd = COMMAND_REGISTRY["run_verify_block"]
+    assert cmd.group == "signoff"
+    assert cmd.command == ["/bin/bash", "-c", "{verify_command}"]
+
+
+def test_run_verify_block_param_has_byte_cap() -> None:
+    cmd = COMMAND_REGISTRY["run_verify_block"]
+    pdef = cmd.params["verify_command"]
+    # Opaque shell text: no regex pattern, just a size cap.
+    assert pdef.pattern is None
+    assert pdef.max_bytes is not None
+    assert pdef.max_bytes >= 1024  # at least enough for typical verify commands
+
+
+def test_run_verify_block_accepts_simple_shell(project_config: ProjectConfig) -> None:
+    cmd = COMMAND_REGISTRY["run_verify_block"]
+    validated = validate_params(cmd, {"verify_command": "sudo ufw status | head -1"})
+    assert validated == {"verify_command": "sudo ufw status | head -1"}
+    resolved = _resolve_command(cmd.command, project_config, validated)
+    assert resolved == ["/bin/bash", "-c", "sudo ufw status | head -1"]
+
+
+def test_run_verify_block_accepts_shell_with_braces(project_config: ProjectConfig) -> None:
+    # Shell parameter expansion uses ${...} - format_map must not
+    # interpret those as Python format placeholders.
+    cmd = COMMAND_REGISTRY["run_verify_block"]
+    validated = validate_params(cmd, {"verify_command": "echo ${HOME}"})
+    resolved = _resolve_command(cmd.command, project_config, validated)
+    assert resolved == ["/bin/bash", "-c", "echo ${HOME}"]
+
+
+def test_run_verify_block_rejects_oversized_payload() -> None:
+    cmd = COMMAND_REGISTRY["run_verify_block"]
+    pdef = cmd.params["verify_command"]
+    assert pdef.max_bytes is not None
+    too_big = "x" * (pdef.max_bytes + 1)
+    with pytest.raises(ParamValidationError, match="exceeds max_bytes"):
+        validate_params(cmd, {"verify_command": too_big})
+
+
+def test_run_verify_block_rejects_unknown_param() -> None:
+    cmd = COMMAND_REGISTRY["run_verify_block"]
+    with pytest.raises(ParamValidationError, match="Unknown params"):
+        validate_params(cmd, {"verify_command": "echo ok", "evil": "rm -rf /"})
