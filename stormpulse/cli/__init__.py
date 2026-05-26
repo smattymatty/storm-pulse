@@ -6,13 +6,31 @@ import argparse
 import logging
 import os
 import sys
+from pathlib import Path
 
 from stormpulse import __version__
 
 logger = logging.getLogger("stormpulse")
 
+
+def _default_creds_dir() -> str:
+    """Pick a creds-dir default that matches the install mode.
+
+    Root → /etc/stormpulse (legacy system install). Otherwise XDG
+    config dir (~/.config/stormpulse by default). The agent is
+    rootless on hardened boxes, so a non-root caller almost never
+    wants /etc/stormpulse — and writing there fails with PermissionError
+    after the CSR was already signed, burning the enrollment token.
+    """
+    if os.geteuid() == 0:
+        return "/etc/stormpulse"
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return str(base / "stormpulse")
+
+
 _DEFAULT_CONFIG = "/etc/stormpulse/stormpulse.toml"
-_DEFAULT_CREDS_DIR = "/etc/stormpulse"
+_DEFAULT_CREDS_DIR = _default_creds_dir()
 
 
 def main() -> None:

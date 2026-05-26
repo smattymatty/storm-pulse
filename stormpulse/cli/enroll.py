@@ -15,12 +15,19 @@ def cmd_enroll(args: argparse.Namespace) -> None:
         EnrollError,
         build_csr,
         generate_keypair,
+        preflight_creds_dir,
         request_certificate,
         write_credentials,
         write_enroll_metadata,
     )
 
     creds_dir = Path(args.creds_dir)
+
+    try:
+        preflight_creds_dir(creds_dir)
+    except EnrollError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
 
     logger.info("Generating EC P-256 keypair...")
     private_key, key_pem = generate_keypair()

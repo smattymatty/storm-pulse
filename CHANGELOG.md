@@ -9,6 +9,19 @@ This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroac
 
 ## [Unreleased]
 
+## [0.1.9] - Unreleased
+
+Fixes the rootless-install footgun where `stormpulse enroll` and `stormpulse init` defaulted `--creds-dir` to `/etc/stormpulse`, regardless of who was running them. On a hardened box (no `stormpulse` system user, no write to `/etc/`), enrollment would sign the CSR successfully, mark the token used on the dashboard, then fail locally with `PermissionError` — burning the token and forcing the operator to issue a fresh one for every retry. See ADR CORE-003 for the rootless posture this is catching up to.
+
+### Fixed
+
+- **`--creds-dir` defaults are now EUID-aware.** Root → `/etc/stormpulse` (legacy system install). Non-root → `$XDG_CONFIG_HOME/stormpulse` (defaulting to `~/.config/stormpulse`). Applies to both `enroll` and `init`. `--creds-dir` still overrides.
+- **`stormpulse enroll` no longer burns the token on local write failures.** The CLI now preflights `creds_dir` (creates it at 0o700 if missing, writes and deletes a marker file) before POSTing the CSR. A local-only failure raises before the network call, so the enrollment token is still valid on retry.
+
+### Added
+
+- **`stormpulse.enroll.preflight_creds_dir()`**. Public helper that validates a credentials directory is writable. Raises `EnrollError` with an actionable hint pointing at `--creds-dir`.
+
 ## [0.1.8] - 2026-05-26
 
 Adds `run_verify_block`, the dashboard-driven verify hatch that powers the Storm Developments website's sign-off checklist auto-check feature, **and** the operator-owned seal that bounds it. The hatch is wide on purpose — the agent runs whatever HMAC-signed shell the dashboard sends — and the seal is how the operator closes it once onboarding is done so it isn't open forever. See ADR CORE-004.

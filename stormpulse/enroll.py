@@ -159,6 +159,48 @@ def request_certificate(
     return data
 
 
+def preflight_creds_dir(creds_dir: Path) -> None:
+    """Verify ``creds_dir`` is writable before any network calls.
+
+    The enrollment endpoint marks the token used the moment it signs
+    the CSR. If the subsequent local write fails (wrong default path,
+    permissions), the token is burned and the operator has to issue
+    a new one. Catching the local failure here -- before the POST --
+    keeps the token reusable on retry.
+
+    Creates the directory at mode 0o700 if missing. If it already
+    exists, leaves its permissions alone. Writes and deletes a marker
+    file to confirm the dir is actually writable (mkdir alone doesn't
+    catch a read-only fs).
+    """
+    try:
+        existed = creds_dir.is_dir()
+        creds_dir.mkdir(parents=True, exist_ok=True)
+        if not existed:
+            os.chmod(creds_dir, 0o700)
+    except PermissionError as exc:
+        raise EnrollError(
+            f"Permission denied creating {creds_dir}. "
+            f"Pass --creds-dir to write somewhere your user owns, "
+            f"e.g. --creds-dir ~/.config/stormpulse."
+        ) from exc
+    except OSError as exc:
+        raise EnrollError(
+            f"Cannot create {creds_dir}: {exc}. "
+            f"Pass --creds-dir to choose a writable location."
+        ) from exc
+
+    marker = creds_dir / ".stormpulse-write-test"
+    try:
+        marker.write_bytes(b"")
+        marker.unlink()
+    except OSError as exc:
+        raise EnrollError(
+            f"{creds_dir} exists but is not writable: {exc}. "
+            f"Pass --creds-dir to choose a writable location."
+        ) from exc
+
+
 def _write_file(path: Path, data: bytes, mode: int) -> None:
     """Write data and set permissions atomically.
 

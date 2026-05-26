@@ -9,7 +9,6 @@ storm_pulse_agent.egg-info/requires.txt
 storm_pulse_agent.egg-info/top_level.txt
 stormpulse/__init__.py
 stormpulse/__main__.py
-stormpulse/agent.py
 stormpulse/auth.py
 stormpulse/config.py
 stormpulse/enroll.py
@@ -17,6 +16,19 @@ stormpulse/metrics.py
 stormpulse/protocol.py
 stormpulse/status.py
 stormpulse/system_inventory.py
+stormpulse/agent/__init__.py
+stormpulse/agent/bootstrap.py
+stormpulse/agent/dispatch.py
+stormpulse/agent/garage_actions.py
+stormpulse/agent/log_batches.py
+stormpulse/agent/long_running.py
+stormpulse/agent/loops.py
+stormpulse/agent/metadata.py
+stormpulse/agent/reconnect.py
+stormpulse/agent/register.py
+stormpulse/agent/signoff_guard.py
+stormpulse/agent/signoff_nag.py
+stormpulse/agent/ssl_context.py
 stormpulse/caddy/__init__.py
 stormpulse/caddy/commands.py
 stormpulse/caddy/init.py
@@ -29,6 +41,7 @@ stormpulse/cli/init.py
 stormpulse/cli/log.py
 stormpulse/cli/migrate.py
 stormpulse/cli/run.py
+stormpulse/cli/signoff.py
 stormpulse/cli/status.py
 stormpulse/commands/__init__.py
 stormpulse/commands/deploy.py
@@ -67,7 +80,8 @@ stormpulse/logging/positions.py
 stormpulse/logging/shipper.py
 stormpulse/logging/tailer.py
 stormpulse/logging/writer.py
-tests/test_agent.py
+stormpulse/signoff/__init__.py
+stormpulse/signoff/init.py
 tests/test_auth.py
 tests/test_commands.py
 tests/test_config.py
@@ -79,4 +93,5 @@ tests/test_metrics.py
 tests/test_migrate.py
 tests/test_mode.py
 tests/test_protocol.py
+tests/test_signoff.py
 tests/test_status.py
