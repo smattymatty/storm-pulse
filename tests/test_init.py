@@ -370,6 +370,51 @@ class TestPromptPulseToken:
         with pytest.raises(InitError, match="EOF"):
             prompt_pulse_token()
 
+    def test_recalls_token_from_existing_config(self, tmp_path: Path) -> None:
+        # On re-runs, a valid prior pulse_token shows as the default
+        # and Enter (empty input) accepts it -- no retyping the UUID.
+        token = "a1b2c3d4-5678-9abc-def0-111111111111"
+        config = tmp_path / "stormpulse.toml"
+        config.write_text(f'[agent]\nid = "test"\npulse_token = "{token}"\n')
+        with patch("builtins.input", return_value=""):
+            assert prompt_pulse_token(remembered_from=config) == token
+
+    def test_typed_token_overrides_remembered(self, tmp_path: Path) -> None:
+        old = "a1b2c3d4-5678-9abc-def0-111111111111"
+        new = "f9e8d7c6-5432-10fe-dcba-987654321000"
+        config = tmp_path / "stormpulse.toml"
+        config.write_text(f'[agent]\nid = "test"\npulse_token = "{old}"\n')
+        with patch("builtins.input", return_value=new):
+            assert prompt_pulse_token(remembered_from=config) == new
+
+    def test_missing_config_falls_back_to_no_default(self, tmp_path: Path) -> None:
+        # No prior config -> no default. Empty input has nothing to
+        # fall back on; the wizard then rejects the empty value and
+        # re-prompts (and we provide a valid UUID).
+        token = "a1b2c3d4-5678-9abc-def0-111111111111"
+        with patch("builtins.input", side_effect=["", token]):
+            assert prompt_pulse_token(remembered_from=tmp_path / "nope.toml") == token
+
+    def test_malformed_remembered_token_is_skipped(self, tmp_path: Path) -> None:
+        # A stale or hand-edited token that fails UUID validation is
+        # not offered as default -- the operator isn't fooled into
+        # pressing Enter on a broken value that the prompt would reject.
+        config = tmp_path / "stormpulse.toml"
+        config.write_text('[agent]\nid = "test"\npulse_token = "not-a-uuid"\n')
+        token = "a1b2c3d4-5678-9abc-def0-111111111111"
+        # Empty Enter has no default to fall back on (malformed token
+        # was rejected as a candidate default), so the prompt rejects
+        # the empty string and re-prompts.
+        with patch("builtins.input", side_effect=["", token]):
+            assert prompt_pulse_token(remembered_from=config) == token
+
+    def test_malformed_toml_falls_back(self, tmp_path: Path) -> None:
+        config = tmp_path / "stormpulse.toml"
+        config.write_text("this is not valid toml = = =\n")
+        token = "a1b2c3d4-5678-9abc-def0-111111111111"
+        with patch("builtins.input", return_value=token):
+            assert prompt_pulse_token(remembered_from=config) == token
+
 
 # ---------------------------------------------------------------------------
 # TestPromptDashboardUrl
@@ -449,7 +494,13 @@ class TestPromptProjectDir:
                 return ""
             return str(target)
 
-        with patch("stormpulse.init.prompts.os.access", return_value=False):
+        # Only tmp_path (the walk-up ancestor) is "not writable"; the
+        # newly-created target is writable so the second iteration
+        # accepts it.
+        def fake_access(path: object, mode: int) -> bool:
+            return Path(str(path)) != tmp_path
+
+        with patch("stormpulse.init.prompts.os.access", side_effect=fake_access):
             with patch("builtins.input", side_effect=fake_input):
                 result = prompt_project_dir()
         assert result == target.resolve()
@@ -464,10 +515,42 @@ class TestPromptProjectDir:
         bad = tmp_path / "needs-sudo"
         good = tmp_path / "different"
         good.mkdir()
-        with patch("stormpulse.init.prompts.os.access", return_value=False):
+
+        def fake_access(path: object, mode: int) -> bool:
+            return Path(str(path)) != tmp_path
+
+        with patch("stormpulse.init.prompts.os.access", side_effect=fake_access):
             with patch("builtins.input", side_effect=[str(bad), str(good)]):
                 result = prompt_project_dir()
         assert result == good.resolve()
+
+    def test_existing_unwritable_dir_shows_chown_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # `sudo mkdir` without `chown` scenario: dir exists but isn't
+        # writable by the operator. Wizard should not silently accept;
+        # it shows the chown hint and Press-Enter retries until the
+        # operator (in another shell) fixes the ownership.
+        target = tmp_path / "root-owned"
+        target.mkdir()
+
+        access_count = {"target": 0}
+        def fake_access(path: object, mode: int) -> bool:
+            if Path(str(path)) == target:
+                access_count["target"] += 1
+                # First check: simulate root-owned, not writable.
+                # Second check: simulate post-chown, writable.
+                return access_count["target"] > 1
+            return True
+
+        with patch("stormpulse.init.prompts.os.access", side_effect=fake_access):
+            with patch("builtins.input", side_effect=[str(target), ""]):
+                result = prompt_project_dir()
+        assert result == target.resolve()
+        err = capsys.readouterr().err
+        assert "exists but is not writable" in err
+        assert "sudo chown -R" in err
+        assert str(target) in err
 
 
 # ---------------------------------------------------------------------------
@@ -603,8 +686,37 @@ class TestPromptEnvFile:
         env = tmp_path / "custom.env"
         env.write_text("KEY=val\n")
         mock_input.return_value = str(env)
+        # project_dir doesn't exist -> scaffold offer suppressed, falls
+        # straight to manual entry where mock returns str(env).
         result = prompt_env_file(tmp_path / "no-env")
         assert result == env.resolve()
+
+    def test_scaffold_accepted_creates_empty_env(self, tmp_path: Path) -> None:
+        # project_dir is writable, no .env exists -> wizard offers to
+        # create one. Accept (y) -> file touched, returned.
+        with patch("builtins.input", return_value="y"):
+            result = prompt_env_file(tmp_path)
+        target = tmp_path / ".env"
+        assert result == target.resolve()
+        assert target.is_file()
+        assert target.read_text() == ""
+
+    def test_scaffold_declined_falls_through_to_skip(self, tmp_path: Path) -> None:
+        # Decline the scaffold (n), then accept the skip default at the
+        # manual-entry prompt. No file created.
+        with patch("builtins.input", side_effect=["n", ""]):
+            result = prompt_env_file(tmp_path)
+        assert result is None
+        assert not (tmp_path / ".env").exists()
+
+    def test_scaffold_skipped_when_dir_unwritable(self, tmp_path: Path) -> None:
+        # Unwritable project_dir -> scaffold offer suppressed entirely.
+        # Manual-entry prompt fires and operator types skip.
+        with patch("stormpulse.init.prompts.os.access", return_value=False):
+            with patch("builtins.input", return_value="skip"):
+                result = prompt_env_file(tmp_path)
+        assert result is None
+        assert not (tmp_path / ".env").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -1051,14 +1163,16 @@ class TestRunInit:
         compose.write_text("services:\n  web:\n    image: test\n")
 
         # Prompts: pulse_token, dashboard_url (accept default), project_dir,
-        # compose file (y), docker service (accept default web), env_file (skip)
+        # compose file (y), docker service (accept default web), env scaffold
+        # offer (decline), env_file path (skip).
         mock_input.side_effect = [
             "a1b2c3d4-5678-9abc-def0-111111111111",  # pulse_token
             "",  # dashboard_url (accept default)
             str(project),  # project_dir
             "y",  # compose file confirm
             "",  # docker service (default first = web)
-            "skip",  # env_file
+            "n",  # decline env scaffold offer
+            "skip",  # env_file path
         ]
 
         run_init(creds, force=True)
@@ -1103,7 +1217,8 @@ class TestRunInit:
             str(project),  # project_dir
             "y",  # compose confirm
             "",  # docker service default
-            "skip",  # env_file
+            "n",  # decline env scaffold offer
+            "skip",  # env_file path
         ]
 
         step = MagicMock()
