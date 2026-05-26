@@ -9,6 +9,18 @@ This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroac
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-05-25
+
+Adds `run_verify_block`: a new whitelisted command that lets the dashboard execute sign-off verify shell on the agent. Powers the Storm Developments website's sign-off checklist auto-check feature.
+
+### Added
+
+- **`run_verify_block` command.** Registered in the standard command registry alongside `git_pull` and `docker_logs`. Template `["/bin/bash", "-c", "{verify_command}"]`; the shell text arrives as a parameter (4 KiB cap, no regex restriction). Group `signoff`, 30s default timeout.
+
+### Changed
+
+- **Trust boundary, intentional.** This is the first registered command whose shell text travels on the wire (HMAC-signed by the dashboard) rather than being baked into the agent. The previous built-ins ship templated shell with operator-supplied parameters filling pre-defined slots (`docker_service_name`, `tail_lines`); `run_verify_block` accepts a full opaque shell string from the dashboard. The trust chain is unchanged in shape — the agent only executes what an HMAC-signed envelope tells it to — but the practical reach of "what an HMAC-signed envelope can ask for" widens from "any pre-blessed template" to "any shell". A compromised dashboard already wins under the old model (it can dispatch `git_pull` to mutate the project, or `docker_logs` to leak stdout); this change makes that compromise more dangerous in degree but not in kind. The dashboard side is expected to refuse to dispatch `run_verify_block` for any block whose `kind != verify` so this stays a read-only mechanism in practice.
+
 ## [0.1.7] - 2026-05-25
 
 Adds rootless / user-mode install so Storm-hardened boxes (rootless docker, no `docker` group) can run the agent without weakening the hardening posture. See ADR CORE-003.

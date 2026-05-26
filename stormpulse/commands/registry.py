@@ -53,6 +53,30 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
             ),
         },
     ),
+    # Dashboard-driven verify-block execution for the sign-off checklist
+    # feature in the Storm Developments website. Unlike the other entries
+    # in this registry whose shell templates are baked in here, this one
+    # takes the shell text as a parameter (HMAC-signed by the dashboard).
+    # The trust shift is intentional and documented in the storm-pulse
+    # 0.1.8 CHANGELOG: the agent's job is faithful execution of
+    # dashboard-signed commands, not to be a defense-in-depth layer
+    # against a compromised dashboard. Confined to read-only verify
+    # checks by the dashboard side (the website refuses to dispatch
+    # any block whose `kind != verify`).
+    "run_verify_block": CommandDef(
+        group="signoff",
+        command=["/bin/bash", "-c", "{verify_command}"],
+        timeout=30,
+        description="Run a sign-off verify command from the dashboard",
+        params={
+            "verify_command": ParamDef(
+                placeholder="verify_command",
+                default=None,
+                max_bytes=4096,
+                description="Shell command text supplied by the dashboard",
+            ),
+        },
+    ),
 }
 
 
