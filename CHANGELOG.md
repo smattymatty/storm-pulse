@@ -22,6 +22,7 @@ Fixes the rootless-install footgun where `stormpulse enroll` and `stormpulse ini
 ### Added
 
 - **`stormpulse.enroll.preflight_creds_dir()`**. Public helper that validates a credentials directory is writable. Raises `EnrollError` with an actionable hint pointing at `--creds-dir`.
+- **`stormpulse init` offers to create a missing project directory.** Previously the wizard re-prompted with "Directory not found" and the operator had to drop out, `mkdir` in another shell, and start the wizard over. Now: "Directory does not exist. Create it? [Y/n]" → on yes, `mkdir -p` and report the resulting owner. If the parent isn't writable (e.g. `/opt` owned by root), the wizard prints the exact `sudo mkdir -p ... && sudo chown $USER:$USER ...` line to paste in another shell and re-prompts. No subprocess `sudo`, no escalation surface.
 
 ## [0.1.8] - 2026-05-26
 

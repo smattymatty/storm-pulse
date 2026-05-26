@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import grp
+import pwd
 import re
 import sys
 from pathlib import Path
@@ -56,14 +58,47 @@ def prompt_dashboard_url(default: str | None = None) -> str:
 
 
 def prompt_project_dir() -> Path:
-    """Prompt for the project directory."""
+    """Prompt for the project directory; offer to create it if missing.
+
+    Fresh-box workflow: the operator is often installing the agent
+    before the project itself exists. Re-prompting forever made them
+    drop the wizard, mkdir in another shell, and start over.
+
+    On a missing path we offer to create it. If the parent isn't
+    writable (e.g. ``/opt`` owned by root), we don't escalate -- we
+    print the exact ``sudo`` line the operator can paste in another
+    shell and re-prompt. Keeps the agent's privilege surface at zero.
+    """
     default = str(Path.cwd())
     while True:
         value = prompt("Project directory", default=default)
         p = Path(value)
         if p.is_dir():
             return p.resolve()
-        print(f"  Directory not found: {value}", file=sys.stderr)
+        print(f"  Directory {value} does not exist.", file=sys.stderr)
+        if not prompt_confirm("  Create it?", default_yes=True):
+            continue
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            print(
+                f"  Cannot create {value} -- parent directory not writable.",
+                file=sys.stderr,
+            )
+            print("  Run this in another shell, then retry:", file=sys.stderr)
+            print(
+                f"    sudo mkdir -p {value} && sudo chown $USER:$USER {value}",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            st = p.stat()
+            owner = pwd.getpwuid(st.st_uid).pw_name
+            group = grp.getgrgid(st.st_gid).gr_name
+            print(f"  Created {p} (owner: {owner}:{group})", file=sys.stderr)
+        except KeyError:
+            print(f"  Created {p}", file=sys.stderr)
+        return p.resolve()
 
 
 def prompt_compose_file(project_dir: Path) -> Path:

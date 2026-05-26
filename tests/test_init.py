@@ -409,11 +409,40 @@ class TestPromptProjectDir:
         result = prompt_project_dir()
         assert result == tmp_path.resolve()
 
-    @patch("builtins.input", side_effect=["/nonexistent/path", ""])
-    def test_rejects_nonexistent(self, _mock: MagicMock) -> None:
-        # Second call returns empty which uses cwd (which exists)
-        result = prompt_project_dir()
-        assert result.is_dir()
+    def test_offers_to_create_and_creates(self, tmp_path: Path) -> None:
+        new_dir = tmp_path / "new-project"
+        assert not new_dir.exists()
+        with patch("builtins.input", side_effect=[str(new_dir), "y"]):
+            result = prompt_project_dir()
+        assert result == new_dir.resolve()
+        assert new_dir.is_dir()
+
+    def test_create_makes_parents(self, tmp_path: Path) -> None:
+        nested = tmp_path / "a" / "b" / "c"
+        with patch("builtins.input", side_effect=[str(nested), "y"]):
+            result = prompt_project_dir()
+        assert result == nested.resolve()
+        assert nested.is_dir()
+
+    def test_decline_create_reprompts(self, tmp_path: Path) -> None:
+        # First path missing, decline create, then enter existing dir.
+        missing = tmp_path / "skip-me"
+        with patch("builtins.input", side_effect=[str(missing), "n", str(tmp_path)]):
+            result = prompt_project_dir()
+        assert result == tmp_path.resolve()
+        assert not missing.exists()
+
+    def test_permission_error_reprompts_with_sudo_hint(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        missing = tmp_path / "no-permission"
+        with patch("builtins.input", side_effect=[str(missing), "y", str(tmp_path)]):
+            with patch.object(Path, "mkdir", side_effect=PermissionError):
+                result = prompt_project_dir()
+        assert result == tmp_path.resolve()
+        err = capsys.readouterr().err
+        assert "sudo mkdir -p" in err
+        assert str(missing) in err
 
 
 # ---------------------------------------------------------------------------
