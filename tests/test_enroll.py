@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import email.message
 import json
+import os
 import stat
 import urllib.error
 from pathlib import Path
@@ -19,6 +20,7 @@ from stormpulse.enroll import (
     EnrollError,
     build_csr,
     generate_keypair,
+    preflight_creds_dir,
     request_certificate,
     write_credentials,
     write_enroll_metadata,
@@ -228,6 +230,86 @@ class TestWriteCredentials:
         response = _mock_response(hmac_key="not-valid-base64!!!")
         with pytest.raises(EnrollError, match="invalid HMAC key"):
             write_credentials(tmp_path / "creds", b"KEY_PEM", response)
+
+
+# ---------------------------------------------------------------------------
+# Preflight writability check
+# ---------------------------------------------------------------------------
+
+
+class TestPreflightCredsDir:
+    def test_creates_missing_dir_with_0o700(self, tmp_path: Path) -> None:
+        target = tmp_path / "new_creds"
+        preflight_creds_dir(target)
+        assert target.is_dir()
+        assert stat.S_IMODE(target.stat().st_mode) == 0o700
+
+    def test_creates_parents(self, tmp_path: Path) -> None:
+        target = tmp_path / "a" / "b" / "c"
+        preflight_creds_dir(target)
+        assert target.is_dir()
+
+    def test_leaves_marker_cleaned_up(self, tmp_path: Path) -> None:
+        target = tmp_path / "creds"
+        preflight_creds_dir(target)
+        assert list(target.iterdir()) == []
+
+    def test_preserves_existing_dir_permissions(self, tmp_path: Path) -> None:
+        target = tmp_path / "creds"
+        target.mkdir(mode=0o750)
+        preflight_creds_dir(target)
+        assert stat.S_IMODE(target.stat().st_mode) == 0o750
+
+    def test_raises_when_parent_not_writable(self, tmp_path: Path) -> None:
+        if os.geteuid() == 0:
+            pytest.skip("root bypasses permission bits")
+        parent = tmp_path / "ro"
+        parent.mkdir(mode=0o500)
+        try:
+            with pytest.raises(EnrollError, match="--creds-dir"):
+                preflight_creds_dir(parent / "creds")
+        finally:
+            parent.chmod(0o700)  # so pytest can clean up
+
+    def test_raises_when_existing_dir_not_writable(self, tmp_path: Path) -> None:
+        if os.geteuid() == 0:
+            pytest.skip("root bypasses permission bits")
+        target = tmp_path / "creds"
+        target.mkdir(mode=0o500)
+        try:
+            with pytest.raises(EnrollError, match="--creds-dir"):
+                preflight_creds_dir(target)
+        finally:
+            target.chmod(0o700)
+
+
+# ---------------------------------------------------------------------------
+# CLI default creds-dir (euid-aware)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultCredsDir:
+    def test_root_gets_etc_stormpulse(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from stormpulse.cli import _default_creds_dir
+        monkeypatch.setattr(os, "geteuid", lambda: 0)
+        assert _default_creds_dir() == "/etc/stormpulse"
+
+    def test_user_gets_xdg_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        from stormpulse.cli import _default_creds_dir
+        monkeypatch.setattr(os, "geteuid", lambda: 1000)
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        assert _default_creds_dir() == str(tmp_path / "xdg" / "stormpulse")
+
+    def test_user_falls_back_to_home_config(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        from stormpulse.cli import _default_creds_dir
+        monkeypatch.setattr(os, "geteuid", lambda: 1000)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        assert _default_creds_dir() == str(tmp_path / ".config" / "stormpulse")
 
 
 # ---------------------------------------------------------------------------
