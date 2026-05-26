@@ -432,17 +432,42 @@ class TestPromptProjectDir:
         assert result == tmp_path.resolve()
         assert not missing.exists()
 
-    def test_permission_error_reprompts_with_sudo_hint(
+    def test_unwritable_parent_shows_sudo_and_enter_retries(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
     ) -> None:
-        missing = tmp_path / "no-permission"
-        with patch("builtins.input", side_effect=[str(missing), "y", str(tmp_path)]):
-            with patch.object(Path, "mkdir", side_effect=PermissionError):
+        # Parent isn't writable -> wizard skips "Create it?" and shows
+        # the sudo line. Operator runs sudo in another shell (simulated
+        # by fake_input creating the dir at the Press-Enter prompt) and
+        # just presses Enter -- empty input falls through to the prompt
+        # default, which is the same path. Loop re-checks, finds it,
+        # returns. No retyping the path.
+        target = tmp_path / "needs-sudo"
+
+        def fake_input(prompt_text: str) -> str:
+            if "Press Enter" in prompt_text:
+                target.mkdir()
+                return ""
+            return str(target)
+
+        with patch("stormpulse.init.prompts.os.access", return_value=False):
+            with patch("builtins.input", side_effect=fake_input):
                 result = prompt_project_dir()
-        assert result == tmp_path.resolve()
+        assert result == target.resolve()
         err = capsys.readouterr().err
         assert "sudo mkdir -p" in err
-        assert str(missing) in err
+        assert "Run this in another shell" in err
+
+    def test_unwritable_parent_accepts_different_path(self, tmp_path: Path) -> None:
+        # After the sudo hint, the operator can also type a different
+        # path instead of pressing Enter -- that path is processed
+        # normally on the next loop iteration.
+        bad = tmp_path / "needs-sudo"
+        good = tmp_path / "different"
+        good.mkdir()
+        with patch("stormpulse.init.prompts.os.access", return_value=False):
+            with patch("builtins.input", side_effect=[str(bad), str(good)]):
+                result = prompt_project_dir()
+        assert result == good.resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -468,10 +493,63 @@ class TestPromptComposeFile:
     def test_manual_entry(self, mock_input: MagicMock, tmp_path: Path) -> None:
         compose = tmp_path / "custom-compose.yml"
         compose.write_text("services:")
-        # No auto-detect match, so go straight to manual
+        # No auto-detect match. project_dir doesn't exist, so the
+        # scaffold offer is suppressed (os.access -> False) and we
+        # fall straight through to manual entry.
         mock_input.return_value = str(compose)
         result = prompt_compose_file(tmp_path / "empty")
         assert result == compose.resolve()
+
+    def test_scaffold_accepted_writes_placeholder(self, tmp_path: Path) -> None:
+        # Empty writable project dir -> wizard offers scaffold,
+        # operator accepts (y) and accepts default service name.
+        project_dir = tmp_path / "fresh"
+        project_dir.mkdir()
+        with patch("builtins.input", side_effect=["y", ""]):
+            result = prompt_compose_file(project_dir)
+        assert result == (project_dir / "docker-compose.yml").resolve()
+        body = result.read_text()
+        # Default service name comes from project_dir.name.
+        assert "services:" in body
+        assert f"  {project_dir.name}:" in body
+        assert "image: placeholder:latest" in body
+        # The next step in the wizard parses services -- verify the
+        # scaffolded file feeds parse_service_names correctly.
+        from stormpulse.init.compose import parse_service_names
+        assert parse_service_names(result) == [project_dir.name]
+
+    def test_scaffold_accepts_custom_service_name(self, tmp_path: Path) -> None:
+        project_dir = tmp_path / "myproj"
+        project_dir.mkdir()
+        with patch("builtins.input", side_effect=["y", "garaged"]):
+            result = prompt_compose_file(project_dir)
+        assert "  garaged:" in result.read_text()
+
+    def test_scaffold_declined_falls_through_to_manual(self, tmp_path: Path) -> None:
+        project_dir = tmp_path / "fresh"
+        project_dir.mkdir()
+        existing = tmp_path / "elsewhere.yml"
+        existing.write_text("services:\n  web:\n")
+        # Decline the scaffold (n), then provide an existing path manually.
+        with patch("builtins.input", side_effect=["n", str(existing)]):
+            result = prompt_compose_file(project_dir)
+        assert result == existing.resolve()
+        # No placeholder written.
+        assert not (project_dir / "docker-compose.yml").exists()
+
+    def test_scaffold_skipped_when_dir_unwritable(self, tmp_path: Path) -> None:
+        # Even with input ready to accept, the unwritable-dir branch
+        # returns None without prompting -- only the manual-entry
+        # path consumes input.
+        project_dir = tmp_path / "fresh"
+        project_dir.mkdir()
+        existing = tmp_path / "elsewhere.yml"
+        existing.write_text("services:\n  web:\n")
+        with patch("stormpulse.init.prompts.os.access", return_value=False):
+            with patch("builtins.input", side_effect=[str(existing)]):
+                result = prompt_compose_file(project_dir)
+        assert result == existing.resolve()
+        assert not (project_dir / "docker-compose.yml").exists()
 
 
 # ---------------------------------------------------------------------------
