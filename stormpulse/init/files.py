@@ -49,6 +49,29 @@ def user_systemd_path() -> Path:
     return Path.home() / ".config" / "systemd" / "user" / "stormpulse.service"
 
 
+def default_config_path() -> str:
+    """Pick the ``stormpulse.toml`` path matching the current install mode.
+
+    Root (EUID 0) → ``/etc/stormpulse/stormpulse.toml`` (legacy system
+    install). Non-root → ``$XDG_CONFIG_HOME/stormpulse/stormpulse.toml``,
+    defaulting to ``~/.config/stormpulse/stormpulse.toml``.
+
+    Mirrors the EUID-based mode detection in ``stormpulse.init.mode``
+    and the ``--creds-dir`` default logic in ``stormpulse.cli``. CLI
+    subcommands MUST resolve their default config path through this
+    helper rather than hardcoding the system path: rootless is the
+    norm on hardened Storm boxes, and a hardcoded ``/etc/stormpulse``
+    default silently misses the real file (``signoff unseal`` cannot
+    open the seal, ``caddy init`` cannot find the config to edit,
+    etc.).
+    """
+    if os.geteuid() == 0:
+        return str(CONFIG_PATH)
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return str(base / "stormpulse" / "stormpulse.toml")
+
+
 def write_config_file(path: Path, content: str, *, force: bool = False) -> None:
     """Write the TOML config with mode 0o640, owned by root:stormpulse."""
     if path.is_file() and not force:

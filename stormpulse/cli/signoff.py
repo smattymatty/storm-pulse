@@ -18,9 +18,11 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from stormpulse.signoff import SignoffState
 
+from stormpulse.init.files import default_config_path
+
 logger = logging.getLogger("stormpulse")
 
-_DEFAULT_CONFIG = "/etc/stormpulse/stormpulse.toml"
+_DEFAULT_CONFIG = default_config_path()
 
 
 def _load_state(args: argparse.Namespace) -> tuple["SignoffState", Path]:

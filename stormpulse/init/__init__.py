@@ -27,6 +27,7 @@ from stormpulse.init.compose import (
 from stormpulse.init.files import (
     CONFIG_PATH,
     SYSTEMD_PATH,
+    default_config_path,
     user_config_dir,
     user_config_path,
     user_data_dir,
@@ -103,6 +104,7 @@ __all__ = [
     "run_init",
     "run_system_setup",
     "run_user_daemon_reload",
+    "default_config_path",
     "user_config_dir",
     "user_config_path",
     "user_data_dir",

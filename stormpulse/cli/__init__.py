@@ -29,7 +29,9 @@ def _default_creds_dir() -> str:
     return str(base / "stormpulse")
 
 
-_DEFAULT_CONFIG = "/etc/stormpulse/stormpulse.toml"
+from stormpulse.init.files import default_config_path
+
+_DEFAULT_CONFIG = default_config_path()
 _DEFAULT_CREDS_DIR = _default_creds_dir()
 
 
