@@ -46,6 +46,9 @@ stormpulse enroll ENDPOINT AGENT_ID TOKEN [--creds-dir DIR] [--force]
 stormpulse init [--creds-dir DIR] [--force]
 stormpulse run [CONFIG]
 stormpulse status [CONFIG]
+stormpulse signoff status [CONFIG]
+stormpulse signoff unseal [CONFIG] [--confirm-hostname HOSTNAME]
+stormpulse signoff seal [CONFIG]
 stormpulse garage init [--config PATH] [--garage-config PATH] [--force]
 stormpulse logging init [--config PATH]
 stormpulse --version
@@ -58,6 +61,8 @@ stormpulse --version
 **run** -- Starts the agent. Connects to the dashboard, sends heartbeats and metrics, executes commands. Reconnects automatically with exponential backoff.
 
 **status** -- Local inspection. Shows version, agent ID, config path, dashboard URL, certificate expiry, nonce DB entry count, and whether the agent process is running. No network required.
+
+**signoff status / unseal / seal** -- Manage the verify-block hatch on this host. The agent ships sealed: the dashboard cannot dispatch `run_verify_block` until the operator opens the hatch with `signoff unseal`, which requires typing the host's hostname back at the prompt (or `--confirm-hostname HOSTNAME` for automation). `signoff seal` closes the hatch in one keystroke. The dashboard never gets to seal or unseal: the operator on the host is the only authority. See the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture#layer-4-execution) page for the threat model.
 
 **garage init** -- Detects a Garage S3 node and appends a `[garage]` section to an existing `stormpulse.toml`. Auto-detects container name from docker-compose.yml. Use `--force` to overwrite an existing `[garage]` section.
 

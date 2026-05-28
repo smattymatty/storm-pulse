@@ -9,6 +9,16 @@ This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroac
 
 ## [Unreleased]
 
+Fixes the rootless-install footgun where `stormpulse signoff`, `stormpulse caddy`, `stormpulse garage`, `stormpulse logging`, and `stormpulse run` all defaulted `--config` to `/etc/stormpulse/stormpulse.toml` regardless of EUID. On a hardened rootless box (config lives at `~/.config/stormpulse/stormpulse.toml`), every one of those subcommands failed with "Config file not found" unless the operator passed `--config` explicitly. Discovered 2026-05-28 during the alpha-node sign-off walk, where `stormpulse signoff unseal` blocked the verify-hatch step at the end of 001-ubuntu-baseline. Same shape as the 0.1.9 `--creds-dir` EUID-awareness fix, just on the config-path side; the earlier fix caught `enroll` and `init` but missed every other subcommand that resolves a config path.
+
+### Fixed
+
+- **`--config` defaults are now EUID-aware across every subcommand.** Root → `/etc/stormpulse/stormpulse.toml` (legacy system install). Non-root → `$XDG_CONFIG_HOME/stormpulse/stormpulse.toml` (defaulting to `~/.config/stormpulse/stormpulse.toml`). Applies to `signoff` (status/seal/unseal), `caddy`, `garage`, `logging`, and `run`. `--config` still overrides. Resolved through a new shared `stormpulse.init.files.default_config_path()` helper that mirrors the existing `_default_creds_dir()` logic in `stormpulse.cli`, so future CLI subcommands that need a config-path default have one source of truth to import from instead of pasting another hardcoded `/etc/stormpulse/stormpulse.toml` constant.
+
+### Added
+
+- **`stormpulse.init.files.default_config_path()`**. Public helper exposed via `stormpulse.init` that returns the EUID-appropriate `stormpulse.toml` path as a string. Use it as the `argparse` default for any new CLI subcommand that takes `--config`.
+
 ## [0.1.9] - 2026-05-26
 
 Fixes the rootless-install footgun where `stormpulse enroll` and `stormpulse init` defaulted `--creds-dir` to `/etc/stormpulse`, regardless of who was running them. On a hardened box (no `stormpulse` system user, no write to `/etc/`), enrollment would sign the CSR successfully, mark the token used on the dashboard, then fail locally with `PermissionError` — burning the token and forcing the operator to issue a fresh one for every retry. See ADR CORE-003 for the rootless posture this is catching up to.

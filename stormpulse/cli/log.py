@@ -7,9 +7,11 @@ import logging
 import sys
 from pathlib import Path
 
+from stormpulse.init.files import default_config_path
+
 logger = logging.getLogger("stormpulse")
 
-_DEFAULT_CONFIG = "/etc/stormpulse/stormpulse.toml"
+_DEFAULT_CONFIG = default_config_path()
 
 
 def cmd_logging_init(args: argparse.Namespace) -> None:
