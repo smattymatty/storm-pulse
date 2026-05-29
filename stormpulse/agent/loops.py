@@ -84,12 +84,16 @@ async def metrics_loop(agent: "Agent", ws: ClientConnection) -> None:
 async def garage_loop(agent: "Agent", ws: ClientConnection) -> None:
     """Refresh Garage state at the configured interval.
 
-    No-op when ``config.garage`` is None or disabled. Writes
-    ``agent._garage_state``; the metrics loop reads it each cycle to
-    bundle the latest snapshot into the next push.
+    No-op when ``config.garage`` is None or disabled, or when the agent
+    self-disabled the feature at bootstrap (ADR GARAGE-000) because of
+    a substrate / version / auth precondition failure. In that case the
+    disabled sentinel from Agent.__init__ stays on ``_garage_state``
+    until the operator fixes the host and restarts the agent.
     """
     gc = agent._config.garage
     if gc is None or not gc.enabled:
+        return
+    if agent._garage_disabled_reason is not None:
         return
     interval = gc.state_push_interval_seconds
     while not agent._shutdown.is_set():

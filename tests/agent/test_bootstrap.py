@@ -19,6 +19,9 @@ from stormpulse.config import CaddyConfig, Config, ConfigError, LogGroupConfig
 
 from tests.helpers import build_config, build_garage_config
 
+# Garage preconditions are patched to pass by the autouse fixture in
+# tests/conftest.py per ADR GARAGE-000.
+
 
 # ---------------------------------------------------------------------------
 # Registry assembly

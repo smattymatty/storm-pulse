@@ -53,7 +53,15 @@ class GarageBucket:
 
 @dataclass(frozen=True, slots=True)
 class GarageState:
-    """Full Garage node state, included in metrics.push and register payloads."""
+    """Full Garage node state, included in metrics.push and register payloads.
+
+    ``disabled_reason`` is set only when the agent's Garage feature has
+    self-disabled at start because of a precondition failure (see
+    GARAGE-000). When non-None, every other field is a zero-value
+    sentinel and ``healthy`` is False; the dashboard reads
+    ``disabled_reason`` and renders a named cause rather than the
+    healthy/unhealthy distinction.
+    """
 
     node_id: str
     hostname: str
@@ -68,10 +76,23 @@ class GarageState:
     buckets: list[GarageBucket]
     keys: list[GarageKeyRef]
     peers: list[GaragePeer]
+    disabled_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to plain dict for inclusion in protocol payloads."""
         return asdict(self)
+
+    @classmethod
+    def disabled(cls, reason: str) -> "GarageState":
+        """Build the sentinel state for a self-disabled Garage feature."""
+        return cls(
+            node_id="", hostname="", zone="",
+            capacity_gb=0.0, data_avail_gb=0.0,
+            version="", healthy=False, db_engine="",
+            object_count=0, block_count=0,
+            buckets=[], keys=[], peers=[],
+            disabled_reason=reason,
+        )
 
 
 def run_garage(config: GarageConfig, *args: str) -> str | None:

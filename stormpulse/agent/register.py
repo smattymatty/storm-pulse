@@ -33,11 +33,18 @@ async def send_register(agent: "Agent", ws: ClientConnection, url: str) -> None:
 
     garage_dict = None
     if agent._config.garage and agent._config.garage.enabled:
-        agent._garage_state = await asyncio.to_thread(
-            discover_garage, agent._config.garage,
-        )
-        if agent._garage_state:
-            garage_dict = agent._garage_state.to_dict()
+        if agent._garage_disabled_reason is not None:
+            # ADR GARAGE-000: precondition failed at bootstrap. The
+            # disabled sentinel was seeded on Agent.__init__; ride it
+            # to the dashboard verbatim, do not call discover_garage.
+            if agent._garage_state is not None:
+                garage_dict = agent._garage_state.to_dict()
+        else:
+            agent._garage_state = await asyncio.to_thread(
+                discover_garage, agent._config.garage,
+            )
+            if agent._garage_state:
+                garage_dict = agent._garage_state.to_dict()
 
     log_group_names = sorted(agent._shippers.keys()) or None
     system_inventory = await asyncio.to_thread(

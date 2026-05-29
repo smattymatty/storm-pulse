@@ -97,7 +97,16 @@ class Agent:
         )
         self._shippers: dict[str, LogShipper] = deps.shippers
         self._streaming_tailers: list[StreamingDockerTailer] = deps.streaming_tailers
-        self._garage_state: GarageState | None = None
+        # ADR GARAGE-000: a precondition failure at bootstrap skips
+        # garage command registration; the reason rides to the
+        # dashboard as the initial GarageState until the operator
+        # fixes the host and restarts the agent.
+        self._garage_disabled_reason: str | None = deps.garage_disabled_reason
+        self._garage_state: GarageState | None = (
+            GarageState.disabled(self._garage_disabled_reason)
+            if self._garage_disabled_reason is not None
+            else None
+        )
         self._pending_batches = PendingBatches()
         # One JobManager per active connection. Recreated on reconnect;
         # jobs do not survive across connections.
