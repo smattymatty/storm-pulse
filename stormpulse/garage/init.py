@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import glob
 import os
 import re
 import sys
@@ -20,6 +21,16 @@ _GARAGE_CONFIG_SEARCH_PATHS = [
     Path("./garage.toml"),
 ]
 
+# Storm rootless convention: the 002-garage playbook places config under
+# each admin user's home so the rootless daemon (running as that user)
+# can sanely bind-mount it without sudo gymnastics. Glob across /home/*/
+# so the wizard auto-detects on a Storm-shaped box without forcing
+# --garage-config. Checked after the fixed paths above so existing
+# installs at /opt/garage/ continue to win when both exist.
+_GARAGE_CONFIG_GLOB_PATTERNS = [
+    "/home/*/garage/etc/garage.toml",
+]
+
 
 def find_garage_config(override: str | None = None) -> Path | None:
     """Find the Garage config file. Returns None if not found."""
@@ -29,6 +40,11 @@ def find_garage_config(override: str | None = None) -> Path | None:
     for p in _GARAGE_CONFIG_SEARCH_PATHS:
         if p.is_file():
             return p
+    for pattern in _GARAGE_CONFIG_GLOB_PATTERNS:
+        for hit in sorted(glob.glob(pattern)):
+            p = Path(hit)
+            if p.is_file():
+                return p
     return None
 
 
@@ -244,10 +260,12 @@ def run_garage_init(
     # Find garage config
     garage_config = find_garage_config(garage_config_override)
     if garage_config is None:
-        searched = ", ".join(str(p) for p in _GARAGE_CONFIG_SEARCH_PATHS)
+        searched_fixed = ", ".join(str(p) for p in _GARAGE_CONFIG_SEARCH_PATHS)
+        searched_glob = ", ".join(_GARAGE_CONFIG_GLOB_PATTERNS)
         raise InitError(
             f"No Garage installation detected.\n"
-            f"Searched: {searched}\n"
+            f"Searched: {searched_fixed}\n"
+            f"Globbed: {searched_glob}\n"
             f"Use --garage-config to specify the path."
         )
 

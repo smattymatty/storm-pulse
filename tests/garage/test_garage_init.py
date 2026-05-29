@@ -122,6 +122,56 @@ class TestFindGarageConfig:
             (tmp_path / "a.toml").write_text("")
             assert find_garage_config() == tmp_path / "a.toml"
 
+    def test_glob_pattern_finds_rootless_storm_layout(self, tmp_path: Path) -> None:
+        # Storm rootless convention: config under /home/<user>/garage/etc/
+        # The init wizard must auto-discover that layout without forcing
+        # the operator to pass --garage-config.
+        home_user = tmp_path / "storm" / "garage" / "etc"
+        home_user.mkdir(parents=True)
+        cfg = home_user / "garage.toml"
+        cfg.write_text("[s3_api]\n")
+        glob_pattern = str(tmp_path / "*" / "garage" / "etc" / "garage.toml")
+        with patch(
+            "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS", [],
+        ), patch(
+            "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
+            [glob_pattern],
+        ):
+            assert find_garage_config() == cfg
+
+    def test_fixed_paths_win_over_glob(self, tmp_path: Path) -> None:
+        # An existing /opt/garage install must keep winning when a
+        # parallel rootless tree exists; the glob is a fallback, not a
+        # replacement for the legacy default.
+        legacy = tmp_path / "opt" / "garage"
+        legacy.mkdir(parents=True)
+        legacy_cfg = legacy / "garage.toml"
+        legacy_cfg.write_text("[s3_api]\n# legacy\n")
+
+        rootless = tmp_path / "storm" / "garage" / "etc"
+        rootless.mkdir(parents=True)
+        rootless_cfg = rootless / "garage.toml"
+        rootless_cfg.write_text("[s3_api]\n# rootless\n")
+
+        with patch(
+            "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS",
+            [legacy_cfg],
+        ), patch(
+            "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
+            [str(tmp_path / "*" / "garage" / "etc" / "garage.toml")],
+        ):
+            assert find_garage_config() == legacy_cfg
+
+    def test_glob_no_matches_returns_none(self, tmp_path: Path) -> None:
+        glob_pattern = str(tmp_path / "*" / "garage" / "etc" / "garage.toml")
+        with patch(
+            "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS", [],
+        ), patch(
+            "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
+            [glob_pattern],
+        ):
+            assert find_garage_config() is None
+
 
 # ---------------------------------------------------------------------------
 # TOML section management
