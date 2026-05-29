@@ -77,6 +77,27 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
             ),
         },
     ),
+    # Sibling of run_verify_block for the dashboard's apply-block path.
+    # Same HMAC-signed-shell trust shift (see the run_verify_block
+    # comment above); the parameter name, timeout, and byte cap differ
+    # because apply scripts include long-running work (docker pull,
+    # vulnerability scans, image builds) and multi-line heredocs that
+    # the verify limits were never sized for. Seal-gated identically to
+    # run_verify_block, see build_registry below.
+    "run_apply_block": CommandDef(
+        group="signoff",
+        command=["/bin/bash", "-c", "{apply_command}"],
+        timeout=600,
+        description="Run a sign-off apply command from the dashboard",
+        params={
+            "apply_command": ParamDef(
+                placeholder="apply_command",
+                default=None,
+                max_bytes=16384,
+                description="Shell command text supplied by the dashboard",
+            ),
+        },
+    ),
 }
 
 
@@ -91,14 +112,16 @@ def build_registry(
     Config commands override built-ins on name collision.
     Commands in *disabled* are removed from the final registry.
 
-    When ``signoff_sealed`` is true, ``run_verify_block`` is also
-    excluded — a sealed agent advertises (and accepts) the same
-    pre-0.1.8 capability set, so the dashboard's verify hatch is gone
-    until the operator unseals on the host. See ``stormpulse.signoff``
-    and ADR CORE-004.
+    When ``signoff_sealed`` is true, both ``run_verify_block`` and
+    ``run_apply_block`` are excluded. A sealed agent advertises (and
+    accepts) the same pre-0.1.8 capability set, so the dashboard's
+    verify and apply hatches are both gone until the operator unseals
+    on the host. See ``stormpulse.signoff`` and ADR CORE-004.
     """
     merged = {**COMMAND_REGISTRY, **config_commands}
-    auto_disabled = {"run_verify_block"} if signoff_sealed else set()
+    auto_disabled = (
+        {"run_verify_block", "run_apply_block"} if signoff_sealed else set()
+    )
     return {
         k: v for k, v in merged.items()
         if k not in disabled and k not in auto_disabled

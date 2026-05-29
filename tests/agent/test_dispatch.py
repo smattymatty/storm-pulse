@@ -102,6 +102,85 @@ async def test_dispatch_ack_types_ignored(
 
 
 # ---------------------------------------------------------------------------
+# Dispatch-time seal refusal
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_refuses_run_verify_block_when_sealed(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    agent._signoff_state.seal()
+    ws = AsyncMock()
+
+    await agent._dispatch(
+        ws,
+        sign_command_request(
+            command="run_verify_block",
+            params={"verify_command": "echo ok"},
+        ),
+    )
+
+    mock_exec.assert_not_called()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is False
+    assert sent_data["payload"]["failure_reason"] == "signoff_sealed"
+    assert sent_data["payload"]["exit_code"] == -1
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_refuses_run_apply_block_when_sealed(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    agent._signoff_state.seal()
+    ws = AsyncMock()
+
+    await agent._dispatch(
+        ws,
+        sign_command_request(
+            command="run_apply_block",
+            params={"apply_command": "echo ok"},
+        ),
+    )
+
+    mock_exec.assert_not_called()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["command"] == "run_apply_block"
+    assert sent_data["payload"]["success"] is False
+    assert sent_data["payload"]["failure_reason"] == "signoff_sealed"
+    assert sent_data["payload"]["exit_code"] == -1
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_runs_run_apply_block_when_unsealed(
+    mock_exec: MagicMock, agent: Agent,
+) -> None:
+    mock_exec.return_value = make_successful_result(command="run_apply_block")
+    ws = AsyncMock()
+
+    await agent._dispatch(
+        ws,
+        sign_command_request(
+            command="run_apply_block",
+            params={"apply_command": "echo ok"},
+        ),
+    )
+
+    mock_exec.assert_called_once()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is True
+
+
+# ---------------------------------------------------------------------------
 # Command sequence
 # ---------------------------------------------------------------------------
 

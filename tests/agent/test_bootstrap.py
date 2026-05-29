@@ -72,6 +72,18 @@ def test_signoff_sealed_removes_run_verify_block(tmp_path: Path) -> None:
     assert "run_verify_block" in unsealed.registry
 
 
+def test_signoff_sealed_removes_run_apply_block(tmp_path: Path) -> None:
+    cfg = build_config(tmp_path)
+    sealed = build_agent_dependencies(
+        cfg, signoff_sealed=True, log_position_store=None,
+    )
+    unsealed = build_agent_dependencies(
+        cfg, signoff_sealed=False, log_position_store=None,
+    )
+    assert "run_apply_block" not in sealed.registry
+    assert "run_apply_block" in unsealed.registry
+
+
 def test_disabled_commands_are_removed(tmp_path: Path) -> None:
     cfg = build_config(tmp_path)
     cfg = replace(

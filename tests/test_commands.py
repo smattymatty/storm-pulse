@@ -44,12 +44,12 @@ def project_config() -> ProjectConfig:
 # ---------------------------------------------------------------------------
 
 
-def test_registry_has_three_commands() -> None:
-    assert len(COMMAND_REGISTRY) == 3
+def test_registry_has_four_commands() -> None:
+    assert len(COMMAND_REGISTRY) == 4
 
 
 def test_all_expected_commands_present() -> None:
-    expected = {"git_pull", "docker_logs", "run_verify_block"}
+    expected = {"git_pull", "docker_logs", "run_verify_block", "run_apply_block"}
     assert set(COMMAND_REGISTRY.keys()) == expected
 
 
@@ -426,8 +426,8 @@ def test_build_registry_adds_custom_command() -> None:
         description="Restart Caddy",
     )
     registry = build_registry({"restart_caddy": custom})
-    # 3 built-ins (git_pull, docker_logs, run_verify_block) + 1 custom.
-    assert len(registry) == 4
+    # 4 built-ins (git_pull, docker_logs, run_verify_block, run_apply_block) + 1 custom.
+    assert len(registry) == 5
     assert registry["restart_caddy"] is custom
     assert registry["git_pull"] is COMMAND_REGISTRY["git_pull"]
 
@@ -439,8 +439,8 @@ def test_build_registry_overrides_builtin() -> None:
         timeout=120,
     )
     registry = build_registry({"git_pull": custom_git})
-    # Override collapses git_pull into one entry; the other two built-ins stay.
-    assert len(registry) == 3
+    # Override collapses git_pull into one entry; the other three built-ins stay.
+    assert len(registry) == 4
     assert registry["git_pull"] is custom_git
     assert registry["git_pull"].timeout == 120
 
@@ -448,8 +448,8 @@ def test_build_registry_overrides_builtin() -> None:
 def test_build_registry_disables_builtin() -> None:
     registry = build_registry({}, disabled=frozenset({"docker_logs"}))
     assert "docker_logs" not in registry
-    # git_pull + run_verify_block remain.
-    assert len(registry) == 2
+    # git_pull + run_verify_block + run_apply_block remain.
+    assert len(registry) == 3
 
 
 def test_build_registry_disables_custom_command() -> None:
@@ -460,23 +460,26 @@ def test_build_registry_disables_custom_command() -> None:
     )
     registry = build_registry({"restart_caddy": custom}, disabled=frozenset({"restart_caddy"}))
     assert "restart_caddy" not in registry
-    # Three built-ins, custom is disabled away.
-    assert len(registry) == 3
+    # Four built-ins, custom is disabled away.
+    assert len(registry) == 4
 
 
 def test_build_registry_disables_multiple() -> None:
     registry = build_registry(
-        {}, disabled=frozenset({"git_pull", "docker_logs", "run_verify_block"}),
+        {}, disabled=frozenset({
+            "git_pull", "docker_logs", "run_verify_block", "run_apply_block",
+        }),
     )
     assert "git_pull" not in registry
     assert "docker_logs" not in registry
     assert "run_verify_block" not in registry
+    assert "run_apply_block" not in registry
     assert len(registry) == 0
 
 
 def test_build_registry_disabled_unknown_is_harmless() -> None:
     registry = build_registry({}, disabled=frozenset({"nonexistent_command"}))
-    assert len(registry) == 3
+    assert len(registry) == 4
 
 
 def test_build_registry_does_not_mutate_original() -> None:
@@ -654,3 +657,78 @@ def test_run_verify_block_rejects_unknown_param() -> None:
     cmd = COMMAND_REGISTRY["run_verify_block"]
     with pytest.raises(ParamValidationError, match="Unknown params"):
         validate_params(cmd, {"verify_command": "echo ok", "evil": "rm -rf /"})
+
+
+# ---------------------------------------------------------------------------
+# run_apply_block - dashboard-driven apply-block execution. Sibling of
+# run_verify_block; larger byte cap and longer timeout because apply
+# scripts include image pulls, vulnerability scans, and multi-line
+# heredocs.
+# ---------------------------------------------------------------------------
+
+
+def test_run_apply_block_registered() -> None:
+    assert "run_apply_block" in COMMAND_REGISTRY
+    cmd = COMMAND_REGISTRY["run_apply_block"]
+    assert cmd.group == "signoff"
+    assert cmd.command == ["/bin/bash", "-c", "{apply_command}"]
+
+
+def test_run_apply_block_timeout_is_longer_than_verify() -> None:
+    apply_cmd = COMMAND_REGISTRY["run_apply_block"]
+    verify_cmd = COMMAND_REGISTRY["run_verify_block"]
+    assert apply_cmd.timeout > verify_cmd.timeout
+    # Has to cover docker pull + grype scan; 600s is the chosen budget.
+    assert apply_cmd.timeout >= 300
+
+
+def test_run_apply_block_param_has_larger_byte_cap_than_verify() -> None:
+    apply_pdef = COMMAND_REGISTRY["run_apply_block"].params["apply_command"]
+    verify_pdef = COMMAND_REGISTRY["run_verify_block"].params["verify_command"]
+    assert apply_pdef.pattern is None
+    assert apply_pdef.max_bytes is not None
+    assert verify_pdef.max_bytes is not None
+    assert apply_pdef.max_bytes > verify_pdef.max_bytes
+    # Sized for a Compose-file heredoc plus surrounding shell.
+    assert apply_pdef.max_bytes >= 8192
+
+
+def test_run_apply_block_accepts_multiline_heredoc(project_config: ProjectConfig) -> None:
+    cmd = COMMAND_REGISTRY["run_apply_block"]
+    script = (
+        "cat > /tmp/compose.yml <<'EOF'\n"
+        "services:\n"
+        "  web:\n"
+        "    image: placeholder:latest\n"
+        "EOF\n"
+        "docker compose -f /tmp/compose.yml config"
+    )
+    validated = validate_params(cmd, {"apply_command": script})
+    assert validated == {"apply_command": script}
+    resolved = _resolve_command(cmd.command, project_config, validated)
+    assert resolved == ["/bin/bash", "-c", script]
+
+
+def test_run_apply_block_rejects_oversized_payload() -> None:
+    cmd = COMMAND_REGISTRY["run_apply_block"]
+    pdef = cmd.params["apply_command"]
+    assert pdef.max_bytes is not None
+    too_big = "x" * (pdef.max_bytes + 1)
+    with pytest.raises(ParamValidationError, match="exceeds max_bytes"):
+        validate_params(cmd, {"apply_command": too_big})
+
+
+def test_run_apply_block_rejects_unknown_param() -> None:
+    cmd = COMMAND_REGISTRY["run_apply_block"]
+    with pytest.raises(ParamValidationError, match="Unknown params"):
+        validate_params(cmd, {"apply_command": "echo ok", "evil": "rm -rf /"})
+
+
+def test_run_apply_block_rejects_verify_param_name() -> None:
+    # Wire contract distinction: apply uses apply_command, verify uses
+    # verify_command. A dashboard that sends the wrong param name for
+    # the dispatched command must fail validation rather than silently
+    # firing an empty shell.
+    cmd = COMMAND_REGISTRY["run_apply_block"]
+    with pytest.raises(ParamValidationError, match="Unknown params"):
+        validate_params(cmd, {"verify_command": "echo ok"})

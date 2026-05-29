@@ -35,7 +35,7 @@ from stormpulse.agent.garage_actions import (
 )
 from stormpulse.agent.long_running import resolve_long_running_handler
 from stormpulse.agent.signoff_guard import (
-    VERIFY_BLOCK_COMMAND,
+    SEALED_COMMANDS,
     is_blocked_by_seal,
     sealed_refusal_result,
 )
@@ -69,6 +69,7 @@ ACK_TYPES = frozenset({
     MessageType.HEARTBEAT_ACK,
     MessageType.METRICS_ACK,
     MessageType.COMMAND_RESULT_ACK,
+    MessageType.SIGNOFF_STATE_ACK,
     MessageType.ERROR,
 })
 
@@ -202,11 +203,11 @@ async def _refuse_if_sealed(
     payload: CommandRequestPayload,
     cmd_def: CommandDef | None,
 ) -> bool:
-    """Refuse a sealed ``run_verify_block`` inline. Returns ``True`` if handled.
+    """Refuse a sealed verify or apply block inline. Returns ``True`` if handled.
 
     Dispatch-time recheck catches the case where the operator ran
-    ``stormpulse signoff seal`` after the registry was built — the
-    registry still contains ``run_verify_block``, but the seal file
+    ``stormpulse signoff seal`` after the registry was built: the
+    registry still contains the seal-gated commands, but the seal file
     now says "no". See ADR CORE-004.
     """
     if not is_blocked_by_seal(agent._signoff_state, [payload.command]):
@@ -215,7 +216,7 @@ async def _refuse_if_sealed(
     await ws.send(make_command_result(agent._config.agent.id, sealed).to_json())
     logger.warning(
         "Refused %s (request %s): signoff is sealed",
-        VERIFY_BLOCK_COMMAND, envelope.id,
+        payload.command, envelope.id,
     )
     return True
 
@@ -371,12 +372,13 @@ async def handle_command_sequence(
         return
 
     # Same dispatch-time seal recheck as the single-command path: refuse
-    # the sequence pre-flight if any step is the verify hatch and the
-    # agent was sealed since the registry was built.
+    # the sequence pre-flight if any step is a seal-gated command and
+    # the agent was sealed since the registry was built.
     if is_blocked_by_seal(agent._signoff_state, payload.commands):
+        sealed_in_sequence = sorted(SEALED_COMMANDS & set(payload.commands))
         logger.warning(
             "Refused sequence %s: contains %s while sealed",
-            payload.sequence_id, VERIFY_BLOCK_COMMAND,
+            payload.sequence_id, ", ".join(sealed_in_sequence),
         )
         return
 
