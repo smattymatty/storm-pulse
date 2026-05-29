@@ -7,15 +7,36 @@ import socket
 import ssl
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from stormpulse.agent import Agent
+from stormpulse.agent import bootstrap as agent_bootstrap
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 
 from tests.helpers import SECRET, build_config
+
+
+@pytest.fixture(autouse=True)
+def _garage_preconditions_pass_in_tests() -> Generator[None, None, None]:
+    """Default Garage preconditions to PASS in every test.
+
+    Per ADR GARAGE-000, the bootstrap path runs substrate + version +
+    auth checks before merging the garage command set. Those checks
+    shell out to ``findmnt`` and ``docker``; they fail closed in the
+    test environment, which would silently drop the garage command set
+    from every Agent constructed in a test.
+
+    Tests that explicitly want to exercise the precondition-failed
+    path patch ``run_garage_preconditions`` themselves with a non-None
+    return value.
+    """
+    with patch.object(
+        agent_bootstrap, "run_garage_preconditions", return_value=None,
+    ):
+        yield
 
 
 @pytest.fixture

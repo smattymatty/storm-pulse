@@ -21,6 +21,7 @@ from stormpulse.commands.jobs import LongRunningFactory
 from stormpulse.config import CommandDef, Config, ConfigError
 from stormpulse.garage import build_garage_commands
 from stormpulse.garage import long_running_factories as garage_long_running_factories
+from stormpulse.garage.preconditions import run_preconditions as run_garage_preconditions
 from stormpulse.logging import (
     DockerTailer,
     LogPositionStore,
@@ -41,12 +42,19 @@ class AgentDependencies:
     here when its CommandDef is marked ``long_running``. ``shippers``
     and ``streaming_tailers`` are the log-shipping plumbing — only
     populated when a ``LogPositionStore`` is supplied.
+
+    ``garage_disabled_reason`` is set when ``[garage].enabled = true``
+    but a precondition failed at boot (substrate, version, or auth).
+    The garage command set is skipped in that case and the reason is
+    published to the dashboard via ``GarageState.disabled_reason``.
+    See ADR GARAGE-000.
     """
 
     registry: dict[str, CommandDef]
     long_running_factories: dict[str, LongRunningFactory]
     shippers: dict[str, LogShipper]
     streaming_tailers: list[StreamingDockerTailer]
+    garage_disabled_reason: str | None = None
 
 
 def build_agent_dependencies(
@@ -65,9 +73,16 @@ def build_agent_dependencies(
     """
     commands = dict(config.commands)
     long_running: dict[str, LongRunningFactory] = {}
+    garage_disabled_reason: str | None = None
     if config.garage and config.garage.enabled:
-        commands.update(build_garage_commands(config.garage))
-        long_running.update(garage_long_running_factories(config.garage))
+        # ADR GARAGE-000: run substrate + version + auth preconditions
+        # before registering the garage command set. On failure, skip
+        # registration and let the named reason ride to the dashboard
+        # via GarageState.disabled_reason.
+        garage_disabled_reason = run_garage_preconditions(config.garage)
+        if garage_disabled_reason is None:
+            commands.update(build_garage_commands(config.garage))
+            long_running.update(garage_long_running_factories(config.garage))
     if config.caddy and config.caddy.enabled:
         import_err = verify_drop_in_imported(
             config.caddy.main_caddyfile, config.caddy.drop_in_path,
@@ -104,4 +119,5 @@ def build_agent_dependencies(
         long_running_factories=long_running,
         shippers=shippers,
         streaming_tailers=streaming_tailers,
+        garage_disabled_reason=garage_disabled_reason,
     )
