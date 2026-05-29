@@ -189,20 +189,22 @@ def test_format_unsealed_duration_future_clock_skew() -> None:
 
 
 # ---------------------------------------------------------------------------
-# build_registry: signoff_sealed excludes run_verify_block
+# build_registry: signoff_sealed excludes run_verify_block and run_apply_block
 # ---------------------------------------------------------------------------
 
 
-def test_build_registry_includes_run_verify_block_when_unsealed() -> None:
+def test_build_registry_includes_seal_gated_commands_when_unsealed() -> None:
     registry = build_registry({}, signoff_sealed=False)
     assert "run_verify_block" in registry
+    assert "run_apply_block" in registry
 
 
-def test_build_registry_excludes_run_verify_block_when_sealed() -> None:
+def test_build_registry_excludes_seal_gated_commands_when_sealed() -> None:
     registry = build_registry({}, signoff_sealed=True)
     assert "run_verify_block" not in registry
-    # The other built-ins must still be present — seal only closes
-    # the verify hatch, not the rest of the registry.
+    assert "run_apply_block" not in registry
+    # The other built-ins must still be present. Seal only closes the
+    # verify and apply hatches, not the rest of the registry.
     assert "git_pull" in registry
     assert "docker_logs" in registry
 
@@ -211,6 +213,7 @@ def test_build_registry_seal_default_is_unsealed() -> None:
     # Existing callers that don't pass the kwarg keep the prior shape.
     registry = build_registry({})
     assert "run_verify_block" in registry
+    assert "run_apply_block" in registry
 
 
 def test_build_registry_sealed_plus_disabled_still_excludes_both() -> None:
@@ -220,13 +223,15 @@ def test_build_registry_sealed_plus_disabled_still_excludes_both() -> None:
         signoff_sealed=True,
     )
     assert "run_verify_block" not in registry
+    assert "run_apply_block" not in registry
     assert "git_pull" not in registry
     assert "docker_logs" in registry
 
 
 def test_build_registry_sealed_does_not_block_config_command_named_similarly() -> None:
-    # Only the built-in run_verify_block is auto-disabled. A config-defined
-    # command with a different name keeps working when sealed.
+    # Only the built-in seal-gated commands are auto-disabled. A
+    # config-defined command with a different name keeps working when
+    # sealed.
     custom = CommandDef(
         group="custom",
         command=["/bin/echo", "ok"],
@@ -236,6 +241,7 @@ def test_build_registry_sealed_does_not_block_config_command_named_similarly() -
     registry = build_registry({"my_verify": custom}, signoff_sealed=True)
     assert "my_verify" in registry
     assert "run_verify_block" not in registry
+    assert "run_apply_block" not in registry
 
 
 # ---------------------------------------------------------------------------
