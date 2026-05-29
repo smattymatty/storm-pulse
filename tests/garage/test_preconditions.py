@@ -34,58 +34,11 @@ def _completed(returncode: int, stdout: str = "", stderr: str = "") -> subproces
     )
 
 
-# ---- check_substrate ------------------------------------------------
-
-
-class TestCheckSubstrate:
-    def test_both_paths_zfs_passes(self) -> None:
-        with patch(
-            "stormpulse.garage.preconditions.subprocess.run",
-            return_value=_completed(0, stdout="zfs\n"),
-        ):
-            assert preconditions.check_substrate() is None
-
-    def test_meta_not_zfs_fails(self) -> None:
-        # First call (meta) returns ext4; second call would be data but
-        # we never get there because substrate short-circuits.
-        with patch(
-            "stormpulse.garage.preconditions.subprocess.run",
-            return_value=_completed(0, stdout="ext4\n"),
-        ):
-            assert preconditions.check_substrate() == "substrate_not_zfs"
-
-    def test_data_not_zfs_fails(self) -> None:
-        # First call (meta) zfs; second call (data) xfs.
-        calls = [
-            _completed(0, stdout="zfs\n"),
-            _completed(0, stdout="xfs\n"),
-        ]
-        with patch(
-            "stormpulse.garage.preconditions.subprocess.run", side_effect=calls,
-        ):
-            assert preconditions.check_substrate() == "substrate_not_zfs"
-
-    def test_path_not_mounted_fails(self) -> None:
-        # findmnt exits non-zero when the path isn't a mount.
-        with patch(
-            "stormpulse.garage.preconditions.subprocess.run",
-            return_value=_completed(1, stderr="findmnt: /var/lib/garage/meta: not a mountpoint"),
-        ):
-            assert preconditions.check_substrate() == "substrate_not_zfs"
-
-    def test_findmnt_missing_fails(self) -> None:
-        with patch(
-            "stormpulse.garage.preconditions.subprocess.run",
-            side_effect=FileNotFoundError("findmnt"),
-        ):
-            assert preconditions.check_substrate() == "substrate_not_zfs"
-
-    def test_findmnt_timeout_fails(self) -> None:
-        with patch(
-            "stormpulse.garage.preconditions.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd=["findmnt"], timeout=15),
-        ):
-            assert preconditions.check_substrate() == "substrate_not_zfs"
+# Note: the original GARAGE-000 included a substrate precondition that
+# asserted /var/lib/garage/{meta,data} were ZFS mounts. It was dropped
+# when CELLAR-003 was amended (alpha provider's LVM-ext4 topology made
+# ZFS-on-clean-disk unworkable; durability moved up to garage.toml).
+# See CELLAR-003 amendment + the preconditions.py module docstring.
 
 
 # ---- check_garage_version -------------------------------------------
@@ -199,34 +152,10 @@ class TestRunPreconditions:
         cfg = _make_config(tmp_path)
         with patch.multiple(
             preconditions,
-            check_substrate=lambda: None,
             check_garage_version=lambda c: None,
             check_rpc_secret=lambda c: None,
         ):
             assert preconditions.run_preconditions(cfg) is None
-
-    def test_substrate_short_circuits(self, tmp_path: Path) -> None:
-        cfg = _make_config(tmp_path)
-        version_calls = []
-        rpc_calls = []
-
-        def fake_version(_c: GarageConfig) -> str | None:
-            version_calls.append(1)
-            return None
-
-        def fake_rpc(_c: GarageConfig) -> str | None:
-            rpc_calls.append(1)
-            return None
-
-        with patch.multiple(
-            preconditions,
-            check_substrate=lambda: "substrate_not_zfs",
-            check_garage_version=fake_version,
-            check_rpc_secret=fake_rpc,
-        ):
-            assert preconditions.run_preconditions(cfg) == "substrate_not_zfs"
-        assert version_calls == [], "version check ran despite substrate failure"
-        assert rpc_calls == [], "rpc check ran despite substrate failure"
 
     def test_version_short_circuits_rpc(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -238,7 +167,6 @@ class TestRunPreconditions:
 
         with patch.multiple(
             preconditions,
-            check_substrate=lambda: None,
             check_garage_version=lambda c: "garage_version_unsupported",
             check_rpc_secret=fake_rpc,
         ):
@@ -249,7 +177,6 @@ class TestRunPreconditions:
         cfg = _make_config(tmp_path)
         with patch.multiple(
             preconditions,
-            check_substrate=lambda: None,
             check_garage_version=lambda c: None,
             check_rpc_secret=lambda c: "rpc_secret_unauthenticated",
         ):
@@ -261,8 +188,8 @@ class TestRunPreconditions:
 
 class TestGarageStateDisabled:
     def test_disabled_sentinel_carries_reason(self) -> None:
-        state = GarageState.disabled("substrate_not_zfs")
-        assert state.disabled_reason == "substrate_not_zfs"
+        state = GarageState.disabled("garage_unreachable")
+        assert state.disabled_reason == "garage_unreachable"
         assert state.healthy is False
         assert state.node_id == ""
         assert state.buckets == []
@@ -289,12 +216,12 @@ class TestBootstrapWiring:
         cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
         with patch.object(
             bootstrap, "run_garage_preconditions",
-            return_value="substrate_not_zfs",
+            return_value="garage_unreachable",
         ):
             deps = bootstrap.build_agent_dependencies(
                 cfg, signoff_sealed=False, log_position_store=None,
             )
-        assert deps.garage_disabled_reason == "substrate_not_zfs"
+        assert deps.garage_disabled_reason == "garage_unreachable"
         # Garage command set is absent when preconditions fail.
         assert not any(k.startswith("garage_") for k in deps.registry)
 
