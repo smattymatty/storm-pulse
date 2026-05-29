@@ -149,8 +149,16 @@ KillMode=mixed
 # Sandboxing. Less strict than the system unit because user units
 # don't run privileged; the gain of ProtectHome / ProtectSystem is
 # marginal and would block access to the agent's own files under ~.
+# PrivateTmp is *not* set on the user unit. It creates a mount
+# namespace that breaks rootless Docker socket access: subprocess
+# `docker compose ps` reports "permission denied" connecting to
+# unix:///run/user/$UID/docker.sock even though DOCKER_HOST, the
+# process UID, and the socket perms are all correct. Rootless user
+# services have no elevated privileges to defend, so the security
+# tradeoff isn't worth breaking the docker integration. The system
+# unit above keeps PrivateTmp because it runs as a dedicated user
+# with broader hardening; that lane doesn't drive rootless Docker.
 NoNewPrivileges=yes
-PrivateTmp=yes
 
 [Install]
 WantedBy=default.target
