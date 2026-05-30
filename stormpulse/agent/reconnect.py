@@ -23,6 +23,7 @@ from websockets.exceptions import ConnectionClosed
 from stormpulse.agent import dispatch, loops
 from stormpulse.agent.register import send_register
 from stormpulse.agent.signoff_nag import signoff_nag_loop
+from stormpulse.agent.signoff_push import signoff_state_push_loop
 from stormpulse.commands.jobs import JobManager
 from stormpulse.protocol import Envelope
 
@@ -98,6 +99,7 @@ async def _run_session(
             tg.create_task(dispatch.receive_loop(agent, ws))
             tg.create_task(loops.garage_loop(agent, ws))
             tg.create_task(signoff_nag_loop(agent, ws))
+            tg.create_task(signoff_state_push_loop(agent, ws))
             for group_name in agent._shippers:
                 tg.create_task(loops.log_loop(agent, ws, group_name))
     finally:

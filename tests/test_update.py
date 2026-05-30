@@ -81,13 +81,19 @@ class TestCmdUpdateRestartFlow:
             calls.append(list(argv))
             return MagicMock(returncode=0)
 
+        # pipx subprocess lives in cli.update; systemctl subprocess lives in
+        # cli.restart (the helper was factored out so the standalone restart
+        # command can reuse it). Both get patched with the same side_effect.
         with patch("stormpulse.cli.update.shutil.which", return_value="/usr/bin/pipx"):
             with patch("stormpulse.cli.update.subprocess.run", side_effect=fake_run):
                 with patch(
-                    "stormpulse.cli.update.detect_mode",
-                    return_value=InstallMode.USER,
+                    "stormpulse.cli.restart.subprocess.run", side_effect=fake_run,
                 ):
-                    cmd_update(_ns())
+                    with patch(
+                        "stormpulse.cli.update.detect_mode",
+                        return_value=InstallMode.USER,
+                    ):
+                        cmd_update(_ns())
 
         # Two subprocess calls: pipx install, then systemctl --user restart.
         assert len(calls) == 2
@@ -147,19 +153,23 @@ class TestCmdUpdateRestartFlow:
 
     def test_systemctl_failure_propagates_exit_code(self) -> None:
         from stormpulse.init.mode import InstallMode
-        run_results = iter([
-            MagicMock(returncode=0),   # pipx succeeded
-            MagicMock(returncode=5),   # systemctl --user failed
-        ])
+
+        # pipx runs in cli.update.subprocess.run; systemctl runs in
+        # cli.restart.subprocess.run after the helper factoring. Mock each
+        # at its own home so the test asserts both paths.
         with patch("stormpulse.cli.update.shutil.which", return_value="/usr/bin/pipx"):
             with patch(
                 "stormpulse.cli.update.subprocess.run",
-                side_effect=lambda *_a, **_k: next(run_results),
+                return_value=MagicMock(returncode=0),  # pipx succeeded
             ):
                 with patch(
-                    "stormpulse.cli.update.detect_mode",
-                    return_value=InstallMode.USER,
+                    "stormpulse.cli.restart.subprocess.run",
+                    return_value=MagicMock(returncode=5),  # systemctl --user failed
                 ):
-                    with pytest.raises(SystemExit) as exc:
-                        cmd_update(_ns())
+                    with patch(
+                        "stormpulse.cli.update.detect_mode",
+                        return_value=InstallMode.USER,
+                    ):
+                        with pytest.raises(SystemExit) as exc:
+                            cmd_update(_ns())
         assert exc.value.code == 5
