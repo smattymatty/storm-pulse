@@ -63,13 +63,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Dashboard acknowledgement types — received but not actionable.
+# Dashboard acknowledgement types, received but not actionable.
+# SIGNOFF_STATE_ACK belongs in this set once the signoff.state envelope
+# lands. The enum value is not yet defined in protocol.py on main, so
+# referencing it here crash-loops the agent at import. Re-add it in the
+# same commit as the protocol.py enum addition.
 ACK_TYPES = frozenset({
     MessageType.REGISTER_OK,
     MessageType.HEARTBEAT_ACK,
     MessageType.METRICS_ACK,
     MessageType.COMMAND_RESULT_ACK,
-    MessageType.SIGNOFF_STATE_ACK,
     MessageType.ERROR,
 })
 

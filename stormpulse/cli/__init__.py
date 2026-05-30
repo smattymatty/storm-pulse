@@ -149,6 +149,12 @@ def main() -> None:
         help="skip the restart; print the restart command instead",
     )
 
+    # --- restart subcommand ---
+    subparsers.add_parser(
+        "restart",
+        help="restart the systemd unit (user-mode auto, system-mode prints hint)",
+    )
+
     # --- status subcommand ---
     status_parser = subparsers.add_parser("status", help="show agent status")
     status_parser.add_argument(
@@ -201,6 +207,9 @@ def main() -> None:
     elif args.command == "update":
         from stormpulse.cli.update import cmd_update
         cmd_update(args)
+    elif args.command == "restart":
+        from stormpulse.cli.restart import cmd_restart
+        cmd_restart(args)
     elif args.command == "garage":
         if getattr(args, "garage_command", None) == "init":
             from stormpulse.cli.garage import cmd_garage_init
@@ -262,6 +271,7 @@ def main() -> None:
             print("  migrate-to-rootless  Convert system install to user mode", file=sys.stderr)
             print("  status               Show agent status", file=sys.stderr)
             print("  update               Reinstall via pipx and restart", file=sys.stderr)
+            print("  restart              Restart the systemd unit", file=sys.stderr)
             print("  garage               Garage S3 node management", file=sys.stderr)
             print("  caddy                Caddy reverse-proxy integration", file=sys.stderr)
             print("  logging              Log shipping configuration", file=sys.stderr)

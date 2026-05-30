@@ -38,7 +38,7 @@ An earlier draft of this ADR shipped the hatch in the **unsealed** state and ask
 4. **The unsealed window is nagged from every surface.** While the seal is OFF:
    - The agent emits a `WARNING` log every 5 minutes naming the unsealed duration (`stormpulse.agent.signoff_nag.signoff_nag_loop`). Mirrored to `PulseLogger` if one is configured, so the dashboard sees structured events too.
    - `stormpulse status` renders the seal row in bold red (`⚠ UNSEALED (for 3h 12m)`) with a "reseal with: …" pointer.
-   - The register payload's `signoff_sealed: bool` advertises the state on every (re)connect. The dashboard surfaces a persistent banner on the server's status page.
+   - The register payload's `signoff_sealed: bool` advertises the state on every (re)connect. The dashboard surfaces a persistent banner on the server's status page. Mid-session transitions ride a separate `signoff.state` envelope (see Live propagation below) so the banner does not lag the CLI.
    - The agent tracks `unsealed_since` as a UTC ISO timestamp in `signoff.unsealed_at`, so "unsealed for X" stays accurate across agent restarts.
 
 5. **Resealing is cheap; only the operator can do it.** `stormpulse signoff seal` is one keystroke (no prompt — the safe direction needs no friction). The CLI lives on the host and the agent process has no whitelisted command that touches the seal file, so a compromised dashboard cannot reseal an agent it just unsealed, and a `run_verify_block` payload cannot toggle the flag from inside.
@@ -46,6 +46,17 @@ An earlier draft of this ADR shipped the hatch in the **unsealed** state and ask
 6. **Two-layer enforcement on the agent (unchanged from earlier draft).** `build_registry` excludes `run_verify_block` when sealed; `_handle_command_request` and `_handle_command_sequence` re-stat the flag at dispatch time, so an operator sealing mid-run takes effect immediately. Sealed dispatches of `run_verify_block` come back with `failure_reason="signoff_sealed"`.
 
 7. **Operator workflow.** Install → agent is sealed. Dashboard shows "agent sealed, run `stormpulse signoff unseal` on the host to verify." Operator unseals (typing hostname). Operator runs verification through the dashboard. Operator runs `stormpulse signoff seal`. For later re-verification of the same agent, the cycle repeats — *not* a fresh install. The seal is a state, not a one-shot.
+
+### Live propagation
+
+The seal state crosses the WebSocket on two different envelopes:
+
+- **`register`** carries the at-connect snapshot. Fires once per (re)connect. Self-heals a missed transition after reconnect.
+- **`signoff.state`** carries mid-session transitions. Fires whenever the sentinel file flips while a connection is up, so the dashboard's mirror updates in the same tick the operator runs `stormpulse signoff seal` or `stormpulse signoff unseal`.
+
+Without `signoff.state` the only mid-session signal was the local `signoff_nag` warning log; the dashboard would not see the change until the next reconnect. The new envelope closes that lag without changing what `register` does at connect, what the seal model's threat boundary covers, or who can write the on-host sentinel. A small dedicated loop (`stormpulse.agent.signoff_push`) polls the sentinel on a tight cadence (5s) so transitions surface promptly; missed transitions while the WebSocket is down self-heal at the next register.
+
+The wire shape is defined in the Pulse wire contract spec under `signoff.state` (agent → dash) and `signoff.state.ack` (dash → agent). The seal model's safety properties do not change: the dashboard is still a mirror, the agent's on-disk sentinel is still authoritative, and a compromised dashboard still cannot toggle the seal.
 
 ## Consequences
 

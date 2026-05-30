@@ -24,6 +24,7 @@ class MessageType(StrEnum):
     COMMAND_PROGRESS = "command.progress"
     REGISTER = "register"
     LOG_BATCH = "log.batch"
+    SIGNOFF_STATE = "signoff.state"
 
     # Dashboard → Agent (actionable)
     COMMAND_REQUEST = "command.request"
@@ -35,6 +36,7 @@ class MessageType(StrEnum):
     HEARTBEAT_ACK = "heartbeat.ack"
     METRICS_ACK = "metrics.ack"
     COMMAND_RESULT_ACK = "command.result.ack"
+    SIGNOFF_STATE_ACK = "signoff.state.ack"
     ERROR = "error"
 
 
@@ -199,6 +201,25 @@ class RegisterPayload:
     # and for the "unsealed > N hours" pager trigger — the agent owns
     # the authoritative wall-clock so the dashboard doesn't have to
     # guess from its own register history.
+    unsealed_since: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Self:
+        return _payload_from_dict(cls, data)
+
+
+@dataclass(frozen=True, slots=True)
+class SignoffStatePayload:
+    """Payload for signoff.state messages (agent -> dashboard).
+
+    Mid-session push of the verify-block seal state. The register
+    payload still carries the at-connect snapshot; this envelope
+    exists so the dashboard does not lag a CLI-driven transition
+    while a connection is up. See ADR CORE-004 "Live propagation"
+    and the spec's `signoff.state` section.
+    """
+
+    signoff_sealed: bool
     unsealed_since: str | None = None
 
     @classmethod
@@ -404,6 +425,24 @@ def make_command_result(
 def make_command_progress(agent_id: str, progress: CommandProgressPayload) -> Envelope:
     """Create a command.progress envelope."""
     return _make_envelope(agent_id, MessageType.COMMAND_PROGRESS, asdict(progress))
+
+
+def make_signoff_state(
+    agent_id: str, *, sealed: bool, unsealed_since: str | None = None,
+) -> Envelope:
+    """Create a signoff.state envelope.
+
+    `unsealed_since` SHOULD be a UTC ISO-8601 string when ``sealed`` is
+    ``False`` and ``None`` when ``sealed`` is ``True``. The dashboard
+    clears the column when sealed and persists the wall-clock when
+    unsealed; see ADR DEVELOPER-005.
+    """
+    return _make_envelope(
+        agent_id, MessageType.SIGNOFF_STATE,
+        asdict(SignoffStatePayload(
+            signoff_sealed=sealed, unsealed_since=unsealed_since,
+        )),
+    )
 
 
 def make_log_batch(

@@ -22,7 +22,8 @@ import shutil
 import subprocess
 import sys
 
-from stormpulse.init.mode import InstallMode, detect_mode
+from stormpulse.cli.restart import restart_or_hint
+from stormpulse.init.mode import detect_mode
 
 logger = logging.getLogger("stormpulse")
 
@@ -84,27 +85,6 @@ def cmd_update(args: argparse.Namespace) -> None:
         )
         return
 
-    # System-mode (root): don't auto-restart, don't shell out to sudo.
-    # The running unit is a system unit; tell the operator what to run.
-    if detect_mode() is InstallMode.SYSTEM:
-        print(
-            "System install detected. Restart when ready: "
-            "systemctl restart stormpulse",
-            file=sys.stderr,
-        )
-        return
-
-    print("Restarting user unit: stormpulse...", file=sys.stderr)
-    restart = subprocess.run(
-        ["systemctl", "--user", "restart", "stormpulse"],
-    )
-    if restart.returncode != 0:
-        logger.error(
-            "systemctl --user restart stormpulse exited %d",
-            restart.returncode,
-        )
-        sys.exit(restart.returncode)
-    print(
-        "Restarted. Tail with: journalctl --user -u stormpulse -f",
-        file=sys.stderr,
-    )
+    code = restart_or_hint(detect_mode())
+    if code != 0:
+        sys.exit(code)
