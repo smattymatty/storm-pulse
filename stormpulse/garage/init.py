@@ -10,9 +10,11 @@ import tomllib
 from pathlib import Path
 
 from stormpulse.init import InitError, prompt
+from stormpulse.init.files import default_config_path
+from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
-from stormpulse.init.system import restart_stormpulse
+from stormpulse.init.system import restart_or_hint
 
 
 _GARAGE_CONFIG_SEARCH_PATHS = [
@@ -250,11 +252,17 @@ def run_garage_init(
     force: bool = False,
 ) -> None:
     """Public entry point for ``stormpulse garage init``."""
-    # Root check
-    if os.geteuid() != 0:
+    # Writability gate. Replaces the old root-only check: USER mode is
+    # the default on hardened boxes (ADR core/003), so requiring sudo
+    # was wrong. The CLI has already routed ``config_path`` through
+    # ``default_config_path()`` for the operator's mode, so we just
+    # verify the parent dir is writable for whoever's running us.
+    if not os.access(config_path.parent, os.W_OK):
+        suggested = default_config_path()
         raise InitError(
-            "stormpulse garage init must be run as root "
-            "(sudo stormpulse garage init)"
+            f"Cannot write to {config_path}. "
+            f"In USER mode the config should be at {suggested} "
+            f"and owned by the operator. In SYSTEM mode, re-run with sudo."
         )
 
     # Find garage config
@@ -325,20 +333,18 @@ def run_garage_init(
     )
     print(f"\n  [garage] section written to {config_path}", file=sys.stderr)
 
-    # Restart
-    if prompt_confirm("Restart stormpulse now?"):
-        if restart_stormpulse():
-            print("  stormpulse restarted successfully.", file=sys.stderr)
-        else:
-            print(
-                "  Restart failed. Restart manually:\n"
-                "    sudo systemctl restart stormpulse",
-                file=sys.stderr,
-            )
+    # Restart. No-escalation posture (see stormpulse.init.system):
+    # SYSTEM mode prints the hint and never shells out; USER mode runs
+    # the user unit restart after explicit operator consent.
+    mode = detect_mode()
+    if mode is InstallMode.SYSTEM:
+        restart_or_hint(mode)
+    elif prompt_confirm("Restart stormpulse now?"):
+        restart_or_hint(mode)
     else:
         print(
             "\n  Restart later with:\n"
-            "    sudo systemctl restart stormpulse",
+            "    systemctl --user restart stormpulse",
             file=sys.stderr,
         )
 

@@ -22,8 +22,8 @@ import shutil
 import subprocess
 import sys
 
-from stormpulse.cli.restart import restart_or_hint
 from stormpulse.init.mode import detect_mode
+from stormpulse.init.system import restart_or_hint
 
 logger = logging.getLogger("stormpulse")
 

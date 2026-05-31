@@ -7,7 +7,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from stormpulse.cli.restart import cmd_restart, restart_or_hint
+from stormpulse.cli.restart import cmd_restart
+from stormpulse.init.system import restart_or_hint
 from stormpulse.init.mode import InstallMode
 
 
@@ -19,7 +20,7 @@ class TestRestartOrHint:
             calls.append(list(argv))
             return MagicMock(returncode=0)
 
-        with patch("stormpulse.cli.restart.subprocess.run", side_effect=fake_run):
+        with patch("stormpulse.init.system.subprocess.run", side_effect=fake_run):
             code = restart_or_hint(InstallMode.USER)
 
         assert code == 0
@@ -29,7 +30,7 @@ class TestRestartOrHint:
         self, caplog: pytest.LogCaptureFixture,
     ) -> None:
         with patch(
-            "stormpulse.cli.restart.subprocess.run",
+            "stormpulse.init.system.subprocess.run",
             return_value=MagicMock(returncode=5),
         ):
             code = restart_or_hint(InstallMode.USER)
@@ -40,7 +41,7 @@ class TestRestartOrHint:
     def test_system_mode_prints_hint_does_not_exec(
         self, capsys: pytest.CaptureFixture[str],
     ) -> None:
-        with patch("stormpulse.cli.restart.subprocess.run") as run_mock:
+        with patch("stormpulse.init.system.subprocess.run") as run_mock:
             code = restart_or_hint(InstallMode.SYSTEM)
 
         # No-escalation posture: never shells out in system mode.
@@ -55,7 +56,7 @@ class TestRestartOrHint:
 class TestCmdRestart:
     def test_user_mode_success_returns_normally(self) -> None:
         with patch(
-            "stormpulse.cli.restart.subprocess.run",
+            "stormpulse.init.system.subprocess.run",
             return_value=MagicMock(returncode=0),
         ):
             with patch(
@@ -67,7 +68,7 @@ class TestCmdRestart:
 
     def test_user_mode_failure_exits_with_systemctl_code(self) -> None:
         with patch(
-            "stormpulse.cli.restart.subprocess.run",
+            "stormpulse.init.system.subprocess.run",
             return_value=MagicMock(returncode=7),
         ):
             with patch(
@@ -82,7 +83,7 @@ class TestCmdRestart:
     def test_system_mode_returns_normally_after_hint(
         self, capsys: pytest.CaptureFixture[str],
     ) -> None:
-        with patch("stormpulse.cli.restart.subprocess.run") as run_mock:
+        with patch("stormpulse.init.system.subprocess.run") as run_mock:
             with patch(
                 "stormpulse.cli.restart.detect_mode",
                 return_value=InstallMode.SYSTEM,

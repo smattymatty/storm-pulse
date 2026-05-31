@@ -15,8 +15,10 @@ from pathlib import Path
 
 from stormpulse.caddy.sync import verify_drop_in_imported
 from stormpulse.init import InitError, prompt
+from stormpulse.init.files import default_config_path
+from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
-from stormpulse.init.system import restart_stormpulse
+from stormpulse.init.system import restart_or_hint
 
 
 # Search paths in priority order:
@@ -186,10 +188,14 @@ def run_caddy_init(
     force: bool = False,
 ) -> None:
     """Public entry point for ``stormpulse caddy init``."""
-    if os.geteuid() != 0:
+    # Writability gate. Replaces the old root-only check: USER mode is
+    # the default on hardened boxes (ADR core/003).
+    if not os.access(config_path.parent, os.W_OK):
+        suggested = default_config_path()
         raise InitError(
-            "stormpulse caddy init must be run as root "
-            "(sudo stormpulse caddy init)"
+            f"Cannot write to {config_path}. "
+            f"In USER mode the config should be at {suggested} "
+            f"and owned by the operator. In SYSTEM mode, re-run with sudo."
         )
 
     main_caddyfile = find_caddy_main(main_caddyfile_override)
@@ -263,29 +269,33 @@ def run_caddy_init(
     )
     print(f"\n  [caddy] section written to {config_path}", file=sys.stderr)
 
+    mode = detect_mode()
+    restart_cmd = (
+        "systemctl --user restart stormpulse"
+        if mode is InstallMode.USER
+        else "sudo systemctl restart stormpulse"
+    )
+
     # If the import directive is missing, don't offer restart - the
     # agent's boot check would crash. Surface the next step plainly
     # instead.
     if import_err:
         print(
             "\n  Don't restart yet - fix the import directive above first.\n"
-            "  Then:    sudo systemctl restart stormpulse",
+            f"  Then:    {restart_cmd}",
             file=sys.stderr,
         )
         return
 
-    if prompt_confirm("Restart stormpulse now?"):
-        if restart_stormpulse():
-            print("  stormpulse restarted successfully.", file=sys.stderr)
-        else:
-            print(
-                "  Restart failed. Restart manually:\n"
-                "    sudo systemctl restart stormpulse",
-                file=sys.stderr,
-            )
+    # No-escalation posture (see stormpulse.init.system): SYSTEM mode
+    # prints the hint and never shells out; USER mode runs the user
+    # unit restart after explicit operator consent.
+    if mode is InstallMode.SYSTEM:
+        restart_or_hint(mode)
+    elif prompt_confirm("Restart stormpulse now?"):
+        restart_or_hint(mode)
     else:
         print(
-            "\n  Restart later with:\n"
-            "    sudo systemctl restart stormpulse",
+            f"\n  Restart later with:\n    {restart_cmd}",
             file=sys.stderr,
         )
