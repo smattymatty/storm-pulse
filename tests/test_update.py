@@ -87,7 +87,7 @@ class TestCmdUpdateRestartFlow:
         with patch("stormpulse.cli.update.shutil.which", return_value="/usr/bin/pipx"):
             with patch("stormpulse.cli.update.subprocess.run", side_effect=fake_run):
                 with patch(
-                    "stormpulse.cli.restart.subprocess.run", side_effect=fake_run,
+                    "stormpulse.init.system.subprocess.run", side_effect=fake_run,
                 ):
                     with patch(
                         "stormpulse.cli.update.detect_mode",
@@ -163,7 +163,7 @@ class TestCmdUpdateRestartFlow:
                 return_value=MagicMock(returncode=0),  # pipx succeeded
             ):
                 with patch(
-                    "stormpulse.cli.restart.subprocess.run",
+                    "stormpulse.init.system.subprocess.run",
                     return_value=MagicMock(returncode=5),  # systemctl --user failed
                 ):
                     with patch(

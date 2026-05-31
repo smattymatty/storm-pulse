@@ -1,7 +1,8 @@
-"""System setup commands (chown, docker group, systemd reload)."""
+"""System setup commands (chown, docker group, systemd reload, restart)."""
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,8 @@ from pathlib import Path
 from stormpulse.init.checks import InitError
 from stormpulse.init.compose import parse_volume_mounts
 from stormpulse.init.mode import InstallMode
+
+logger = logging.getLogger("stormpulse")
 
 
 def run_cmd(args: list[str], *, description: str) -> bool:
@@ -184,19 +187,51 @@ def check_linger_enabled() -> bool:
         return False
 
 
-def restart_stormpulse() -> bool:
-    """Restart the stormpulse systemd service. Returns True on success."""
-    try:
-        subprocess.run(
-            ["/usr/bin/systemctl", "restart", "stormpulse"],
-            check=True,
-            capture_output=True,
+def _restart_user_unit() -> int:
+    """Run ``systemctl --user restart stormpulse``. Return its exit code.
+
+    Prints a status line before invoking and a success/tail line on
+    return when the unit restarted cleanly. Errors are logged via
+    ``logger.error`` so they surface in the same journal stream as
+    the agent itself.
+    """
+    print("Restarting user unit: stormpulse...", file=sys.stderr)
+    result = subprocess.run(["systemctl", "--user", "restart", "stormpulse"])
+    if result.returncode != 0:
+        logger.error(
+            "systemctl --user restart stormpulse exited %d",
+            result.returncode,
         )
-        return True
-    except FileNotFoundError:
-        print("  systemctl not found", file=sys.stderr)
-        return False
-    except subprocess.CalledProcessError as exc:
-        stderr = exc.stderr.decode("utf-8", errors="replace").strip()
-        print(f"  Restart failed: {stderr or exc}", file=sys.stderr)
-        return False
+        return result.returncode
+    print(
+        "Restarted. Tail with: journalctl --user -u stormpulse -f",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _print_system_restart_hint() -> None:
+    """Print the system-mode restart instruction without executing.
+
+    Matches the no-escalation posture: the wrapper never shells out
+    to sudo. The operator runs the command in a context that already
+    holds the privilege.
+    """
+    print(
+        "System install detected. Restart when ready: "
+        "systemctl restart stormpulse",
+        file=sys.stderr,
+    )
+
+
+def restart_or_hint(mode: InstallMode) -> int:
+    """Restart the unit (user mode) or print the hint (system mode).
+
+    Returns the exit code the caller should propagate. ``0`` when the
+    system-mode hint was printed (the hint is informational, not a
+    failure) or when the user-mode restart succeeded.
+    """
+    if mode is InstallMode.SYSTEM:
+        _print_system_restart_hint()
+        return 0
+    return _restart_user_unit()

@@ -187,19 +187,20 @@ class TestAppendCaddySection:
 
 
 class TestRunCaddyInit:
-    def test_not_root_exits(self, tmp_path: Path) -> None:
-        with patch("stormpulse.caddy.init.os.geteuid", return_value=1000):
-            with pytest.raises(InitError, match="root"):
-                run_caddy_init(tmp_path / "stormpulse.toml")
+    def test_unwritable_config_dir_exits(self, tmp_path: Path) -> None:
+        # Parent dir does not exist - writability gate (ADR core/003)
+        # fires before mode-specific paths.
+        bad_path = tmp_path / "nonexistent" / "stormpulse.toml"
+        with pytest.raises(InitError, match="Cannot write"):
+            run_caddy_init(bad_path)
 
     def test_no_caddy_detected_raises(self, tmp_path: Path) -> None:
-        with patch("stormpulse.caddy.init.os.geteuid", return_value=0):
-            with patch(
-                "stormpulse.caddy.init.find_caddy_main",
-                return_value=None,
-            ):
-                with pytest.raises(InitError, match="No Caddy installation"):
-                    run_caddy_init(tmp_path / "stormpulse.toml")
+        with patch(
+            "stormpulse.caddy.init.find_caddy_main",
+            return_value=None,
+        ):
+            with pytest.raises(InitError, match="No Caddy installation"):
+                run_caddy_init(tmp_path / "stormpulse.toml")
 
     def test_section_already_present_without_force_raises(
         self, tmp_path: Path,
@@ -208,13 +209,12 @@ class TestRunCaddyInit:
         cfg.write_text('[caddy]\nenabled = true\n')
         caddyfile = tmp_path / "Caddyfile"
         caddyfile.write_text("import conf.d/*.caddy\n")
-        with patch("stormpulse.caddy.init.os.geteuid", return_value=0):
-            with patch(
-                "stormpulse.caddy.init.find_caddy_main",
-                return_value=caddyfile,
-            ):
-                with pytest.raises(InitError, match="already exists"):
-                    run_caddy_init(cfg)
+        with patch(
+            "stormpulse.caddy.init.find_caddy_main",
+            return_value=caddyfile,
+        ):
+            with pytest.raises(InitError, match="already exists"):
+                run_caddy_init(cfg)
 
     @staticmethod
     def _prompt_mock(responses: list[str]) -> Callable[..., str]:
@@ -244,16 +244,18 @@ class TestRunCaddyInit:
         caddyfile.write_text("import conf.d/*.caddy\n")
 
         # Prompts in order: admin URL, drop-in path, confirm, restart.
-        # Empty strings accept defaults; "n" declines restart.
-        with patch("stormpulse.caddy.init.os.geteuid", return_value=0):
-            with patch(
-                "stormpulse.caddy.init.find_caddy_main",
-                return_value=caddyfile,
-            ):
-                mock_prompt = self._prompt_mock(["", "", "y", "n"])
-                with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
-                     patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
-                    run_caddy_init(cfg)
+        # Empty strings accept defaults; "n" declines restart. Test
+        # runs unprivileged so detect_mode() returns USER, which is
+        # the path that prompts for restart at all (SYSTEM mode just
+        # prints the hint and skips the prompt).
+        with patch(
+            "stormpulse.caddy.init.find_caddy_main",
+            return_value=caddyfile,
+        ):
+            mock_prompt = self._prompt_mock(["", "", "y", "n"])
+            with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
+                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
+                run_caddy_init(cfg)
 
         content = cfg.read_text()
         assert "[caddy]" in content
@@ -276,15 +278,14 @@ class TestRunCaddyInit:
         caddyfile = tmp_path / "Caddyfile"
         caddyfile.write_text(":80 { respond \"ok\" }\n")
 
-        with patch("stormpulse.caddy.init.os.geteuid", return_value=0):
-            with patch(
-                "stormpulse.caddy.init.find_caddy_main",
-                return_value=caddyfile,
-            ):
-                mock_prompt = self._prompt_mock(["", "", "n"])
-                with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
-                     patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
-                    run_caddy_init(cfg)
+        with patch(
+            "stormpulse.caddy.init.find_caddy_main",
+            return_value=caddyfile,
+        ):
+            mock_prompt = self._prompt_mock(["", "", "n"])
+            with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
+                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
+                run_caddy_init(cfg)
 
         # The [caddy] section was NOT written.
         assert "[caddy]" not in cfg.read_text()
@@ -299,21 +300,20 @@ class TestRunCaddyInit:
 
         # admin URL, drop-in, write-anyway=y. No restart prompt because
         # the import-missing branch suppresses restart entirely.
-        with patch("stormpulse.caddy.init.os.geteuid", return_value=0):
-            with patch(
-                "stormpulse.caddy.init.find_caddy_main",
-                return_value=caddyfile,
-            ):
-                mock_prompt = self._prompt_mock(["", "", "y"])
-                with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
-                     patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
-                    with patch(
-                        "stormpulse.caddy.init.restart_stormpulse",
-                    ) as mock_restart:
-                        run_caddy_init(cfg)
+        with patch(
+            "stormpulse.caddy.init.find_caddy_main",
+            return_value=caddyfile,
+        ):
+            mock_prompt = self._prompt_mock(["", "", "y"])
+            with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
+                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
+                with patch(
+                    "stormpulse.caddy.init.restart_or_hint",
+                ) as mock_restart:
+                    run_caddy_init(cfg)
 
         # Section written but restart NEVER called - fix-import-first
-        # path skips the restart prompt entirely.
+        # path skips the restart entirely.
         assert "[caddy]" in cfg.read_text()
         mock_restart.assert_not_called()
 

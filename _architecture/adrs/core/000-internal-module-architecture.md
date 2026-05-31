@@ -57,7 +57,7 @@ This ADR governs imports *between* modules. The internal sublayering of any sing
 
 **Negative:**
 
-- A helper that genuinely serves two Features must be hoisted into Framework even when that feels premature (the `prompt_confirm` / `restart_stormpulse` case). Forcing the question "what layer does this really belong to?" the moment a second consumer appears is the feature, not a bug, but the friction is real.
+- A helper that genuinely serves two Features must be hoisted into Framework even when that feels premature (the `prompt_confirm` / `restart_or_hint` case). Forcing the question "what layer does this really belong to?" the moment a second consumer appears is the feature, not a bug, but the friction is real.
 - Rule 2 is stricter than the sibling django repo's CORE-001, which constrains topology but not name-level privacy. A reader moving between the two repos holds one extra rule for storm-pulse. The strictness buys binary checkability; the extra rule is the cost.
 - Coupling that isn't a static `import` - dynamic imports by string, registry lookups by name, dotted-path references - is invisible to both rules and to CORE-001's checks. It stays a code-review concern.
 - 23 violations existed at adoption against an estimated 3. The cleanup is done, but [CORE-001](001-fitness-functions.md)'s baseline-mechanism choice (a plain list, no ratchet) was sized for the wrong number. That trade-off is flagged there for re-decision rather than quietly corrected.

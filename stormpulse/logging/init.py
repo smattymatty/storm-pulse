@@ -8,9 +8,11 @@ import sys
 from pathlib import Path
 
 from stormpulse.init import InitError, prompt
+from stormpulse.init.files import default_config_path
+from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
-from stormpulse.init.system import restart_stormpulse
+from stormpulse.init.system import restart_or_hint
 
 _DEFAULT_DOCKER_BINARY = "/usr/bin/docker"
 
@@ -184,10 +186,14 @@ def _existing_log_group_names(config_path: Path) -> list[str]:
 
 def run_logging_init(config_path: Path) -> None:
     """Public entry point for ``stormpulse logging init``."""
-    if os.geteuid() != 0:
+    # Writability gate. Replaces the old root-only check: USER mode is
+    # the default on hardened boxes (ADR core/003).
+    if not os.access(config_path.parent, os.W_OK):
+        suggested = default_config_path()
         raise InitError(
-            "stormpulse logging init must be run as root "
-            "(sudo stormpulse logging init)"
+            f"Cannot write to {config_path}. "
+            f"In USER mode the config should be at {suggested} "
+            f"and owned by the operator. In SYSTEM mode, re-run with sudo."
         )
     if not config_path.is_file():
         raise InitError(f"Config file not found: {config_path}")
@@ -217,19 +223,18 @@ def run_logging_init(config_path: Path) -> None:
         print(f"  Added: {g['name']} (docker)", file=sys.stderr)
     print(f"\n  {len(groups)} log group(s) written to {config_path}", file=sys.stderr)
 
-    if prompt_confirm("Restart stormpulse now?"):
-        if restart_stormpulse():
-            print("  stormpulse restarted successfully.", file=sys.stderr)
-        else:
-            print(
-                "  Restart failed. Restart manually:\n"
-                "    sudo systemctl restart stormpulse",
-                file=sys.stderr,
-            )
+    # No-escalation posture (see stormpulse.init.system): SYSTEM mode
+    # prints the hint and never shells out; USER mode runs the user
+    # unit restart after explicit operator consent.
+    mode = detect_mode()
+    if mode is InstallMode.SYSTEM:
+        restart_or_hint(mode)
+    elif prompt_confirm("Restart stormpulse now?"):
+        restart_or_hint(mode)
     else:
         print(
             "\n  Restart later with:\n"
-            "    sudo systemctl restart stormpulse",
+            "    systemctl --user restart stormpulse",
             file=sys.stderr,
         )
 

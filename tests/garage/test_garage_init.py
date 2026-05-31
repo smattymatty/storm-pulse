@@ -354,24 +354,24 @@ class TestAppendGarageSection:
 
 
 # ---------------------------------------------------------------------------
-# Root check
+# Writability gate (replaces the old root-only check; see ADR core/003)
 # ---------------------------------------------------------------------------
 
 
 class TestRunGarageInit:
-    def test_not_root_exits(self, tmp_path: Path) -> None:
-        with patch("stormpulse.garage.init.os.geteuid", return_value=1000):
-            with pytest.raises(InitError, match="root"):
-                run_garage_init(tmp_path / "stormpulse.toml")
+    def test_unwritable_config_dir_exits(self, tmp_path: Path) -> None:
+        # Parent dir does not exist - os.access(parent, W_OK) is False.
+        bad_path = tmp_path / "nonexistent" / "stormpulse.toml"
+        with pytest.raises(InitError, match="Cannot write"):
+            run_garage_init(bad_path)
 
     def test_no_garage_config_found(self, tmp_path: Path) -> None:
-        with patch("stormpulse.garage.init.os.geteuid", return_value=0):
-            with patch(
-                "stormpulse.garage.init.find_garage_config",
-                return_value=None,
-            ):
-                with pytest.raises(InitError, match="No Garage installation"):
-                    run_garage_init(tmp_path / "stormpulse.toml")
+        with patch(
+            "stormpulse.garage.init.find_garage_config",
+            return_value=None,
+        ):
+            with pytest.raises(InitError, match="No Garage installation"):
+                run_garage_init(tmp_path / "stormpulse.toml")
 
 
 # ---------------------------------------------------------------------------

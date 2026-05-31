@@ -40,7 +40,6 @@ from stormpulse.init import (
     write_systemd_unit,
 )
 from stormpulse.init.prompts import prompt_confirm
-from stormpulse.init.system import restart_stormpulse
 
 
 # ---------------------------------------------------------------------------
@@ -1285,30 +1284,3 @@ class TestPromptConfirm:
         assert prompt_confirm("Continue?") is False
 
 
-# ---------------------------------------------------------------------------
-# TestRestartStormpulse
-# ---------------------------------------------------------------------------
-
-
-class TestRestartStormpulse:
-    @patch("stormpulse.init.system.subprocess.run")
-    def test_success(self, mock_run: MagicMock) -> None:
-        assert restart_stormpulse() is True
-        mock_run.assert_called_once()
-        args = mock_run.call_args[0][0]
-        assert args[0].endswith("systemctl")
-        assert "restart" in args
-        assert "stormpulse" in args
-
-    @patch("stormpulse.init.system.subprocess.run", side_effect=FileNotFoundError())
-    def test_missing_systemctl(self, _mock: MagicMock) -> None:
-        assert restart_stormpulse() is False
-
-    @patch("stormpulse.init.system.subprocess.run")
-    def test_failed_call(self, mock_run: MagicMock) -> None:
-        import subprocess as sp
-
-        mock_run.side_effect = sp.CalledProcessError(
-            1, "systemctl", stderr=b"failed"
-        )
-        assert restart_stormpulse() is False
