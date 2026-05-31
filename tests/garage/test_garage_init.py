@@ -10,6 +10,7 @@ import pytest
 
 from stormpulse.init import InitError
 from stormpulse.garage.init import (
+    _find_compose_file,
     append_garage_section,
     find_garage_config,
     garage_init_step,
@@ -95,6 +96,40 @@ class TestParseGarageContainerName:
     def test_defaults_when_file_missing(self, tmp_path: Path) -> None:
         compose = tmp_path / "nonexistent.yml"
         assert parse_garage_container_name(compose) == "garaged"
+
+
+class TestFindComposeFile:
+    def test_finds_alongside(self, tmp_path: Path) -> None:
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text("services:\n")
+        assert _find_compose_file(tmp_path) == compose
+
+    def test_finds_yaml_extension(self, tmp_path: Path) -> None:
+        compose = tmp_path / "docker-compose.yaml"
+        compose.write_text("services:\n")
+        assert _find_compose_file(tmp_path) == compose
+
+    def test_falls_back_to_parent(self, tmp_path: Path) -> None:
+        # Storm layout: garage.toml in <name>/etc/, compose in <name>/.
+        etc = tmp_path / "etc"
+        etc.mkdir()
+        compose = tmp_path / "docker-compose.yml"
+        compose.write_text("services:\n")
+        assert _find_compose_file(etc) == compose
+
+    def test_alongside_wins_over_parent(self, tmp_path: Path) -> None:
+        etc = tmp_path / "etc"
+        etc.mkdir()
+        alongside = etc / "docker-compose.yml"
+        alongside.write_text("services:\n  # alongside\n")
+        parent = tmp_path / "docker-compose.yml"
+        parent.write_text("services:\n  # parent\n")
+        assert _find_compose_file(etc) == alongside
+
+    def test_returns_none_when_missing_everywhere(self, tmp_path: Path) -> None:
+        etc = tmp_path / "etc"
+        etc.mkdir()
+        assert _find_compose_file(etc) is None
 
 
 # ---------------------------------------------------------------------------

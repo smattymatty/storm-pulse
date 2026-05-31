@@ -50,6 +50,31 @@ def find_garage_config(override: str | None = None) -> Path | None:
     return None
 
 
+def _find_compose_file(garage_dir: Path) -> Path | None:
+    """Locate the Garage compose file relative to where garage.toml lives.
+
+    Searches alongside the config first, then one level up. The Storm
+    rootless convention is ``~/<name>/etc/garage.toml`` for config with
+    the compose file at ``~/<name>/docker-compose.yml`` -- one directory
+    above the config. Older installs keep both alongside each other, so
+    the alongside-search still wins when both exist.
+
+    Returns the first match or ``None``. OSError from ``is_file()`` (a
+    parent dir we cannot stat into) degrades to "not found here" rather
+    than aborting the wizard.
+    """
+    search_dirs = [garage_dir, garage_dir.parent]
+    for d in search_dirs:
+        for name in ("docker-compose.yml", "docker-compose.yaml"):
+            candidate = d / name
+            try:
+                if candidate.is_file():
+                    return candidate
+            except OSError:
+                continue
+    return None
+
+
 def parse_garage_container_name(compose_path: Path) -> str:
     """Extract container_name for the Garage service from a compose file.
 
@@ -286,27 +311,22 @@ def run_garage_init(
             f"Use --force to overwrite."
         )
 
-    # Detect container name from compose file
-    garage_dir = garage_config.parent
-    compose_candidates = [
-        garage_dir / "docker-compose.yml",
-        garage_dir / "docker-compose.yaml",
-    ]
+    # Detect container name from compose file. Searches alongside
+    # garage.toml first, then one directory up (Storm etc/ layout).
     container_name = "garaged"
-    for compose_path in compose_candidates:
-        if compose_path.is_file():
-            container_name = parse_garage_container_name(compose_path)
-            if container_name != "garaged":
-                print(
-                    f"  Container name: {container_name}  "
-                    f"(from {compose_path})",
-                    file=sys.stderr,
-                )
-            break
+    compose_path = _find_compose_file(garage_config.parent)
+    if compose_path is not None:
+        container_name = parse_garage_container_name(compose_path)
+        if container_name != "garaged":
+            print(
+                f"  Container name: {container_name}  "
+                f"(from {compose_path})",
+                file=sys.stderr,
+            )
     else:
         print(
-            "  No docker-compose.yml found alongside Garage config. "
-            "Using defaults.",
+            "  No docker-compose.yml found alongside Garage config "
+            "or in its parent. Using defaults.",
             file=sys.stderr,
         )
 
@@ -365,14 +385,11 @@ def garage_init_step(config_path: Path) -> None:
     if not prompt_confirm("\nEnable Garage integration?"):
         return
 
-    # Detect container name from a sibling compose file
-    garage_dir = garage_config.parent
+    # Detect container name from the compose file (alongside or parent).
     container = "garaged"
-    for name in ("docker-compose.yml", "docker-compose.yaml"):
-        cp = garage_dir / name
-        if cp.is_file():
-            container = parse_garage_container_name(cp)
-            break
+    cp = _find_compose_file(garage_config.parent)
+    if cp is not None:
+        container = parse_garage_container_name(cp)
 
     values = prompt_garage_values(
         container_name=container,
