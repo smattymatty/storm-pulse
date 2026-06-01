@@ -112,6 +112,12 @@ class JobManager:
         """
         if request_id in self._jobs and not self._jobs[request_id].done():
             raise ValueError(f"Job already running: {request_id}")
+        logger.info(
+            "Starting job %s (request_id=%s, group=%s)",
+            command,
+            request_id,
+            group,
+        )
         task = asyncio.create_task(
             self._run(request_id, command, group, handler, on_success),
             name=f"job:{command}:{request_id}",
@@ -135,7 +141,8 @@ class JobManager:
         except Exception:
             logger.warning(
                 "send_now failed for envelope %s (type=%s)",
-                envelope.id, envelope.type.value,
+                envelope.id,
+                envelope.type.value,
                 exc_info=True,
             )
 
@@ -186,9 +193,21 @@ class JobManager:
             self._jobs.pop(request_id, None)
             raise
         except Exception as exc:
-            logger.exception(
-                "Long-running command %r (request_id=%s) crashed",
-                command, request_id,
+            # Use logger.error with exc_info=False (NOT logger.exception) so
+            # the traceback locals - which may include signed shell payloads
+            # or other handler-bound secrets - do not land in the journal.
+            # The handler's own logging is the right place for diagnostics
+            # that need stack context.
+            logger.error(
+                "Job %r (request_id=%s) crashed: %s",
+                command,
+                request_id,
+                exc,
+            )
+            logger.debug(
+                "Traceback for crashed job %s",
+                request_id,
+                exc_info=True,
             )
             outcome = JobOutcome(
                 success=False,
@@ -200,6 +219,13 @@ class JobManager:
         self._jobs.pop(request_id, None)
 
         duration_ms = int((time.monotonic() - start) * 1000)
+        logger.info(
+            "Job %s (request_id=%s) finished success=%s duration_ms=%d",
+            command,
+            request_id,
+            outcome.success,
+            duration_ms,
+        )
         result = CommandResultPayload(
             request_id=request_id,
             command=command,
@@ -212,13 +238,19 @@ class JobManager:
             failure_reason=outcome.failure_reason,
         )
         envelope = make_command_result(
-            self._agent_id, result, extras=outcome.extras or None,
+            self._agent_id,
+            result,
+            extras=outcome.extras or None,
         )
         try:
             await self._send(envelope)
         except Exception:
-            logger.warning(
-                "Failed to send terminal command.result for %s", request_id,
+            # ERROR not WARNING: silent loss of a signed command's terminal
+            # result means the dashboard never learns the outcome. That's a
+            # real failure, not a transient blip.
+            logger.error(
+                "Failed to send terminal command.result for %s",
+                request_id,
                 exc_info=True,
             )
 
@@ -226,18 +258,27 @@ class JobManager:
             try:
                 await on_success()
             except Exception:
-                logger.warning(
-                    "on_success callback failed for %s", request_id,
+                # ERROR not WARNING: on_success skipping means post-mutation
+                # cleanup (fresh metrics push, state refresh) never happens.
+                logger.error(
+                    "on_success callback failed for %s",
+                    request_id,
                     exc_info=True,
                 )
 
     def _make_progress_callback(
-        self, request_id: str, command: str, group: str,
+        self,
+        request_id: str,
+        command: str,
+        group: str,
     ) -> ProgressCallback:
         """Build the per-job progress callback bound to wire identity."""
 
         async def progress(
-            stage: str, current: int, total: int | None, message: str,
+            stage: str,
+            current: int,
+            total: int | None,
+            message: str,
         ) -> None:
             payload = CommandProgressPayload(
                 request_id=request_id,
@@ -257,7 +298,8 @@ class JobManager:
                 # the terminal result, where send-failure is logged again.
                 logger.warning(
                     "Failed to send command.progress for %s (stage=%s)",
-                    request_id, stage,
+                    request_id,
+                    stage,
                 )
 
         return progress

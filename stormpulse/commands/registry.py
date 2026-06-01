@@ -32,9 +32,16 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
     "docker_logs": CommandDef(
         group="diagnostics",
         command=[
-            "/usr/bin/docker", "compose", "--env-file", "{env_file}",
-            "-f", "{compose_file}",
-            "logs", "--tail", "{tail_lines}", "{docker_service_name}",
+            "/usr/bin/docker",
+            "compose",
+            "--env-file",
+            "{env_file}",
+            "-f",
+            "{compose_file}",
+            "logs",
+            "--tail",
+            "{tail_lines}",
+            "{docker_service_name}",
         ],
         timeout=30,
         description="Show recent service logs",
@@ -119,12 +126,9 @@ def build_registry(
     on the host. See ``stormpulse.signoff`` and ADR CORE-004.
     """
     merged = {**COMMAND_REGISTRY, **config_commands}
-    auto_disabled = (
-        {"run_verify_block", "run_apply_block"} if signoff_sealed else set()
-    )
+    auto_disabled = {"run_verify_block", "run_apply_block"} if signoff_sealed else set()
     return {
-        k: v for k, v in merged.items()
-        if k not in disabled and k not in auto_disabled
+        k: v for k, v in merged.items() if k not in disabled and k not in auto_disabled
     }
 
 
@@ -140,9 +144,7 @@ def validate_params(
     """
     unknown = set(runtime_params) - set(cmd_def.params)
     if unknown:
-        raise ParamValidationError(
-            f"Unknown params: {', '.join(sorted(unknown))}"
-        )
+        raise ParamValidationError(f"Unknown params: {', '.join(sorted(unknown))}")
 
     merged: dict[str, str] = {}
     for name, pdef in cmd_def.params.items():
@@ -240,7 +242,9 @@ def execute_command(
     OS errors) are reported in the result payload.
     """
     cmd_def = get_command(command_name, registry=registry)
-    validated = validate_params(cmd_def, runtime_params or {}) if cmd_def.params else None
+    validated = (
+        validate_params(cmd_def, runtime_params or {}) if cmd_def.params else None
+    )
     resolved = _resolve_command(cmd_def.command, config, validated)
 
     if not cmd_def.sensitive_output:

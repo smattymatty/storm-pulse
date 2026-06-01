@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage.discover import discover_garage
-from stormpulse.garage.state import GarageBucket, GarageState
+from stormpulse.garage.state import GarageState
 
 
 def _make_config(tmp_path: Path, *, enabled: bool = True) -> GarageConfig:

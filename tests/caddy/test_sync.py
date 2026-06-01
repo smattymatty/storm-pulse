@@ -26,13 +26,14 @@ from stormpulse.caddy.sync import (
 )
 from stormpulse.config import CaddyConfig
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
-def _make_config(tmp_path: Path, main_caddyfile_content: str = "# stub\n") -> CaddyConfig:
+def _make_config(
+    tmp_path: Path, main_caddyfile_content: str = "# stub\n"
+) -> CaddyConfig:
     """Build a CaddyConfig and write the main Caddyfile to disk.
 
     Handler reads the main Caddyfile during reload; tests need it to
@@ -51,8 +52,11 @@ def _make_config(tmp_path: Path, main_caddyfile_content: str = "# stub\n") -> Ca
 
 
 def _noop_progress() -> Any:
-    async def progress(stage: str, current: int, total: int | None, message: str) -> None:
+    async def progress(
+        stage: str, current: int, total: int | None, message: str
+    ) -> None:
         return None
+
     return progress
 
 
@@ -125,14 +129,16 @@ class TestPostCaddyLoad:
 
     def test_4xx_returns_failure_with_body(self) -> None:
         mock_conn = _make_mock_connection(
-            status=400, body="syntax error at line 3",
+            status=400,
+            body="syntax error at line 3",
         )
         with patch(
             "stormpulse.caddy.sync.http.client.HTTPConnection",
             return_value=mock_conn,
         ):
             ok, err = _post_caddy_load(
-                "http://localhost:2019", "garbage",
+                "http://localhost:2019",
+                "garbage",
             )
         assert ok is False
         assert "400" in err
@@ -145,7 +151,8 @@ class TestPostCaddyLoad:
             return_value=mock_conn,
         ):
             ok, err = _post_caddy_load(
-                "http://localhost:2019", "anything",
+                "http://localhost:2019",
+                "anything",
             )
         assert ok is False
         assert "500" in err
@@ -156,7 +163,8 @@ class TestPostCaddyLoad:
             side_effect=OSError("connection refused"),
         ):
             ok, err = _post_caddy_load(
-                "http://localhost:2019", "anything",
+                "http://localhost:2019",
+                "anything",
             )
         assert ok is False
         assert "connection refused" in err
@@ -205,7 +213,8 @@ class TestCaddySyncHandler:
             return_value=mock_conn,
         ):
             handler = make_caddy_sync_handler(
-                cfg, {"region": "vancouver-1", "fragment": "example.com { }\n"},
+                cfg,
+                {"region": "vancouver-1", "fragment": "example.com { }\n"},
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -225,7 +234,8 @@ class TestCaddySyncHandler:
             return_value=mock_conn,
         ):
             handler = make_caddy_sync_handler(
-                cfg, {"region": "vancouver-1", "fragment": ""},
+                cfg,
+                {"region": "vancouver-1", "fragment": ""},
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -240,14 +250,16 @@ class TestCaddySyncHandler:
         cfg.drop_in_path.write_text("previous content")
 
         mock_conn = _make_mock_connection(
-            status=400, body="syntax error",
+            status=400,
+            body="syntax error",
         )
         with patch(
             "stormpulse.caddy.sync.http.client.HTTPConnection",
             return_value=mock_conn,
         ):
             handler = make_caddy_sync_handler(
-                cfg, {"region": "vancouver-1", "fragment": "new content"},
+                cfg,
+                {"region": "vancouver-1", "fragment": "new content"},
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -267,7 +279,8 @@ class TestCaddySyncHandler:
             "stormpulse.caddy.sync.http.client.HTTPConnection",
         ) as mock_conn_cls:
             handler = make_caddy_sync_handler(
-                cfg, {"region": "vancouver-1", "fragment": "x"},
+                cfg,
+                {"region": "vancouver-1", "fragment": "x"},
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -277,7 +290,8 @@ class TestCaddySyncHandler:
         mock_conn_cls.assert_not_called()
 
     def test_post_body_is_main_caddyfile_not_fragment(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """The /load body is the composed main Caddyfile, not the fragment.
 
@@ -286,11 +300,7 @@ class TestCaddySyncHandler:
         Caddyfile so Caddy re-adapts the composed config from disk.
         """
         main_content = (
-            "{\n"
-            "    admin localhost:2019\n"
-            "}\n"
-            "\n"
-            "import /tmp/storm/conf.d/*.caddy\n"
+            "{\n    admin localhost:2019\n}\n\nimport /tmp/storm/conf.d/*.caddy\n"
         )
         cfg = _make_config(tmp_path, main_caddyfile_content=main_content)
         cfg.drop_in_path.parent.mkdir()
@@ -301,7 +311,8 @@ class TestCaddySyncHandler:
             return_value=mock_conn,
         ):
             handler = make_caddy_sync_handler(
-                cfg, {"region": "vancouver-1", "fragment": "example.com { }\n"},
+                cfg,
+                {"region": "vancouver-1", "fragment": "example.com { }\n"},
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -313,7 +324,8 @@ class TestCaddySyncHandler:
         assert b"example.com" not in posted_body
 
     def test_main_caddyfile_read_failure_returns_reload_failed(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """If main Caddyfile is missing at reload time, surfaces reload_failed.
 
@@ -329,7 +341,8 @@ class TestCaddySyncHandler:
         cfg.drop_in_path.parent.mkdir()
 
         handler = make_caddy_sync_handler(
-            cfg, {"region": "vancouver-1", "fragment": "x"},
+            cfg,
+            {"region": "vancouver-1", "fragment": "x"},
         )
         outcome = asyncio.run(_run_handler(handler))
 
@@ -367,13 +380,7 @@ class TestReadAndAbsolutizeImports:
     def test_non_import_lines_unchanged(self, tmp_path: Path) -> None:
         path = tmp_path / "Caddyfile"
         content = (
-            "{\n"
-            "    admin localhost:2019\n"
-            "}\n"
-            "\n"
-            'example.com {\n'
-            '    respond "ok"\n'
-            "}\n"
+            "{\n    admin localhost:2019\n}\n\nexample.com {\n    respond \"ok\"\n}\n"
         )
         path.write_text(content)
         result = _read_and_absolutize_imports(path)
@@ -382,9 +389,7 @@ class TestReadAndAbsolutizeImports:
     def test_mixed_absolute_and_relative(self, tmp_path: Path) -> None:
         path = tmp_path / "Caddyfile"
         path.write_text(
-            "import /etc/caddy/global.caddy\n"
-            "import conf.d/*.caddy\n"
-            'respond "hi"\n'
+            "import /etc/caddy/global.caddy\nimport conf.d/*.caddy\nrespond \"hi\"\n"
         )
         result = _read_and_absolutize_imports(path)
         expected = (

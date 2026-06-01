@@ -31,7 +31,5 @@ def check_no_shell() -> list[str]:
                     and isinstance(kw.value, ast.Constant)
                     and kw.value.value is True
                 ):
-                    violations.append(
-                        f"{rel}:{node.lineno} call passes shell=True"
-                    )
+                    violations.append(f"{rel}:{node.lineno} call passes shell=True")
     return violations

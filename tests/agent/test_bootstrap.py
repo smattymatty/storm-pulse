@@ -15,8 +15,7 @@ from pathlib import Path
 import pytest
 
 from stormpulse.agent.bootstrap import build_agent_dependencies
-from stormpulse.config import CaddyConfig, Config, ConfigError, LogGroupConfig
-
+from stormpulse.config import CaddyConfig, ConfigError, LogGroupConfig
 from tests.helpers import build_config, build_garage_config
 
 # Garage preconditions are patched to pass by the autouse fixture in
@@ -31,7 +30,9 @@ from tests.helpers import build_config, build_garage_config
 def test_no_features_yields_built_in_commands_only(tmp_path: Path) -> None:
     cfg = build_config(tmp_path)
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     # Built-in commands include git_pull and docker_logs at minimum.
     assert "git_pull" in deps.registry
@@ -45,7 +46,9 @@ def test_garage_enabled_merges_garage_commands(tmp_path: Path) -> None:
     garage = build_garage_config(tmp_path)
     cfg = build_config(tmp_path, garage=garage)
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert "garage_refresh" in deps.registry
     assert "garage_bucket_clear" in deps.registry
@@ -55,7 +58,9 @@ def test_garage_disabled_does_not_merge_garage_commands(tmp_path: Path) -> None:
     garage = replace(build_garage_config(tmp_path), enabled=False)
     cfg = build_config(tmp_path, garage=garage)
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert not any(name.startswith("garage_") for name in deps.registry)
 
@@ -63,10 +68,14 @@ def test_garage_disabled_does_not_merge_garage_commands(tmp_path: Path) -> None:
 def test_signoff_sealed_removes_run_verify_block(tmp_path: Path) -> None:
     cfg = build_config(tmp_path)
     sealed = build_agent_dependencies(
-        cfg, signoff_sealed=True, log_position_store=None,
+        cfg,
+        signoff_sealed=True,
+        log_position_store=None,
     )
     unsealed = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert "run_verify_block" not in sealed.registry
     assert "run_verify_block" in unsealed.registry
@@ -75,10 +84,14 @@ def test_signoff_sealed_removes_run_verify_block(tmp_path: Path) -> None:
 def test_signoff_sealed_removes_run_apply_block(tmp_path: Path) -> None:
     cfg = build_config(tmp_path)
     sealed = build_agent_dependencies(
-        cfg, signoff_sealed=True, log_position_store=None,
+        cfg,
+        signoff_sealed=True,
+        log_position_store=None,
     )
     unsealed = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert "run_apply_block" not in sealed.registry
     assert "run_apply_block" in unsealed.registry
@@ -91,7 +104,9 @@ def test_disabled_commands_are_removed(tmp_path: Path) -> None:
         agent=replace(cfg.agent, disabled_commands=frozenset({"docker_logs"})),
     )
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert "git_pull" in deps.registry
     assert "docker_logs" not in deps.registry
@@ -105,7 +120,9 @@ def test_disabled_commands_are_removed(tmp_path: Path) -> None:
 def test_no_features_yields_empty_long_running_factories(tmp_path: Path) -> None:
     cfg = build_config(tmp_path)
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert deps.long_running_factories == {}
 
@@ -113,7 +130,9 @@ def test_no_features_yields_empty_long_running_factories(tmp_path: Path) -> None
 def test_garage_enabled_publishes_seven_long_running_factories(tmp_path: Path) -> None:
     cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert set(deps.long_running_factories.keys()) == {
         "garage_bucket_clear",
@@ -155,7 +174,9 @@ def test_caddy_missing_drop_in_import_raises_config_error(tmp_path: Path) -> Non
     cfg = replace(build_config(tmp_path), caddy=caddy)
     with pytest.raises(ConfigError, match="Caddy configuration invalid"):
         build_agent_dependencies(
-            cfg, signoff_sealed=False, log_position_store=None,
+            cfg,
+            signoff_sealed=False,
+            log_position_store=None,
         )
 
 
@@ -163,7 +184,9 @@ def test_caddy_imported_drop_in_succeeds(tmp_path: Path) -> None:
     caddy = _caddy_config(tmp_path, drop_in_imported=True)
     cfg = replace(build_config(tmp_path), caddy=caddy)
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert "cellar_custom_domain_caddy_sync" in deps.registry
     assert "cellar_custom_domain_caddy_sync" in deps.long_running_factories
@@ -179,7 +202,9 @@ def test_caddy_disabled_does_not_check_drop_in(tmp_path: Path) -> None:
     )
     cfg = replace(build_config(tmp_path), caddy=caddy)
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert "cellar_custom_domain_caddy_sync" not in deps.registry
 
@@ -192,7 +217,9 @@ def test_caddy_disabled_does_not_check_drop_in(tmp_path: Path) -> None:
 def test_no_log_store_yields_empty_shippers(tmp_path: Path) -> None:
     cfg = build_config(tmp_path)
     deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None,
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
     )
     assert deps.shippers == {}
     assert deps.streaming_tailers == []
@@ -222,7 +249,9 @@ def test_disabled_log_groups_are_skipped(tmp_path: Path) -> None:
             ],
         )
         deps = build_agent_dependencies(
-            cfg, signoff_sealed=False, log_position_store=store,
+            cfg,
+            signoff_sealed=False,
+            log_position_store=store,
         )
         assert deps.shippers == {}
     finally:

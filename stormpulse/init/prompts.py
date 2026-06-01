@@ -76,7 +76,10 @@ def prompt_pulse_token(remembered_from: Path | None = None) -> str:
         value = prompt("Pulse token (from dashboard)", default=default)
         if UUID_RE.match(value):
             return value
-        print("  Invalid format - expected a UUID (e.g. a1b2c3d4-5678-...)", file=sys.stderr)
+        print(
+            "  Invalid format - expected a UUID (e.g. a1b2c3d4-5678-...)",
+            file=sys.stderr,
+        )
 
 
 def prompt_dashboard_url(default: str | None = None) -> str:
@@ -85,7 +88,10 @@ def prompt_dashboard_url(default: str | None = None) -> str:
         value = prompt("Dashboard WebSocket URL", default=default)
         if value.startswith("wss://") or value.startswith("ws://"):
             if value.startswith("ws://"):
-                print("  Warning: ws:// is unencrypted. Use wss:// in production.", file=sys.stderr)
+                print(
+                    "  Warning: ws:// is unencrypted. Use wss:// in production.",
+                    file=sys.stderr,
+                )
             return value
         print("  URL must start with wss:// or ws://", file=sys.stderr)
 
@@ -224,7 +230,8 @@ def _offer_compose_scaffold(project_dir: Path) -> Path | None:
         # Manual entry remains the escape hatch.
         return None
     if not prompt_confirm(
-        f"  Scaffold a placeholder at {target}?", default_yes=True,
+        f"  Scaffold a placeholder at {target}?",
+        default_yes=True,
     ):
         return None
     default_service = project_dir.name or "app"
@@ -264,7 +271,8 @@ def prompt_docker_service(compose_path: Path) -> str:
         default = services[0]
         while True:
             choice = prompt(
-                "Default service for commands (e.g. docker_logs)", default=default,
+                "Default service for commands (e.g. docker_logs)",
+                default=default,
             )
             if choice.isdigit() and 1 <= int(choice) <= len(services):
                 return services[int(choice) - 1]

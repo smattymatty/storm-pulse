@@ -20,7 +20,6 @@ from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.system import restart_or_hint
 
-
 # Search paths in priority order:
 #   /etc/caddy/Caddyfile      - apt-installed default
 #   /opt/caddy/Caddyfile      - common manual-install convention
@@ -230,8 +229,7 @@ def run_caddy_init(
     )
     if import_err:
         print(
-            f"\n  WARNING: {main_caddyfile} does not import "
-            f"{drop_in_path}.",
+            f"\n  WARNING: {main_caddyfile} does not import {drop_in_path}.",
             file=sys.stderr,
         )
         print(
@@ -244,8 +242,7 @@ def run_caddy_init(
             file=sys.stderr,
         )
         print(
-            "  The agent will refuse to start until the import is in "
-            "place.",
+            "  The agent will refuse to start until the import is in place.",
             file=sys.stderr,
         )
         if not prompt_confirm(

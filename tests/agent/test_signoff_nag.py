@@ -6,12 +6,11 @@ import asyncio
 import logging
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from stormpulse.agent import Agent
-from stormpulse.agent import signoff_nag
+from stormpulse.agent import Agent, signoff_nag
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 
@@ -47,9 +46,7 @@ async def test_nag_loop_silent_when_sealed(
             signoff_nag.signoff_nag_loop(agent, ws),
             stop_after(),
         )
-    assert not any(
-        "UNSEALED" in rec.message for rec in caplog.records
-    )
+    assert not any("UNSEALED" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -92,7 +89,11 @@ async def test_nag_loop_mirrors_to_pulse_logger(
 
     pulse_logger = MagicMock()
     ag = Agent(
-        config, SECRET, nonce_store, ssl_ctx, shutdown,
+        config,
+        SECRET,
+        nonce_store,
+        ssl_ctx,
+        shutdown,
         pulse_logger=pulse_logger,
     )
     ag._signoff_state.seal()
@@ -116,7 +117,8 @@ async def test_nag_loop_mirrors_to_pulse_logger(
 
 @pytest.mark.asyncio
 async def test_nag_loop_exits_promptly_on_shutdown(
-    agent: Agent, shutdown: asyncio.Event,
+    agent: Agent,
+    shutdown: asyncio.Event,
 ) -> None:
     """Shutdown fired before the first wait should still terminate the loop."""
     agent._signoff_state.seal()

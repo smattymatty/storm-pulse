@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from stormpulse.agent import Agent
-
 from tests.helpers import FAKE_METRICS, make_fake_garage_state, sign_command_request
 
 

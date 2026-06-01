@@ -10,13 +10,21 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 dependencies = [
-    "websockets>=14.0",
+    "websockets>=14.0,<15.0",
     "psutil>=6.0",
     "cryptography>=48.0.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=1.0", "mypy>=1.13", "types-psutil>=6.0", "import-linter>=2.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.0",
+    "mypy>=1.13",
+    "types-psutil>=6.0",
+    "import-linter>=2.0",
+    "ruff>=0.8.0",
+    "pre-commit>=4.0",
+]
 
 [project.scripts]
 stormpulse = "stormpulse.cli:main"
@@ -33,6 +41,25 @@ python_version = "3.12"
 module = "tests.*"
 strict = false
 check_untyped_defs = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = [".venv", "dist", "storm_pulse_agent.egg-info"]
+
+[tool.ruff.lint]
+# E = pycodestyle errors. F = Pyflakes (real bugs). I = isort (import order).
+# UP = pyupgrade (modernize idioms for py312).
+select = ["E", "F", "I", "UP"]
+# E501 (line-too-long) is handled by `ruff format` at line-length 88 for real
+# code. Docstrings and long string literals stay where they are; lint-level
+# E501 would otherwise force a flood of noqa pragmas with no real benefit.
+ignore = ["E501"]
+
+[tool.ruff.format]
+# Black-compatible defaults. Quote style and line ending stay automatic so
+# we don't fight the existing codebase on first run.
+quote-style = "preserve"
 
 [tool.setuptools.packages.find]
 include = ["stormpulse*"]

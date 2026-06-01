@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import ssl
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,7 +17,6 @@ from websockets.asyncio.server import ServerConnection, serve
 from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore, generate_nonce
 from stormpulse.protocol import CommandResultPayload
-
 from tests.helpers import (
     AGENT_ID,
     FAKE_METRICS,
@@ -41,7 +40,9 @@ def _plain_connect(url: str, **kwargs):  # type: ignore[no-untyped-def]
     return real_connect(url, **kwargs)
 
 
-async def _wait_for_register(ws: ServerConnection, *, timeout: float = 2.0) -> dict[str, Any]:
+async def _wait_for_register(
+    ws: ServerConnection, *, timeout: float = 2.0
+) -> dict[str, Any]:
     """Receive messages until a register envelope arrives."""
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
@@ -105,10 +106,14 @@ def _exec_side_effect_factory(
     ) -> CommandResultPayload:
         if name in fail:
             return make_failed_result(
-                command=name, request_id=request_id, sequence_id=sequence_id,
+                command=name,
+                request_id=request_id,
+                sequence_id=sequence_id,
             )
         return make_successful_result(
-            command=name, request_id=request_id, sequence_id=sequence_id,
+            command=name,
+            request_id=request_id,
+            sequence_id=sequence_id,
         )
 
     return side_effect
@@ -144,11 +149,16 @@ async def test_full_lifecycle(tmp_path: Path, free_port: int) -> None:
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.dispatch.execute_command", side_effect=_exec_side_effect_factory()),
+        patch(
+            "stormpulse.agent.dispatch.execute_command",
+            side_effect=_exec_side_effect_factory(),
+        ),
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -179,7 +189,9 @@ async def test_bad_hmac_rejected(tmp_path: Path, free_port: int) -> None:
         await _wait_for_register(ws)
 
         # Send a command with a garbage HMAC
-        bad_msg = sign_command_request("git_pull", secret=b"wrong-secret-not-the-real-one!!")
+        bad_msg = sign_command_request(
+            "git_pull", secret=b"wrong-secret-not-the-real-one!!"
+        )
         await ws.send(bad_msg)
 
         stray_results.extend(await _drain_non_results(ws, timeout=0.5))
@@ -193,7 +205,9 @@ async def test_bad_hmac_rejected(tmp_path: Path, free_port: int) -> None:
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -242,7 +256,9 @@ async def test_nonce_replay_rejected(tmp_path: Path, free_port: int) -> None:
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -269,7 +285,7 @@ async def test_stale_timestamp_rejected(tmp_path: Path, free_port: int) -> None:
     async def handler(ws: ServerConnection) -> None:
         await _wait_for_register(ws)
 
-        stale_ts = datetime.now(timezone.utc) - timedelta(seconds=300)
+        stale_ts = datetime.now(UTC) - timedelta(seconds=300)
         await ws.send(sign_command_request("git_pull", ts=stale_ts))
 
         stray_results.extend(await _drain_non_results(ws, timeout=0.5))
@@ -283,7 +299,9 @@ async def test_stale_timestamp_rejected(tmp_path: Path, free_port: int) -> None:
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -328,7 +346,9 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -367,11 +387,16 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.dispatch.execute_command", side_effect=_exec_side_effect_factory()),
+        patch(
+            "stormpulse.agent.dispatch.execute_command",
+            side_effect=_exec_side_effect_factory(),
+        ),
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -419,7 +444,9 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -469,7 +496,9 @@ async def test_heartbeat_and_metrics_flow(tmp_path: Path, free_port: int) -> Non
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -527,7 +556,9 @@ async def test_reconnect_after_disconnect(tmp_path: Path, free_port: int) -> Non
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(second_register_received.wait(), timeout=5.0)
@@ -564,7 +595,9 @@ async def test_shutdown_during_backoff(tmp_path: Path, free_port: int) -> None:
         patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown)
+            agent = Agent(
+                config, SECRET, store, MagicMock(spec=ssl.SSLContext), shutdown
+            )
             agent_task = asyncio.create_task(agent.run())
 
             # Wait for first connection-then-disconnect cycle

@@ -138,7 +138,6 @@ class TestGarageLoopEnabled:
         assert agent._garage_state is not None
         assert agent._garage_state.node_id == "abc123"
 
-
     @pytest.mark.asyncio
     async def test_collects_before_first_wait(self, tmp_path: Path) -> None:
         """First action in _garage_loop must be collect, not sleep."""
@@ -180,7 +179,9 @@ class TestGarageLoopEnabled:
                 # Give just enough time for the collect to run, but nowhere
                 # near 600s - proves collect happens before the wait
                 await asyncio.sleep(0.1)
-                assert mock_collect.called, "collect_garage_state was not called before wait"
+                assert mock_collect.called, (
+                    "collect_garage_state was not called before wait"
+                )
                 shutdown.set()
                 await task
 
@@ -234,10 +235,19 @@ class TestGarageRefresh:
         agent, _ = _make_agent(config, tmp_path)
 
         fake_state = GarageState(
-            node_id="abc123", hostname="test", zone="zone-1",
-            capacity_gb=10.0, data_avail_gb=8.0, version="v2.2.0",
-            healthy=True, db_engine="sqlite",
-            object_count=5, block_count=10, buckets=[], keys=[], peers=[],
+            node_id="abc123",
+            hostname="test",
+            zone="zone-1",
+            capacity_gb=10.0,
+            data_avail_gb=8.0,
+            version="v2.2.0",
+            healthy=True,
+            db_engine="sqlite",
+            object_count=5,
+            block_count=10,
+            buckets=[],
+            keys=[],
+            peers=[],
         )
         with patch(
             "stormpulse.agent.garage_actions.collect_garage_state",

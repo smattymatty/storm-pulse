@@ -73,7 +73,8 @@ class TestValidateParams:
             "}\n"
         )
         validated = validate_params(
-            cmd, {"region": "vancouver-1", "fragment": fragment},
+            cmd,
+            {"region": "vancouver-1", "fragment": fragment},
         )
         assert validated["region"] == "vancouver-1"
         assert validated["fragment"] == fragment
@@ -92,7 +93,8 @@ class TestValidateParams:
         ]
         with pytest.raises(ParamValidationError):
             validate_params(
-                cmd, {"region": "../etc/passwd", "fragment": ""},
+                cmd,
+                {"region": "../etc/passwd", "fragment": ""},
             )
 
     def test_oversize_fragment_rejected(self) -> None:
@@ -102,6 +104,7 @@ class TestValidateParams:
         oversize = "a" * 200_000  # over the 150_000 cap
         with pytest.raises(ParamValidationError) as exc_info:
             validate_params(
-                cmd, {"region": "vancouver-1", "fragment": oversize},
+                cmd,
+                {"region": "vancouver-1", "fragment": oversize},
             )
         assert "exceeds max_bytes" in str(exc_info.value)

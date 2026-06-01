@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,12 +18,16 @@ from stormpulse.init.mode import (
 
 
 class TestRootlessSocketPath:
-    def test_returns_path_when_xdg_runtime_dir_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_path_when_xdg_runtime_dir_set(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
         result = rootless_socket_path()
         assert result == Path("/run/user/1000/docker.sock")
 
-    def test_returns_none_when_xdg_runtime_dir_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_none_when_xdg_runtime_dir_unset(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
         assert rootless_socket_path() is None
 
@@ -39,7 +42,9 @@ class TestDetectMode:
         assert detect_mode() is InstallMode.USER
 
     @patch("stormpulse.init.mode.os.geteuid", return_value=1000)
-    def test_user_default_ignores_missing_docker_socket(self, _mock: object, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_user_default_ignores_missing_docker_socket(
+        self, _mock: object, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Regression: pre-0.1.9 the probe would return SYSTEM here and
         # then validate_mode_for_euid would reject the install. Detect
         # must now key off EUID alone so a fresh box -- where rootless

@@ -24,7 +24,6 @@ from stormpulse.caddy.init import (
 )
 from stormpulse.init import InitError
 
-
 # ---------------------------------------------------------------------------
 # find_caddy_main
 # ---------------------------------------------------------------------------
@@ -203,7 +202,8 @@ class TestRunCaddyInit:
                 run_caddy_init(tmp_path / "stormpulse.toml")
 
     def test_section_already_present_without_force_raises(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[caddy]\nenabled = true\n')
@@ -230,10 +230,12 @@ class TestRunCaddyInit:
         def mock(label: str, default: str | None = None) -> str:
             response = next(it)
             return response if response else (default or "")
+
         return mock
 
     def test_happy_path_writes_section_and_offers_restart(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
@@ -253,8 +255,10 @@ class TestRunCaddyInit:
             return_value=caddyfile,
         ):
             mock_prompt = self._prompt_mock(["", "", "y", "n"])
-            with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
-                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
+            with (
+                patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt),
+                patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt),
+            ):
                 run_caddy_init(cfg)
 
         content = cfg.read_text()
@@ -262,12 +266,16 @@ class TestRunCaddyInit:
         assert 'admin_url = "http://localhost:2019"' in content
         assert f'main_caddyfile = "{caddyfile}"' in content
         # Default drop-in derived from main Caddyfile's parent.
-        assert 'drop_in_path = "' + str(
-            tmp_path / "conf.d" / "cellar-custom-domains.caddy"
-        ) + '"' in content
+        assert (
+            'drop_in_path = "'
+            + str(tmp_path / "conf.d" / "cellar-custom-domains.caddy")
+            + '"'
+            in content
+        )
 
     def test_missing_import_directive_warns_and_can_abort(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
@@ -283,15 +291,18 @@ class TestRunCaddyInit:
             return_value=caddyfile,
         ):
             mock_prompt = self._prompt_mock(["", "", "n"])
-            with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
-                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
+            with (
+                patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt),
+                patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt),
+            ):
                 run_caddy_init(cfg)
 
         # The [caddy] section was NOT written.
         assert "[caddy]" not in cfg.read_text()
 
     def test_missing_import_directive_write_anyway_skips_restart(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
@@ -305,8 +316,10 @@ class TestRunCaddyInit:
             return_value=caddyfile,
         ):
             mock_prompt = self._prompt_mock(["", "", "y"])
-            with patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt), \
-                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt):
+            with (
+                patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt),
+                patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt),
+            ):
                 with patch(
                     "stormpulse.caddy.init.restart_or_hint",
                 ) as mock_restart:
@@ -327,6 +340,7 @@ class TestCaddyTomlTemplate:
     def test_template_renders_valid_toml(self) -> None:
         # Confirm the template doesn't drift into invalid TOML.
         import tomllib
+
         rendered = _CADDY_TOML_TEMPLATE.format(
             admin_url="http://localhost:2019",
             main_caddyfile="/etc/caddy/Caddyfile",

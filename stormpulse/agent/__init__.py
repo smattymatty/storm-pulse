@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import ssl
 
+from websockets.asyncio.client import ClientConnection
+
 from stormpulse.agent import dispatch, garage_actions, loops, reconnect
 from stormpulse.agent.bootstrap import build_agent_dependencies
 from stormpulse.agent.log_batches import PendingBatches
@@ -49,7 +51,6 @@ from stormpulse.protocol import (
     Envelope,
 )
 from stormpulse.signoff import SignoffState
-from websockets.asyncio.client import ClientConnection
 
 __all__ = [
     "Agent",
@@ -143,12 +144,16 @@ class Agent:
         await dispatch.dispatch_message(self, ws, raw)
 
     async def _handle_command_request(
-        self, ws: ClientConnection, envelope: Envelope,
+        self,
+        ws: ClientConnection,
+        envelope: Envelope,
     ) -> None:
         await dispatch.handle_command_request(self, ws, envelope)
 
     async def _handle_command_sequence(
-        self, ws: ClientConnection, envelope: Envelope,
+        self,
+        ws: ClientConnection,
+        envelope: Envelope,
     ) -> None:
         await dispatch.handle_command_sequence(self, ws, envelope)
 
@@ -159,6 +164,9 @@ class Agent:
         return await garage_actions.handle_garage_refresh(self, request_id)
 
     async def _dispatch_long_running(
-        self, request_id: str, payload: CommandRequestPayload, cmd_def: CommandDef,
+        self,
+        request_id: str,
+        payload: CommandRequestPayload,
+        cmd_def: CommandDef,
     ) -> None:
         await dispatch.dispatch_long_running(self, request_id, payload, cmd_def)

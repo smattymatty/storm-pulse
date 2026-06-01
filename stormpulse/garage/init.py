@@ -16,7 +16,6 @@ from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
 from stormpulse.init.system import restart_or_hint
 
-
 _GARAGE_CONFIG_SEARCH_PATHS = [
     Path("/opt/garage/garage.toml"),
     Path("/etc/garage/garage.toml"),
@@ -319,8 +318,7 @@ def run_garage_init(
         container_name = parse_garage_container_name(compose_path)
         if container_name != "garaged":
             print(
-                f"  Container name: {container_name}  "
-                f"(from {compose_path})",
+                f"  Container name: {container_name}  (from {compose_path})",
                 file=sys.stderr,
             )
     else:
@@ -363,8 +361,7 @@ def run_garage_init(
         restart_or_hint(mode)
     else:
         print(
-            "\n  Restart later with:\n"
-            "    systemctl --user restart stormpulse",
+            "\n  Restart later with:\n    systemctl --user restart stormpulse",
             file=sys.stderr,
         )
 

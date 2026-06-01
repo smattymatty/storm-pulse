@@ -18,9 +18,7 @@ def write_file(path: Path, data: bytes, mode: int) -> None:
         tmp.rename(path)
     except PermissionError as exc:
         tmp.unlink(missing_ok=True)
-        raise InitError(
-            f"Permission denied writing {path}. Run with sudo."
-        ) from exc
+        raise InitError(f"Permission denied writing {path}. Run with sudo.") from exc
     except OSError as exc:
         tmp.unlink(missing_ok=True)
         raise InitError(f"Failed to write {path}: {exc}") from exc
@@ -32,6 +30,7 @@ SYSTEMD_PATH = Path("/etc/systemd/system/stormpulse.service")
 # User-mode paths. Used when ``stormpulse init`` ran in user mode (see
 # ADR CORE-003 and stormpulse.init.mode). Resolved lazily because $HOME
 # can differ between import time and call time (e.g. tests, sudo -E).
+
 
 def user_config_dir() -> Path:
     return Path.home() / ".config" / "stormpulse"
@@ -75,9 +74,7 @@ def default_config_path() -> str:
 def write_config_file(path: Path, content: str, *, force: bool = False) -> None:
     """Write the TOML config with mode 0o640, owned by root:stormpulse."""
     if path.is_file() and not force:
-        raise InitError(
-            f"{path} already exists. Use --force to overwrite."
-        )
+        raise InitError(f"{path} already exists. Use --force to overwrite.")
     write_file(path, content.encode("utf-8"), 0o640)
     try:
         shutil.chown(path, "root", "stormpulse")
@@ -86,7 +83,10 @@ def write_config_file(path: Path, content: str, *, force: bool = False) -> None:
 
 
 def write_user_config_file(
-    path: Path, content: str, *, force: bool = False,
+    path: Path,
+    content: str,
+    *,
+    force: bool = False,
 ) -> None:
     """Write the TOML config for a user-mode install.
 
@@ -96,26 +96,28 @@ def write_user_config_file(
     created with mode 0o700.
     """
     if path.is_file() and not force:
-        raise InitError(
-            f"{path} already exists. Use --force to overwrite."
-        )
+        raise InitError(f"{path} already exists. Use --force to overwrite.")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     write_file(path, content.encode("utf-8"), 0o600)
 
 
 def write_systemd_unit(
-    path: Path, content: str, *, force: bool = False,
+    path: Path,
+    content: str,
+    *,
+    force: bool = False,
 ) -> None:
     """Write the systemd unit file with mode 0o644."""
     if path.is_file() and not force:
-        raise InitError(
-            f"{path} already exists. Use --force to overwrite."
-        )
+        raise InitError(f"{path} already exists. Use --force to overwrite.")
     write_file(path, content.encode("utf-8"), 0o644)
 
 
 def write_user_systemd_unit(
-    path: Path, content: str, *, force: bool = False,
+    path: Path,
+    content: str,
+    *,
+    force: bool = False,
 ) -> None:
     """Write the user-mode systemd unit file.
 
@@ -124,8 +126,6 @@ def write_user_systemd_unit(
     default systemd user-unit dir layout).
     """
     if path.is_file() and not force:
-        raise InitError(
-            f"{path} already exists. Use --force to overwrite."
-        )
+        raise InitError(f"{path} already exists. Use --force to overwrite.")
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
     write_file(path, content.encode("utf-8"), 0o644)

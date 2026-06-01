@@ -21,7 +21,9 @@ from stormpulse.commands.jobs import LongRunningFactory
 from stormpulse.config import CommandDef, Config, ConfigError
 from stormpulse.garage import build_garage_commands
 from stormpulse.garage import long_running_factories as garage_long_running_factories
-from stormpulse.garage.preconditions import run_preconditions as run_garage_preconditions
+from stormpulse.garage.preconditions import (
+    run_preconditions as run_garage_preconditions,
+)
 from stormpulse.logging import (
     DockerTailer,
     LogPositionStore,
@@ -85,7 +87,8 @@ def build_agent_dependencies(
             long_running.update(garage_long_running_factories(config.garage))
     if config.caddy and config.caddy.enabled:
         import_err = verify_drop_in_imported(
-            config.caddy.main_caddyfile, config.caddy.drop_in_path,
+            config.caddy.main_caddyfile,
+            config.caddy.drop_in_path,
         )
         if import_err:
             raise ConfigError(f"Caddy configuration invalid: {import_err}")

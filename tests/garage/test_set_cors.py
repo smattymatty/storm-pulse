@@ -16,7 +16,6 @@ import pytest
 from stormpulse.garage import set_cors
 from stormpulse.garage.s3 import (
     CorsRule,
-    GarageS3Client,
     S3AuthError,
     S3Error,
 )
@@ -28,7 +27,6 @@ from stormpulse.garage.set_cors import (
     make_set_cors_handler,
     run_set_cors,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test scaffolding
@@ -53,7 +51,11 @@ class _ProgressRecorder:
         self.events: list[tuple[str, int, int | None, str]] = []
 
     async def __call__(
-        self, stage: str, current: int, total: int | None, message: str,
+        self,
+        stage: str,
+        current: int,
+        total: int | None,
+        message: str,
     ) -> None:
         self.events.append((stage, current, total, message))
 
@@ -153,7 +155,8 @@ async def test_no_such_bucket_surfaces_in_extras_error() -> None:
     client = _FakeS3Client(
         put_raises=S3Error(
             "PUT /missing -> HTTP 404: NoSuchBucket: bucket gone",
-            status=404, code="NoSuchBucket",
+            status=404,
+            code="NoSuchBucket",
         ),
     )
     progress = _ProgressRecorder()
@@ -184,6 +187,7 @@ async def test_origins_param_decoded_from_json(monkeypatch: pytest.MonkeyPatch) 
         captured["origins"] = origins
         # Return the real success shape so the handler doesn't blow up
         from stormpulse.commands.jobs import JobOutcome
+
         return JobOutcome(success=True, exit_code=0)
 
     monkeypatch.setattr(set_cors, "run_set_cors", fake_run)
@@ -223,7 +227,14 @@ def test_origins_param_rejects_malformed_json() -> None:
 
 @pytest.mark.parametrize(
     "missing",
-    ["bucket_name", "s3_endpoint", "region", "access_key_id", "secret_access_key", "origins"],
+    [
+        "bucket_name",
+        "s3_endpoint",
+        "region",
+        "access_key_id",
+        "secret_access_key",
+        "origins",
+    ],
 )
 def test_handler_factory_returns_none_for_missing_param(missing: str) -> None:
     params = dict(_VALID_PARAMS)

@@ -4,19 +4,18 @@ from __future__ import annotations
 
 import argparse
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from stormpulse.commands import COMMAND_REGISTRY, CommandDef, build_registry
+from stormpulse.commands import CommandDef, build_registry
 from stormpulse.signoff import (
     SignoffState,
     format_unsealed_duration,
     state_dir_from_db_path,
 )
-
 
 # ---------------------------------------------------------------------------
 # SignoffState: file-presence semantics
@@ -101,9 +100,9 @@ def test_unsealed_since_is_none_when_sealed(tmp_path: Path) -> None:
 def test_unsealed_since_records_transition_timestamp(tmp_path: Path) -> None:
     state = SignoffState(tmp_path)
     state.seal()
-    before = datetime.now(timezone.utc) - timedelta(seconds=1)
+    before = datetime.now(UTC) - timedelta(seconds=1)
     state.unseal()
-    after = datetime.now(timezone.utc) + timedelta(seconds=1)
+    after = datetime.now(UTC) + timedelta(seconds=1)
 
     since = state.unsealed_since()
     assert since is not None
@@ -164,27 +163,27 @@ def test_format_unsealed_duration_none_returns_unknown() -> None:
 
 
 def test_format_unsealed_duration_minutes() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert format_unsealed_duration(now - timedelta(minutes=12)) == "12m"
 
 
 def test_format_unsealed_duration_hours_and_minutes() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert format_unsealed_duration(now - timedelta(hours=3, minutes=14)) == "3h 14m"
 
 
 def test_format_unsealed_duration_days_and_hours() -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     out = format_unsealed_duration(now - timedelta(days=4, hours=7, minutes=22))
     assert out == "4d 7h"
 
 
 def test_format_unsealed_duration_below_a_minute() -> None:
-    assert format_unsealed_duration(datetime.now(timezone.utc)) == "<1m"
+    assert format_unsealed_duration(datetime.now(UTC)) == "<1m"
 
 
 def test_format_unsealed_duration_future_clock_skew() -> None:
-    future = datetime.now(timezone.utc) + timedelta(minutes=5)
+    future = datetime.now(UTC) + timedelta(minutes=5)
     assert format_unsealed_duration(future) == "<1m"
 
 
@@ -301,7 +300,8 @@ db_path = "{db_path}"
 
 
 def test_cli_unseal_rejects_wrong_hostname(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from stormpulse.cli.signoff import cmd_signoff_seal, cmd_signoff_unseal
 
@@ -312,7 +312,8 @@ def test_cli_unseal_rejects_wrong_hostname(
     with pytest.raises(SystemExit) as excinfo:
         cmd_signoff_unseal(
             argparse.Namespace(
-                config=str(cfg), confirm_hostname="definitely-wrong",
+                config=str(cfg),
+                confirm_hostname="definitely-wrong",
             ),
         )
     assert excinfo.value.code == 1
@@ -321,7 +322,8 @@ def test_cli_unseal_rejects_wrong_hostname(
 
 
 def test_cli_unseal_non_tty_without_flag_exits(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     """When stdin isn't a TTY and no --confirm-hostname is passed, refuse."""
     from stormpulse.cli.signoff import cmd_signoff_seal, cmd_signoff_unseal
@@ -343,7 +345,9 @@ def test_cli_unseal_non_tty_without_flag_exits(
     assert "interactive confirmation" in err
 
 
-def test_cli_signoff_round_trip(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_signoff_round_trip(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     import socket
 
     from stormpulse.cli.signoff import (
@@ -416,4 +420,3 @@ def test_init_step_is_registered_with_the_orchestrator() -> None:
     from stormpulse.signoff.init import signoff_init_step
 
     assert signoff_init_step in registered_init_steps()
-

@@ -25,9 +25,7 @@ def check_root() -> None:
     both user and system modes.
     """
     if os.geteuid() != 0:
-        raise InitError(
-            "stormpulse init must be run as root (sudo stormpulse init)"
-        )
+        raise InitError("stormpulse init must be run as root (sudo stormpulse init)")
 
 
 def check_euid_for_mode(mode: InstallMode) -> None:

@@ -11,14 +11,6 @@ from stormpulse.init.checks import (
     extract_agent_id,
     load_enroll_metadata,
 )
-from stormpulse.init.mode import (
-    InstallMode,
-    ModeError,
-    detect_mode,
-    resolve_mode,
-    rootless_socket_path,
-    validate_mode_for_euid,
-)
 from stormpulse.init.compose import (
     detect_compose_files,
     parse_service_names,
@@ -32,8 +24,8 @@ from stormpulse.init.files import (
     user_config_path,
     user_data_dir,
     user_systemd_path,
-    write_file,
     write_config_file,
+    write_file,
     write_systemd_unit,
     write_user_config_file,
     write_user_systemd_unit,
@@ -45,10 +37,18 @@ from stormpulse.init.generate import (
     generate_toml,
     render_systemd_unit,
 )
+from stormpulse.init.mode import (
+    InstallMode,
+    ModeError,
+    detect_mode,
+    resolve_mode,
+    rootless_socket_path,
+    validate_mode_for_euid,
+)
 from stormpulse.init.orchestrator import run_init
 from stormpulse.init.prompts import (
-    prompt,
     UUID_RE,
+    prompt,
     prompt_compose_file,
     prompt_dashboard_url,
     prompt_docker_service,
@@ -59,8 +59,8 @@ from stormpulse.init.prompts import (
 from stormpulse.init.system import (
     check_linger_enabled,
     run_cmd,
-    run_find_apply,
     run_daemon_reload,
+    run_find_apply,
     run_system_setup,
     run_user_daemon_reload,
 )

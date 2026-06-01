@@ -42,7 +42,11 @@ class _ProgressRecorder:
         self.events: list[tuple[str, int, int | None, str]] = []
 
     async def __call__(
-        self, stage: str, current: int, total: int | None, message: str,
+        self,
+        stage: str,
+        current: int,
+        total: int | None,
+        message: str,
     ) -> None:
         self.events.append((stage, current, total, message))
 
@@ -64,7 +68,9 @@ async def _run(
     key_tier: str = "rw",
 ) -> JobOutcome:
     monkeypatch.setattr(
-        provision_additional_key, "run_garage", fake.run_garage,
+        provision_additional_key,
+        "run_garage",
+        fake.run_garage,
     )
     return await run_provision_additional_key(
         progress=_ProgressRecorder(),
@@ -101,17 +107,28 @@ async def test_happy_path_rw_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(fake.calls) == 3
     assert fake.calls[0] == ("key", "create", "new-rw-key")
     assert fake.calls[1] == (
-        "bucket", "allow", "--read", "--write",
-        bucket_id, "--key", new_key_id,
+        "bucket",
+        "allow",
+        "--read",
+        "--write",
+        bucket_id,
+        "--key",
+        new_key_id,
     )
     assert fake.calls[2] == (
-        "bucket", "alias", "--local", new_key_id, bucket_id, "media",
+        "bucket",
+        "alias",
+        "--local",
+        new_key_id,
+        bucket_id,
+        "media",
     )
 
     # End state: new key has rw perms; bucket has new local alias
     bucket = next(iter(fake.buckets.values()))
     assert fake.keys[new_key_id].permissions[bucket.bucket_id] == {
-        "read", "write",
+        "read",
+        "write",
     }
     assert bucket.local_aliases[new_key_id] == "media"
 
@@ -121,8 +138,11 @@ async def test_happy_path_ro_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     fake, bucket_id = _setup_fake_with_bucket()
 
     outcome = await _run(
-        monkeypatch, fake, bucket_id,
-        new_key_name="new-ro-key", key_tier="ro",
+        monkeypatch,
+        fake,
+        bucket_id,
+        new_key_name="new-ro-key",
+        key_tier="ro",
     )
 
     assert outcome.success is True
@@ -130,8 +150,12 @@ async def test_happy_path_ro_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     assert outcome.extras["key_tier"] == "ro"
     # ro grants only --read
     assert fake.calls[1] == (
-        "bucket", "allow", "--read",
-        bucket_id, "--key", new_key_id,
+        "bucket",
+        "allow",
+        "--read",
+        bucket_id,
+        "--key",
+        new_key_id,
     )
     assert "--write" not in fake.calls[1]
     assert "--owner" not in fake.calls[1]
@@ -202,14 +226,17 @@ async def test_step3_alias_attach_failure_revokes_and_deletes_key(
     assert len(deny_calls) == 1
     # rw tier denies --read --write
     assert deny_calls[0] == (
-        "bucket", "deny", "--read", "--write",
-        bucket_id, "--key", new_key_id,
+        "bucket",
+        "deny",
+        "--read",
+        "--write",
+        bucket_id,
+        "--key",
+        new_key_id,
     )
     assert fake.calls[-1] == ("key", "delete", "--yes", new_key_id)
     # No unalias_local (alias never attached)
-    assert all(
-        c[:3] != ("bucket", "unalias", "--local") for c in fake.calls
-    )
+    assert all(c[:3] != ("bucket", "unalias", "--local") for c in fake.calls)
     # Bucket still alive
     assert len(fake.buckets) == 1
     assert new_key_id not in fake.keys
@@ -236,8 +263,9 @@ async def test_rollback_partial_when_perm_revoke_fails(
     assert outcome.extras["step_failed"] == "new_key_alias_attach"
     assert outcome.extras["rollback_status"] == "partial"
     cleanup = outcome.extras["manual_cleanup_required"]
-    types_ids = {(item["type"], item.get("key_id") or item.get("id"))
-                 for item in cleanup}
+    types_ids = {
+        (item["type"], item.get("key_id") or item.get("id")) for item in cleanup
+    }
     assert ("permission_grant", new_key_id) in types_ids
     assert ("key", new_key_id) in types_ids
     # Bucket itself never appears in cleanup - this orchestrator doesn't own it
@@ -260,8 +288,9 @@ async def test_rollback_partial_when_key_delete_fails(
     assert outcome.extras["step_failed"] == "new_key_permission_grant"
     assert outcome.extras["rollback_status"] == "partial"
     cleanup = outcome.extras["manual_cleanup_required"]
-    types_ids = {(item["type"], item.get("key_id") or item.get("id"))
-                 for item in cleanup}
+    types_ids = {
+        (item["type"], item.get("key_id") or item.get("id")) for item in cleanup
+    }
     assert ("key", new_key_id) in types_ids
     # No permission_grant entry - perms were never granted
     assert not any(t == "permission_grant" for t, _ in types_ids)

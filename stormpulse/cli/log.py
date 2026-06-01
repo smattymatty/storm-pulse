@@ -28,12 +28,14 @@ def cmd_logging_init(args: argparse.Namespace) -> None:
 def add_logging_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     """Add the ``logging`` subcommand group with nested subcommands."""
     logging_parser = subparsers.add_parser(
-        "logging", help="log shipping configuration",
+        "logging",
+        help="log shipping configuration",
     )
     logging_sub = logging_parser.add_subparsers(dest="logging_command")
 
     init_parser = logging_sub.add_parser(
-        "init", help="detect running containers and configure log shipping",
+        "init",
+        help="detect running containers and configure log shipping",
     )
     init_parser.add_argument(
         "--config",

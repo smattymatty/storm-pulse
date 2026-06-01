@@ -14,8 +14,6 @@ Plus integration with agent dispatch via make_clear_bucket_handler.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from stormpulse.garage.clear_bucket import (
@@ -24,14 +22,12 @@ from stormpulse.garage.clear_bucket import (
 )
 from stormpulse.garage.s3 import (
     DeleteResult,
-    GarageS3Client,
     ListResult,
     S3AuthError,
     S3Error,
     S3ErrorEntry,
     S3ObjectEntry,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test scaffolding
@@ -52,7 +48,12 @@ class _FakeS3Client:
     ) -> None:
         self._head_raises = head_raises
         self._pages = pages or [
-            ListResult(contents=[], is_truncated=False, next_continuation_token=None, key_count=0),
+            ListResult(
+                contents=[],
+                is_truncated=False,
+                next_continuation_token=None,
+                key_count=0,
+            ),
         ]
         self._page_index = 0
         self._list_raises = list_raises
@@ -66,7 +67,10 @@ class _FakeS3Client:
             raise self._head_raises
 
     def list_objects_v2(
-        self, bucket: str, continuation_token: str | None = None, max_keys: int = 1000,
+        self,
+        bucket: str,
+        continuation_token: str | None = None,
+        max_keys: int = 1000,
     ) -> ListResult:
         if self._list_raises is not None:
             raise self._list_raises
@@ -92,12 +96,18 @@ class _ProgressRecorder:
         self.events: list[tuple[str, int, int | None, str]] = []
 
     async def __call__(
-        self, stage: str, current: int, total: int | None, message: str,
+        self,
+        stage: str,
+        current: int,
+        total: int | None,
+        message: str,
     ) -> None:
         self.events.append((stage, current, total, message))
 
 
-def _make_page(keys: list[str], is_truncated: bool, token: str | None = None) -> ListResult:
+def _make_page(
+    keys: list[str], is_truncated: bool, token: str | None = None
+) -> ListResult:
     return ListResult(
         contents=[S3ObjectEntry(key=k, size=1) for k in keys],
         is_truncated=is_truncated,
@@ -196,7 +206,11 @@ async def test_partial_delete_failure_marks_overall_failure() -> None:
     assert outcome.extras["deleted_count"] == 1
     assert outcome.extras["failed_count"] == 2
     assert len(outcome.extras["errors"]) == 2
-    assert outcome.extras["errors"][0] == {"Key": "b", "Code": "AccessDenied", "Message": "denied"}
+    assert outcome.extras["errors"][0] == {
+        "Key": "b",
+        "Code": "AccessDenied",
+        "Message": "denied",
+    }
     assert "could not be deleted" in outcome.extras["error"]
 
 
@@ -286,23 +300,27 @@ def test_handler_factory_returns_none_for_missing_params() -> None:
 
 
 def test_handler_factory_returns_none_for_bad_endpoint() -> None:
-    handler = make_clear_bucket_handler({
-        "bucket_name": "x",
-        "s3_endpoint": "not-a-url",
-        "region": "garage",
-        "access_key_id": "GK1",
-        "secret_access_key": "secret",
-    })
+    handler = make_clear_bucket_handler(
+        {
+            "bucket_name": "x",
+            "s3_endpoint": "not-a-url",
+            "region": "garage",
+            "access_key_id": "GK1",
+            "secret_access_key": "secret",
+        }
+    )
     assert handler is None
 
 
 def test_handler_factory_returns_handler_with_valid_params() -> None:
-    handler = make_clear_bucket_handler({
-        "bucket_name": "x",
-        "s3_endpoint": "http://localhost:3900",
-        "region": "garage",
-        "access_key_id": "GK1",
-        "secret_access_key": "secret",
-    })
+    handler = make_clear_bucket_handler(
+        {
+            "bucket_name": "x",
+            "s3_endpoint": "http://localhost:3900",
+            "region": "garage",
+            "access_key_id": "GK1",
+            "secret_access_key": "secret",
+        }
+    )
     assert handler is not None
     assert callable(handler)

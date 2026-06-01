@@ -33,5 +33,5 @@ pre-release-check:
 	$(PYTHON) scripts/pre_release_check.py
 
 clean:
-	rm -rf .mypy_cache .pytest_cache .import_linter_cache
+	rm -rf .mypy_cache .pytest_cache .import_linter_cache dist/
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

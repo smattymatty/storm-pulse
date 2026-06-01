@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def send_register(agent: "Agent", ws: ClientConnection, url: str) -> None:
+async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
     """Build and send the register envelope after a fresh connection."""
-    logger.info("Connected to dashboard")
+    logger.info("Connected to dashboard at %s", url)
 
     garage_dict = None
     if agent._config.garage and agent._config.garage.enabled:
@@ -41,15 +41,19 @@ async def send_register(agent: "Agent", ws: ClientConnection, url: str) -> None:
                 garage_dict = agent._garage_state.to_dict()
         else:
             agent._garage_state = await asyncio.to_thread(
-                discover_garage, agent._config.garage,
+                discover_garage,
+                agent._config.garage,
             )
             if agent._garage_state:
                 garage_dict = agent._garage_state.to_dict()
 
     log_group_names = sorted(agent._shippers.keys()) or None
-    system_inventory = await asyncio.to_thread(
-        collect_system_inventory,
-    ) or None
+    system_inventory = (
+        await asyncio.to_thread(
+            collect_system_inventory,
+        )
+        or None
+    )
 
     # Re-stat the seal file at register time so a fresh connect after
     # `stormpulse signoff seal` advertises the new state to the
@@ -64,7 +68,8 @@ async def send_register(agent: "Agent", ws: ClientConnection, url: str) -> None:
         __version__,
         agent._config.agent.pulse_token,
         commands=build_commands_metadata(
-            agent._registry, agent._config.project,
+            agent._registry,
+            agent._config.project,
         ),
         garage=garage_dict,
         log_groups=log_group_names,
@@ -76,6 +81,7 @@ async def send_register(agent: "Agent", ws: ClientConnection, url: str) -> None:
     logger.info("Sent register (v%s)", __version__)
     if agent._pulse_logger is not None:
         agent._pulse_logger.info(
-            "Connected to dashboard", "connection",
+            "Connected to dashboard",
+            "connection",
             {"url": url, "version": __version__},
         )

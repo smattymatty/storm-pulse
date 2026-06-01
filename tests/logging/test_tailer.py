@@ -139,6 +139,7 @@ def test_max_lines_caps_read(tmp_path: Path) -> None:
     assert lines2 == ["line3\n", "line4\n", "line5\n"]
     store.close()
 
+
 def test_no_new_lines_after_confirm(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
@@ -151,8 +152,10 @@ def test_no_new_lines_after_confirm(tmp_path: Path) -> None:
     assert lines == []
     store.close()
 
+
 def test_hard_cap_overrides_max_lines(tmp_path: Path) -> None:
     from stormpulse.logging.tailer import MAX_LINES_PER_INTERVAL
+
     store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     log.write_text("".join(f"line{i}\n" for i in range(MAX_LINES_PER_INTERVAL + 50)))
@@ -161,6 +164,7 @@ def test_hard_cap_overrides_max_lines(tmp_path: Path) -> None:
     lines, _, _ = tailer.read_new_lines(max_lines=MAX_LINES_PER_INTERVAL + 50)
     assert len(lines) == MAX_LINES_PER_INTERVAL
     store.close()
+
 
 def test_position_survives_tailer_restart(tmp_path: Path) -> None:
     db = tmp_path / "pos.db"

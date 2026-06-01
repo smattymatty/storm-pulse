@@ -23,7 +23,6 @@ from stormpulse.commands import (
 from stormpulse.commands.registry import _resolve_command
 from stormpulse.config import ParamDef, ProjectConfig
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -65,7 +64,9 @@ def test_all_commands_have_groups() -> None:
 
 def test_builtin_commands_no_confirmation() -> None:
     for name in ("git_pull", "docker_logs"):
-        assert COMMAND_REGISTRY[name].requires_confirmation is False, f"{name} should not require confirmation"
+        assert COMMAND_REGISTRY[name].requires_confirmation is False, (
+            f"{name} should not require confirmation"
+        )
 
 
 def test_command_def_is_frozen() -> None:
@@ -106,14 +107,32 @@ def test_resolve_project_dir(project_config: ProjectConfig) -> None:
 
 
 def test_resolve_compose_file(project_config: ProjectConfig) -> None:
-    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "build"]
+    template = [
+        "/usr/bin/docker",
+        "compose",
+        "--env-file",
+        "{env_file}",
+        "-f",
+        "{compose_file}",
+        "build",
+    ]
     resolved = _resolve_command(template, project_config)
     assert resolved[3] == "/opt/myapp/.env"
     assert resolved[5] == "/opt/myapp/docker-compose.yml"
 
 
 def test_resolve_docker_service_name(project_config: ProjectConfig) -> None:
-    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "exec", "{docker_service_name}", "python"]
+    template = [
+        "/usr/bin/docker",
+        "compose",
+        "--env-file",
+        "{env_file}",
+        "-f",
+        "{compose_file}",
+        "exec",
+        "{docker_service_name}",
+        "python",
+    ]
     resolved = _resolve_command(template, project_config)
     assert resolved[7] == "web"
 
@@ -125,11 +144,24 @@ def test_resolve_unknown_placeholder_raises(project_config: ProjectConfig) -> No
 
 
 def test_resolve_env_file(project_config: ProjectConfig) -> None:
-    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "up"]
+    template = [
+        "/usr/bin/docker",
+        "compose",
+        "--env-file",
+        "{env_file}",
+        "-f",
+        "{compose_file}",
+        "up",
+    ]
     resolved = _resolve_command(template, project_config)
     assert resolved == [
-        "/usr/bin/docker", "compose", "--env-file", "/opt/myapp/.env",
-        "-f", "/opt/myapp/docker-compose.yml", "up",
+        "/usr/bin/docker",
+        "compose",
+        "--env-file",
+        "/opt/myapp/.env",
+        "-f",
+        "/opt/myapp/docker-compose.yml",
+        "up",
     ]
 
 
@@ -140,9 +172,23 @@ def test_resolve_without_env_file() -> None:
         compose_file=Path("/opt/myapp/docker-compose.yml"),
         docker_service_name="web",
     )
-    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "up"]
+    template = [
+        "/usr/bin/docker",
+        "compose",
+        "--env-file",
+        "{env_file}",
+        "-f",
+        "{compose_file}",
+        "up",
+    ]
     resolved = _resolve_command(template, config)
-    assert resolved == ["/usr/bin/docker", "compose", "-f", "/opt/myapp/docker-compose.yml", "up"]
+    assert resolved == [
+        "/usr/bin/docker",
+        "compose",
+        "-f",
+        "/opt/myapp/docker-compose.yml",
+        "up",
+    ]
 
 
 def test_resolve_strips_empty_flag_value() -> None:
@@ -152,7 +198,15 @@ def test_resolve_strips_empty_flag_value() -> None:
         compose_file=Path("/opt/myapp/docker-compose.yml"),
         docker_service_name="web",
     )
-    template = ["/usr/bin/docker", "compose", "--env-file", "{env_file}", "-f", "{compose_file}", "build"]
+    template = [
+        "/usr/bin/docker",
+        "compose",
+        "--env-file",
+        "{env_file}",
+        "-f",
+        "{compose_file}",
+        "build",
+    ]
     resolved = _resolve_command(template, config)
     assert "--env-file" not in resolved
     assert "" not in resolved
@@ -172,9 +226,14 @@ def test_execute_success(
 ) -> None:
     mock_time.side_effect = [0.0, 0.342]
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="Already up to date.\n", stderr="",
+        args=[],
+        returncode=0,
+        stdout="Already up to date.\n",
+        stderr="",
     )
-    result = execute_command("git_pull", project_config, "req-1", registry=COMMAND_REGISTRY)
+    result = execute_command(
+        "git_pull", project_config, "req-1", registry=COMMAND_REGISTRY
+    )
     assert result.success is True
     assert result.exit_code == 0
     assert result.duration_ms == 342
@@ -191,9 +250,14 @@ def test_execute_failure_nonzero_exit(
 ) -> None:
     mock_time.side_effect = [0.0, 1.0]
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout="", stderr="error: permission denied\n",
+        args=[],
+        returncode=1,
+        stdout="",
+        stderr="error: permission denied\n",
     )
-    result = execute_command("git_pull", project_config, "req-2", registry=COMMAND_REGISTRY)
+    result = execute_command(
+        "git_pull", project_config, "req-2", registry=COMMAND_REGISTRY
+    )
     assert result.success is False
     assert result.exit_code == 1
     assert result.failure_reason == "exit_code"
@@ -212,7 +276,9 @@ def test_execute_timeout(
     exc.stdout = "partial"  # type: ignore[assignment]
     exc.stderr = ""  # type: ignore[assignment]
     mock_run.side_effect = exc
-    result = execute_command("git_pull", project_config, "req-3", registry=COMMAND_REGISTRY)
+    result = execute_command(
+        "git_pull", project_config, "req-3", registry=COMMAND_REGISTRY
+    )
     assert result.success is False
     assert result.exit_code == -1
     assert result.failure_reason == "timeout"
@@ -228,8 +294,12 @@ def test_execute_binary_not_found(
     project_config: ProjectConfig,
 ) -> None:
     mock_time.side_effect = [0.0, 0.001]
-    mock_run.side_effect = FileNotFoundError("[Errno 2] No such file or directory: '/usr/bin/git'")
-    result = execute_command("git_pull", project_config, "req-4", registry=COMMAND_REGISTRY)
+    mock_run.side_effect = FileNotFoundError(
+        "[Errno 2] No such file or directory: '/usr/bin/git'"
+    )
+    result = execute_command(
+        "git_pull", project_config, "req-4", registry=COMMAND_REGISTRY
+    )
     assert result.success is False
     assert result.exit_code == -1
     assert result.failure_reason == "not_found"
@@ -245,7 +315,9 @@ def test_execute_os_error(
 ) -> None:
     mock_time.side_effect = [0.0, 0.001]
     mock_run.side_effect = OSError("Permission denied")
-    result = execute_command("git_pull", project_config, "req-5", registry=COMMAND_REGISTRY)
+    result = execute_command(
+        "git_pull", project_config, "req-5", registry=COMMAND_REGISTRY
+    )
     assert result.success is False
     assert result.exit_code == -1
     assert result.failure_reason == "os_error"
@@ -259,8 +331,12 @@ def test_execute_measures_duration(
     project_config: ProjectConfig,
 ) -> None:
     mock_time.side_effect = [1.0, 1.5]
-    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-    result = execute_command("git_pull", project_config, "req-6", registry=COMMAND_REGISTRY)
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
+    result = execute_command(
+        "git_pull", project_config, "req-6", registry=COMMAND_REGISTRY
+    )
     assert result.duration_ms == 500
 
 
@@ -272,9 +348,15 @@ def test_execute_forwards_sequence_id(
     project_config: ProjectConfig,
 ) -> None:
     mock_time.side_effect = [0.0, 0.1]
-    mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    mock_run.return_value = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="", stderr=""
+    )
     result = execute_command(
-        "git_pull", project_config, "req-7", sequence_id="seq-42", registry=COMMAND_REGISTRY,
+        "git_pull",
+        project_config,
+        "req-7",
+        sequence_id="seq-42",
+        registry=COMMAND_REGISTRY,
     )
     assert result.sequence_id == "seq-42"
 
@@ -300,9 +382,16 @@ def test_docker_logs_resolution(project_config: ProjectConfig) -> None:
     validated = validate_params(cmd, {})
     resolved = _resolve_command(cmd.command, project_config, validated)
     assert resolved == [
-        "/usr/bin/docker", "compose", "--env-file", "/opt/myapp/.env",
-        "-f", "/opt/myapp/docker-compose.yml",
-        "logs", "--tail", "100", "web",
+        "/usr/bin/docker",
+        "compose",
+        "--env-file",
+        "/opt/myapp/.env",
+        "-f",
+        "/opt/myapp/docker-compose.yml",
+        "logs",
+        "--tail",
+        "100",
+        "web",
     ]
 
 
@@ -315,9 +404,14 @@ def test_execute_docker_logs(
 ) -> None:
     mock_time.side_effect = [0.0, 0.2]
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="log line 1\nlog line 2\n", stderr="",
+        args=[],
+        returncode=0,
+        stdout="log line 1\nlog line 2\n",
+        stderr="",
     )
-    result = execute_command("docker_logs", project_config, "req-logs", registry=COMMAND_REGISTRY)
+    result = execute_command(
+        "docker_logs", project_config, "req-logs", registry=COMMAND_REGISTRY
+    )
     assert result.success is True
     assert result.command == "docker_logs"
     assert result.group == "diagnostics"
@@ -333,78 +427,129 @@ def test_execute_docker_logs(
 
 
 @patch("stormpulse.commands.deploy.execute_command")
-def test_deploy_all_success(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
+def test_deploy_all_success(
+    mock_exec: MagicMock, project_config: ProjectConfig
+) -> None:
     mock_exec.side_effect = lambda name, cfg, rid, sid, *, registry: MagicMock(
-        success=True, command=name, sequence_id=sid, request_id=rid,
+        success=True,
+        command=name,
+        sequence_id=sid,
+        request_id=rid,
     )
-    results = list(run_deploy_sequence(
-        ["git_pull", "docker_logs"], project_config, "seq-1", registry=COMMAND_REGISTRY,
-    ))
+    results = list(
+        run_deploy_sequence(
+            ["git_pull", "docker_logs"],
+            project_config,
+            "seq-1",
+            registry=COMMAND_REGISTRY,
+        )
+    )
     assert len(results) == 2
     assert all(r.success for r in results)
 
 
 @patch("stormpulse.commands.deploy.execute_command")
-def test_deploy_stop_on_failure(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
+def test_deploy_stop_on_failure(
+    mock_exec: MagicMock, project_config: ProjectConfig
+) -> None:
+    def side_effect(
+        name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any
+    ) -> MagicMock:
         return MagicMock(success=(name != "docker_logs"), command=name)
 
     mock_exec.side_effect = side_effect
-    results = list(run_deploy_sequence(
-        ["git_pull", "docker_logs"], project_config, "seq-2", registry=COMMAND_REGISTRY,
-    ))
+    results = list(
+        run_deploy_sequence(
+            ["git_pull", "docker_logs"],
+            project_config,
+            "seq-2",
+            registry=COMMAND_REGISTRY,
+        )
+    )
     assert len(results) == 2  # git_pull (ok), docker_logs (fail), then stop
     assert results[0].success is True
     assert results[1].success is False
 
 
 @patch("stormpulse.commands.deploy.execute_command")
-def test_deploy_continue_on_failure(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
+def test_deploy_continue_on_failure(
+    mock_exec: MagicMock, project_config: ProjectConfig
+) -> None:
+    def side_effect(
+        name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any
+    ) -> MagicMock:
         return MagicMock(success=(name != "docker_logs"), command=name)
 
     mock_exec.side_effect = side_effect
-    results = list(run_deploy_sequence(
-        ["git_pull", "docker_logs"], project_config, "seq-3",
-        stop_on_failure=False, registry=COMMAND_REGISTRY,
-    ))
+    results = list(
+        run_deploy_sequence(
+            ["git_pull", "docker_logs"],
+            project_config,
+            "seq-3",
+            stop_on_failure=False,
+            registry=COMMAND_REGISTRY,
+        )
+    )
     assert len(results) == 2
 
 
 def test_deploy_invalid_command_raises_upfront(project_config: ProjectConfig) -> None:
     with pytest.raises(CommandError, match="Unknown command"):
-        list(run_deploy_sequence(
-            ["git_pull", "bogus"], project_config, "seq-4", registry=COMMAND_REGISTRY,
-        ))
+        list(
+            run_deploy_sequence(
+                ["git_pull", "bogus"],
+                project_config,
+                "seq-4",
+                registry=COMMAND_REGISTRY,
+            )
+        )
 
 
 @patch("stormpulse.commands.deploy.execute_command")
-def test_deploy_unique_request_ids(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
+def test_deploy_unique_request_ids(
+    mock_exec: MagicMock, project_config: ProjectConfig
+) -> None:
     call_args: list[str] = []
 
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
+    def side_effect(
+        name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any
+    ) -> MagicMock:
         call_args.append(rid)
         return MagicMock(success=True, command=name)
 
     mock_exec.side_effect = side_effect
-    list(run_deploy_sequence(
-        ["git_pull", "docker_logs"], project_config, "seq-5", registry=COMMAND_REGISTRY,
-    ))
+    list(
+        run_deploy_sequence(
+            ["git_pull", "docker_logs"],
+            project_config,
+            "seq-5",
+            registry=COMMAND_REGISTRY,
+        )
+    )
     assert len(set(call_args)) == 2  # all unique
 
 
 @patch("stormpulse.commands.deploy.execute_command")
-def test_deploy_shared_sequence_id(mock_exec: MagicMock, project_config: ProjectConfig) -> None:
+def test_deploy_shared_sequence_id(
+    mock_exec: MagicMock, project_config: ProjectConfig
+) -> None:
     call_sids: list[str | None] = []
 
-    def side_effect(name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any) -> MagicMock:
+    def side_effect(
+        name: str, cfg: Any, rid: str, sid: str | None, *, registry: Any
+    ) -> MagicMock:
         call_sids.append(sid)
         return MagicMock(success=True, command=name)
 
     mock_exec.side_effect = side_effect
-    list(run_deploy_sequence(
-        ["git_pull", "docker_logs"], project_config, "seq-6", registry=COMMAND_REGISTRY,
-    ))
+    list(
+        run_deploy_sequence(
+            ["git_pull", "docker_logs"],
+            project_config,
+            "seq-6",
+            registry=COMMAND_REGISTRY,
+        )
+    )
     assert all(sid == "seq-6" for sid in call_sids)
 
 
@@ -458,7 +603,9 @@ def test_build_registry_disables_custom_command() -> None:
         command=["/usr/bin/systemctl", "restart", "caddy.service"],
         timeout=30,
     )
-    registry = build_registry({"restart_caddy": custom}, disabled=frozenset({"restart_caddy"}))
+    registry = build_registry(
+        {"restart_caddy": custom}, disabled=frozenset({"restart_caddy"})
+    )
     assert "restart_caddy" not in registry
     # Four built-ins, custom is disabled away.
     assert len(registry) == 4
@@ -466,9 +613,15 @@ def test_build_registry_disables_custom_command() -> None:
 
 def test_build_registry_disables_multiple() -> None:
     registry = build_registry(
-        {}, disabled=frozenset({
-            "git_pull", "docker_logs", "run_verify_block", "run_apply_block",
-        }),
+        {},
+        disabled=frozenset(
+            {
+                "git_pull",
+                "docker_logs",
+                "run_verify_block",
+                "run_apply_block",
+            }
+        ),
     )
     assert "git_pull" not in registry
     assert "docker_logs" not in registry
@@ -484,7 +637,9 @@ def test_build_registry_disabled_unknown_is_harmless() -> None:
 
 def test_build_registry_does_not_mutate_original() -> None:
     custom = CommandDef(
-        group="test", command=["/bin/true"], timeout=10,
+        group="test",
+        command=["/bin/true"],
+        timeout=10,
     )
     registry = build_registry({"test_cmd": custom})
     assert "test_cmd" in registry
@@ -500,7 +655,10 @@ def test_execute_config_defined_command(
 ) -> None:
     mock_time.side_effect = [0.0, 0.1]
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="ok\n", stderr="",
+        args=[],
+        returncode=0,
+        stdout="ok\n",
+        stderr="",
     )
     custom = CommandDef(
         group="maintenance",
@@ -508,7 +666,9 @@ def test_execute_config_defined_command(
         timeout=30,
     )
     registry = build_registry({"restart_caddy": custom})
-    result = execute_command("restart_caddy", project_config, "req-c1", registry=registry)
+    result = execute_command(
+        "restart_caddy", project_config, "req-c1", registry=registry
+    )
     assert result.success is True
     assert result.command == "restart_caddy"
     assert result.group == "maintenance"
@@ -597,11 +757,22 @@ def test_resolve_with_param_overrides(project_config: ProjectConfig) -> None:
 def test_resolve_param_overrides_alongside_config_placeholders(
     project_config: ProjectConfig,
 ) -> None:
-    template = ["/usr/bin/docker", "compose", "-f", "{compose_file}", "logs", "{service}"]
+    template = [
+        "/usr/bin/docker",
+        "compose",
+        "-f",
+        "{compose_file}",
+        "logs",
+        "{service}",
+    ]
     resolved = _resolve_command(template, project_config, {"service": "worker"})
     assert resolved == [
-        "/usr/bin/docker", "compose", "-f", "/opt/myapp/docker-compose.yml",
-        "logs", "worker",
+        "/usr/bin/docker",
+        "compose",
+        "-f",
+        "/opt/myapp/docker-compose.yml",
+        "logs",
+        "worker",
     ]
 
 
@@ -635,7 +806,9 @@ def test_run_verify_block_accepts_simple_shell(project_config: ProjectConfig) ->
     assert resolved == ["/bin/bash", "-c", "sudo ufw status | head -1"]
 
 
-def test_run_verify_block_accepts_shell_with_braces(project_config: ProjectConfig) -> None:
+def test_run_verify_block_accepts_shell_with_braces(
+    project_config: ProjectConfig,
+) -> None:
     # Shell parameter expansion uses ${...} - format_map must not
     # interpret those as Python format placeholders.
     cmd = COMMAND_REGISTRY["run_verify_block"]
@@ -693,7 +866,9 @@ def test_run_apply_block_param_has_larger_byte_cap_than_verify() -> None:
     assert apply_pdef.max_bytes >= 8192
 
 
-def test_run_apply_block_accepts_multiline_heredoc(project_config: ProjectConfig) -> None:
+def test_run_apply_block_accepts_multiline_heredoc(
+    project_config: ProjectConfig,
+) -> None:
     cmd = COMMAND_REGISTRY["run_apply_block"]
     script = (
         "cat > /tmp/compose.yml <<'EOF'\n"

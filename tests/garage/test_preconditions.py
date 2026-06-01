@@ -28,9 +28,14 @@ def _make_config(tmp_path: Path) -> GarageConfig:
     )
 
 
-def _completed(returncode: int, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+def _completed(
+    returncode: int, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=[], returncode=returncode, stdout=stdout, stderr=stderr,
+        args=[],
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
     )
 
 
@@ -59,7 +64,9 @@ class TestCheckGarageVersion:
             "stormpulse.garage.preconditions.subprocess.run",
             return_value=_completed(0, stdout="garage v1.0.1\n"),
         ):
-            assert preconditions.check_garage_version(cfg) == "garage_version_unsupported"
+            assert (
+                preconditions.check_garage_version(cfg) == "garage_version_unsupported"
+            )
 
     def test_v0_fails(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -67,7 +74,9 @@ class TestCheckGarageVersion:
             "stormpulse.garage.preconditions.subprocess.run",
             return_value=_completed(0, stdout="garage v0.9.4\n"),
         ):
-            assert preconditions.check_garage_version(cfg) == "garage_version_unsupported"
+            assert (
+                preconditions.check_garage_version(cfg) == "garage_version_unsupported"
+            )
 
     def test_v3_fails(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -75,7 +84,9 @@ class TestCheckGarageVersion:
             "stormpulse.garage.preconditions.subprocess.run",
             return_value=_completed(0, stdout="garage v3.0.0\n"),
         ):
-            assert preconditions.check_garage_version(cfg) == "garage_version_unsupported"
+            assert (
+                preconditions.check_garage_version(cfg) == "garage_version_unsupported"
+            )
 
     def test_container_down_fails_unreachable(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -111,7 +122,8 @@ class TestCheckRpcSecret:
         with patch(
             "stormpulse.garage.preconditions.subprocess.run",
             return_value=_completed(
-                1, stderr=(
+                1,
+                stderr=(
                     "ServerConn::run: Handshake error: performing handshake: "
                     "failed opening client secret box"
                 ),
@@ -208,35 +220,44 @@ class TestGarageStateDisabled:
 
 class TestBootstrapWiring:
     def test_disabled_reason_propagates_to_agent_dependencies(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         from stormpulse.agent import bootstrap
         from tests.helpers import build_config, build_garage_config
 
         cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
         with patch.object(
-            bootstrap, "run_garage_preconditions",
+            bootstrap,
+            "run_garage_preconditions",
             return_value="garage_unreachable",
         ):
             deps = bootstrap.build_agent_dependencies(
-                cfg, signoff_sealed=False, log_position_store=None,
+                cfg,
+                signoff_sealed=False,
+                log_position_store=None,
             )
         assert deps.garage_disabled_reason == "garage_unreachable"
         # Garage command set is absent when preconditions fail.
         assert not any(k.startswith("garage_") for k in deps.registry)
 
     def test_passing_preconditions_registers_garage_commands(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         from stormpulse.agent import bootstrap
         from tests.helpers import build_config, build_garage_config
 
         cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
         with patch.object(
-            bootstrap, "run_garage_preconditions", return_value=None,
+            bootstrap,
+            "run_garage_preconditions",
+            return_value=None,
         ):
             deps = bootstrap.build_agent_dependencies(
-                cfg, signoff_sealed=False, log_position_store=None,
+                cfg,
+                signoff_sealed=False,
+                log_position_store=None,
             )
         assert deps.garage_disabled_reason is None
         assert any(k.startswith("garage_") for k in deps.registry)

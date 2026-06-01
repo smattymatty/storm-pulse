@@ -14,7 +14,6 @@ from stormpulse.agent import Agent
 from stormpulse.agent.register import send_register
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
-
 from tests.helpers import SECRET, make_fake_garage_state
 
 
@@ -28,7 +27,8 @@ async def test_send_register_sends_register_envelope(agent: Agent) -> None:
     ws = AsyncMock()
 
     with patch(
-        "stormpulse.agent.register.collect_system_inventory", return_value=None,
+        "stormpulse.agent.register.collect_system_inventory",
+        return_value=None,
     ):
         await send_register(agent, ws, "wss://example.com/ws/")
 
@@ -80,13 +80,18 @@ async def test_send_register_reports_seal_state(
     sealed_state.seal()
     try:
         ag = Agent(
-            config, SECRET, nonce_store, ssl_ctx, shutdown,
+            config,
+            SECRET,
+            nonce_store,
+            ssl_ctx,
+            shutdown,
             signoff_state=sealed_state,
         )
         ws = AsyncMock()
 
         with patch(
-            "stormpulse.agent.register.collect_system_inventory", return_value=None,
+            "stormpulse.agent.register.collect_system_inventory",
+            return_value=None,
         ):
             await send_register(ag, ws, "wss://example.com/ws/")
 
@@ -120,13 +125,18 @@ async def test_send_register_advertises_unsealed_since(
     state.seal()
     state.unseal()  # now has a real unsealed_since marker
     ag = Agent(
-        config, SECRET, nonce_store, ssl_ctx, shutdown,
+        config,
+        SECRET,
+        nonce_store,
+        ssl_ctx,
+        shutdown,
         signoff_state=state,
     )
     ws = AsyncMock()
 
     with patch(
-        "stormpulse.agent.register.collect_system_inventory", return_value=None,
+        "stormpulse.agent.register.collect_system_inventory",
+        return_value=None,
     ):
         await send_register(ag, ws, "wss://example.com/ws/")
 
@@ -148,13 +158,18 @@ async def test_send_register_mirrors_to_pulse_logger(
     """A connect event is mirrored to the PulseLogger when one is configured."""
     pulse_logger = MagicMock()
     ag = Agent(
-        config, SECRET, nonce_store, ssl_ctx, shutdown,
+        config,
+        SECRET,
+        nonce_store,
+        ssl_ctx,
+        shutdown,
         pulse_logger=pulse_logger,
     )
     ws = AsyncMock()
 
     with patch(
-        "stormpulse.agent.register.collect_system_inventory", return_value=None,
+        "stormpulse.agent.register.collect_system_inventory",
+        return_value=None,
     ):
         await send_register(ag, ws, "wss://test.example/ws/")
 

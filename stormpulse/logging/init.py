@@ -36,9 +36,9 @@ retention_days = 90
 # First match wins. Patterns match the container name exactly or as a
 # whole word inside it (so "my-caddy-1" still matches "caddy").
 _CONTAINER_PARSER_HINTS: list[tuple[str, str, str]] = [
-    ("caddy",   "caddy_json", ""),
-    ("garaged", "garage_s3",  "garage_api"),
-    ("garage",  "garage_s3",  "garage_api"),
+    ("caddy", "caddy_json", ""),
+    ("garaged", "garage_s3", "garage_api"),
+    ("garage", "garage_s3", "garage_api"),
 ]
 
 
@@ -128,14 +128,16 @@ def prompt_logging_setup(
                 f"  {name}: detected as {parser} (filter={filter_contains!r})",
                 file=sys.stderr,
             )
-        groups.append({
-            "name": name,
-            "container_name": name,
-            "docker_binary": docker_binary_input,
-            "ship_interval_seconds": interval,
-            "parser": parser,
-            "filter_contains": filter_contains,
-        })
+        groups.append(
+            {
+                "name": name,
+                "container_name": name,
+                "docker_binary": docker_binary_input,
+                "ship_interval_seconds": interval,
+                "parser": parser,
+                "filter_contains": filter_contains,
+            }
+        )
     return groups
 
 
@@ -171,6 +173,7 @@ def _existing_log_group_names(config_path: Path) -> list[str]:
     """Best-effort extraction of existing [[log_groups]] names from TOML."""
     try:
         import tomllib
+
         with open(config_path, "rb") as f:
             raw = tomllib.load(f)
     except (OSError, Exception):
@@ -179,7 +182,8 @@ def _existing_log_group_names(config_path: Path) -> list[str]:
     if not isinstance(groups, list):
         return []
     return [
-        str(g["name"]) for g in groups
+        str(g["name"])
+        for g in groups
         if isinstance(g, dict) and isinstance(g.get("name"), str)
     ]
 
@@ -220,7 +224,9 @@ def run_logging_init(config_path: Path) -> None:
 
     append_log_groups(config_path, groups)
     for g in groups:
-        print(f"  Added: {g['name']} (docker)", file=sys.stderr)
+        # source_type is hardcoded in _LOG_GROUP_TEMPLATE above; if the
+        # template changes per-group, switch this to g['source_type'].
+        print(f"  Added: {g['name']} (docker_stream)", file=sys.stderr)
     print(f"\n  {len(groups)} log group(s) written to {config_path}", file=sys.stderr)
 
     # No-escalation posture (see stormpulse.init.system): SYSTEM mode
@@ -233,8 +239,7 @@ def run_logging_init(config_path: Path) -> None:
         restart_or_hint(mode)
     else:
         print(
-            "\n  Restart later with:\n"
-            "    systemctl --user restart stormpulse",
+            "\n  Restart later with:\n    systemctl --user restart stormpulse",
             file=sys.stderr,
         )
 
@@ -261,7 +266,9 @@ def logging_init_step(config_path: Path) -> None:
 
     append_log_groups(config_path, log_groups)
     for g in log_groups:
-        print(f"  Added: {g['name']} (docker)", file=sys.stderr)
+        # source_type is hardcoded in _LOG_GROUP_TEMPLATE above; if the
+        # template changes per-group, switch this to g['source_type'].
+        print(f"  Added: {g['name']} (docker_stream)", file=sys.stderr)
 
 
 register_init_step(logging_init_step)

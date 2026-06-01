@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
 from stormpulse.config import CommandDef, ParamDef
-
 from tests.helpers import DUMMY_PROJECT
-
 
 # ---------------------------------------------------------------------------
 # strip_binary_path

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from stormpulse.config import ConfigError, GarageConfig, load_config
+from stormpulse.config import ConfigError, load_config
 
 
 def _write_toml(tmp_path: Path, garage_section: str = "") -> Path:
@@ -56,7 +56,9 @@ class TestGarageConfigParsing:
         assert cfg.garage is None
 
     def test_valid_section(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [garage]
 enabled = true
 container_name = "garaged"
@@ -64,7 +66,8 @@ garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = 300
-""")
+""",
+        )
         cfg = load_config(path)
         assert cfg.garage is not None
         assert cfg.garage.enabled is True
@@ -75,7 +78,9 @@ state_push_interval_seconds = 300
         assert cfg.garage.state_push_interval_seconds == 300.0
 
     def test_disabled(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [garage]
 enabled = false
 container_name = "garaged"
@@ -83,22 +88,28 @@ garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = 300
-""")
+""",
+        )
         cfg = load_config(path)
         assert cfg.garage is not None
         assert cfg.garage.enabled is False
 
     def test_missing_required_key(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [garage]
 enabled = true
 container_name = "garaged"
-""")
+""",
+        )
         with pytest.raises(ConfigError, match="garage_binary"):
             load_config(path)
 
     def test_non_absolute_docker_binary(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [garage]
 enabled = true
 container_name = "garaged"
@@ -106,12 +117,15 @@ garage_binary = "/garage"
 docker_binary = "docker"
 config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = 300
-""")
+""",
+        )
         with pytest.raises(ConfigError, match="absolute path"):
             load_config(path)
 
     def test_negative_interval(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [garage]
 enabled = true
 container_name = "garaged"
@@ -119,12 +133,15 @@ garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = -1
-""")
+""",
+        )
         with pytest.raises(ConfigError, match="positive"):
             load_config(path)
 
     def test_empty_container_name(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [garage]
 enabled = true
 container_name = ""
@@ -132,40 +149,50 @@ garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = 300
-""")
+""",
+        )
         with pytest.raises(ConfigError, match="container_name"):
             load_config(path)
 
 
 class TestSensitiveOutputParsing:
     def test_sensitive_output_in_custom_command(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [commands.my_cmd]
 group = "test"
 command = ["/usr/bin/echo", "hello"]
 timeout = 10
 sensitive_output = true
-""")
+""",
+        )
         cfg = load_config(path)
         assert cfg.commands["my_cmd"].sensitive_output is True
 
     def test_sensitive_output_defaults_false(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [commands.my_cmd]
 group = "test"
 command = ["/usr/bin/echo", "hello"]
 timeout = 10
-""")
+""",
+        )
         cfg = load_config(path)
         assert cfg.commands["my_cmd"].sensitive_output is False
 
     def test_sensitive_output_invalid_type(self, tmp_path: Path) -> None:
-        path = _write_toml(tmp_path, """\
+        path = _write_toml(
+            tmp_path,
+            """\
 [commands.my_cmd]
 group = "test"
 command = ["/usr/bin/echo", "hello"]
 timeout = 10
 sensitive_output = "yes"
-""")
+""",
+        )
         with pytest.raises(ConfigError, match="sensitive_output"):
             load_config(path)

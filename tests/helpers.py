@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from stormpulse.auth import (
@@ -64,12 +64,21 @@ DUMMY_PROJECT = ProjectConfig(
 def make_fake_garage_state() -> GarageState:
     """A minimal GarageState for tests that just need the shape."""
     return GarageState(
-        node_id="n1", hostname="h", zone="z",
-        capacity_gb=1.0, data_avail_gb=1.0,
-        version="v", healthy=True, db_engine="x",
-        object_count=0, block_count=0,
-        buckets=[], keys=[], peers=[],
+        node_id="n1",
+        hostname="h",
+        zone="z",
+        capacity_gb=1.0,
+        data_avail_gb=1.0,
+        version="v",
+        healthy=True,
+        db_engine="x",
+        object_count=0,
+        block_count=0,
+        buckets=[],
+        keys=[],
+        peers=[],
     )
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -136,7 +145,7 @@ def sign_command_request(
 ) -> str:
     """Build a signed command.request envelope as a JSON string."""
     if ts is None:
-        ts = datetime.now(timezone.utc)
+        ts = datetime.now(UTC)
     if nonce is None:
         nonce = generate_nonce()
     ts_str = format_timestamp(ts)
@@ -148,7 +157,12 @@ def sign_command_request(
         id=str(uuid.uuid4()),
         ts=ts,
         agent_id=agent_id,
-        payload={"command": command, "params": params or {}, "hmac": sig, "nonce": nonce},
+        payload={
+            "command": command,
+            "params": params or {},
+            "hmac": sig,
+            "nonce": nonce,
+        },
     )
     return envelope.to_json()
 
@@ -165,14 +179,18 @@ def sign_command_sequence(
 ) -> str:
     """Build a signed command.sequence envelope as a JSON string."""
     if ts is None:
-        ts = datetime.now(timezone.utc)
+        ts = datetime.now(UTC)
     if nonce is None:
         nonce = generate_nonce()
     if sequence_id is None:
         sequence_id = str(uuid.uuid4())
     ts_str = format_timestamp(ts)
     canonical = canonical_command_sequence(
-        sequence_id, commands, stop_on_failure, nonce, ts_str,
+        sequence_id,
+        commands,
+        stop_on_failure,
+        nonce,
+        ts_str,
     )
     sig = sign(canonical, secret)
     envelope = Envelope(

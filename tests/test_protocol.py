@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
+from datetime import UTC
 from typing import Any
 
 import pytest
-from dataclasses import asdict
 
 from stormpulse.protocol import (
     CommandProgressPayload,
@@ -27,7 +28,6 @@ from stormpulse.protocol import (
     make_metrics_push,
     make_register,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -329,13 +329,17 @@ def test_metrics_payload_from_dict(metrics_dict: dict[str, Any]) -> None:
     assert payload.containers[0].name == "web"
 
 
-def test_command_request_payload_from_dict(command_request_dict: dict[str, Any]) -> None:
+def test_command_request_payload_from_dict(
+    command_request_dict: dict[str, Any],
+) -> None:
     payload = CommandRequestPayload.from_dict(command_request_dict["payload"])
     assert payload.command == "git_pull"
     assert payload.nonce == "nonce-1"
 
 
-def test_command_sequence_payload_from_dict(command_sequence_dict: dict[str, Any]) -> None:
+def test_command_sequence_payload_from_dict(
+    command_sequence_dict: dict[str, Any],
+) -> None:
     payload = CommandSequencePayload.from_dict(command_sequence_dict["payload"])
     assert payload.sequence_id == "seq-001"
     assert len(payload.commands) == 2
@@ -401,14 +405,22 @@ def test_register_payload_from_dict_null_commands() -> None:
 
 
 def test_container_info_from_dict() -> None:
-    info = ContainerInfo.from_dict({"name": "db", "status": "exited", "image": "postgres:16"})
+    info = ContainerInfo.from_dict(
+        {"name": "db", "status": "exited", "image": "postgres:16"}
+    )
     assert info.name == "db"
 
 
 def test_payload_asdict_roundtrip() -> None:
     original = CommandResultPayload(
-        request_id="r1", command="git_pull", group="deploy",
-        success=True, exit_code=0, stdout="", stderr="", duration_ms=10,
+        request_id="r1",
+        command="git_pull",
+        group="deploy",
+        success=True,
+        exit_code=0,
+        stdout="",
+        stderr="",
+        duration_ms=10,
     )
     d = asdict(original)
     rebuilt = CommandResultPayload.from_dict(d)
@@ -417,8 +429,11 @@ def test_payload_asdict_roundtrip() -> None:
 
 def test_command_progress_payload_defaults() -> None:
     payload = CommandProgressPayload(
-        request_id="req-9", command="garage_bucket_clear", group="garage",
-        stage="starting", current=0,
+        request_id="req-9",
+        command="garage_bucket_clear",
+        group="garage",
+        stage="starting",
+        current=0,
     )
     assert payload.total is None
     assert payload.message == ""
@@ -426,8 +441,13 @@ def test_command_progress_payload_defaults() -> None:
 
 def test_command_progress_payload_from_dict() -> None:
     data = {
-        "request_id": "req-9", "command": "garage_bucket_clear", "group": "garage",
-        "stage": "running", "current": 1000, "total": 5000, "message": "deleted batch 1",
+        "request_id": "req-9",
+        "command": "garage_bucket_clear",
+        "group": "garage",
+        "stage": "running",
+        "current": 1000,
+        "total": 5000,
+        "message": "deleted batch 1",
     }
     payload = CommandProgressPayload.from_dict(data)
     assert payload.stage == "running"
@@ -437,15 +457,25 @@ def test_command_progress_payload_from_dict() -> None:
 
 def test_command_progress_payload_missing_required_raises() -> None:
     with pytest.raises(ProtocolError):
-        CommandProgressPayload.from_dict({
-            "request_id": "req-9", "command": "x", "group": "g", "stage": "starting",
-        })
+        CommandProgressPayload.from_dict(
+            {
+                "request_id": "req-9",
+                "command": "x",
+                "group": "g",
+                "stage": "starting",
+            }
+        )
 
 
 def test_roundtrip_command_progress() -> None:
     progress = CommandProgressPayload(
-        request_id="req-9", command="garage_bucket_clear", group="garage",
-        stage="running", current=2000, total=5000, message="batch 2/5",
+        request_id="req-9",
+        command="garage_bucket_clear",
+        group="garage",
+        stage="running",
+        current=2000,
+        total=5000,
+        message="batch 2/5",
     )
     original = make_command_progress("test-agent", progress)
     rebuilt = Envelope.from_json(original.to_json())
@@ -458,8 +488,11 @@ def test_roundtrip_command_progress() -> None:
 
 def test_roundtrip_command_progress_unknown_total() -> None:
     progress = CommandProgressPayload(
-        request_id="req-9", command="garage_bucket_clear", group="garage",
-        stage="starting", current=0,
+        request_id="req-9",
+        command="garage_bucket_clear",
+        group="garage",
+        stage="starting",
+        current=0,
     )
     original = make_command_progress("test-agent", progress)
     rebuilt = Envelope.from_json(original.to_json())
@@ -469,9 +502,15 @@ def test_roundtrip_command_progress_unknown_total() -> None:
 
 def test_metrics_payload_asdict_roundtrip() -> None:
     original = MetricsPayload(
-        cpu_percent=1.0, memory_percent=2.0, memory_used_mb=3.0,
-        memory_total_mb=4.0, disk_percent=5.0, disk_used_gb=6.0,
-        disk_total_gb=7.0, load_avg_1m=0.1, load_avg_5m=0.2,
+        cpu_percent=1.0,
+        memory_percent=2.0,
+        memory_used_mb=3.0,
+        memory_total_mb=4.0,
+        disk_percent=5.0,
+        disk_used_gb=6.0,
+        disk_total_gb=7.0,
+        load_avg_1m=0.1,
+        load_avg_5m=0.2,
         uptime_seconds=8.0,
         containers=[ContainerInfo(name="x", status="y", image="z")],
     )
@@ -569,10 +608,17 @@ def test_metrics_missing_field_raises() -> None:
 
 def test_metrics_containers_not_list_raises() -> None:
     data: dict[str, Any] = {
-        "cpu_percent": 1.0, "memory_percent": 2.0, "memory_used_mb": 3.0,
-        "memory_total_mb": 4.0, "disk_percent": 5.0, "disk_used_gb": 6.0,
-        "disk_total_gb": 7.0, "load_avg_1m": 0.1, "load_avg_5m": 0.2,
-        "uptime_seconds": 8.0, "containers": "not a list",
+        "cpu_percent": 1.0,
+        "memory_percent": 2.0,
+        "memory_used_mb": 3.0,
+        "memory_total_mb": 4.0,
+        "disk_percent": 5.0,
+        "disk_used_gb": 6.0,
+        "disk_total_gb": 7.0,
+        "load_avg_1m": 0.1,
+        "load_avg_5m": 0.2,
+        "uptime_seconds": 8.0,
+        "containers": "not a list",
     }
     with pytest.raises(ProtocolError, match="expected list"):
         MetricsPayload.from_dict(data)
@@ -633,10 +679,17 @@ def test_make_register_with_commands() -> None:
 
 def test_make_metrics_push_valid() -> None:
     metrics = MetricsPayload(
-        cpu_percent=5.0, memory_percent=10.0, memory_used_mb=512.0,
-        memory_total_mb=1024.0, disk_percent=20.0, disk_used_gb=8.0,
-        disk_total_gb=40.0, load_avg_1m=0.0, load_avg_5m=0.0,
-        uptime_seconds=100.0, containers=[],
+        cpu_percent=5.0,
+        memory_percent=10.0,
+        memory_used_mb=512.0,
+        memory_total_mb=1024.0,
+        disk_percent=20.0,
+        disk_used_gb=8.0,
+        disk_total_gb=40.0,
+        load_avg_1m=0.0,
+        load_avg_5m=0.0,
+        uptime_seconds=100.0,
+        containers=[],
     )
     env = make_metrics_push("test-01", metrics)
     assert env.type == MessageType.METRICS_PUSH
@@ -646,8 +699,14 @@ def test_make_metrics_push_valid() -> None:
 
 def test_make_command_result_valid() -> None:
     result = CommandResultPayload(
-        request_id="r1", command="git_pull", group="deploy",
-        success=True, exit_code=0, stdout="up\n", stderr="", duration_ms=200,
+        request_id="r1",
+        command="git_pull",
+        group="deploy",
+        success=True,
+        exit_code=0,
+        stdout="up\n",
+        stderr="",
+        duration_ms=200,
     )
     env = make_command_result("test-01", result)
     assert env.type == MessageType.COMMAND_RESULT
@@ -666,17 +725,28 @@ def test_extra_envelope_fields_ignored(heartbeat_dict: dict[str, Any]) -> None:
 
 
 def test_extra_payload_fields_ignored() -> None:
-    data: dict[str, Any] = {"version": "0.1.0", "pulse_token": "tok", "extra": "ignored"}
+    data: dict[str, Any] = {
+        "version": "0.1.0",
+        "pulse_token": "tok",
+        "extra": "ignored",
+    }
     payload = RegisterPayload.from_dict(data)
     assert payload.version == "0.1.0"
 
 
 def test_empty_containers_valid() -> None:
     data: dict[str, Any] = {
-        "cpu_percent": 1.0, "memory_percent": 2.0, "memory_used_mb": 3.0,
-        "memory_total_mb": 4.0, "disk_percent": 5.0, "disk_used_gb": 6.0,
-        "disk_total_gb": 7.0, "load_avg_1m": 0.1, "load_avg_5m": 0.2,
-        "uptime_seconds": 8.0, "containers": [],
+        "cpu_percent": 1.0,
+        "memory_percent": 2.0,
+        "memory_used_mb": 3.0,
+        "memory_total_mb": 4.0,
+        "disk_percent": 5.0,
+        "disk_used_gb": 6.0,
+        "disk_total_gb": 7.0,
+        "load_avg_1m": 0.1,
+        "load_avg_5m": 0.2,
+        "uptime_seconds": 8.0,
+        "containers": [],
     }
     payload = MetricsPayload.from_dict(data)
     assert payload.containers == []
@@ -779,7 +849,9 @@ def test_log_batch_envelope_json_roundtrip() -> None:
         group="pulse",
         parser="stormpulse",
         batch_id="bid",
-        lines=[{"ts": "t", "level": "INFO", "message": "m", "event_type": "connection"}],
+        lines=[
+            {"ts": "t", "level": "INFO", "message": "m", "event_type": "connection"}
+        ],
         dropped=0,
         from_position=0,
         to_position=10,
@@ -797,7 +869,9 @@ def test_log_batch_ack_message_type_valid() -> None:
 
 def test_register_with_log_groups() -> None:
     env = make_register(
-        "agent-1", "0.3.0", "tok",
+        "agent-1",
+        "0.3.0",
+        "tok",
         log_groups=["storage", "pulse"],
     )
     assert env.payload["log_groups"] == ["storage", "pulse"]
@@ -811,17 +885,26 @@ def test_register_with_log_groups() -> None:
 
 def test_make_metrics_push_with_garage_merges_dict() -> None:
     from stormpulse.protocol import MetricsPayload
+
     metrics = MetricsPayload(
-        cpu_percent=1.0, memory_percent=2.0, memory_used_mb=3.0,
-        memory_total_mb=4.0, disk_percent=5.0, disk_used_gb=6.0,
-        disk_total_gb=7.0, load_avg_1m=0.0, load_avg_5m=0.0,
-        uptime_seconds=1.0, containers=[],
+        cpu_percent=1.0,
+        memory_percent=2.0,
+        memory_used_mb=3.0,
+        memory_total_mb=4.0,
+        disk_percent=5.0,
+        disk_used_gb=6.0,
+        disk_total_gb=7.0,
+        load_avg_1m=0.0,
+        load_avg_5m=0.0,
+        uptime_seconds=1.0,
+        containers=[],
     )
     garage = {"node_id": "abc", "healthy": True, "buckets": []}
     env = make_metrics_push("agent-1", metrics, garage=garage)
     assert env.payload["garage"] == garage
     # Full round-trip preserves garage
     from stormpulse.protocol import Envelope
+
     round_tripped = Envelope.from_json(env.to_json())
     assert round_tripped.payload["garage"] == garage
     assert round_tripped.payload["cpu_percent"] == 1.0
@@ -829,9 +912,12 @@ def test_make_metrics_push_with_garage_merges_dict() -> None:
 
 def test_make_register_with_garage_and_log_groups() -> None:
     from stormpulse.protocol import Envelope
+
     garage = {"node_id": "n", "buckets": []}
     env = make_register(
-        "agent-1", "1.0.0", "tok",
+        "agent-1",
+        "1.0.0",
+        "tok",
         commands={"git_pull": {"group": "deploy"}},
         garage=garage,
         log_groups=["storage"],
@@ -842,22 +928,29 @@ def test_make_register_with_garage_and_log_groups() -> None:
     assert rt.payload["commands"] == {"git_pull": {"group": "deploy"}}
 
 
-@pytest.mark.parametrize("ack_type", [
-    MessageType.REGISTER_OK,
-    MessageType.HEARTBEAT_ACK,
-    MessageType.METRICS_ACK,
-    MessageType.COMMAND_RESULT_ACK,
-    MessageType.LOG_BATCH_ACK,
-    MessageType.ERROR,
-])
+@pytest.mark.parametrize(
+    "ack_type",
+    [
+        MessageType.REGISTER_OK,
+        MessageType.HEARTBEAT_ACK,
+        MessageType.METRICS_ACK,
+        MessageType.COMMAND_RESULT_ACK,
+        MessageType.LOG_BATCH_ACK,
+        MessageType.ERROR,
+    ],
+)
 def test_ack_envelope_round_trip(ack_type: MessageType) -> None:
     """Dashboard-origin ack messages must round-trip through from_json/to_json unchanged."""
-    from stormpulse.protocol import Envelope
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
+
+    from stormpulse.protocol import Envelope
+
     original = Envelope(
-        v=1, type=ack_type, id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc).replace(microsecond=0),
+        v=1,
+        type=ack_type,
+        id=str(uuid.uuid4()),
+        ts=datetime.now(UTC).replace(microsecond=0),
         agent_id="agent-1",
         payload={"detail": "ok"},
     )
@@ -870,21 +963,32 @@ def test_ack_envelope_round_trip(ack_type: MessageType) -> None:
 
 def test_envelope_post_init_rejects_unsupported_version() -> None:
     """Directly constructing with v!=1 must raise (not just from_json)."""
+    from datetime import datetime
+
     from stormpulse.protocol import Envelope
-    from datetime import datetime, timezone
+
     with pytest.raises(ProtocolError, match="Unsupported protocol version"):
         Envelope(
-            v=2, type=MessageType.HEARTBEAT, id="x",
-            ts=datetime.now(timezone.utc), agent_id="a", payload={},
+            v=2,
+            type=MessageType.HEARTBEAT,
+            id="x",
+            ts=datetime.now(UTC),
+            agent_id="a",
+            payload={},
         )
 
 
 def test_envelope_post_init_rejects_naive_timestamp() -> None:
-    from stormpulse.protocol import Envelope
     from datetime import datetime
+
+    from stormpulse.protocol import Envelope
+
     with pytest.raises(ProtocolError, match="timezone-aware"):
         Envelope(
-            v=1, type=MessageType.HEARTBEAT, id="x",
+            v=1,
+            type=MessageType.HEARTBEAT,
+            id="x",
             ts=datetime(2026, 1, 1),  # naive
-            agent_id="a", payload={},
+            agent_id="a",
+            payload={},
         )

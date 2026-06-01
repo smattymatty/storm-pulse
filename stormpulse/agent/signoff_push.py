@@ -40,7 +40,8 @@ POLL_INTERVAL_SECONDS = 5.0
 
 
 async def signoff_state_push_loop(
-    agent: "Agent", ws: ClientConnection,
+    agent: Agent,
+    ws: ClientConnection,
 ) -> None:
     """Push ``signoff.state`` on every observed seal transition."""
     agent_id = agent._config.agent.id
@@ -64,7 +65,8 @@ async def signoff_state_push_loop(
             raise
         except Exception:
             logger.warning(
-                "Failed to push signoff.state on transition", exc_info=True,
+                "Failed to push signoff.state on transition",
+                exc_info=True,
             )
             # Retry next tick; do not advance last_sealed on send failure.
             continue
@@ -75,6 +77,7 @@ async def signoff_state_push_loop(
         last_sealed = current_sealed
         if agent._pulse_logger is not None:
             agent._pulse_logger.info(
-                "Seal state changed", "signoff",
+                "Seal state changed",
+                "signoff",
                 {"sealed": current_sealed},
             )

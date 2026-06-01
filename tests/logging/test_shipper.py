@@ -36,12 +36,14 @@ def _make_group(
 
 
 def _stormpulse_line(message: str) -> str:
-    return json.dumps({
-        "ts": "2026-04-10T13:00:00Z",
-        "level": "INFO",
-        "message": message,
-        "event_type": "connection",
-    })
+    return json.dumps(
+        {
+            "ts": "2026-04-10T13:00:00Z",
+            "level": "INFO",
+            "message": message,
+            "event_type": "connection",
+        }
+    )
 
 
 def test_empty_source_returns_none(tmp_path: Path) -> None:
@@ -73,7 +75,9 @@ def test_parses_valid_lines(tmp_path: Path) -> None:
 def test_malformed_lines_counted_as_dropped(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "t.log"
-    log.write_text(_stormpulse_line("ok") + "\nnot json\n" + _stormpulse_line("ok2") + "\n")
+    log.write_text(
+        _stormpulse_line("ok") + "\nnot json\n" + _stormpulse_line("ok2") + "\n"
+    )
     group = _make_group(log)
     shipper = LogShipper(group, LogTailer(group, store))
     batch = shipper.collect_batch()
@@ -87,8 +91,7 @@ def test_filter_contains_skips_non_matching(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "t.log"
     log.write_text(
-        _stormpulse_line("keep this") + "\n"
-        + _stormpulse_line("drop this") + "\n"
+        _stormpulse_line("keep this") + "\n" + _stormpulse_line("drop this") + "\n"
     )
     group = _make_group(log, filter_contains="keep")
     shipper = LogShipper(group, LogTailer(group, store))
@@ -122,13 +125,20 @@ def test_unknown_parser_raises(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "t.log"
     group = LogGroupConfig(
-        name="x", enabled=True, source_type="file", source_path=log,
-        filter_contains="", parser="not_a_parser",
-        ship_interval_seconds=10.0, max_lines_per_batch=5, retention_days=1,
+        name="x",
+        enabled=True,
+        source_type="file",
+        source_path=log,
+        filter_contains="",
+        parser="not_a_parser",
+        ship_interval_seconds=10.0,
+        max_lines_per_batch=5,
+        retention_days=1,
     )
     with pytest.raises(ValueError):
         LogShipper(group, LogTailer(group, store))
     store.close()
+
 
 def test_position_not_advanced_without_confirm(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
@@ -146,6 +156,7 @@ def test_position_not_advanced_without_confirm(tmp_path: Path) -> None:
     assert len(batch2.lines) == len(batch1.lines)
     store.close()
 
+
 def test_all_filtered_returns_none(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "t.log"
@@ -154,6 +165,7 @@ def test_all_filtered_returns_none(tmp_path: Path) -> None:
     shipper = LogShipper(group, LogTailer(group, store))
     assert shipper.collect_batch() is None
     store.close()
+
 
 def test_all_dropped_ships_drop_count(tmp_path: Path) -> None:
     """Unparseable source still ships dropped count so dashboard sees the signal."""
@@ -174,10 +186,17 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
     is a string timestamp (not int) and confirm_shipped accepts it."""
     store = LogPositionStore(tmp_path / "pos.db")
     group = LogGroupConfig(
-        name="web", enabled=True, source_type="docker",
-        source_path=Path(""), filter_contains="", parser="docker_raw",
-        ship_interval_seconds=10.0, max_lines_per_batch=50, retention_days=30,
-        container_name="web", docker_binary="/usr/bin/docker",
+        name="web",
+        enabled=True,
+        source_type="docker",
+        source_path=Path(""),
+        filter_contains="",
+        parser="docker_raw",
+        ship_interval_seconds=10.0,
+        max_lines_per_batch=50,
+        retention_days=30,
+        container_name="web",
+        docker_binary="/usr/bin/docker",
     )
     store.set_docker_ts("web", "web", "2026-04-16T13:00:00.000000Z")
     tailer = DockerTailer(group, store)
@@ -186,7 +205,10 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
     stdout = "2026-04-16T13:00:01.000000Z some log line\n"
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout=stdout, stderr="",
+            args=[],
+            returncode=0,
+            stdout=stdout,
+            stderr="",
         )
         batch = shipper.collect_batch()
 

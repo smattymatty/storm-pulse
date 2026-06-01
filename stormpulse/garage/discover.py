@@ -31,7 +31,8 @@ def discover_garage(config: GarageConfig | None) -> GarageState | None:
 
     if not config.config_path.is_file():
         logger.warning(
-            "Garage config_path does not exist: %s", config.config_path,
+            "Garage config_path does not exist: %s",
+            config.config_path,
         )
         return None
 

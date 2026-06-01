@@ -218,9 +218,15 @@ async def test_send_now_puts_envelope_on_wire() -> None:
     from stormpulse.protocol import CommandResultPayload, make_command_result
 
     payload = CommandResultPayload(
-        request_id="r-1", command="x", group="g",
-        success=False, exit_code=-1, stdout="", stderr="no handler",
-        duration_ms=0, failure_reason="os_error",
+        request_id="r-1",
+        command="x",
+        group="g",
+        success=False,
+        exit_code=-1,
+        stdout="",
+        stderr="no handler",
+        duration_ms=0,
+        failure_reason="os_error",
     )
     await mgr.send_now(make_command_result("agent-1", payload))
     assert len(wire.sent) == 1
@@ -333,9 +339,15 @@ async def test_send_now_swallows_send_errors() -> None:
     from stormpulse.protocol import CommandResultPayload, make_command_result
 
     payload = CommandResultPayload(
-        request_id="r-1", command="x", group="g",
-        success=False, exit_code=-1, stdout="", stderr="",
-        duration_ms=0, failure_reason="os_error",
+        request_id="r-1",
+        command="x",
+        group="g",
+        success=False,
+        exit_code=-1,
+        stdout="",
+        stderr="",
+        duration_ms=0,
+        failure_reason="os_error",
     )
     # Should not raise
     await mgr.send_now(make_command_result("agent-1", payload))

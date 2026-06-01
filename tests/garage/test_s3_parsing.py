@@ -7,9 +7,9 @@ verify that the parser handles namespaced and bare tags identically.
 
 from __future__ import annotations
 
-import pytest
-
 from xml.etree import ElementTree
+
+import pytest
 
 from stormpulse.garage.s3 import (
     CorsRule,
@@ -23,7 +23,6 @@ from stormpulse.garage.s3 import (
     _parse_error_response,
     _parse_list_response,
 )
-
 
 # ---------------------------------------------------------------------------
 # ListObjectsV2 response parsing

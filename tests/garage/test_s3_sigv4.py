@@ -15,15 +15,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 
-import pytest
-
 from stormpulse.garage.s3 import (
     _build_authorization,
     _canonical_headers,
     _canonical_query_string,
     _derive_signing_key,
 )
-
 
 # AWS get-vanilla vector inputs
 _ACCESS_KEY = "AKIDEXAMPLE"
@@ -67,10 +64,12 @@ def test_canonical_query_empty_value_kept() -> None:
 
 
 def test_canonical_headers_lowercased_and_sorted() -> None:
-    block, signed = _canonical_headers({
-        "Host": "example.amazonaws.com",
-        "X-Amz-Date": "20150830T123600Z",
-    })
+    block, signed = _canonical_headers(
+        {
+            "Host": "example.amazonaws.com",
+            "X-Amz-Date": "20150830T123600Z",
+        }
+    )
     # Sorted lowercased: host before x-amz-date
     assert block == "host:example.amazonaws.com\nx-amz-date:20150830T123600Z\n"
     assert signed == "host;x-amz-date"
@@ -122,16 +121,30 @@ def test_authorization_query_params_affect_signature() -> None:
     headers = {"Host": "example.amazonaws.com", "X-Amz-Date": _AMZ_DATE}
     body_sha256 = hashlib.sha256(b"").hexdigest()
     sig_no_query = _build_authorization(
-        method="GET", path="/", query_params=[],
-        headers=headers, body_sha256=body_sha256,
-        access_key=_ACCESS_KEY, secret_key=_SECRET_KEY,
-        region=_REGION, amz_date=_AMZ_DATE, date_stamp=_DATE_STAMP, service=_SERVICE,
+        method="GET",
+        path="/",
+        query_params=[],
+        headers=headers,
+        body_sha256=body_sha256,
+        access_key=_ACCESS_KEY,
+        secret_key=_SECRET_KEY,
+        region=_REGION,
+        amz_date=_AMZ_DATE,
+        date_stamp=_DATE_STAMP,
+        service=_SERVICE,
     )
     sig_with_query = _build_authorization(
-        method="GET", path="/", query_params=[("prefix", "x")],
-        headers=headers, body_sha256=body_sha256,
-        access_key=_ACCESS_KEY, secret_key=_SECRET_KEY,
-        region=_REGION, amz_date=_AMZ_DATE, date_stamp=_DATE_STAMP, service=_SERVICE,
+        method="GET",
+        path="/",
+        query_params=[("prefix", "x")],
+        headers=headers,
+        body_sha256=body_sha256,
+        access_key=_ACCESS_KEY,
+        secret_key=_SECRET_KEY,
+        region=_REGION,
+        amz_date=_AMZ_DATE,
+        date_stamp=_DATE_STAMP,
+        service=_SERVICE,
     )
     assert sig_no_query != sig_with_query
 
@@ -141,16 +154,30 @@ def test_authorization_secret_change_changes_signature() -> None:
     headers = {"Host": "example.amazonaws.com", "X-Amz-Date": _AMZ_DATE}
     body_sha256 = hashlib.sha256(b"").hexdigest()
     sig_a = _build_authorization(
-        method="GET", path="/", query_params=[],
-        headers=headers, body_sha256=body_sha256,
-        access_key=_ACCESS_KEY, secret_key=_SECRET_KEY,
-        region=_REGION, amz_date=_AMZ_DATE, date_stamp=_DATE_STAMP, service=_SERVICE,
+        method="GET",
+        path="/",
+        query_params=[],
+        headers=headers,
+        body_sha256=body_sha256,
+        access_key=_ACCESS_KEY,
+        secret_key=_SECRET_KEY,
+        region=_REGION,
+        amz_date=_AMZ_DATE,
+        date_stamp=_DATE_STAMP,
+        service=_SERVICE,
     )
     sig_b = _build_authorization(
-        method="GET", path="/", query_params=[],
-        headers=headers, body_sha256=body_sha256,
-        access_key=_ACCESS_KEY, secret_key="different-secret-not-the-aws-vector-one",
-        region=_REGION, amz_date=_AMZ_DATE, date_stamp=_DATE_STAMP, service=_SERVICE,
+        method="GET",
+        path="/",
+        query_params=[],
+        headers=headers,
+        body_sha256=body_sha256,
+        access_key=_ACCESS_KEY,
+        secret_key="different-secret-not-the-aws-vector-one",
+        region=_REGION,
+        amz_date=_AMZ_DATE,
+        date_stamp=_DATE_STAMP,
+        service=_SERVICE,
     )
     assert sig_a != sig_b
 
@@ -167,7 +194,9 @@ def test_derive_signing_key_matches_manual_chain() -> None:
     region = "ca-central-1"
     service = "s3"
     expected_step1 = hmac.new(
-        ("AWS4" + secret).encode(), date_stamp.encode(), hashlib.sha256,
+        ("AWS4" + secret).encode(),
+        date_stamp.encode(),
+        hashlib.sha256,
     ).digest()
     expected_step2 = hmac.new(expected_step1, region.encode(), hashlib.sha256).digest()
     expected_step3 = hmac.new(expected_step2, service.encode(), hashlib.sha256).digest()

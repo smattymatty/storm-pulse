@@ -8,7 +8,6 @@ the post-refresh push closure.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -25,9 +24,7 @@ from stormpulse.agent.garage_actions import (
 from stormpulse.commands.jobs import JobManager
 from stormpulse.config import CommandDef
 from stormpulse.protocol import Envelope
-
 from tests.helpers import FAKE_METRICS, make_fake_garage_state
-
 
 # ---------------------------------------------------------------------------
 # build_metrics_envelope
@@ -37,7 +34,8 @@ from tests.helpers import FAKE_METRICS, make_fake_garage_state
 @pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_metrics")
 async def test_build_metrics_envelope_without_garage_state(
-    mock_collect: MagicMock, agent: Agent,
+    mock_collect: MagicMock,
+    agent: Agent,
 ) -> None:
     """When no garage state is set, the envelope has ``garage=None``."""
     mock_collect.return_value = FAKE_METRICS
@@ -49,7 +47,8 @@ async def test_build_metrics_envelope_without_garage_state(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_metrics")
 async def test_build_metrics_envelope_includes_garage_snapshot(
-    mock_collect: MagicMock, agent: Agent,
+    mock_collect: MagicMock,
+    agent: Agent,
 ) -> None:
     """When garage state is present it rides as a dict on the envelope."""
     mock_collect.return_value = FAKE_METRICS
@@ -116,7 +115,9 @@ def test_post_success_hook_none_when_garage_disabled(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     """A garage-group command on an agent with [garage].enabled=False gets no hook."""
-    cmd_def = CommandDef(group="garage", command=["/garage"], timeout=60, long_running=True)
+    cmd_def = CommandDef(
+        group="garage", command=["/garage"], timeout=60, long_running=True
+    )
     ag = agent_with_garage(enabled=False)
     assert post_success_hook(ag, cmd_def, "garage_bucket_clear") is None
 
@@ -124,7 +125,9 @@ def test_post_success_hook_none_when_garage_disabled(
 def test_post_success_hook_present_when_garage_enabled(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
-    cmd_def = CommandDef(group="garage", command=["/garage"], timeout=60, long_running=True)
+    cmd_def = CommandDef(
+        group="garage", command=["/garage"], timeout=60, long_running=True
+    )
     ag = agent_with_garage()
     assert post_success_hook(ag, cmd_def, "garage_bucket_clear") is not None
 
@@ -150,7 +153,9 @@ async def test_post_success_hook_refreshes_and_pushes(
 
     ag._job_manager = JobManager(ag._config.agent.id, fake_send)
 
-    cmd_def = CommandDef(group="garage", command=["/garage"], timeout=60, long_running=True)
+    cmd_def = CommandDef(
+        group="garage", command=["/garage"], timeout=60, long_running=True
+    )
     hook = post_success_hook(ag, cmd_def, "garage_bucket_clear")
     assert hook is not None
     await hook()
@@ -170,7 +175,8 @@ async def test_post_success_hook_refreshes_and_pushes(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_metrics")
 async def test_push_post_refresh_metrics_sends_envelope(
-    mock_collect: MagicMock, agent: Agent,
+    mock_collect: MagicMock,
+    agent: Agent,
 ) -> None:
     mock_collect.return_value = FAKE_METRICS
     ws = AsyncMock()
@@ -181,9 +187,12 @@ async def test_push_post_refresh_metrics_sends_envelope(
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.agent.garage_actions.collect_metrics", side_effect=RuntimeError("boom"))
+@patch(
+    "stormpulse.agent.garage_actions.collect_metrics", side_effect=RuntimeError("boom")
+)
 async def test_push_post_refresh_metrics_swallows_errors(
-    _mock: MagicMock, agent: Agent,
+    _mock: MagicMock,
+    agent: Agent,
 ) -> None:
     """A failed push must not raise — the underlying refresh already succeeded."""
     ws = AsyncMock()

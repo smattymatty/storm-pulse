@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
 import stat
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from cryptography import x509
@@ -41,7 +40,6 @@ from stormpulse.init import (
 )
 from stormpulse.init.prompts import prompt_confirm
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -50,7 +48,7 @@ from stormpulse.init.prompts import prompt_confirm
 def _make_cert_with_cn(tmp_path: Path, cn: str) -> Path:
     """Generate a self-signed cert with a specific CN."""
     key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cert = (
         x509.CertificateBuilder()
         .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, cn)]))
@@ -196,10 +194,16 @@ class TestLoadEnrollMetadata:
 
 class TestDeriveDashboardUrl:
     def test_https_to_wss(self) -> None:
-        assert derive_dashboard_url("https://example.com/api/enroll/") == "wss://example.com/ws/pulse/"
+        assert (
+            derive_dashboard_url("https://example.com/api/enroll/")
+            == "wss://example.com/ws/pulse/"
+        )
 
     def test_http_to_ws(self) -> None:
-        assert derive_dashboard_url("http://localhost:8000/api/enroll/") == "ws://localhost:8000/ws/pulse/"
+        assert (
+            derive_dashboard_url("http://localhost:8000/api/enroll/")
+            == "ws://localhost:8000/ws/pulse/"
+        )
 
     def test_standard_port_omitted(self) -> None:
         url = derive_dashboard_url("https://example.com:443/api/enroll/")
@@ -257,7 +261,9 @@ class TestParseServiceNames:
 
     def test_deeper_indentation_ignored(self, tmp_path: Path) -> None:
         p = tmp_path / "docker-compose.yml"
-        p.write_text("services:\n  web:\n    image: test\n    ports:\n      - '80:80'\n")
+        p.write_text(
+            "services:\n  web:\n    image: test\n    ports:\n      - '80:80'\n"
+        )
         services = parse_service_names(p)
         assert services == ["web"]
 
@@ -360,7 +366,10 @@ class TestPromptPulseToken:
     def test_valid_uuid(self, _mock: MagicMock) -> None:
         assert prompt_pulse_token() == "a1b2c3d4-5678-9abc-def0-111111111111"
 
-    @patch("builtins.input", side_effect=["garbage", "a1b2c3d4-5678-9abc-def0-111111111111"])
+    @patch(
+        "builtins.input",
+        side_effect=["garbage", "a1b2c3d4-5678-9abc-def0-111111111111"],
+    )
     def test_rejects_then_accepts(self, _mock: MagicMock) -> None:
         assert prompt_pulse_token() == "a1b2c3d4-5678-9abc-def0-111111111111"
 
@@ -426,7 +435,9 @@ class TestPromptDashboardUrl:
         assert prompt_dashboard_url() == "wss://example.com/ws/pulse/"
 
     @patch("builtins.input", return_value="ws://localhost:8000/ws/pulse/")
-    def test_ws_with_warning(self, _mock: MagicMock, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_ws_with_warning(
+        self, _mock: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         result = prompt_dashboard_url()
         assert result == "ws://localhost:8000/ws/pulse/"
         assert "unencrypted" in capsys.readouterr().err
@@ -477,7 +488,9 @@ class TestPromptProjectDir:
         assert not missing.exists()
 
     def test_unwritable_parent_shows_sudo_and_enter_retries(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         # Parent isn't writable -> wizard skips "Create it?" and shows
         # the sudo line. Operator runs sudo in another shell (simulated
@@ -524,7 +537,9 @@ class TestPromptProjectDir:
         assert result == good.resolve()
 
     def test_existing_unwritable_dir_shows_chown_hint(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         # `sudo mkdir` without `chown` scenario: dir exists but isn't
         # writable by the operator. Wizard should not silently accept;
@@ -534,6 +549,7 @@ class TestPromptProjectDir:
         target.mkdir()
 
         access_count = {"target": 0}
+
         def fake_access(path: object, mode: int) -> bool:
             if Path(str(path)) == target:
                 access_count["target"] += 1
@@ -598,6 +614,7 @@ class TestPromptComposeFile:
         # The next step in the wizard parses services -- verify the
         # scaffolded file feeds parse_service_names correctly.
         from stormpulse.init.compose import parse_service_names
+
         assert parse_service_names(result) == [project_dir.name]
 
     def test_scaffold_accepts_custom_service_name(self, tmp_path: Path) -> None:
@@ -762,7 +779,15 @@ class TestGenerateToml:
         config = self._make_config(tmp_path)
         content = generate_toml(config)
         parsed = tomllib.loads(content)
-        for section in ("agent", "dashboard", "tls", "auth", "metrics", "project", "storage"):
+        for section in (
+            "agent",
+            "dashboard",
+            "tls",
+            "auth",
+            "metrics",
+            "project",
+            "storage",
+        ):
             assert section in parsed, f"Missing section: {section}"
 
     def test_env_file_included(self, tmp_path: Path) -> None:
@@ -860,7 +885,9 @@ class TestWriteSystemdUnit:
 class TestRunFindApply:
     @patch("stormpulse.init.system.subprocess.Popen")
     def test_builds_find_with_prune_args(
-        self, mock_popen: MagicMock, tmp_path: Path,
+        self,
+        mock_popen: MagicMock,
+        tmp_path: Path,
     ) -> None:
         from stormpulse.init import run_find_apply
 
@@ -879,7 +906,8 @@ class TestRunFindApply:
         vol2 = tmp_path / "logs"
 
         result = run_find_apply(
-            tmp_path, [vol1, vol2],
+            tmp_path,
+            [vol1, vol2],
             ["/usr/bin/chown", "root:stormpulse"],
             description="test chown",
         )
@@ -896,11 +924,18 @@ class TestRunFindApply:
         assert find_args[-1] == "-print0"
 
         xargs_args = mock_popen.call_args_list[1][0][0]
-        assert xargs_args == ["/usr/bin/xargs", "-0", "/usr/bin/chown", "root:stormpulse"]
+        assert xargs_args == [
+            "/usr/bin/xargs",
+            "-0",
+            "/usr/bin/chown",
+            "root:stormpulse",
+        ]
 
     @patch("stormpulse.init.system.subprocess.Popen")
     def test_returns_false_on_find_failure(
-        self, mock_popen: MagicMock, tmp_path: Path,
+        self,
+        mock_popen: MagicMock,
+        tmp_path: Path,
     ) -> None:
         from stormpulse.init import run_find_apply
 
@@ -916,7 +951,8 @@ class TestRunFindApply:
         mock_popen.side_effect = [mock_find, mock_xargs]
 
         result = run_find_apply(
-            tmp_path, [],
+            tmp_path,
+            [],
             ["/usr/bin/chown", "root:stormpulse"],
             description="test",
         )
@@ -924,14 +960,17 @@ class TestRunFindApply:
 
     @patch("stormpulse.init.system.subprocess.Popen")
     def test_returns_false_on_missing_binary(
-        self, mock_popen: MagicMock, tmp_path: Path,
+        self,
+        mock_popen: MagicMock,
+        tmp_path: Path,
     ) -> None:
         from stormpulse.init import run_find_apply
 
         mock_popen.side_effect = FileNotFoundError(2, "No such file", "/usr/bin/find")
 
         result = run_find_apply(
-            tmp_path, [],
+            tmp_path,
+            [],
             ["/usr/bin/chown", "root:stormpulse"],
             description="test",
         )
@@ -947,7 +986,10 @@ class TestRunSystemSetup:
     @patch("stormpulse.init.system.subprocess.run")
     @patch("stormpulse.init.system.parse_volume_mounts", return_value=[])
     def test_no_volumes_uses_simple_chown(
-        self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        _mock_vol: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
@@ -967,7 +1009,10 @@ class TestRunSystemSetup:
     @patch("stormpulse.init.system.run_find_apply", return_value=True)
     @patch("stormpulse.init.system.subprocess.run")
     def test_with_volumes_uses_find_prune(
-        self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
+        self,
+        mock_run: MagicMock,
+        mock_find_apply: MagicMock,
+        tmp_path: Path,
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
@@ -996,15 +1041,17 @@ class TestRunSystemSetup:
         # No chown -R on the project dir via subprocess.run
         run_args = [c[0][0] for c in mock_run.call_args_list]
         project_chowns = [
-            a for a in run_args
-            if "/usr/bin/chown" in a and str(project) in a
+            a for a in run_args if "/usr/bin/chown" in a and str(project) in a
         ]
         assert len(project_chowns) == 0
 
     @patch("stormpulse.init.system.run_find_apply", return_value=True)
     @patch("stormpulse.init.system.subprocess.run")
     def test_volume_dirs_never_chowned(
-        self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
+        self,
+        mock_run: MagicMock,
+        mock_find_apply: MagicMock,
+        tmp_path: Path,
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
@@ -1031,7 +1078,10 @@ class TestRunSystemSetup:
     @patch("stormpulse.init.system.subprocess.run")
     @patch("stormpulse.init.system.parse_volume_mounts", return_value=None)
     def test_parse_failure_skips_chown(
-        self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        _mock_vol: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         project = tmp_path / "project"
@@ -1055,7 +1105,10 @@ class TestRunSystemSetup:
     @patch("stormpulse.init.system.subprocess.run")
     @patch("stormpulse.init.system.parse_volume_mounts", return_value=[])
     def test_continues_on_failure(
-        self, _mock_vol: MagicMock, mock_run: MagicMock, tmp_path: Path,
+        self,
+        _mock_vol: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
     ) -> None:
         import subprocess as sp
 
@@ -1070,7 +1123,10 @@ class TestRunSystemSetup:
     @patch("stormpulse.init.system.run_find_apply", return_value=False)
     @patch("stormpulse.init.system.subprocess.run")
     def test_returns_early_on_chown_failure_with_volumes(
-        self, mock_run: MagicMock, mock_find_apply: MagicMock, tmp_path: Path,
+        self,
+        mock_run: MagicMock,
+        mock_find_apply: MagicMock,
+        tmp_path: Path,
     ) -> None:
         project = tmp_path / "project"
         project.mkdir()
@@ -1119,12 +1175,14 @@ class TestRunInit:
         # Force system mode (would otherwise auto-detect to user when
         # the rootless socket is present on the test host).
         from stormpulse.init import InstallMode
+
         with pytest.raises(InitError, match="needs root|must be run as root"):
             run_init(tmp_path, mode=InstallMode.SYSTEM)
 
     @patch("stormpulse.init.mode.os.geteuid", return_value=0)
     def test_aborts_missing_creds(self, _mock: MagicMock, tmp_path: Path) -> None:
         from stormpulse.init import InstallMode
+
         with pytest.raises(InitError, match="not found"):
             run_init(tmp_path / "nonexistent", mode=InstallMode.SYSTEM)
 
@@ -1150,10 +1208,15 @@ class TestRunInit:
 
         # Write enroll.json
         import json
-        (creds / "enroll.json").write_text(json.dumps({
-            "endpoint": "https://example.com/api/enroll/",
-            "agent_id": "happy-agent",
-        }))
+
+        (creds / "enroll.json").write_text(
+            json.dumps(
+                {
+                    "endpoint": "https://example.com/api/enroll/",
+                    "agent_id": "happy-agent",
+                }
+            )
+        )
 
         # Create project dir with compose file
         project = tmp_path / "project"
@@ -1201,10 +1264,14 @@ class TestRunInit:
         import json
 
         creds = _make_creds_dir(tmp_path, cn="step-agent")
-        (creds / "enroll.json").write_text(json.dumps({
-            "endpoint": "https://example.com/api/enroll/",
-            "agent_id": "step-agent",
-        }))
+        (creds / "enroll.json").write_text(
+            json.dumps(
+                {
+                    "endpoint": "https://example.com/api/enroll/",
+                    "agent_id": "step-agent",
+                }
+            )
+        )
         project = tmp_path / "project"
         project.mkdir()
         (project / "docker-compose.yml").write_text(
@@ -1282,5 +1349,3 @@ class TestPromptConfirm:
     @patch("stormpulse.init.prompts.prompt", return_value="n")
     def test_n_returns_false(self, _mock: MagicMock) -> None:
         assert prompt_confirm("Continue?") is False
-
-

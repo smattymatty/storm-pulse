@@ -6,7 +6,7 @@ import sqlite3
 import time
 import uuid
 from collections.abc import Generator
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -29,7 +29,6 @@ from stormpulse.protocol import (
     MessageType,
     format_timestamp,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -67,7 +66,7 @@ def _make_signed_request(
     params: dict[str, str] | None = None,
 ) -> Envelope:
     if ts is None:
-        ts = datetime.now(timezone.utc)
+        ts = datetime.now(UTC)
     if nonce is None:
         nonce = generate_nonce()
     ts_str = format_timestamp(ts)
@@ -79,7 +78,12 @@ def _make_signed_request(
         id=str(uuid.uuid4()),
         ts=ts,
         agent_id=agent_id,
-        payload={"command": command, "params": params or {}, "hmac": sig, "nonce": nonce},
+        payload={
+            "command": command,
+            "params": params or {},
+            "hmac": sig,
+            "nonce": nonce,
+        },
     )
 
 
@@ -96,7 +100,7 @@ def _make_signed_sequence(
     if commands is None:
         commands = ["git_pull", "docker_logs"]
     if ts is None:
-        ts = datetime.now(timezone.utc)
+        ts = datetime.now(UTC)
     if nonce is None:
         nonce = generate_nonce()
     ts_str = format_timestamp(ts)
@@ -161,10 +165,15 @@ def test_canonical_command_request_format() -> None:
 
 def test_canonical_command_request_with_params() -> None:
     result = canonical_command_request(
-        "docker_logs", "nonce-1", "2026-02-21T12:00:00Z",
+        "docker_logs",
+        "nonce-1",
+        "2026-02-21T12:00:00Z",
         params={"service": "celery", "count": "50"},
     )
-    assert result == "v1\ndocker_logs\ncount=50&service=celery\nnonce-1\n2026-02-21T12:00:00Z"
+    assert (
+        result
+        == "v1\ndocker_logs\ncount=50&service=celery\nnonce-1\n2026-02-21T12:00:00Z"
+    )
 
 
 def test_canonical_command_request_v1_prefix() -> None:
@@ -176,7 +185,10 @@ def test_canonical_command_sequence_format() -> None:
     result = canonical_command_sequence(
         "seq-001", ["git_pull", "docker_logs"], True, "nonce-2", "2026-02-21T12:00:00Z"
     )
-    assert result == "v1\nseq-001\ngit_pull,docker_logs\ntrue\nnonce-2\n2026-02-21T12:00:00Z"
+    assert (
+        result
+        == "v1\nseq-001\ngit_pull,docker_logs\ntrue\nnonce-2\n2026-02-21T12:00:00Z"
+    )
 
 
 def test_canonical_command_sequence_stop_on_failure_false() -> None:
@@ -308,7 +320,7 @@ def test_verify_command_request_bad_hmac(nonce_store: NonceStore) -> None:
 
 
 def test_verify_command_request_stale(nonce_store: NonceStore) -> None:
-    old_ts = datetime.now(timezone.utc) - timedelta(seconds=120)
+    old_ts = datetime.now(UTC) - timedelta(seconds=120)
     env = _make_signed_request(ts=old_ts)
     with pytest.raises(AuthError, match="old"):
         verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
@@ -351,7 +363,7 @@ def test_verify_command_sequence_bad_hmac(nonce_store: NonceStore) -> None:
 
 
 def test_verify_command_sequence_stale(nonce_store: NonceStore) -> None:
-    old_ts = datetime.now(timezone.utc) - timedelta(seconds=120)
+    old_ts = datetime.now(UTC) - timedelta(seconds=120)
     env = _make_signed_sequence(ts=old_ts)
     with pytest.raises(AuthError, match="old"):
         verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
@@ -376,7 +388,7 @@ def test_verify_heartbeat_raises(nonce_store: NonceStore) -> None:
         v=1,
         type=MessageType.HEARTBEAT,
         id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         agent_id="test-agent",
         payload={},
     )
@@ -389,7 +401,7 @@ def test_verify_metrics_push_raises(nonce_store: NonceStore) -> None:
         v=1,
         type=MessageType.METRICS_PUSH,
         id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         agent_id="test-agent",
         payload={"cpu_percent": 0},
     )
@@ -402,7 +414,7 @@ def test_verify_register_raises(nonce_store: NonceStore) -> None:
         v=1,
         type=MessageType.REGISTER,
         id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         agent_id="test-agent",
         payload={"version": "0.1.0"},
     )
@@ -417,7 +429,7 @@ def test_verify_register_raises(nonce_store: NonceStore) -> None:
 
 def test_stale_rejected_before_hmac_check(nonce_store: NonceStore) -> None:
     """A stale message with a bad HMAC should fail on timestamp, not HMAC."""
-    old_ts = datetime.now(timezone.utc) - timedelta(seconds=120)
+    old_ts = datetime.now(UTC) - timedelta(seconds=120)
     env = Envelope(
         v=1,
         type=MessageType.COMMAND_REQUEST,
@@ -437,7 +449,7 @@ def test_bad_hmac_rejected_before_nonce_stored(nonce_store: NonceStore) -> None:
         v=1,
         type=MessageType.COMMAND_REQUEST,
         id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         agent_id="test-agent",
         payload={"command": "git_pull", "params": {}, "hmac": "bad", "nonce": nonce},
     )
@@ -488,7 +500,7 @@ def test_verify_non_utc_timezone(nonce_store: NonceStore) -> None:
 
 def test_verify_future_timestamp_within_window(nonce_store: NonceStore) -> None:
     """A slightly future timestamp (clock skew) within window should pass."""
-    future_ts = datetime.now(timezone.utc) + timedelta(seconds=5)
+    future_ts = datetime.now(UTC) + timedelta(seconds=5)
     env = _make_signed_request(ts=future_ts)
     payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
     assert isinstance(payload, CommandRequestPayload)
@@ -496,7 +508,7 @@ def test_verify_future_timestamp_within_window(nonce_store: NonceStore) -> None:
 
 def test_verify_future_timestamp_too_far_raises(nonce_store: NonceStore) -> None:
     """A future timestamp beyond the skew tolerance should be rejected."""
-    far_future = datetime.now(timezone.utc) + timedelta(seconds=120)
+    far_future = datetime.now(UTC) + timedelta(seconds=120)
     env = _make_signed_request(ts=far_future)
     with pytest.raises(AuthError, match="future"):
         verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
@@ -535,7 +547,8 @@ def test_canonicalize_params_single() -> None:
 
 def test_verify_command_request_with_params_roundtrip(nonce_store: NonceStore) -> None:
     env = _make_signed_request(
-        command="docker_logs", params={"service": "celery"},
+        command="docker_logs",
+        params={"service": "celery"},
     )
     payload = verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
     assert isinstance(payload, CommandRequestPayload)

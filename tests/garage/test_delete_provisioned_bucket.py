@@ -46,13 +46,19 @@ class _ProgressRecorder:
         self.events: list[tuple[str, int, int | None, str]] = []
 
     async def __call__(
-        self, stage: str, current: int, total: int | None, message: str,
+        self,
+        stage: str,
+        current: int,
+        total: int | None,
+        message: str,
     ) -> None:
         self.events.append((stage, current, total, message))
 
 
 def _setup_post_provision_bucket(
-    fake: FakeGarage, *, n_locals: int = 1,
+    fake: FakeGarage,
+    *,
+    n_locals: int = 1,
 ) -> tuple[str, list[tuple[str, str]]]:
     """Create a bucket in the post-A+B+C shape: zero global aliases,
     N local aliases attached. Returns (bucket_id_16char, local_aliases)
@@ -75,8 +81,14 @@ def _setup_post_provision_bucket(
         key = fake.add_key(f"key-{i}")
         # Grant permissions so the key shows up in bucket info.
         rc, _, stderr = fake._bucket_allow_or_deny(
-            ("--read", "--write", "--owner",
-             "temp-provisioning-alias", "--key", key.key_id),
+            (
+                "--read",
+                "--write",
+                "--owner",
+                "temp-provisioning-alias",
+                "--key",
+                key.key_id,
+            ),
             deny=False,
         )
         if rc != 0:
@@ -84,7 +96,9 @@ def _setup_post_provision_bucket(
         # Attach local alias.
         alias_name = f"obsidian-{i}" if n_locals > 1 else "obsidian"
         rc, _, stderr = fake._bucket_alias_local(
-            key.key_id, "temp-provisioning-alias", alias_name,
+            key.key_id,
+            "temp-provisioning-alias",
+            alias_name,
         )
         if rc != 0:
             raise ValueError(f"setup local alias failed: {stderr}")
@@ -104,7 +118,9 @@ async def _run(
     bucket_id: str,
 ) -> JobOutcome:
     monkeypatch.setattr(
-        delete_provisioned_bucket, "run_garage", fake.run_garage,
+        delete_provisioned_bucket,
+        "run_garage",
+        fake.run_garage,
     )
     # The orchestrator imports run_garage from provision_bucket; patch
     # both call sites so the fake intercepts everything.
@@ -202,8 +218,7 @@ async def test_bucket_with_global_alias_skips_temp_alias(
     # the key surfaces in bucket info.
     key = fake.add_key("alice-site-all")
     fake._bucket_allow_or_deny(
-        ("--read", "--write", "--owner",
-         "alice-site", "--key", key.key_id),
+        ("--read", "--write", "--owner", "alice-site", "--key", key.key_id),
         deny=False,
     )
     fake._bucket_alias_local(key.key_id, "alice-site", "site")
@@ -277,9 +292,7 @@ async def test_bucket_not_empty_exits_at_step_1_without_mutation(
     assert bucket_id[:16] in {b.bucket_id[:16] for b in fake.buckets.values()}
     surviving = next(iter(fake.buckets.values()))
     assert len(surviving.local_aliases) == 1
-    assert all(
-        not g.startswith("pulse-delete-") for g in surviving.global_aliases
-    )
+    assert all(not g.startswith("pulse-delete-") for g in surviving.global_aliases)
     # Friendly stderr message names the count so the dashboard's toast
     # can surface it verbatim.
     assert "5 object" in outcome.stderr
@@ -308,9 +321,7 @@ async def test_local_alias_detach_failure_rolls_back(
     # All 3 locals back.
     assert len(surviving.local_aliases) == 3
     # No leftover temp global.
-    assert all(
-        not g.startswith("pulse-delete-") for g in surviving.global_aliases
-    )
+    assert all(not g.startswith("pulse-delete-") for g in surviving.global_aliases)
 
 
 # ---------------------------------------------------------------------------
@@ -367,20 +378,27 @@ async def test_step_5_preserves_keys_with_other_buckets(
     bucket_a_id = bucket_a.bucket_id
     shared_key = fake.add_key("shared-ops-key")
     fake._bucket_allow_or_deny(
-        ("--read", "--write", "--owner",
-         "temp-provisioning-a", "--key", shared_key.key_id),
+        (
+            "--read",
+            "--write",
+            "--owner",
+            "temp-provisioning-a",
+            "--key",
+            shared_key.key_id,
+        ),
         deny=False,
     )
     fake._bucket_alias_local(
-        shared_key.key_id, "temp-provisioning-a", "alias-on-a",
+        shared_key.key_id,
+        "temp-provisioning-a",
+        "alias-on-a",
     )
     fake._bucket_unalias_global("temp-provisioning-a")
 
     # Bucket B - survives. Same key has access here too.
     bucket_b = fake.add_bucket("bucket-b")
     fake._bucket_allow_or_deny(
-        ("--read", "--write", "--owner",
-         "bucket-b", "--key", shared_key.key_id),
+        ("--read", "--write", "--owner", "bucket-b", "--key", shared_key.key_id),
         deny=False,
     )
     fake.calls.clear()
@@ -399,14 +417,16 @@ async def test_step_5_preserves_keys_with_other_buckets(
 
 def test_handler_factory_returns_none_on_missing_bucket_id() -> None:
     handler = make_delete_provisioned_bucket_handler(
-        _make_config(), params={},
+        _make_config(),
+        params={},
     )
     assert handler is None
 
 
 def test_handler_factory_returns_handler_when_complete() -> None:
     handler = make_delete_provisioned_bucket_handler(
-        _make_config(), params={"bucket_id": "abc1234567890def"},
+        _make_config(),
+        params={"bucket_id": "abc1234567890def"},
     )
     assert handler is not None
     assert callable(handler)

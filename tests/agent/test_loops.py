@@ -11,9 +11,7 @@ import pytest
 
 from stormpulse.agent import Agent
 from stormpulse.protocol import MetricsPayload
-
 from tests.helpers import FAKE_METRICS, make_fake_garage_state
-
 
 # ---------------------------------------------------------------------------
 # Heartbeat loop
@@ -21,7 +19,9 @@ from tests.helpers import FAKE_METRICS, make_fake_garage_state
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_loop_sends_messages(agent: Agent, shutdown: asyncio.Event) -> None:
+async def test_heartbeat_loop_sends_messages(
+    agent: Agent, shutdown: asyncio.Event
+) -> None:
     ws = AsyncMock()
     sent: list[str] = []
     ws.send = AsyncMock(side_effect=lambda msg: sent.append(msg))
@@ -41,7 +41,9 @@ async def test_heartbeat_loop_sends_messages(agent: Agent, shutdown: asyncio.Eve
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_loop_stops_on_shutdown(agent: Agent, shutdown: asyncio.Event) -> None:
+async def test_heartbeat_loop_stops_on_shutdown(
+    agent: Agent, shutdown: asyncio.Event
+) -> None:
     ws = AsyncMock()
     shutdown.set()
     await agent._heartbeat_loop(ws)
@@ -56,7 +58,9 @@ async def test_heartbeat_loop_stops_on_shutdown(agent: Agent, shutdown: asyncio.
 @pytest.mark.asyncio
 @patch("stormpulse.agent.loops.collect_metrics")
 async def test_metrics_loop_sends_metrics(
-    mock_collect: MagicMock, agent: Agent, shutdown: asyncio.Event,
+    mock_collect: MagicMock,
+    agent: Agent,
+    shutdown: asyncio.Event,
 ) -> None:
     mock_collect.return_value = FAKE_METRICS
     ws = AsyncMock()
@@ -81,7 +85,9 @@ async def test_metrics_loop_sends_metrics(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.loops.collect_metrics")
 async def test_metrics_loop_survives_collection_error(
-    mock_collect: MagicMock, agent: Agent, shutdown: asyncio.Event,
+    mock_collect: MagicMock,
+    agent: Agent,
+    shutdown: asyncio.Event,
 ) -> None:
     call_count = 0
 

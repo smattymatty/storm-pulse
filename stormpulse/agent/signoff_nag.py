@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 NAG_INTERVAL_SECONDS = 300.0  # 5 minutes
 
 
-async def signoff_nag_loop(agent: "Agent", ws: ClientConnection) -> None:
+async def signoff_nag_loop(agent: Agent, ws: ClientConnection) -> None:
     """Warn periodically while the agent is unsealed.
 
     ``ws`` is unused (the dashboard learns seal state via register); the
@@ -51,7 +51,8 @@ async def signoff_nag_loop(agent: "Agent", ws: ClientConnection) -> None:
             )
             if agent._pulse_logger is not None:
                 agent._pulse_logger.warning(
-                    "Agent unsealed", "signoff",
+                    "Agent unsealed",
+                    "signoff",
                     {"duration": duration},
                 )
         if await sleep_or_shutdown(agent._shutdown, NAG_INTERVAL_SECONDS):

@@ -49,7 +49,9 @@ def run_find_apply(
 
     try:
         find_proc = subprocess.Popen(
-            find_args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            find_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
         xargs_proc = subprocess.Popen(
             ["/usr/bin/xargs", "-0", *cmd_args],
@@ -95,7 +97,14 @@ def run_system_setup(
         # case the agent does git operations from a unit it didn't
         # check out itself.
         run_cmd(
-            ["/usr/bin/git", "config", "--global", "--add", "safe.directory", str(project_dir)],
+            [
+                "/usr/bin/git",
+                "config",
+                "--global",
+                "--add",
+                "safe.directory",
+                str(project_dir),
+            ],
             description=f"Marking {project_dir} as git safe.directory (user)",
         )
         return
@@ -105,7 +114,14 @@ def run_system_setup(
         description="Adding stormpulse to docker group",
     )
     run_cmd(
-        ["/usr/bin/git", "config", "--system", "--add", "safe.directory", str(project_dir)],
+        [
+            "/usr/bin/git",
+            "config",
+            "--system",
+            "--add",
+            "safe.directory",
+            str(project_dir),
+        ],
         description=f"Marking {project_dir} as git safe.directory",
     )
 
@@ -121,20 +137,25 @@ def run_system_setup(
         )
     elif volume_dirs:
         if not run_find_apply(
-            project_dir, volume_dirs,
+            project_dir,
+            volume_dirs,
             ["/usr/bin/chown", "root:stormpulse"],
             description=f"chown root:stormpulse {project_dir} (excluding {len(volume_dirs)} volume(s))",
         ):
             print("    Cannot set project directory permissions.", file=sys.stderr)
             return
         run_find_apply(
-            project_dir, volume_dirs,
+            project_dir,
+            volume_dirs,
             ["/usr/bin/chmod", "g+w"],
             description=f"chmod g+w {project_dir} (excluding {len(volume_dirs)} volume(s))",
         )
         existing = [d for d in volume_dirs if d.is_dir()]
         if existing:
-            print(f"  Excluded {len(existing)} Docker volume(s) from ownership changes.", file=sys.stderr)
+            print(
+                f"  Excluded {len(existing)} Docker volume(s) from ownership changes.",
+                file=sys.stderr,
+            )
     else:
         if not run_cmd(
             ["/usr/bin/chown", "-R", "root:stormpulse", str(project_dir)],
@@ -174,13 +195,16 @@ def check_linger_enabled() -> bool:
     stops when the operator logs out -- which makes the agent useless.
     """
     import os
+
     user = os.environ.get("USER") or ""
     if not user:
         return False
     try:
         result = subprocess.run(
             ["/usr/bin/loginctl", "show-user", user, "--property=Linger"],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         return "Linger=yes" in result.stdout
     except (FileNotFoundError, OSError):
@@ -204,7 +228,7 @@ def _restart_user_unit() -> int:
         )
         return result.returncode
     print(
-        "Restarted. Tail with: journalctl --user -u stormpulse -f",
+        "Restarted. Tail with: stormpulse logs",
         file=sys.stderr,
     )
     return 0
@@ -218,8 +242,7 @@ def _print_system_restart_hint() -> None:
     holds the privilege.
     """
     print(
-        "System install detected. Restart when ready: "
-        "systemctl restart stormpulse",
+        "System install detected. Restart when ready: systemctl restart stormpulse",
         file=sys.stderr,
     )
 

@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from dataclasses import asdict, dataclass
 from collections.abc import Callable
-from typing import Any, TypeVar
-
-_T = TypeVar("_T")
+from dataclasses import asdict, dataclass
+from typing import Any
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import (
-    GaragePeer,
     GarageParseError,
+    GaragePeer,
     parse_bucket_info,
     parse_bucket_list,
     parse_key_list,
@@ -83,14 +81,22 @@ class GarageState:
         return asdict(self)
 
     @classmethod
-    def disabled(cls, reason: str) -> "GarageState":
+    def disabled(cls, reason: str) -> GarageState:
         """Build the sentinel state for a self-disabled Garage feature."""
         return cls(
-            node_id="", hostname="", zone="",
-            capacity_gb=0.0, data_avail_gb=0.0,
-            version="", healthy=False, db_engine="",
-            object_count=0, block_count=0,
-            buckets=[], keys=[], peers=[],
+            node_id="",
+            hostname="",
+            zone="",
+            capacity_gb=0.0,
+            data_avail_gb=0.0,
+            version="",
+            healthy=False,
+            db_engine="",
+            object_count=0,
+            block_count=0,
+            buckets=[],
+            keys=[],
+            peers=[],
             disabled_reason=reason,
         )
 
@@ -98,8 +104,11 @@ class GarageState:
 def run_garage(config: GarageConfig, *args: str) -> str | None:
     """Run a garage CLI command via docker exec. Returns stdout or None on failure."""
     cmd = [
-        config.docker_binary, "exec", config.container_name,
-        config.garage_binary, *args,
+        config.docker_binary,
+        "exec",
+        config.container_name,
+        config.garage_binary,
+        *args,
     ]
     try:
         proc = subprocess.run(
@@ -119,14 +128,18 @@ def run_garage(config: GarageConfig, *args: str) -> str | None:
     if proc.returncode != 0:
         logger.warning(
             "Garage command failed (exit %d): %s - %s",
-            proc.returncode, " ".join(args), proc.stderr.strip(),
+            proc.returncode,
+            " ".join(args),
+            proc.stderr.strip(),
         )
         return None
 
     return proc.stdout
 
 
-def _try_parse(config: GarageConfig, parser: Callable[[str], _T], *args: str, what: str) -> _T | None:
+def _try_parse[T](
+    config: GarageConfig, parser: Callable[[str], T], *args: str, what: str
+) -> T | None:
     out = run_garage(config, *args)
     if out is None:
         return None
@@ -149,11 +162,16 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
     node = nodes[0]
 
     stats = _try_parse(config, parse_stats, "stats", what="stats")
-    key_entries = _try_parse(config, parse_key_list, "key", "list", what="key list") or []
+    key_entries = (
+        _try_parse(config, parse_key_list, "key", "list", what="key list") or []
+    )
     key_name_map = {k.key_id: k.name for k in key_entries}
 
     buckets: list[GarageBucket] = []
-    for entry in _try_parse(config, parse_bucket_list, "bucket", "list", what="bucket list") or []:
+    for entry in (
+        _try_parse(config, parse_bucket_list, "bucket", "list", what="bucket list")
+        or []
+    ):
         # Address bucket info by global alias when present, otherwise by UUID.
         # The Garage CLI accepts a bucket UUID anywhere it accepts a global alias.
         # Post-bucket-naming-refactor most customer buckets won't have a global
@@ -163,26 +181,36 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
         if not bucket_ref:
             continue
         info = _try_parse(
-            config, parse_bucket_info, "bucket", "info", bucket_ref,
+            config,
+            parse_bucket_info,
+            "bucket",
+            "info",
+            bucket_ref,
             what=f"bucket info for {bucket_ref}",
         )
         if info is None:
             continue
-        buckets.append(GarageBucket(
-            id=info.bucket_id,
-            alias=entry.global_alias,
-            size_bytes=info.size_bytes,
-            object_count=info.object_count,
-            keys=[
-                GarageKeyRef(k.access_key_id, key_name_map.get(k.access_key_id, ""), k.permissions)
-                for k in info.keys
-            ],
-            website_access=info.website_access,
-            website_index_document=info.website_index_document,
-            website_error_document=info.website_error_document,
-            quota_max_size_bytes=info.quota_max_size_bytes,
-            quota_max_objects=info.quota_max_objects,
-        ))
+        buckets.append(
+            GarageBucket(
+                id=info.bucket_id,
+                alias=entry.global_alias,
+                size_bytes=info.size_bytes,
+                object_count=info.object_count,
+                keys=[
+                    GarageKeyRef(
+                        k.access_key_id,
+                        key_name_map.get(k.access_key_id, ""),
+                        k.permissions,
+                    )
+                    for k in info.keys
+                ],
+                website_access=info.website_access,
+                website_index_document=info.website_index_document,
+                website_error_document=info.website_error_document,
+                quota_max_size_bytes=info.quota_max_size_bytes,
+                quota_max_objects=info.quota_max_objects,
+            )
+        )
 
     return GarageState(
         node_id=node.node_id,

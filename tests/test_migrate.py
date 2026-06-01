@@ -30,7 +30,9 @@ def _make_plan(tmp_path: Path) -> MigrationPlan:
 
 
 class TestBuildPlan:
-    def test_returns_plan_with_user_paths(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_returns_plan_with_user_paths(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
         # Pin HOME so user paths are predictable.
         monkeypatch.setenv("HOME", str(tmp_path))
         plan = build_plan()
@@ -42,14 +44,19 @@ class TestBuildPlan:
 
 class TestCheckPreconditions:
     @patch("stormpulse.init.migrate.os.geteuid", return_value=0)
-    def test_refuses_when_running_as_root(self, _mock: MagicMock, tmp_path: Path) -> None:
+    def test_refuses_when_running_as_root(
+        self, _mock: MagicMock, tmp_path: Path
+    ) -> None:
         plan = _make_plan(tmp_path)
         with pytest.raises(InitError, match="not via sudo"):
             check_preconditions(plan)
 
     @patch("stormpulse.init.migrate.os.geteuid", return_value=1000)
     def test_refuses_when_no_rootless_socket(
-        self, _mock: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        _mock: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
         plan = _make_plan(tmp_path)
@@ -58,7 +65,10 @@ class TestCheckPreconditions:
 
     @patch("stormpulse.init.migrate.os.geteuid", return_value=1000)
     def test_refuses_when_no_old_install(
-        self, _mock: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        _mock: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         runtime = tmp_path / "runtime"
         runtime.mkdir()
@@ -70,7 +80,10 @@ class TestCheckPreconditions:
 
     @patch("stormpulse.init.migrate.os.geteuid", return_value=1000)
     def test_refuses_when_new_install_already_present(
-        self, _mock: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        _mock: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         runtime = tmp_path / "runtime"
         runtime.mkdir()
@@ -87,7 +100,10 @@ class TestCheckPreconditions:
 
     @patch("stormpulse.init.migrate.os.geteuid", return_value=1000)
     def test_passes_when_environment_ready(
-        self, _mock: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        self,
+        _mock: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         runtime = tmp_path / "runtime"
         runtime.mkdir()

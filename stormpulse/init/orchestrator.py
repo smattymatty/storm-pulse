@@ -66,7 +66,9 @@ def run_init(
     agent_id = extract_agent_id(creds_dir)
     meta = load_enroll_metadata(creds_dir)
 
-    mode_label = "USER (rootless)" if resolved_mode is InstallMode.USER else "SYSTEM (rootful)"
+    mode_label = (
+        "USER (rootless)" if resolved_mode is InstallMode.USER else "SYSTEM (rootful)"
+    )
     print(
         f"\nStorm Pulse Init - configuring agent '{agent_id}' [{mode_label}]\n",
         file=sys.stderr,
@@ -80,8 +82,12 @@ def run_init(
     # Where any previous run's config would live. Used both as the
     # source for the pulse-token recall default below and the
     # overwrite-confirm target after the wizard finishes.
-    config_path = user_config_path() if resolved_mode is InstallMode.USER else CONFIG_PATH
-    systemd_path = user_systemd_path() if resolved_mode is InstallMode.USER else SYSTEMD_PATH
+    config_path = (
+        user_config_path() if resolved_mode is InstallMode.USER else CONFIG_PATH
+    )
+    systemd_path = (
+        user_systemd_path() if resolved_mode is InstallMode.USER else SYSTEMD_PATH
+    )
 
     pulse_token = prompt_pulse_token(remembered_from=config_path)
     dashboard_url = prompt_dashboard_url(default=dashboard_default)
@@ -121,8 +127,10 @@ def run_init(
         agent_bin = _resolve_user_agent_bin()
         user_data_dir().mkdir(parents=True, exist_ok=True, mode=0o700)
         unit_content = render_systemd_unit(
-            project_dir, mode=resolved_mode,
-            agent_bin=agent_bin, config_path=config_path,
+            project_dir,
+            mode=resolved_mode,
+            agent_bin=agent_bin,
+            config_path=config_path,
         )
         write_user_systemd_unit(systemd_path, unit_content, force=force)
     else:
@@ -152,7 +160,8 @@ def run_init(
         run_daemon_reload()
 
     if resolved_mode is InstallMode.USER:
-        print(f"""
+        print(
+            f"""
 Setup complete (user mode)!
 
 Next steps:
@@ -161,10 +170,13 @@ Next steps:
   2. Start the agent:
      systemctl --user enable --now stormpulse
   3. Check logs:
-     journalctl --user -u stormpulse -f
-""", file=sys.stderr)
+     stormpulse logs
+""",
+            file=sys.stderr,
+        )
     else:
-        print(f"""
+        print(
+            f"""
 Setup complete!
 
 Next steps:
@@ -173,8 +185,10 @@ Next steps:
   2. Start the agent:
      sudo systemctl enable --now stormpulse
   3. Check logs:
-     sudo journalctl -u stormpulse -f
-""", file=sys.stderr)
+     stormpulse logs
+""",
+            file=sys.stderr,
+        )
 
 
 def _resolve_user_agent_bin() -> Path:

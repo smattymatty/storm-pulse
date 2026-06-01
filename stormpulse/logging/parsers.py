@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 MAX_LINE_BYTES = 4096
@@ -41,12 +41,19 @@ _GARAGE_ADMIN_RE = re.compile(
 # Only ship mutating admin operations. The agent's own garage_refresh
 # polls GetBucketInfo/ListKeys/GetClusterStatus every 30s - that's
 # noise, not operator-initiated activity worth tracking.
-_GARAGE_ADMIN_MUTATIONS: frozenset[str] = frozenset({
-    "CreateBucket", "DeleteBucket", "UpdateBucket",
-    "CreateKey", "DeleteKey", "UpdateKey",
-    "AllowBucketKey", "DenyBucketKey",
-    "ApplyClusterLayout",
-})
+_GARAGE_ADMIN_MUTATIONS: frozenset[str] = frozenset(
+    {
+        "CreateBucket",
+        "DeleteBucket",
+        "UpdateBucket",
+        "CreateKey",
+        "DeleteKey",
+        "UpdateKey",
+        "AllowBucketKey",
+        "DenyBucketKey",
+        "ApplyClusterLayout",
+    }
+)
 
 
 def parse_garage_s3(line: str) -> dict[str, Any] | None:
@@ -167,7 +174,9 @@ _CADDY_REQUIRED = {"ts", "request", "status"}
 _CERT_LOGGER_PREFIX = "tls"
 _DOCKER_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s+(.*)$")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
-_UA_BROWSER_RE = re.compile(r"(Firefox|Chrome|Safari|Edge|Opera|curl|wget|Go-http-client|python-requests)/[\d.]+")
+_UA_BROWSER_RE = re.compile(
+    r"(Firefox|Chrome|Safari|Edge|Opera|curl|wget|Go-http-client|python-requests)/[\d.]+"
+)
 
 
 def _summarize_user_agent(ua: str) -> str:
@@ -221,7 +230,7 @@ def parse_caddy_json(line: str) -> dict[str, Any] | None:
         if raw_ts is None:
             return None
         if isinstance(raw_ts, (int, float)):
-            ts_iso = datetime.fromtimestamp(float(raw_ts), tz=timezone.utc).strftime(
+            ts_iso = datetime.fromtimestamp(float(raw_ts), tz=UTC).strftime(
                 "%Y-%m-%dT%H:%M:%S.%fZ",
             )
         else:
@@ -250,7 +259,7 @@ def parse_caddy_json(line: str) -> dict[str, Any] | None:
 
     raw_ts = obj.get("ts")
     if isinstance(raw_ts, (int, float)):
-        ts_iso = datetime.fromtimestamp(float(raw_ts), tz=timezone.utc).strftime(
+        ts_iso = datetime.fromtimestamp(float(raw_ts), tz=UTC).strftime(
             "%Y-%m-%dT%H:%M:%S.%fZ",
         )
     else:
@@ -263,7 +272,9 @@ def parse_caddy_json(line: str) -> dict[str, Any] | None:
     status = obj.get("status", 0)
 
     headers_raw = request.get("headers") or {}
-    headers: dict[str, Any] = cast(dict[str, Any], headers_raw) if isinstance(headers_raw, dict) else {}
+    headers: dict[str, Any] = (
+        cast(dict[str, Any], headers_raw) if isinstance(headers_raw, dict) else {}
+    )
     ua_list = headers.get("User-Agent") or []
     ua = str(ua_list[0]) if isinstance(ua_list, list) and ua_list else ""
     ua_brief = _summarize_user_agent(ua)

@@ -99,12 +99,18 @@ class CommandDef:
     params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
 
 
-PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset({
-    "project_dir", "compose_file", "env_file",
-})
+PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset(
+    {
+        "project_dir",
+        "compose_file",
+        "env_file",
+    }
+)
 
 
-_LOG_PARSERS: frozenset[str] = frozenset({"garage_s3", "stormpulse", "caddy_json", "docker_raw"})
+_LOG_PARSERS: frozenset[str] = frozenset(
+    {"garage_s3", "stormpulse", "caddy_json", "docker_raw"}
+)
 _LOG_SOURCE_TYPES: frozenset[str] = frozenset({"file", "docker", "docker_stream"})
 _LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,50}")
 
@@ -178,8 +184,11 @@ class Config:
         """
         missing: list[str] = []
         for p in (
-            self.tls.ca_cert, self.tls.client_cert, self.tls.client_key,
-            self.auth.hmac_secret, self.project.compose_file,
+            self.tls.ca_cert,
+            self.tls.client_cert,
+            self.tls.client_key,
+            self.auth.hmac_secret,
+            self.project.compose_file,
         ):
             if not p.is_file():
                 missing.append(str(p))
@@ -259,7 +268,9 @@ def _parse_dashboard(raw: dict[str, Any]) -> DashboardConfig:
     url = _require_key(s, "url", str, "dashboard")
     rmin = float(_require_key(s, "reconnect_min_seconds", (int, float), "dashboard"))
     rmax = float(_require_key(s, "reconnect_max_seconds", (int, float), "dashboard"))
-    heartbeat = float(_require_key(s, "heartbeat_interval_seconds", (int, float), "dashboard"))
+    heartbeat = float(
+        _require_key(s, "heartbeat_interval_seconds", (int, float), "dashboard")
+    )
     if rmin <= 0 or rmax <= 0:
         raise ConfigError("Reconnect intervals must be positive")
     if heartbeat <= 0:
@@ -568,10 +579,10 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
                     f"'container_name' in {ctx} must be non-empty for docker sources"
                 )
             docker_binary_raw = entry.get("docker_binary", "/usr/bin/docker")
-            if not isinstance(docker_binary_raw, str) or not docker_binary_raw.startswith("/"):
-                raise ConfigError(
-                    f"'docker_binary' in {ctx} must be an absolute path"
-                )
+            if not isinstance(
+                docker_binary_raw, str
+            ) or not docker_binary_raw.startswith("/"):
+                raise ConfigError(f"'docker_binary' in {ctx} must be an absolute path")
             docker_binary = docker_binary_raw
 
         parser = _require_key(entry, "parser", str, ctx)
@@ -604,19 +615,21 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
         if not isinstance(filter_contains, str):
             raise ConfigError(f"'filter_contains' in {ctx} must be a string")
 
-        result.append(LogGroupConfig(
-            name=name,
-            enabled=_require_key(entry, "enabled", bool, ctx),
-            source_type=source_type,
-            source_path=Path(source_path) if source_path else Path(""),
-            filter_contains=filter_contains,
-            parser=parser,
-            ship_interval_seconds=interval,
-            max_lines_per_batch=batch_max,
-            retention_days=retention,
-            container_name=container_name,
-            docker_binary=docker_binary,
-        ))
+        result.append(
+            LogGroupConfig(
+                name=name,
+                enabled=_require_key(entry, "enabled", bool, ctx),
+                source_type=source_type,
+                source_path=Path(source_path) if source_path else Path(""),
+                filter_contains=filter_contains,
+                parser=parser,
+                ship_interval_seconds=interval,
+                max_lines_per_batch=batch_max,
+                retention_days=retention,
+                container_name=container_name,
+                docker_binary=docker_binary,
+            )
+        )
     return result
 
 

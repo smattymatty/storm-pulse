@@ -65,19 +65,18 @@ def verify_drop_in_imported(
         line = line.split("#", 1)[0].strip()
         if not line.startswith("import "):
             continue
-        target = line[len("import "):].strip()
+        target = line[len("import ") :].strip()
         if not target:
             continue
 
         target_path = Path(target)
         if not target_path.is_absolute():
-            target_path = (base_dir / target_path)
+            target_path = base_dir / target_path
 
         # Glob pattern in the filename component? Use fnmatch.
         if any(ch in target_path.name for ch in "*?["):
-            if (
-                target_path.parent.resolve() == drop_in_parent
-                and fnmatch.fnmatch(drop_in_abs.name, target_path.name)
+            if target_path.parent.resolve() == drop_in_parent and fnmatch.fnmatch(
+                drop_in_abs.name, target_path.name
             ):
                 return None
         else:
@@ -121,29 +120,36 @@ def make_caddy_sync_handler(
         fragment = params.get("fragment", "")
 
         await progress(
-            "starting", 0, 3, f"syncing Caddy for region {region}",
+            "starting",
+            0,
+            3,
+            f"syncing Caddy for region {region}",
         )
 
         # ----- Step 1: atomic write to drop-in path (disk-truth) -----
         await progress(
-            "running", 1, 3, "persisting drop-in fragment to disk",
+            "running",
+            1,
+            3,
+            "persisting drop-in fragment to disk",
         )
         try:
             await asyncio.to_thread(
-                _atomic_write_or_remove, caddy.drop_in_path, fragment,
+                _atomic_write_or_remove,
+                caddy.drop_in_path,
+                fragment,
             )
         except OSError as exc:
             logger.error(
                 "caddy_sync: persist failed for region=%s path=%s: %s",
-                region, caddy.drop_in_path, exc,
+                region,
+                caddy.drop_in_path,
+                exc,
             )
             return JobOutcome(
                 success=False,
                 exit_code=-1,
-                stderr=(
-                    f"Failed to persist fragment to "
-                    f"{caddy.drop_in_path}: {exc}"
-                ),
+                stderr=(f"Failed to persist fragment to {caddy.drop_in_path}: {exc}"),
                 failure_reason="persist_failed",
             )
 
@@ -154,35 +160,40 @@ def make_caddy_sync_handler(
         # endpoint), wiping every other site the main Caddyfile
         # declares until the next operator-initiated restart.
         await progress(
-            "running", 2, 3, "reloading Caddy via admin /load",
+            "running",
+            2,
+            3,
+            "reloading Caddy via admin /load",
         )
         try:
             load_body = await asyncio.to_thread(
-                _read_and_absolutize_imports, caddy.main_caddyfile,
+                _read_and_absolutize_imports,
+                caddy.main_caddyfile,
             )
         except OSError as exc:
             logger.error(
                 "caddy_sync: drop-in persisted but could not read main "
                 "Caddyfile %s for reload: %s",
-                caddy.main_caddyfile, exc,
+                caddy.main_caddyfile,
+                exc,
             )
             return JobOutcome(
                 success=False,
                 exit_code=-1,
-                stderr=(
-                    f"Drop-in persisted but main Caddyfile read "
-                    f"failed: {exc}"
-                ),
+                stderr=(f"Drop-in persisted but main Caddyfile read failed: {exc}"),
                 failure_reason="reload_failed",
             )
         ok, err = await asyncio.to_thread(
-            _post_caddy_load, caddy.admin_url, load_body,
+            _post_caddy_load,
+            caddy.admin_url,
+            load_body,
         )
         if not ok:
             logger.warning(
                 "caddy_sync: drop-in persisted but Caddy reload "
                 "failed for region=%s: %s",
-                region, err,
+                region,
+                err,
             )
             return JobOutcome(
                 success=False,
@@ -225,14 +236,17 @@ def _post_caddy_load(admin_url: str, fragment: str) -> tuple[bool, str]:
     }
 
     conn_class = (
-        http.client.HTTPSConnection if parsed.scheme == "https"
+        http.client.HTTPSConnection
+        if parsed.scheme == "https"
         else http.client.HTTPConnection
     )
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
     try:
         conn = conn_class(
-            parsed.hostname, port, timeout=_LOAD_TIMEOUT_SECONDS,
+            parsed.hostname,
+            port,
+            timeout=_LOAD_TIMEOUT_SECONDS,
         )
         conn.request("POST", "/load", body=body, headers=headers)
         resp = conn.getresponse()
@@ -288,7 +302,7 @@ def _read_and_absolutize_imports(main_caddyfile: Path) -> str:
         if not code_part.startswith("import "):
             out.append(line)
             continue
-        target = code_part[len("import "):].strip()
+        target = code_part[len("import ") :].strip()
         if not target or Path(target).is_absolute():
             out.append(line)
             continue

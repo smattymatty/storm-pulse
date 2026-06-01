@@ -38,7 +38,10 @@ def cmd_enroll(args: argparse.Namespace) -> None:
     logger.info("Requesting certificate from %s", args.endpoint)
     try:
         response = request_certificate(
-            args.endpoint, args.agent_id, args.token, csr_pem,
+            args.endpoint,
+            args.agent_id,
+            args.token,
+            csr_pem,
         )
     except EnrollError as exc:
         logger.error("%s", exc)
@@ -54,7 +57,9 @@ def cmd_enroll(args: argparse.Namespace) -> None:
     try:
         write_enroll_metadata(creds_dir, args.endpoint, args.agent_id)
     except EnrollError:
-        logger.warning("Could not write enroll.json - init defaults will be unavailable")
+        logger.warning(
+            "Could not write enroll.json - init defaults will be unavailable"
+        )
 
     logger.info("Enrollment complete:")
     logger.info("  Client cert: %s", creds.client_cert)

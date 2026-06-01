@@ -39,7 +39,13 @@ def make_walk_bucket_stats_handler(params: dict[str, str]) -> JobHandler | None:
     Returns None if a required param is missing - the dispatcher emits
     a structured no-handler failure rather than crashing.
     """
-    required = ("bucket_name", "s3_endpoint", "region", "access_key_id", "secret_access_key")
+    required = (
+        "bucket_name",
+        "s3_endpoint",
+        "region",
+        "access_key_id",
+        "secret_access_key",
+    )
     if not all(params.get(k) for k in required):
         logger.error(
             "garage_walk_bucket_stats missing required params: %s",
@@ -74,7 +80,11 @@ def make_walk_bucket_stats_handler(params: dict[str, str]) -> JobHandler | None:
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_walk_bucket_stats(
-            progress, client, bucket, prefix, max_objects,
+            progress,
+            client,
+            bucket,
+            prefix,
+            max_objects,
         )
 
     return handler

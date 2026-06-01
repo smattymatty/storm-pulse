@@ -184,9 +184,7 @@ def render_systemd_unit(
             raise ValueError(
                 "render_systemd_unit(mode=USER) requires agent_bin and config_path",
             )
-        return (
-            USER_SYSTEMD_UNIT_TEMPLATE
-            .replace("{agent_bin}", str(agent_bin))
-            .replace("{config_path}", str(config_path))
-        )
+        return USER_SYSTEMD_UNIT_TEMPLATE.replace(
+            "{agent_bin}", str(agent_bin)
+        ).replace("{config_path}", str(config_path))
     return SYSTEMD_UNIT_TEMPLATE.replace("{project_dir}", str(project_dir))
