@@ -34,7 +34,8 @@ def test_sealed_state_blocks_only_seal_gated_commands(tmp_path: Path) -> None:
     assert is_blocked_by_seal(state, ["git_pull", VERIFY_BLOCK_COMMAND])
     assert is_blocked_by_seal(state, ["git_pull", APPLY_BLOCK_COMMAND])
     assert is_blocked_by_seal(
-        state, [VERIFY_BLOCK_COMMAND, APPLY_BLOCK_COMMAND],
+        state,
+        [VERIFY_BLOCK_COMMAND, APPLY_BLOCK_COMMAND],
     )
     assert not is_blocked_by_seal(state, ["git_pull", "docker_logs"])
 

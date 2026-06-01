@@ -14,7 +14,7 @@ import fcntl
 import json
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +37,7 @@ class PulseLogger:
         detail: dict[str, Any] | None = None,
     ) -> None:
         entry: dict[str, Any] = {
-            "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "level": level,
             "message": message,
             "event_type": event_type,
@@ -59,17 +59,26 @@ class PulseLogger:
                 logger.warning("Failed writing pulse log to %s: %s", self._path, exc)
 
     def info(
-        self, message: str, event_type: str, detail: dict[str, Any] | None = None,
+        self,
+        message: str,
+        event_type: str,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         self._write("INFO", message, event_type, detail)
 
     def warning(
-        self, message: str, event_type: str, detail: dict[str, Any] | None = None,
+        self,
+        message: str,
+        event_type: str,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         self._write("WARNING", message, event_type, detail)
 
     def error(
-        self, message: str, event_type: str, detail: dict[str, Any] | None = None,
+        self,
+        message: str,
+        event_type: str,
+        detail: dict[str, Any] | None = None,
     ) -> None:
         self._write("ERROR", message, event_type, detail)
 
@@ -97,5 +106,9 @@ class PulseLogger:
         if sequence_id is not None:
             detail["sequence_id"] = sequence_id
         level = "INFO" if success else "WARNING"
-        self._write(level, f"Command {command} {'succeeded' if success else 'failed'}",
-                    "command", detail)
+        self._write(
+            level,
+            f"Command {command} {'succeeded' if success else 'failed'}",
+            "command",
+            detail,
+        )

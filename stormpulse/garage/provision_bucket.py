@@ -11,7 +11,6 @@ Additional keys (rw/ro) are added later via ``provision_additional_key``.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import secrets
 import time
@@ -36,7 +35,8 @@ _ADMIN_FLAGS = ("--read", "--write", "--owner")
 
 
 def make_provision_customer_bucket_handler(
-    garage_config: GarageConfig, params: dict[str, str],
+    garage_config: GarageConfig,
+    params: dict[str, str],
 ) -> JobHandler | None:
     """Build a JobHandler from runtime params.
 
@@ -103,13 +103,17 @@ async def run_provision_customer_bucket(
     # or any underscore at all on S3-strict deployments.
     throwaway_alias = f"provisioning-{secrets.token_hex(8)}"
     state = _ProvisionState(
-        display_name=display_name, throwaway_alias=throwaway_alias,
+        display_name=display_name,
+        throwaway_alias=throwaway_alias,
     )
 
     # ---- Step 1: bucket create <throwaway> ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating bucket")
     rc, _stdout, stderr = await run_garage(
-        garage_config, "bucket", "create", throwaway_alias,
+        garage_config,
+        "bucket",
+        "create",
+        throwaway_alias,
     )
     if rc != 0:
         return _failure(
@@ -135,11 +139,15 @@ async def run_provision_customer_bucket(
     # canonical 64-char UUID. The throwaway alias is attached at this
     # point and is the only way to address the bucket until step 11.
     rc, stdout, stderr = await run_garage(
-        garage_config, "bucket", "info", throwaway_alias,
+        garage_config,
+        "bucket",
+        "info",
+        throwaway_alias,
     )
     if rc != 0:
         manual = await _delete_bucket_best_effort(
-            garage_config, throwaway_alias,
+            garage_config,
+            throwaway_alias,
         )
         return _failure(
             failure_reason="bucket_create_failed",
@@ -154,7 +162,8 @@ async def run_provision_customer_bucket(
         info = parse_bucket_info(stdout)
     except GarageParseError as exc:
         manual = await _delete_bucket_best_effort(
-            garage_config, throwaway_alias,
+            garage_config,
+            throwaway_alias,
         )
         return _failure(
             failure_reason="bucket_create_failed",
@@ -173,7 +182,10 @@ async def run_provision_customer_bucket(
     # ---- Step 2: key create <admin> ----
     await progress("running", 1, _TOTAL_STEPS, "Creating admin key")
     rc, stdout, stderr = await run_garage(
-        garage_config, "key", "create", key_name_admin,
+        garage_config,
+        "key",
+        "create",
+        key_name_admin,
     )
     if rc != 0:
         rollback = await _rollback(garage_config, state)
@@ -215,12 +227,19 @@ async def run_provision_customer_bucket(
 
     # ---- Step 3: bucket allow <flags> <throwaway> --key <admin> ----
     await progress(
-        "running", 2, _TOTAL_STEPS, "Granting admin permissions",
+        "running",
+        2,
+        _TOTAL_STEPS,
+        "Granting admin permissions",
     )
     rc, _stdout, stderr = await run_garage(
         garage_config,
-        "bucket", "allow", *_ADMIN_FLAGS,
-        throwaway_alias, "--key", admin.key_id,
+        "bucket",
+        "allow",
+        *_ADMIN_FLAGS,
+        throwaway_alias,
+        "--key",
+        admin.key_id,
     )
     if rc != 0:
         rollback = await _rollback(garage_config, state)
@@ -240,12 +259,19 @@ async def run_provision_customer_bucket(
 
     # ---- Step 4: bucket alias --local <admin> <throwaway> <display> ----
     await progress(
-        "running", 3, _TOTAL_STEPS, "Attaching admin local alias",
+        "running",
+        3,
+        _TOTAL_STEPS,
+        "Attaching admin local alias",
     )
     rc, _stdout, stderr = await run_garage(
         garage_config,
-        "bucket", "alias", "--local", admin.key_id,
-        throwaway_alias, display_name,
+        "bucket",
+        "alias",
+        "--local",
+        admin.key_id,
+        throwaway_alias,
+        display_name,
     )
     if rc != 0:
         rollback = await _rollback(garage_config, state)
@@ -267,10 +293,16 @@ async def run_provision_customer_bucket(
     # The admin's local alias satisfies Garage's "must have at least
     # one alias" orphan rule, so removing the throwaway succeeds.
     await progress(
-        "running", 4, _TOTAL_STEPS, "Removing throwaway alias",
+        "running",
+        4,
+        _TOTAL_STEPS,
+        "Removing throwaway alias",
     )
     rc, _stdout, stderr = await run_garage(
-        garage_config, "bucket", "unalias", throwaway_alias,
+        garage_config,
+        "bucket",
+        "unalias",
+        throwaway_alias,
     )
     if rc != 0:
         rollback = await _rollback(garage_config, state)
@@ -318,7 +350,8 @@ class _RollbackResult:
 
 
 async def _rollback(
-    garage_config: GarageConfig, state: _ProvisionState,
+    garage_config: GarageConfig,
+    state: _ProvisionState,
 ) -> _RollbackResult:
     """Reverse-order cleanup. Halt on first cleanup failure.
 
@@ -341,13 +374,17 @@ async def _rollback(
         try:
             rc, _stdout, _stderr = await run_garage(
                 garage_config,
-                "bucket", "unalias", "--local", state.admin_key_id,
+                "bucket",
+                "unalias",
+                "--local",
+                state.admin_key_id,
                 state.display_name,
             )
-        except (asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError) as exc:
             logger.warning(
                 "Rollback: unalias --local %s failed: %s",
-                state.admin_key_id, exc,
+                state.admin_key_id,
+                exc,
             )
             manual.extend(_remaining_after_alias_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
@@ -360,13 +397,18 @@ async def _rollback(
         try:
             rc, _stdout, _stderr = await run_garage(
                 garage_config,
-                "bucket", "deny", *_ADMIN_FLAGS,
-                state.throwaway_alias, "--key", state.admin_key_id,
+                "bucket",
+                "deny",
+                *_ADMIN_FLAGS,
+                state.throwaway_alias,
+                "--key",
+                state.admin_key_id,
             )
-        except (asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError) as exc:
             logger.warning(
                 "Rollback: bucket deny %s failed: %s",
-                state.admin_key_id, exc,
+                state.admin_key_id,
+                exc,
             )
             manual.extend(_remaining_after_perm_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
@@ -378,12 +420,17 @@ async def _rollback(
     if state.admin_key_id is not None:
         try:
             rc, _stdout, _stderr = await run_garage(
-                garage_config, "key", "delete", "--yes", state.admin_key_id,
+                garage_config,
+                "key",
+                "delete",
+                "--yes",
+                state.admin_key_id,
             )
-        except (asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError) as exc:
             logger.warning(
                 "Rollback: key delete %s failed: %s",
-                state.admin_key_id, exc,
+                state.admin_key_id,
+                exc,
             )
             manual.extend(_remaining_after_key_halt(state))
             return _RollbackResult(status="partial", manual_cleanup=manual)
@@ -396,12 +443,16 @@ async def _rollback(
         try:
             rc, _stdout, _stderr = await run_garage(
                 garage_config,
-                "bucket", "delete", "--yes", state.throwaway_alias,
+                "bucket",
+                "delete",
+                "--yes",
+                state.throwaway_alias,
             )
-        except (asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError) as exc:
             logger.warning(
                 "Rollback: bucket delete %s failed: %s",
-                state.throwaway_alias, exc,
+                state.throwaway_alias,
+                exc,
             )
             manual.append({"type": "bucket", "id": state.bucket_uuid[:16]})
             return _RollbackResult(status="partial", manual_cleanup=manual)
@@ -418,17 +469,21 @@ def _remaining_after_alias_halt(
     """Manual-cleanup list when alias detachment halts."""
     items: list[dict[str, Any]] = []
     if state.admin_key_id is not None:
-        items.append({
-            "type": "local_alias",
-            "key_id": state.admin_key_id,
-            "alias": state.display_name,
-        })
-        if state.admin_perms_granted:
-            items.append({
-                "type": "permission_grant",
+        items.append(
+            {
+                "type": "local_alias",
                 "key_id": state.admin_key_id,
-                "flags": list(_ADMIN_FLAGS),
-            })
+                "alias": state.display_name,
+            }
+        )
+        if state.admin_perms_granted:
+            items.append(
+                {
+                    "type": "permission_grant",
+                    "key_id": state.admin_key_id,
+                    "flags": list(_ADMIN_FLAGS),
+                }
+            )
         items.append({"type": "key", "id": state.admin_key_id})
     if state.bucket_uuid is not None:
         items.append({"type": "bucket", "id": state.bucket_uuid[:16]})
@@ -442,11 +497,13 @@ def _remaining_after_perm_halt(
     items: list[dict[str, Any]] = []
     if state.admin_key_id is not None:
         if state.admin_perms_granted:
-            items.append({
-                "type": "permission_grant",
-                "key_id": state.admin_key_id,
-                "flags": list(_ADMIN_FLAGS),
-            })
+            items.append(
+                {
+                    "type": "permission_grant",
+                    "key_id": state.admin_key_id,
+                    "flags": list(_ADMIN_FLAGS),
+                }
+            )
         items.append({"type": "key", "id": state.admin_key_id})
     if state.bucket_uuid is not None:
         items.append({"type": "bucket", "id": state.bucket_uuid[:16]})
@@ -466,14 +523,19 @@ def _remaining_after_key_halt(
 
 
 async def _delete_bucket_best_effort(
-    garage_config: GarageConfig, alias_or_uuid: str,
+    garage_config: GarageConfig,
+    alias_or_uuid: str,
 ) -> list[dict[str, str]]:
     """Try to delete a bucket; return manual-cleanup list if it fails."""
     try:
         rc, _stdout, _stderr = await run_garage(
-            garage_config, "bucket", "delete", "--yes", alias_or_uuid,
+            garage_config,
+            "bucket",
+            "delete",
+            "--yes",
+            alias_or_uuid,
         )
-    except (asyncio.TimeoutError, OSError):
+    except (TimeoutError, OSError):
         return [{"type": "bucket", "id": alias_or_uuid}]
     if rc != 0:
         return [{"type": "bucket", "id": alias_or_uuid}]
@@ -491,9 +553,7 @@ def _failure(
     extras_extra: dict[str, Any],
 ) -> JobOutcome:
     """Build a failure JobOutcome with the contracted extras shape."""
-    bucket_uuid_short = (
-        state.bucket_uuid[:16] if state.bucket_uuid else None
-    )
+    bucket_uuid_short = state.bucket_uuid[:16] if state.bucket_uuid else None
     extras: dict[str, Any] = {
         "bucket_uuid": bucket_uuid_short,
         "step_completed": state.step_completed,
@@ -504,9 +564,7 @@ def _failure(
         "duration_seconds": _elapsed(started_at),
     }
     extras.update(extras_extra)
-    final_reason = (
-        "rollback_failed" if rollback_status == "partial" else failure_reason
-    )
+    final_reason = "rollback_failed" if rollback_status == "partial" else failure_reason
     return JobOutcome(
         success=False,
         exit_code=-1,
@@ -527,10 +585,12 @@ def _key_payload(key: _AdminKey) -> dict[str, str]:
 
 def _render_success_stdout(bucket_uuid: str, admin: _AdminKey) -> str:
     """Human-readable summary; the structured payload rides in extras."""
-    return "\n".join([
-        f"Bucket UUID: {bucket_uuid}",
-        f"Admin key: {admin.key_id}",
-    ])
+    return "\n".join(
+        [
+            f"Bucket UUID: {bucket_uuid}",
+            f"Admin key: {admin.key_id}",
+        ]
+    )
 
 
 def _elapsed(started_at: float) -> float:

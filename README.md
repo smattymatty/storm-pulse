@@ -50,7 +50,9 @@ stormpulse signoff status [CONFIG]
 stormpulse signoff unseal [CONFIG] [--confirm-hostname HOSTNAME]
 stormpulse signoff seal [CONFIG]
 stormpulse garage init [--config PATH] [--garage-config PATH] [--force]
+stormpulse caddy init [--config PATH] [--force]
 stormpulse logging init [--config PATH]
+stormpulse update [--source {pip,git}] [--branch BRANCH] [--version VERSION] [--no-restart]
 stormpulse --version
 ```
 
@@ -66,7 +68,11 @@ stormpulse --version
 
 **garage init** -- Detects a Garage S3 node and appends a `[garage]` section to an existing `stormpulse.toml`. Auto-detects container name from docker-compose.yml. Use `--force` to overwrite an existing `[garage]` section.
 
-**logging init** -- Detects running Docker containers and appends `[[log_groups]]` blocks for each, using `source_type = "docker"` and the `docker_raw` parser. Skips containers already present in the config. See [Log Shipping](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Logging) for details.
+**caddy init** -- Detects a Caddy reverse proxy and appends a `[caddy]` section to the agent config. Sanity-checks the Caddyfile for a Pulse-managed drop-in `import` line and parses TLS cert lifecycle events out of the Caddy admin API. Use `--force` to overwrite an existing `[caddy]` section.
+
+**logging init** -- Detects running Docker containers and appends `[[log_groups]]` blocks for each, using `source_type = "docker_stream"` and the `docker_raw` parser. Skips containers already present in the config. See [Log Shipping](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Logging) for details.
+
+**update** -- Reinstalls the agent in place via `pipx install --force`. `--source pip` (default) pulls the published release; `--source git` pulls from the official repo, optionally pinned to `--branch`. `--no-restart` skips the post-install systemctl restart so you can stage the update without bouncing the agent.
 
 ## Configuration
 

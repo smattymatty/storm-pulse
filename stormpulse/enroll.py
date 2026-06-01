@@ -81,11 +81,11 @@ def _friendly_http_error(exc: urllib.error.HTTPError) -> str:
         400: "Check that agent_id matches what the dashboard expects.",
         401: "Is the enrollment token correct? Tokens are single-use.",
         403: "Token may have already been used or expired. "
-             "Generate a new one in the dashboard admin.",
+        "Generate a new one in the dashboard admin.",
         404: "Enrollment endpoint not found. "
-             "Is the dashboard updated to support enrollment?",
+        "Is the dashboard updated to support enrollment?",
         409: "This agent_id is already enrolled. "
-             "Revoke the existing enrollment in the dashboard first.",
+        "Revoke the existing enrollment in the dashboard first.",
         429: "Too many enrollment attempts. Wait and try again.",
     }
     hint = hints.get(exc.code, "")
@@ -115,11 +115,13 @@ def request_certificate(
             "unencrypted. Use https:// in production."
         )
 
-    body = json.dumps({
-        "agent_id": agent_id,
-        "token": token,
-        "csr_pem": csr_pem.decode("ascii"),
-    }).encode("utf-8")
+    body = json.dumps(
+        {
+            "agent_id": agent_id,
+            "token": token,
+            "csr_pem": csr_pem.decode("ascii"),
+        }
+    ).encode("utf-8")
 
     req = urllib.request.Request(
         endpoint,
@@ -140,9 +142,7 @@ def request_certificate(
             f"Is the dashboard running? Is the URL correct?"
         ) from exc
     except OSError as exc:
-        raise EnrollError(
-            f"Network error connecting to {endpoint}: {exc}"
-        ) from exc
+        raise EnrollError(f"Network error connecting to {endpoint}: {exc}") from exc
     except (json.JSONDecodeError, ValueError) as exc:
         raise EnrollError(
             f"Dashboard returned invalid JSON. "
@@ -255,7 +255,16 @@ def write_credentials(
     )
 
     if not force:
-        existing = [p for p in (paths.client_cert, paths.client_key, paths.ca_cert, paths.hmac_key) if p.exists()]
+        existing = [
+            p
+            for p in (
+                paths.client_cert,
+                paths.client_key,
+                paths.ca_cert,
+                paths.hmac_key,
+            )
+            if p.exists()
+        ]
         if existing:
             names = ", ".join(p.name for p in existing)
             raise EnrollError(
@@ -267,8 +276,8 @@ def write_credentials(
         hmac_bytes = base64.b64decode(response["hmac_key"])
     except (binascii.Error, ValueError) as exc:
         raise EnrollError(
-            f"Dashboard returned an invalid HMAC key (bad base64). "
-            f"This may indicate a dashboard bug - contact the admin."
+            "Dashboard returned an invalid HMAC key (bad base64). "
+            "This may indicate a dashboard bug - contact the admin."
         ) from exc
 
     _write_file(paths.client_key, key_pem, 0o640)
@@ -276,11 +285,16 @@ def write_credentials(
     _write_file(paths.client_cert, response["client_cert_pem"].encode("ascii"), 0o644)
     _write_file(paths.ca_cert, response["ca_cert_pem"].encode("ascii"), 0o644)
 
-    for p in (paths.client_key, paths.hmac_key, paths.client_cert, paths.ca_cert):
-        try:
-            shutil.chown(p, "root", "stormpulse")
-        except (LookupError, PermissionError):
-            pass  # stormpulse group may not exist (e.g. tests, dev machines)
+    # SYSTEM mode: chown to root:stormpulse so the agent (running as the
+    # stormpulse system user) can read the cred files. USER mode: the
+    # operator owns the files by virtue of having written them; chown would
+    # silently fail and confuse anyone reading the comment block above.
+    if os.geteuid() == 0:
+        for p in (paths.client_key, paths.hmac_key, paths.client_cert, paths.ca_cert):
+            try:
+                shutil.chown(p, "root", "stormpulse")
+            except (LookupError, PermissionError):
+                pass  # stormpulse group may not exist (e.g. tests, dev machines)
 
     return paths
 

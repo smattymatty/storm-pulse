@@ -11,7 +11,6 @@ from websockets.exceptions import ConnectionClosed
 from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
-
 from tests.helpers import SECRET
 
 

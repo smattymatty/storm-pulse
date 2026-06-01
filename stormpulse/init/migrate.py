@@ -27,8 +27,8 @@ final step but defaulted to NO so the rollback path stays open.
 
 from __future__ import annotations
 
+import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -47,7 +47,21 @@ from stormpulse.init.files import (
     write_user_systemd_unit,
 )
 from stormpulse.init.generate import USER_SYSTEMD_UNIT_TEMPLATE
-from stormpulse.init.mode import InstallMode, rootless_socket_path
+from stormpulse.init.mode import rootless_socket_path
+
+logger = logging.getLogger(__name__)
+
+
+def _step(message: str) -> None:
+    """Emit a migration step both to the operator's terminal and the journal.
+
+    Migration runs interactively but its history matters weeks later when
+    debugging a half-migrated box. Dual-emit so the operator sees real-time
+    progress and journald keeps a searchable record.
+    """
+    print(message, file=sys.stderr)
+    logger.info("migrate: %s", message)
+
 
 OLD_CREDS_DIR = Path("/etc/stormpulse")
 CRED_FILES = ("agent.pem", "agent-key.pem", "ca.pem", "hmac.key")
@@ -56,6 +70,7 @@ CRED_FILES = ("agent.pem", "agent-key.pem", "ca.pem", "hmac.key")
 @dataclass(frozen=True, slots=True)
 class MigrationPlan:
     """Resolved set of paths the migration will operate on."""
+
     old_config: Path
     old_systemd: Path
     old_creds_dir: Path
@@ -97,7 +112,7 @@ def check_preconditions(plan: MigrationPlan) -> None:
     if sock is None or not sock.exists():
         raise InitError(
             "No rootless docker socket detected at "
-            f"$XDG_RUNTIME_DIR/docker.sock. Migrate the box to "
+            "$XDG_RUNTIME_DIR/docker.sock. Migrate the box to "
             "rootless docker first (see playbook 001-ubuntu-baseline).",
         )
     if not plan.old_config.is_file():
@@ -116,7 +131,7 @@ def check_preconditions(plan: MigrationPlan) -> None:
 
 def stop_system_unit() -> None:
     """sudo systemctl disable --now stormpulse. Prompts for password."""
-    print("Stopping existing system unit (sudo required)...", file=sys.stderr)
+    _step("Stopping existing system unit (sudo required)...")
     result = subprocess.run(
         ["sudo", "systemctl", "disable", "--now", "stormpulse"],
         check=False,
@@ -141,8 +156,7 @@ def copy_creds(plan: MigrationPlan, *, force: bool = False) -> None:
     if not user:
         raise InitError("Cannot determine $USER for chown after copy.")
 
-    print(f"Copying credentials to {plan.new_creds_dir} (sudo required)...",
-          file=sys.stderr)
+    _step(f"Copying credentials to {plan.new_creds_dir} (sudo required)...")
     for name in CRED_FILES:
         src = plan.old_creds_dir / name
         dst = plan.new_creds_dir / name
@@ -159,12 +173,14 @@ def copy_creds(plan: MigrationPlan, *, force: bool = False) -> None:
         # Copy via sudo, then re-own to the user. cp -p preserves mode
         # so we tighten after.
         cp = subprocess.run(
-            ["sudo", "cp", "-p", str(src), str(dst)], check=False,
+            ["sudo", "cp", "-p", str(src), str(dst)],
+            check=False,
         )
         if cp.returncode != 0:
             raise InitError(f"sudo cp failed for {src} -> {dst}")
         chown = subprocess.run(
-            ["sudo", "chown", f"{user}:{user}", str(dst)], check=False,
+            ["sudo", "chown", f"{user}:{user}", str(dst)],
+            check=False,
         )
         if chown.returncode != 0:
             raise InitError(f"sudo chown failed for {dst}")
@@ -178,10 +194,10 @@ def copy_creds(plan: MigrationPlan, *, force: bool = False) -> None:
 # the prefix of '/etc/stormpulse/agent.pem'.
 _PATH_TRANSLATIONS_TEMPLATE: tuple[tuple[str, str], ...] = (
     (str(OLD_CREDS_DIR) + "/agent-key.pem", "{creds}/agent-key.pem"),
-    (str(OLD_CREDS_DIR) + "/agent.pem",     "{creds}/agent.pem"),
-    (str(OLD_CREDS_DIR) + "/ca.pem",        "{creds}/ca.pem"),
-    (str(OLD_CREDS_DIR) + "/hmac.key",      "{creds}/hmac.key"),
-    ("/opt/stormpulse/data/stormpulse.db",  "{data}/stormpulse.db"),
+    (str(OLD_CREDS_DIR) + "/agent.pem", "{creds}/agent.pem"),
+    (str(OLD_CREDS_DIR) + "/ca.pem", "{creds}/ca.pem"),
+    (str(OLD_CREDS_DIR) + "/hmac.key", "{creds}/hmac.key"),
+    ("/opt/stormpulse/data/stormpulse.db", "{data}/stormpulse.db"),
 )
 
 
@@ -198,7 +214,7 @@ def translate_toml(content: str, plan: MigrationPlan) -> str:
 
 def write_user_toml(plan: MigrationPlan, *, force: bool = False) -> None:
     """Read the old TOML via sudo, translate paths, write the new one."""
-    print("Translating TOML to user-mode paths...", file=sys.stderr)
+    _step("Translating TOML to user-mode paths...")
     old_text = _sudo_read_text(plan.old_config)
     new_text = translate_toml(old_text, plan)
     plan.new_data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -207,7 +223,7 @@ def write_user_toml(plan: MigrationPlan, *, force: bool = False) -> None:
 
 def write_user_unit(plan: MigrationPlan, *, force: bool = False) -> None:
     """Generate and write the user systemd unit."""
-    print("Writing user systemd unit...", file=sys.stderr)
+    _step("Writing user systemd unit...")
     pipx_bin = Path.home() / ".local" / "bin" / "stormpulse"
     if pipx_bin.is_file():
         agent_bin = pipx_bin
@@ -220,17 +236,15 @@ def write_user_unit(plan: MigrationPlan, *, force: bool = False) -> None:
                 "before migrating.",
             )
         agent_bin = Path(which)
-    unit_content = (
-        USER_SYSTEMD_UNIT_TEMPLATE
-        .replace("{agent_bin}", str(agent_bin))
-        .replace("{config_path}", str(plan.new_config))
-    )
+    unit_content = USER_SYSTEMD_UNIT_TEMPLATE.replace(
+        "{agent_bin}", str(agent_bin)
+    ).replace("{config_path}", str(plan.new_config))
     write_user_systemd_unit(plan.new_systemd, unit_content, force=force)
 
 
 def enable_and_start(plan: MigrationPlan) -> None:
     """systemctl --user daemon-reload && enable --now."""
-    print("Enabling + starting user unit...", file=sys.stderr)
+    _step("Enabling + starting user unit...")
     for argv, desc in (
         (["systemctl", "--user", "daemon-reload"], "daemon-reload"),
         (["systemctl", "--user", "enable", "--now", "stormpulse"], "enable + start"),
@@ -247,15 +261,17 @@ def enable_and_start(plan: MigrationPlan) -> None:
 
 def verify(plan: MigrationPlan) -> None:
     """Confirm the user unit is active."""
-    print("Verifying user unit is active...", file=sys.stderr)
+    _step("Verifying user unit is active...")
     result = subprocess.run(
         ["systemctl", "--user", "is-active", "stormpulse"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if result.stdout.strip() != "active":
         raise InitError(
             "User unit is not active after start. Check logs with "
-            "'journalctl --user -u stormpulse -n 50' and roll back to "
+            "'stormpulse logs -n 50 --no-follow' and roll back to "
             "the system unit if needed: "
             "'sudo systemctl enable --now stormpulse'.",
         )
@@ -272,11 +288,12 @@ def run_migration(*, force: bool = False) -> None:
         write_user_unit(plan, force=force)
         enable_and_start(plan)
         verify(plan)
-    except Exception:
+    except Exception as exc:
         # Best-effort rollback: leave the old install in place and tell
         # the operator how to re-enable it. We don't try to undo the
         # partial file writes because they're harmless if the system
         # unit is restarted.
+        logger.error("migrate: failed mid-way: %s", exc)
         print(
             "\nMigration failed mid-way. Roll back with:\n"
             "  sudo systemctl enable --now stormpulse\n"
@@ -286,6 +303,7 @@ def run_migration(*, force: bool = False) -> None:
             file=sys.stderr,
         )
         raise
+    logger.info("migrate: complete - user systemd unit is active")
     print(
         "\nMigration complete. The agent is now running as a user "
         "systemd unit.\n"
@@ -303,7 +321,9 @@ def _sudo_read_text(path: Path) -> str:
     """Read a root-owned file via sudo cat."""
     result = subprocess.run(
         ["sudo", "cat", str(path)],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     if result.returncode != 0:
         raise InitError(f"sudo cat {path} failed: {result.stderr.strip()}")

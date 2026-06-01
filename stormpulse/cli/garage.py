@@ -15,8 +15,8 @@ _DEFAULT_CONFIG = default_config_path()
 
 
 def cmd_garage_init(args: argparse.Namespace) -> None:
-    from stormpulse.init import InitError
     from stormpulse.garage.init import run_garage_init
+    from stormpulse.init import InitError
 
     try:
         run_garage_init(
@@ -32,13 +32,15 @@ def cmd_garage_init(args: argparse.Namespace) -> None:
 def add_garage_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     """Add the ``garage`` subcommand group with nested subcommands."""
     garage_parser = subparsers.add_parser(
-        "garage", help="Garage S3 node management",
+        "garage",
+        help="Garage S3 node management",
     )
     garage_sub = garage_parser.add_subparsers(dest="garage_command")
 
     # --- garage init ---
     init_parser = garage_sub.add_parser(
-        "init", help="detect and configure Garage integration",
+        "init",
+        help="detect and configure Garage integration",
     )
     init_parser.add_argument(
         "--config",

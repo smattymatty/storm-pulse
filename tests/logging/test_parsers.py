@@ -135,8 +135,14 @@ class TestParseGarageS3:
 
     def test_readonly_admin_ops_rejected(self) -> None:
         """Read-only polling ops (agent's garage_refresh) are dropped."""
-        for op in ("GetNodeStatistics", "GetBucketInfo", "ListKeys",
-                    "ListBuckets", "GetClusterStatus", "GetClusterLayout"):
+        for op in (
+            "GetNodeStatistics",
+            "GetBucketInfo",
+            "ListKeys",
+            "ListBuckets",
+            "GetClusterStatus",
+            "GetClusterLayout",
+        ):
             line = (
                 f"2026-04-17T10:12:40.402186Z  INFO garage_api_admin::api_server: "
                 f"Proxied admin API request: {op}"
@@ -170,12 +176,14 @@ class TestParseGarageS3:
 
 class TestParseStormpulse:
     def test_valid_line(self) -> None:
-        line = json.dumps({
-            "ts": "2026-04-10T13:00:00Z",
-            "level": "INFO",
-            "message": "Connected",
-            "event_type": "connection",
-        })
+        line = json.dumps(
+            {
+                "ts": "2026-04-10T13:00:00Z",
+                "level": "INFO",
+                "message": "Connected",
+                "event_type": "connection",
+            }
+        )
         result = parse_stormpulse(line)
         assert result is not None
         assert result["level"] == "INFO"
@@ -183,16 +191,18 @@ class TestParseStormpulse:
         assert result["truncated"] is False
 
     def test_with_optional_fields(self) -> None:
-        line = json.dumps({
-            "ts": "2026-04-10T13:00:00Z",
-            "level": "INFO",
-            "message": "Command succeeded",
-            "event_type": "command",
-            "command": "git_pull",
-            "success": True,
-            "duration_ms": 120,
-            "detail": {"sensitive": False},
-        })
+        line = json.dumps(
+            {
+                "ts": "2026-04-10T13:00:00Z",
+                "level": "INFO",
+                "message": "Command succeeded",
+                "event_type": "command",
+                "command": "git_pull",
+                "success": True,
+                "duration_ms": 120,
+                "detail": {"sensitive": False},
+            }
+        )
         result = parse_stormpulse(line)
         assert result is not None
         assert result["command"] == "git_pull"
@@ -215,13 +225,15 @@ class TestParseStormpulse:
 
     def test_extra_fields_dropped(self) -> None:
         """Extra unexpected fields should not be shipped."""
-        line = json.dumps({
-            "ts": "2026-04-10T13:00:00Z",
-            "level": "INFO",
-            "message": "x",
-            "event_type": "connection",
-            "secret_field": "should-not-appear",
-        })
+        line = json.dumps(
+            {
+                "ts": "2026-04-10T13:00:00Z",
+                "level": "INFO",
+                "message": "x",
+                "event_type": "connection",
+                "secret_field": "should-not-appear",
+            }
+        )
         result = parse_stormpulse(line)
         assert result is not None
         assert "secret_field" not in result
@@ -249,17 +261,19 @@ _REAL_CERTMAGIC_OCSP = (
 
 class TestParseCaddyJson:
     def test_access_log_valid(self) -> None:
-        line = json.dumps({
-            "ts": "2026-04-10T13:00:00Z",
-            "status": 200,
-            "duration": 0.015,
-            "size": 1024,
-            "request": {
-                "remote_ip": "1.2.3.4",
-                "method": "GET",
-                "uri": "/path",
-            },
-        })
+        line = json.dumps(
+            {
+                "ts": "2026-04-10T13:00:00Z",
+                "status": 200,
+                "duration": 0.015,
+                "size": 1024,
+                "request": {
+                    "remote_ip": "1.2.3.4",
+                    "method": "GET",
+                    "uri": "/path",
+                },
+            }
+        )
         result = parse_caddy_json(line)
         assert result is not None
         assert result["status"] == 200
@@ -309,23 +323,27 @@ class TestParseCaddyJson:
     def test_cert_shape_without_ts_returns_none(self) -> None:
         # A cert-shape line (tls logger, msg, no request) but missing
         # ts cannot become a ServerLog row - Storm parses ts on ingest.
-        line = json.dumps({
-            "level": "info",
-            "logger": "tls.obtain",
-            "msg": "certificate obtained successfully",
-            "identifier": "example.com",
-        })
+        line = json.dumps(
+            {
+                "level": "info",
+                "logger": "tls.obtain",
+                "msg": "certificate obtained successfully",
+                "identifier": "example.com",
+            }
+        )
         assert parse_caddy_json(line) is None
 
     def test_non_tls_logger_returns_none(self) -> None:
         # A line with no request AND a non-tls logger is neither an
         # access log nor a cert event. Drop it.
-        line = json.dumps({
-            "ts": "2026-05-16T13:00:00Z",
-            "level": "info",
-            "logger": "http.handlers.reverse_proxy",
-            "msg": "upstream selected",
-        })
+        line = json.dumps(
+            {
+                "ts": "2026-05-16T13:00:00Z",
+                "level": "info",
+                "logger": "http.handlers.reverse_proxy",
+                "msg": "upstream selected",
+            }
+        )
         assert parse_caddy_json(line) is None
 
 
@@ -360,7 +378,10 @@ class TestParseDockerRaw:
         result = parse_docker_raw(line)
         assert result is not None
         assert "\x1b" not in result["message"]
-        assert result["message"] == "2026-04-15T13:23:51.311360Z  INFO garage_net::netapp: Connection closed"
+        assert (
+            result["message"]
+            == "2026-04-15T13:23:51.311360Z  INFO garage_net::netapp: Connection closed"
+        )
 
     def test_oversize_truncated(self) -> None:
         long_msg = "x" * (MAX_LINE_BYTES + 500)

@@ -63,7 +63,11 @@ def _probe_service(binary: str, argv: list[str]) -> str | None:
         return None
     try:
         res = subprocess.run(
-            argv, capture_output=True, text=True, timeout=3, check=False,
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         logger.debug('Service probe %s failed: %s', binary, exc)

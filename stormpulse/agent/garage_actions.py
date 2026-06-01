@@ -38,7 +38,8 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_garage_refresh(
-    agent: "Agent", request_id: str,
+    agent: Agent,
+    request_id: str,
 ) -> CommandResultPayload:
     """Collect fresh Garage state and update shared state.
 
@@ -48,10 +49,15 @@ async def handle_garage_refresh(
     gc = agent._config.garage
     if gc is None or not gc.enabled:
         return CommandResultPayload(
-            request_id=request_id, command="garage_refresh", group="garage",
-            success=False, exit_code=-1, stdout="",
+            request_id=request_id,
+            command="garage_refresh",
+            group="garage",
+            success=False,
+            exit_code=-1,
+            stdout="",
             stderr="Garage integration not enabled",
-            duration_ms=0, failure_reason="not_configured",
+            duration_ms=0,
+            failure_reason="not_configured",
         )
     start = time.monotonic()
     state = await asyncio.to_thread(collect_garage_state, gc)
@@ -59,21 +65,31 @@ async def handle_garage_refresh(
     if state is not None:
         agent._garage_state = state
         return CommandResultPayload(
-            request_id=request_id, command="garage_refresh", group="garage",
-            success=True, exit_code=0,
+            request_id=request_id,
+            command="garage_refresh",
+            group="garage",
+            success=True,
+            exit_code=0,
             stdout=f"Refreshed: {len(state.buckets)} buckets",
-            stderr="", duration_ms=duration_ms,
+            stderr="",
+            duration_ms=duration_ms,
         )
     return CommandResultPayload(
-        request_id=request_id, command="garage_refresh", group="garage",
-        success=False, exit_code=-1, stdout="",
+        request_id=request_id,
+        command="garage_refresh",
+        group="garage",
+        success=False,
+        exit_code=-1,
+        stdout="",
         stderr="Failed to collect garage state",
-        duration_ms=duration_ms, failure_reason="collection_failed",
+        duration_ms=duration_ms,
+        failure_reason="collection_failed",
     )
 
 
 async def push_post_refresh_metrics(
-    agent: "Agent", ws: ClientConnection,
+    agent: Agent,
+    ws: ClientConnection,
 ) -> None:
     """Push a fresh metrics envelope right after a successful sync refresh.
 
@@ -87,12 +103,15 @@ async def push_post_refresh_metrics(
         logger.info("Sent immediate metrics push after garage_refresh")
     except Exception:
         logger.warning(
-            "Failed to send metrics after garage_refresh", exc_info=True,
+            "Failed to send metrics after garage_refresh",
+            exc_info=True,
         )
 
 
 def post_success_hook(
-    agent: "Agent", cmd_def: CommandDef, command: str,
+    agent: Agent,
+    cmd_def: CommandDef,
+    command: str,
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the after-success callback for a long-running command, or ``None``.
 
@@ -120,7 +139,7 @@ def post_success_hook(
     return refresh_and_push
 
 
-async def refresh_garage_state(agent: "Agent") -> None:
+async def refresh_garage_state(agent: Agent) -> None:
     """Collect a fresh Garage snapshot and store it on the agent."""
     gc = agent._config.garage
     if gc is None:
@@ -130,10 +149,12 @@ async def refresh_garage_state(agent: "Agent") -> None:
         agent._garage_state = state
 
 
-async def build_metrics_envelope(agent: "Agent") -> Envelope:
+async def build_metrics_envelope(agent: Agent) -> Envelope:
     """Bundle host metrics + the latest Garage snapshot into a ``metrics.push``."""
     metrics = await asyncio.to_thread(collect_metrics, agent._config)
     garage_dict = agent._garage_state.to_dict() if agent._garage_state else None
     return make_metrics_push(
-        agent._config.agent.id, metrics, garage=garage_dict,
+        agent._config.agent.id,
+        metrics,
+        garage=garage_dict,
     )

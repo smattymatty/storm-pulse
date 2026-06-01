@@ -17,7 +17,7 @@ import hmac
 import http.client
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import quote, urlparse
 from xml.etree import ElementTree
 
@@ -89,7 +89,9 @@ class CorsRule:
 class S3Error(Exception):
     """Raised when Garage returns an HTTP error for an S3 operation."""
 
-    def __init__(self, message: str, status: int | None = None, code: str | None = None) -> None:
+    def __init__(
+        self, message: str, status: int | None = None, code: str | None = None
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.code = code
@@ -103,7 +105,9 @@ def _hmac_sha256(key: bytes, msg: str) -> bytes:
     return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
 
 
-def _derive_signing_key(secret: str, date_stamp: str, region: str, service: str) -> bytes:
+def _derive_signing_key(
+    secret: str, date_stamp: str, region: str, service: str
+) -> bytes:
     """Derive the SigV4 signing key from the secret access key."""
     k_date = _hmac_sha256(("AWS4" + secret).encode("utf-8"), date_stamp)
     k_region = _hmac_sha256(k_date, region)
@@ -117,10 +121,7 @@ def _canonical_query_string(query_params: list[tuple[str, str]]) -> str:
     Sort by key (then value), URL-encode both, join with ``&``. Empty
     values are kept as ``key=`` per spec.
     """
-    encoded = sorted(
-        (quote(k, safe=""), quote(v, safe=""))
-        for k, v in query_params
-    )
+    encoded = sorted((quote(k, safe=""), quote(v, safe="")) for k, v in query_params)
     return "&".join(f"{k}={v}" for k, v in encoded)
 
 
@@ -161,19 +162,20 @@ def _build_authorization(
         f"{signed_headers}\n"
         f"{body_sha256}"
     )
-    canonical_request_hash = hashlib.sha256(canonical_request.encode("utf-8")).hexdigest()
+    canonical_request_hash = hashlib.sha256(
+        canonical_request.encode("utf-8")
+    ).hexdigest()
 
     credential_scope = f"{date_stamp}/{region}/{service}/aws4_request"
     string_to_sign = (
-        f"{_ALGORITHM}\n"
-        f"{amz_date}\n"
-        f"{credential_scope}\n"
-        f"{canonical_request_hash}"
+        f"{_ALGORITHM}\n{amz_date}\n{credential_scope}\n{canonical_request_hash}"
     )
 
     signing_key = _derive_signing_key(secret_key, date_stamp, region, service)
     signature = hmac.new(
-        signing_key, string_to_sign.encode("utf-8"), hashlib.sha256,
+        signing_key,
+        string_to_sign.encode("utf-8"),
+        hashlib.sha256,
     ).hexdigest()
 
     return (
@@ -251,10 +253,15 @@ class GarageS3Client:
         if not keys:
             return DeleteResult(deleted=[], errors=[])
         if len(keys) > 1000:
-            raise ValueError(f"DeleteObjects accepts at most 1000 keys, got {len(keys)}")
+            raise ValueError(
+                f"DeleteObjects accepts at most 1000 keys, got {len(keys)}"
+            )
         xml_body = _build_delete_xml(keys)
         body = self._signed_request(
-            "POST", f"/{bucket}", [("delete", "")], xml_body,
+            "POST",
+            f"/{bucket}",
+            [("delete", "")],
+            xml_body,
             content_type="application/xml",
         )
         return _parse_delete_response(body)
@@ -270,7 +277,10 @@ class GarageS3Client:
         """
         xml_body = _build_cors_xml(rule)
         self._signed_request(
-            "PUT", f"/{bucket}", [("cors", "")], xml_body,
+            "PUT",
+            f"/{bucket}",
+            [("cors", "")],
+            xml_body,
             content_type="application/xml",
         )
 
@@ -285,13 +295,15 @@ class GarageS3Client:
         content_type: str | None = None,
     ) -> bytes:
         """Sign and execute a single S3 request. Returns response body bytes."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         amz_date = now.strftime("%Y%m%dT%H%M%SZ")
         date_stamp = now.strftime("%Y%m%d")
         body_sha256 = hashlib.sha256(body).hexdigest() if body else _EMPTY_SHA256
 
         host_header = self._host
-        if (self._scheme == "http" and self._port != 80) or (self._scheme == "https" and self._port != 443):
+        if (self._scheme == "http" and self._port != 80) or (
+            self._scheme == "https" and self._port != 443
+        ):
             host_header = f"{self._host}:{self._port}"
 
         headers: dict[str, str] = {
@@ -323,9 +335,13 @@ class GarageS3Client:
 
         conn: http.client.HTTPConnection
         if self._scheme == "https":
-            conn = http.client.HTTPSConnection(self._host, self._port, timeout=self._timeout)
+            conn = http.client.HTTPSConnection(
+                self._host, self._port, timeout=self._timeout
+            )
         else:
-            conn = http.client.HTTPConnection(self._host, self._port, timeout=self._timeout)
+            conn = http.client.HTTPConnection(
+                self._host, self._port, timeout=self._timeout
+            )
         try:
             conn.request(method, url_path, body=body or None, headers=headers)
             response = conn.getresponse()
@@ -388,7 +404,9 @@ def _strip_ns(tag: str) -> str:
 
 def _parse_list_response(body: bytes) -> ListResult:
     if not body:
-        return ListResult(contents=[], is_truncated=False, next_continuation_token=None, key_count=0)
+        return ListResult(
+            contents=[], is_truncated=False, next_continuation_token=None, key_count=0
+        )
     root = ElementTree.fromstring(body)
     contents: list[S3ObjectEntry] = []
     is_truncated = False
@@ -414,8 +432,10 @@ def _parse_list_response(body: bytes) -> ListResult:
         elif tag == "KeyCount" and child.text:
             key_count = int(child.text)
     return ListResult(
-        contents=contents, is_truncated=is_truncated,
-        next_continuation_token=next_token, key_count=key_count or len(contents),
+        contents=contents,
+        is_truncated=is_truncated,
+        next_continuation_token=next_token,
+        key_count=key_count or len(contents),
     )
 
 

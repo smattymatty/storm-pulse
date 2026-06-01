@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,7 +14,6 @@ from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.protocol import Envelope, MessageType, make_heartbeat
-
 from tests.helpers import (
     AGENT_ID,
     SECRET,
@@ -24,7 +23,6 @@ from tests.helpers import (
     sign_command_sequence,
 )
 
-
 # ---------------------------------------------------------------------------
 # Single command request
 # ---------------------------------------------------------------------------
@@ -33,7 +31,8 @@ from tests.helpers import (
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_command_request(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     mock_exec.return_value = make_successful_result()
     ws = AsyncMock()
@@ -61,7 +60,7 @@ async def test_dispatch_bad_hmac(agent: Agent) -> None:
         v=1,
         type=MessageType.COMMAND_REQUEST,
         id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         agent_id=AGENT_ID,
         payload={"command": "git_pull", "params": {}, "hmac": "bad", "nonce": "n"},
     )
@@ -78,22 +77,26 @@ async def test_dispatch_unexpected_type(agent: Agent) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ack_type", [
-    MessageType.REGISTER_OK,
-    MessageType.HEARTBEAT_ACK,
-    MessageType.METRICS_ACK,
-    MessageType.COMMAND_RESULT_ACK,
-    MessageType.ERROR,
-])
+@pytest.mark.parametrize(
+    "ack_type",
+    [
+        MessageType.REGISTER_OK,
+        MessageType.HEARTBEAT_ACK,
+        MessageType.METRICS_ACK,
+        MessageType.COMMAND_RESULT_ACK,
+        MessageType.ERROR,
+    ],
+)
 async def test_dispatch_ack_types_ignored(
-    agent: Agent, ack_type: MessageType,
+    agent: Agent,
+    ack_type: MessageType,
 ) -> None:
     ws = AsyncMock()
     envelope = Envelope(
         v=1,
         type=ack_type,
         id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         agent_id=AGENT_ID,
         payload={},
     )
@@ -109,7 +112,8 @@ async def test_dispatch_ack_types_ignored(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_refuses_run_verify_block_when_sealed(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     agent._signoff_state.seal()
     ws = AsyncMock()
@@ -134,7 +138,8 @@ async def test_dispatch_refuses_run_verify_block_when_sealed(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_refuses_run_apply_block_when_sealed(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     agent._signoff_state.seal()
     ws = AsyncMock()
@@ -160,7 +165,8 @@ async def test_dispatch_refuses_run_apply_block_when_sealed(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_runs_run_apply_block_when_unsealed(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     mock_exec.return_value = make_successful_result(command="run_apply_block")
     ws = AsyncMock()
@@ -188,7 +194,8 @@ async def test_dispatch_runs_run_apply_block_when_unsealed(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_command_sequence(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     mock_exec.return_value = make_successful_result()
     ws = AsyncMock()
@@ -202,13 +209,15 @@ async def test_dispatch_command_sequence(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_sequence_stop_on_failure(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     mock_exec.return_value = make_failed_result(command="git_pull")
     ws = AsyncMock()
 
     await agent._dispatch(
-        ws, sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=True),
+        ws,
+        sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=True),
     )
 
     assert mock_exec.call_count == 1
@@ -218,13 +227,15 @@ async def test_dispatch_sequence_stop_on_failure(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_sequence_continues_past_failure(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     mock_exec.return_value = make_failed_result(command="git_pull")
     ws = AsyncMock()
 
     await agent._dispatch(
-        ws, sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=False),
+        ws,
+        sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=False),
     )
 
     assert mock_exec.call_count == 2
@@ -234,7 +245,8 @@ async def test_dispatch_sequence_continues_past_failure(
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_sequence_invalid_command_aborts(
-    mock_exec: MagicMock, agent: Agent,
+    mock_exec: MagicMock,
+    agent: Agent,
 ) -> None:
     ws = AsyncMock()
     await agent._dispatch(ws, sign_command_sequence(["this_command_does_not_exist"]))
@@ -250,8 +262,11 @@ async def test_dispatch_sequence_invalid_command_aborts(
 @pytest.mark.asyncio
 async def test_log_batch_ack_missing_batch_id(agent: Agent) -> None:
     envelope = Envelope(
-        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
-        ts=datetime.now(timezone.utc), agent_id=AGENT_ID,
+        v=1,
+        type=MessageType.LOG_BATCH_ACK,
+        id="x",
+        ts=datetime.now(UTC),
+        agent_id=AGENT_ID,
         payload={},
     )
     # Should not raise
@@ -261,8 +276,11 @@ async def test_log_batch_ack_missing_batch_id(agent: Agent) -> None:
 @pytest.mark.asyncio
 async def test_log_batch_ack_unknown_batch_is_noop(agent: Agent) -> None:
     envelope = Envelope(
-        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
-        ts=datetime.now(timezone.utc), agent_id=AGENT_ID,
+        v=1,
+        type=MessageType.LOG_BATCH_ACK,
+        id="x",
+        ts=datetime.now(UTC),
+        agent_id=AGENT_ID,
         payload={"batch_id": "never-sent"},
     )
     await agent._handle_log_batch_ack(envelope)
@@ -276,8 +294,11 @@ async def test_log_batch_ack_advances_position(agent: Agent) -> None:
     agent._pending_batches.add("bid-1", "grp", 4242)
 
     envelope = Envelope(
-        v=1, type=MessageType.LOG_BATCH_ACK, id="x",
-        ts=datetime.now(timezone.utc), agent_id=AGENT_ID,
+        v=1,
+        type=MessageType.LOG_BATCH_ACK,
+        id="x",
+        ts=datetime.now(UTC),
+        agent_id=AGENT_ID,
         payload={"batch_id": "bid-1"},
     )
     await agent._handle_log_batch_ack(envelope)
@@ -303,7 +324,11 @@ async def test_command_result_logged_to_pulse_logger(
     mock_exec.return_value = make_successful_result()
     pulse_logger = MagicMock()
     ag = Agent(
-        config, SECRET, nonce_store, ssl_ctx, shutdown,
+        config,
+        SECRET,
+        nonce_store,
+        ssl_ctx,
+        shutdown,
         pulse_logger=pulse_logger,
     )
     ws = AsyncMock()

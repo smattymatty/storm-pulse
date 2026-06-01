@@ -8,7 +8,7 @@ import logging
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from stormpulse.protocol import (
@@ -178,7 +178,7 @@ def verify_envelope(
     # 2. Timestamp freshness - directional: reject future-dated commands
     # beyond a small skew tolerance so a future ts can't extend the replay
     # window past nonce eviction.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     age = (now - envelope.ts).total_seconds()
     if age < -_CLOCK_SKEW_TOLERANCE_SECONDS:
         raise AuthError(f"Command timestamp in the future: {-age:.1f}s ahead")
@@ -192,7 +192,10 @@ def verify_envelope(
     if envelope.type == MessageType.COMMAND_REQUEST:
         req_payload = CommandRequestPayload.from_dict(envelope.payload)
         canonical = canonical_command_request(
-            req_payload.command, req_payload.nonce, ts_str, req_payload.params,
+            req_payload.command,
+            req_payload.nonce,
+            ts_str,
+            req_payload.params,
         )
         expected_hmac = req_payload.hmac
         nonce = req_payload.nonce

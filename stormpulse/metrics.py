@@ -19,15 +19,19 @@ logger = logging.getLogger(__name__)
 _DOCKER_TIMEOUT = 10
 
 
-def _parse_container_objects(raw_objects: list[dict[str, object]]) -> list[ContainerInfo]:
+def _parse_container_objects(
+    raw_objects: list[dict[str, object]],
+) -> list[ContainerInfo]:
     """Convert raw docker compose JSON objects to ContainerInfo."""
     containers: list[ContainerInfo] = []
     for obj in raw_objects:
-        containers.append(ContainerInfo(
-            name=str(obj.get("Name", obj.get("name", "unknown"))),
-            status=str(obj.get("State", obj.get("state", "unknown"))),
-            image=str(obj.get("Image", obj.get("image", "unknown"))),
-        ))
+        containers.append(
+            ContainerInfo(
+                name=str(obj.get("Name", obj.get("name", "unknown"))),
+                status=str(obj.get("State", obj.get("state", "unknown"))),
+                image=str(obj.get("Image", obj.get("image", "unknown"))),
+            )
+        )
     return containers
 
 
@@ -39,7 +43,15 @@ def _collect_containers(compose_file: Path) -> list[ContainerInfo]:
     """
     try:
         proc = subprocess.run(
-            ["/usr/bin/docker", "compose", "-f", str(compose_file), "ps", "--format", "json"],
+            [
+                "/usr/bin/docker",
+                "compose",
+                "-f",
+                str(compose_file),
+                "ps",
+                "--format",
+                "json",
+            ],
             capture_output=True,
             text=True,
             timeout=_DOCKER_TIMEOUT,
@@ -53,7 +65,9 @@ def _collect_containers(compose_file: Path) -> list[ContainerInfo]:
         return []
 
     if proc.returncode != 0:
-        logger.warning("Docker compose ps exited %d: %s", proc.returncode, proc.stderr.strip())
+        logger.warning(
+            "Docker compose ps exited %d: %s", proc.returncode, proc.stderr.strip()
+        )
         return []
 
     output = proc.stdout.strip()

@@ -11,7 +11,6 @@ the Garage CLI.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -36,7 +35,8 @@ _TIER_FLAGS: dict[str, tuple[str, ...]] = {
 
 
 def make_provision_additional_key_handler(
-    garage_config: GarageConfig, params: dict[str, str],
+    garage_config: GarageConfig,
+    params: dict[str, str],
 ) -> JobHandler | None:
     """Build a JobHandler from runtime params.
 
@@ -127,7 +127,10 @@ async def run_provision_additional_key(
     # ---- Step 1: key create <new_key_name> ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
     rc, stdout, stderr = await run_garage(
-        garage_config, "key", "create", new_key_name,
+        garage_config,
+        "key",
+        "create",
+        new_key_name,
     )
     if rc != 0:
         return _failure(
@@ -161,13 +164,19 @@ async def run_provision_additional_key(
 
     # ---- Step 2: bucket allow <flags> <bucket_id> --key <new_key_id> ----
     await progress(
-        "running", 1, _TOTAL_STEPS,
+        "running",
+        1,
+        _TOTAL_STEPS,
         f"Granting {key_tier} permissions",
     )
     rc, _stdout, stderr = await run_garage(
         garage_config,
-        "bucket", "allow", *flags,
-        bucket_id, "--key", state.new_key_id,
+        "bucket",
+        "allow",
+        *flags,
+        bucket_id,
+        "--key",
+        state.new_key_id,
     )
     if rc != 0:
         rollback = await _rollback(garage_config, state)
@@ -187,12 +196,19 @@ async def run_provision_additional_key(
 
     # ---- Step 3: bucket alias --local <new_key> <bucket_id> <local_alias> ----
     await progress(
-        "running", 2, _TOTAL_STEPS, "Attaching local alias",
+        "running",
+        2,
+        _TOTAL_STEPS,
+        "Attaching local alias",
     )
     rc, _stdout, stderr = await run_garage(
         garage_config,
-        "bucket", "alias", "--local", state.new_key_id,
-        bucket_id, local_alias,
+        "bucket",
+        "alias",
+        "--local",
+        state.new_key_id,
+        bucket_id,
+        local_alias,
     )
     if rc != 0:
         rollback = await _rollback(garage_config, state)
@@ -237,7 +253,8 @@ class _RollbackResult:
 
 
 async def _rollback(
-    garage_config: GarageConfig, state: _AdditionalKeyState,
+    garage_config: GarageConfig,
+    state: _AdditionalKeyState,
 ) -> _RollbackResult:
     """Reverse-order cleanup. Halt on first failure.
 
@@ -258,13 +275,18 @@ async def _rollback(
         try:
             rc, _stdout, _stderr = await run_garage(
                 garage_config,
-                "bucket", "deny", *flags,
-                state.bucket_id, "--key", state.new_key_id,
+                "bucket",
+                "deny",
+                *flags,
+                state.bucket_id,
+                "--key",
+                state.new_key_id,
             )
-        except (asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError) as exc:
             logger.warning(
                 "Rollback: bucket deny %s failed: %s",
-                state.new_key_id, exc,
+                state.new_key_id,
+                exc,
             )
             manual.extend(_remaining_after_perm_halt(state, flags))
             return _RollbackResult(status="partial", manual_cleanup=manual)
@@ -276,12 +298,17 @@ async def _rollback(
     if state.new_key_id is not None:
         try:
             rc, _stdout, _stderr = await run_garage(
-                garage_config, "key", "delete", "--yes", state.new_key_id,
+                garage_config,
+                "key",
+                "delete",
+                "--yes",
+                state.new_key_id,
             )
-        except (asyncio.TimeoutError, OSError) as exc:
+        except (TimeoutError, OSError) as exc:
             logger.warning(
                 "Rollback: key delete %s failed: %s",
-                state.new_key_id, exc,
+                state.new_key_id,
+                exc,
             )
             manual.append({"type": "key", "id": state.new_key_id})
             return _RollbackResult(status="partial", manual_cleanup=manual)
@@ -293,16 +320,19 @@ async def _rollback(
 
 
 def _remaining_after_perm_halt(
-    state: _AdditionalKeyState, flags: tuple[str, ...],
+    state: _AdditionalKeyState,
+    flags: tuple[str, ...],
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if state.new_key_id is not None:
         if state.perms_granted:
-            items.append({
-                "type": "permission_grant",
-                "key_id": state.new_key_id,
-                "flags": list(flags),
-            })
+            items.append(
+                {
+                    "type": "permission_grant",
+                    "key_id": state.new_key_id,
+                    "flags": list(flags),
+                }
+            )
         items.append({"type": "key", "id": state.new_key_id})
     return items
 
@@ -328,9 +358,7 @@ def _failure(
         "duration_seconds": _elapsed(started_at),
     }
     extras.update(extras_extra)
-    final_reason = (
-        "rollback_failed" if rollback_status == "partial" else failure_reason
-    )
+    final_reason = "rollback_failed" if rollback_status == "partial" else failure_reason
     return JobOutcome(
         success=False,
         exit_code=-1,

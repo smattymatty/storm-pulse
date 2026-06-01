@@ -68,16 +68,18 @@ logger = logging.getLogger(__name__)
 # lands. The enum value is not yet defined in protocol.py on main, so
 # referencing it here crash-loops the agent at import. Re-add it in the
 # same commit as the protocol.py enum addition.
-ACK_TYPES = frozenset({
-    MessageType.REGISTER_OK,
-    MessageType.HEARTBEAT_ACK,
-    MessageType.METRICS_ACK,
-    MessageType.COMMAND_RESULT_ACK,
-    MessageType.ERROR,
-})
+ACK_TYPES = frozenset(
+    {
+        MessageType.REGISTER_OK,
+        MessageType.HEARTBEAT_ACK,
+        MessageType.METRICS_ACK,
+        MessageType.COMMAND_RESULT_ACK,
+        MessageType.ERROR,
+    }
+)
 
 
-async def receive_loop(agent: "Agent", ws: ClientConnection) -> None:
+async def receive_loop(agent: Agent, ws: ClientConnection) -> None:
     """Receive and dispatch inbound messages.
 
     A malformed or buggy message must not kill the receive loop — the
@@ -94,7 +96,9 @@ async def receive_loop(agent: "Agent", ws: ClientConnection) -> None:
 
 
 async def dispatch_message(
-    agent: "Agent", ws: ClientConnection, raw: str | bytes,
+    agent: Agent,
+    ws: ClientConnection,
+    raw: str | bytes,
 ) -> None:
     """Parse envelope, verify auth, execute command(s)."""
     try:
@@ -118,7 +122,7 @@ async def dispatch_message(
             logger.warning("Unexpected message type: %s", envelope.type.value)
 
 
-async def handle_log_batch_ack(agent: "Agent", envelope: Envelope) -> None:
+async def handle_log_batch_ack(agent: Agent, envelope: Envelope) -> None:
     """Advance the stored log position for an acknowledged batch."""
     batch_id = envelope.payload.get("batch_id")
     if not isinstance(batch_id, str):
@@ -135,12 +139,16 @@ async def handle_log_batch_ack(agent: "Agent", envelope: Envelope) -> None:
     await asyncio.to_thread(shipper.tailer.confirm_shipped, to_position)  # type: ignore[arg-type]
     logger.debug(
         "Advanced position for group %s to %s (batch %s)",
-        group_name, to_position, batch_id,
+        group_name,
+        to_position,
+        batch_id,
     )
 
 
 async def handle_command_request(
-    agent: "Agent", ws: ClientConnection, envelope: Envelope,
+    agent: Agent,
+    ws: ClientConnection,
+    envelope: Envelope,
 ) -> None:
     """Verify and execute a single command request.
 
@@ -165,7 +173,9 @@ async def handle_command_request(
         return
     else:
         subprocess_result = await _run_subprocess_command(
-            agent, payload, envelope.id,
+            agent,
+            payload,
+            envelope.id,
         )
         if subprocess_result is None:
             return
@@ -179,12 +189,15 @@ async def handle_command_request(
 
 
 def _verify_request_payload(
-    agent: "Agent", envelope: Envelope,
+    agent: Agent,
+    envelope: Envelope,
 ) -> CommandRequestPayload | None:
     """Verify the envelope auth + type, or return ``None`` to drop it."""
     try:
         payload = verify_envelope(
-            envelope, agent._secret, agent._nonce_store,
+            envelope,
+            agent._secret,
+            agent._nonce_store,
             agent._config.auth.command_max_age_seconds,
         )
     except AuthError as exc:
@@ -192,7 +205,8 @@ def _verify_request_payload(
         return None
     if not isinstance(payload, CommandRequestPayload):
         logger.error(
-            "Expected CommandRequestPayload, got %s", type(payload).__name__,
+            "Expected CommandRequestPayload, got %s",
+            type(payload).__name__,
         )
         return None
     logger.info("Executing command %r (request %s)", payload.command, envelope.id)
@@ -200,7 +214,7 @@ def _verify_request_payload(
 
 
 async def _refuse_if_sealed(
-    agent: "Agent",
+    agent: Agent,
     ws: ClientConnection,
     envelope: Envelope,
     payload: CommandRequestPayload,
@@ -219,13 +233,16 @@ async def _refuse_if_sealed(
     await ws.send(make_command_result(agent._config.agent.id, sealed).to_json())
     logger.warning(
         "Refused %s (request %s): signoff is sealed",
-        payload.command, envelope.id,
+        payload.command,
+        envelope.id,
     )
     return True
 
 
 async def _run_subprocess_command(
-    agent: "Agent", payload: CommandRequestPayload, request_id: str,
+    agent: Agent,
+    payload: CommandRequestPayload,
+    request_id: str,
 ) -> CommandResultPayload | None:
     """Run a whitelisted subprocess command, or return ``None`` on dispatch error.
 
@@ -248,19 +265,25 @@ async def _run_subprocess_command(
 
 
 async def _send_result(
-    agent: "Agent", ws: ClientConnection, result: CommandResultPayload,
+    agent: Agent,
+    ws: ClientConnection,
+    result: CommandResultPayload,
 ) -> None:
     """Send a ``command.result`` envelope and log the outcome."""
     response = make_command_result(agent._config.agent.id, result)
     await ws.send(response.to_json())
     logger.info(
         "Sent result for %r: success=%s, %dms",
-        result.command, result.success, result.duration_ms,
+        result.command,
+        result.success,
+        result.duration_ms,
     )
 
 
 def _log_to_pulse(
-    agent: "Agent", command: str, result: CommandResultPayload,
+    agent: Agent,
+    command: str,
+    result: CommandResultPayload,
 ) -> None:
     """Mirror a command result to the PulseLogger (if configured)."""
     if agent._pulse_logger is None:
@@ -276,7 +299,7 @@ def _log_to_pulse(
 
 
 async def dispatch_long_running(
-    agent: "Agent",
+    agent: Agent,
     request_id: str,
     payload: CommandRequestPayload,
     cmd_def: CommandDef,
@@ -312,11 +335,15 @@ async def dispatch_long_running(
             duration_ms=0,
             failure_reason="os_error",
         )
-        await agent._job_manager.send_now(make_command_result(agent._config.agent.id, failure))
+        await agent._job_manager.send_now(
+            make_command_result(agent._config.agent.id, failure)
+        )
         return
 
     handler = resolve_long_running_handler(
-        agent._long_running_factories, payload.command, validated_params,
+        agent._long_running_factories,
+        payload.command,
+        validated_params,
     )
     if handler is None:
         logger.error(
@@ -334,13 +361,18 @@ async def dispatch_long_running(
             duration_ms=0,
             failure_reason="os_error",
         )
-        await agent._job_manager.send_now(make_command_result(agent._config.agent.id, failure))
+        await agent._job_manager.send_now(
+            make_command_result(agent._config.agent.id, failure)
+        )
         return
 
     on_success = post_success_hook(agent, cmd_def, payload.command)
     try:
         agent._job_manager.start(
-            request_id, payload.command, cmd_def.group, handler,
+            request_id,
+            payload.command,
+            cmd_def.group,
+            handler,
             on_success=on_success,
         )
     except ValueError:
@@ -348,12 +380,16 @@ async def dispatch_long_running(
 
 
 async def handle_command_sequence(
-    agent: "Agent", ws: ClientConnection, envelope: Envelope,
+    agent: Agent,
+    ws: ClientConnection,
+    envelope: Envelope,
 ) -> None:
     """Verify and execute a command sequence, streaming results."""
     try:
         payload = verify_envelope(
-            envelope, agent._secret, agent._nonce_store,
+            envelope,
+            agent._secret,
+            agent._nonce_store,
             agent._config.auth.command_max_age_seconds,
         )
     except AuthError as exc:
@@ -364,7 +400,9 @@ async def handle_command_sequence(
         logger.error("Expected CommandSequencePayload, got %s", type(payload).__name__)
         return
     logger.info(
-        "Executing sequence %s: %s", payload.sequence_id, payload.commands,
+        "Executing sequence %s: %s",
+        payload.sequence_id,
+        payload.commands,
     )
 
     try:
@@ -381,7 +419,8 @@ async def handle_command_sequence(
         sealed_in_sequence = sorted(SEALED_COMMANDS & set(payload.commands))
         logger.warning(
             "Refused sequence %s: contains %s while sealed",
-            payload.sequence_id, ", ".join(sealed_in_sequence),
+            payload.sequence_id,
+            ", ".join(sealed_in_sequence),
         )
         return
 
@@ -390,19 +429,26 @@ async def handle_command_sequence(
     for name in payload.commands:
         request_id = str(uuid.uuid4())
         result = await asyncio.to_thread(
-            execute_command, name, project, request_id, payload.sequence_id,
+            execute_command,
+            name,
+            project,
+            request_id,
+            payload.sequence_id,
             registry=agent._registry,
         )
         response = make_command_result(agent_id, result)
         await ws.send(response.to_json())
         logger.info(
             "Sequence %s step %r: success=%s, %dms",
-            payload.sequence_id, name, result.success, result.duration_ms,
+            payload.sequence_id,
+            name,
+            result.success,
+            result.duration_ms,
         )
         if payload.stop_on_failure and not result.success:
             logger.warning(
-                "Sequence %s halted at %r", payload.sequence_id, name,
+                "Sequence %s halted at %r",
+                payload.sequence_id,
+                name,
             )
             break
-
-

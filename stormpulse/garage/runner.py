@@ -13,7 +13,9 @@ _STEP_TIMEOUT_SECONDS = 30
 
 
 async def run_garage(
-    garage_config: GarageConfig, *args: str, timeout: float = _STEP_TIMEOUT_SECONDS,
+    garage_config: GarageConfig,
+    *args: str,
+    timeout: float = _STEP_TIMEOUT_SECONDS,
 ) -> tuple[int, str, str]:
     """Run ``docker exec <container> /garage <args>``.
 
@@ -34,9 +36,10 @@ async def run_garage(
     )
     try:
         stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(), timeout=timeout,
+            proc.communicate(),
+            timeout=timeout,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         proc.kill()
         await proc.wait()
         raise

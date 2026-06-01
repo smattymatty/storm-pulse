@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 
 async def sleep_or_shutdown(
-    shutdown: asyncio.Event, interval: float,
+    shutdown: asyncio.Event,
+    interval: float,
 ) -> bool:
     """Sleep *interval* seconds or return early when ``shutdown`` fires.
 
@@ -50,7 +51,7 @@ async def sleep_or_shutdown(
         return False
 
 
-async def heartbeat_loop(agent: "Agent", ws: ClientConnection) -> None:
+async def heartbeat_loop(agent: Agent, ws: ClientConnection) -> None:
     """Send periodic heartbeats until shutdown or disconnect."""
     interval = agent._config.dashboard.heartbeat_interval_seconds
     agent_id = agent._config.agent.id
@@ -62,7 +63,7 @@ async def heartbeat_loop(agent: "Agent", ws: ClientConnection) -> None:
             return
 
 
-async def metrics_loop(agent: "Agent", ws: ClientConnection) -> None:
+async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
     """Collect and push metrics at the configured interval."""
     interval = agent._config.metrics.push_interval_seconds
     agent_id = agent._config.agent.id
@@ -81,7 +82,7 @@ async def metrics_loop(agent: "Agent", ws: ClientConnection) -> None:
             return
 
 
-async def garage_loop(agent: "Agent", ws: ClientConnection) -> None:
+async def garage_loop(agent: Agent, ws: ClientConnection) -> None:
     """Refresh Garage state at the configured interval.
 
     No-op when ``config.garage`` is None or disabled, or when the agent
@@ -108,7 +109,7 @@ async def garage_loop(agent: "Agent", ws: ClientConnection) -> None:
             return
 
 
-async def log_loop(agent: "Agent", ws: ClientConnection, group_name: str) -> None:
+async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
     """Tail, parse, batch, and ship logs for one group."""
     shipper = agent._shippers[group_name]
     interval = shipper.ship_interval_seconds
@@ -134,7 +135,10 @@ async def log_loop(agent: "Agent", ws: ClientConnection, group_name: str) -> Non
                 await ws.send(envelope.to_json())
                 logger.debug(
                     "Sent log.batch %s group=%s lines=%d dropped=%d",
-                    batch_id, group_name, len(batch.lines), batch.dropped,
+                    batch_id,
+                    group_name,
+                    len(batch.lines),
+                    batch.dropped,
                 )
         except ConnectionClosed:
             raise

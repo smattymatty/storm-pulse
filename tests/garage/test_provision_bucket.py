@@ -53,7 +53,11 @@ class _ProgressRecorder:
         self.events: list[tuple[str, int, int | None, str]] = []
 
     async def __call__(
-        self, stage: str, current: int, total: int | None, message: str,
+        self,
+        stage: str,
+        current: int,
+        total: int | None,
+        message: str,
     ) -> None:
         self.events.append((stage, current, total, message))
 
@@ -121,12 +125,23 @@ async def test_happy_path_sequence_of_calls(
     assert fake.calls[2] == ("key", "create", "key-admin")
     # Step 3: admin perm grant
     assert fake.calls[3] == (
-        "bucket", "allow", "--read", "--write", "--owner",
-        throwaway, "--key", admin_key,
+        "bucket",
+        "allow",
+        "--read",
+        "--write",
+        "--owner",
+        throwaway,
+        "--key",
+        admin_key,
     )
     # Step 4: admin local alias attach
     assert fake.calls[4] == (
-        "bucket", "alias", "--local", admin_key, throwaway, "media",
+        "bucket",
+        "alias",
+        "--local",
+        admin_key,
+        throwaway,
+        "media",
     )
     # Step 5: unalias throwaway
     assert fake.calls[5] == ("bucket", "unalias", throwaway)
@@ -149,7 +164,9 @@ async def test_happy_path_end_state(
     assert bucket.global_aliases == set()
     assert bucket.local_aliases == {admin_key: "media"}
     assert fake.keys[admin_key].permissions[bucket.bucket_id] == {
-        "read", "write", "owner",
+        "read",
+        "write",
+        "owner",
     }
 
 
@@ -215,9 +232,7 @@ async def test_step3_admin_perm_grant_failure_deletes_key_and_bucket(
     assert len(fake.calls) == 6
     # No deny (no perms were granted), no unalias_local (no alias attached)
     assert all(c[:2] != ("bucket", "deny") for c in fake.calls)
-    assert all(
-        c[:3] != ("bucket", "unalias", "--local") for c in fake.calls
-    )
+    assert all(c[:3] != ("bucket", "unalias", "--local") for c in fake.calls)
     assert fake.calls[-2][:2] == ("key", "delete")
     assert fake.calls[-1] == ("bucket", "delete", "--yes", throwaway)
     assert not fake.buckets
@@ -241,12 +256,14 @@ async def test_step4_admin_local_alias_failure_revokes_perms_and_cleanup(
     deny_calls = [c for c in fake.calls if c[:2] == ("bucket", "deny")]
     assert len(deny_calls) == 1
     assert deny_calls[0][:5] == (
-        "bucket", "deny", "--read", "--write", "--owner",
+        "bucket",
+        "deny",
+        "--read",
+        "--write",
+        "--owner",
     )
     # No unalias_local (no alias attached)
-    assert all(
-        c[:3] != ("bucket", "unalias", "--local") for c in fake.calls
-    )
+    assert all(c[:3] != ("bucket", "unalias", "--local") for c in fake.calls)
     assert fake.calls[-1] == ("bucket", "delete", "--yes", throwaway)
     assert not fake.buckets
     assert not fake.keys
@@ -270,9 +287,7 @@ async def test_step5_unalias_throwaway_failure_atomic_rollback(
     ]
     deny_calls = [c for c in fake.calls if c[:2] == ("bucket", "deny")]
     key_delete_calls = [c for c in fake.calls if c[:2] == ("key", "delete")]
-    bucket_delete_calls = [
-        c for c in fake.calls if c[:2] == ("bucket", "delete")
-    ]
+    bucket_delete_calls = [c for c in fake.calls if c[:2] == ("bucket", "delete")]
     assert len(unalias_local_calls) == 1
     # Confirm 1-positional after --local <key>
     assert len(unalias_local_calls[0]) == 5
@@ -307,8 +322,9 @@ async def test_rollback_partial_when_cleanup_step_errors(
     assert outcome.extras["step_failed"] == "unalias_throwaway"
     assert outcome.extras["rollback_status"] == "partial"
     cleanup = outcome.extras["manual_cleanup_required"]
-    types_ids = {(item["type"], item.get("key_id") or item.get("id"))
-                 for item in cleanup}
+    types_ids = {
+        (item["type"], item.get("key_id") or item.get("id")) for item in cleanup
+    }
     # Pull admin_id from the perm grant call (the trailing arg of bucket allow)
     allow_calls = [c for c in fake.calls if c[:2] == ("bucket", "allow")]
     assert len(allow_calls) == 1

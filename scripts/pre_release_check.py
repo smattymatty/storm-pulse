@@ -46,7 +46,9 @@ def main() -> int:
         )
         return 1
 
-    print(f"ok - version {pyproject_version} agrees between pyproject.toml and CHANGELOG.md")
+    print(
+        f"ok - version {pyproject_version} agrees between pyproject.toml and CHANGELOG.md"
+    )
     return 0
 
 

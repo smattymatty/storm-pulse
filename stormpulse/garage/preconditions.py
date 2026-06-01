@@ -42,13 +42,19 @@ _TIMEOUT_SECONDS = 15
 def check_garage_version(config: GarageConfig) -> str | None:
     """Garage CLI must report v2.x. Returns reason or None on pass."""
     cmd = [
-        config.docker_binary, "exec", config.container_name,
-        config.garage_binary, "--version",
+        config.docker_binary,
+        "exec",
+        config.container_name,
+        config.garage_binary,
+        "--version",
     ]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=_TIMEOUT_SECONDS, shell=False,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SECONDS,
+            shell=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return "garage_unreachable"
@@ -71,13 +77,19 @@ def check_rpc_secret(config: GarageConfig) -> str | None:
     container is up but the secret is wrong.
     """
     cmd = [
-        config.docker_binary, "exec", config.container_name,
-        config.garage_binary, "status",
+        config.docker_binary,
+        "exec",
+        config.container_name,
+        config.garage_binary,
+        "status",
     ]
     try:
         proc = subprocess.run(
-            cmd, capture_output=True, text=True,
-            timeout=_TIMEOUT_SECONDS, shell=False,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_TIMEOUT_SECONDS,
+            shell=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return "garage_unreachable"

@@ -5,11 +5,9 @@ All notable changes to Storm Pulse are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-This changelog starts at 0.1.4. Earlier versions (0.1.0–0.1.3) are not retroactively documented; consult `git log` for their history.
-
 ## [Unreleased]
 
-## [0.1.10] - 2026-05-29
+## [0.1.10] - 2026-05-31
 
 Adds `run_apply_block`, the dashboard-driven apply-block sibling of `run_verify_block` introduced in 0.1.8. The website's command-block dispatch path sends `run_verify_block` for verify blocks and `run_apply_block` for apply blocks; the agent only implemented the verify side, so apply-block "Run (Pulse)" clicks were rejected as `Unknown command: 'run_apply_block'` and the operator had to fall back to **Mark run** plus a manual SSH paste. Discovered 2026-05-29 during the alpha-node 002-garage walk, where the Step 2 grype scan would not dispatch. The verify and apply hatches share the same seal: a sealed agent now auto-disables both. Also ships the rootless-install `--config` EUID-awareness fix queued from 0.1.9 cleanup work.
 

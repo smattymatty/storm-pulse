@@ -73,7 +73,15 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_info": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "info", "{bucket_name}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "info",
+                "{bucket_name}",
+            ],
             timeout=15,
             description="Show bucket details",
             params={
@@ -94,7 +102,15 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         # ----- State-changing -----
         "garage_bucket_create": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "create", "{bucket_name}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "create",
+                "{bucket_name}",
+            ],
             timeout=15,
             description="Create a new bucket",
             params={
@@ -108,8 +124,16 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_delete": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "delete", "--yes",
-                     "{bucket_name}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "delete",
+                "--yes",
+                "{bucket_name}",
+            ],
             timeout=15,
             requires_confirmation=True,
             description="Delete a bucket",
@@ -139,7 +163,16 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_key_delete": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "key", "delete", "--yes", "{key_id}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "key",
+                "delete",
+                "--yes",
+                "{key_id}",
+            ],
             timeout=15,
             requires_confirmation=True,
             description="Delete an API key",
@@ -154,9 +187,20 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_allow": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "allow",
-                     "--read", "--write", "--owner",
-                     "{bucket_name}", "--key", "{key_id}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "allow",
+                "--read",
+                "--write",
+                "--owner",
+                "{bucket_name}",
+                "--key",
+                "{key_id}",
+            ],
             timeout=15,
             description="Grant full access to a bucket for a key",
             params={
@@ -176,9 +220,19 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_allow_rw": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "allow",
-                     "--read", "--write",
-                     "{bucket_name}", "--key", "{key_id}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "allow",
+                "--read",
+                "--write",
+                "{bucket_name}",
+                "--key",
+                "{key_id}",
+            ],
             timeout=15,
             description="Grant read-write access to a bucket for a key",
             params={
@@ -198,9 +252,18 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_allow_ro": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "allow",
-                     "--read",
-                     "{bucket_name}", "--key", "{key_id}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "allow",
+                "--read",
+                "{bucket_name}",
+                "--key",
+                "{key_id}",
+            ],
             timeout=15,
             description="Grant read-only access to a bucket for a key",
             params={
@@ -220,10 +283,20 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_website_allow": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage,
-                     "bucket", "website", "--allow", "{bucket_name}",
-                     "--index-document", "{index_document}",
-                     "--error-document", "{error_document}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "website",
+                "--allow",
+                "{bucket_name}",
+                "--index-document",
+                "{index_document}",
+                "--error-document",
+                "{error_document}",
+            ],
             timeout=30,
             description="Enable static website hosting on a bucket",
             params={
@@ -249,8 +322,16 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_website_deny": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage,
-                     "bucket", "website", "--deny", "{bucket_name}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "website",
+                "--deny",
+                "{bucket_name}",
+            ],
             timeout=30,
             requires_confirmation=True,
             description="Disable static website hosting on a bucket",
@@ -265,8 +346,16 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_alias_global_add": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "alias",
-                     "{bucket_name}", "{new_alias}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "alias",
+                "{bucket_name}",
+                "{new_alias}",
+            ],
             timeout=15,
             description="Add a global alias to a bucket",
             params={
@@ -286,8 +375,15 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_alias_global_remove": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "unalias",
-                     "{alias_name}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "unalias",
+                "{alias_name}",
+            ],
             timeout=15,
             requires_confirmation=True,
             description="Remove a global alias from a bucket",
@@ -302,9 +398,18 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_alias_local_add": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "alias",
-                     "--local", "{key_id}",
-                     "{bucket_name}", "{new_alias}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "alias",
+                "--local",
+                "{key_id}",
+                "{bucket_name}",
+                "{new_alias}",
+            ],
             timeout=15,
             description="Add a local alias scoped to an access key",
             params={
@@ -330,9 +435,17 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_alias_local_remove": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "unalias",
-                     "--local", "{key_id}",
-                     "{alias_name}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "unalias",
+                "--local",
+                "{key_id}",
+                "{alias_name}",
+            ],
             timeout=15,
             requires_confirmation=True,
             description="Remove a local alias scoped to an access key",
@@ -360,7 +473,9 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_provision_customer_bucket": CommandDef(
             group="garage",
-            command=["garage_provision_customer_bucket"],  # internal - handled by JobManager
+            command=[
+                "garage_provision_customer_bucket"
+            ],  # internal - handled by JobManager
             timeout=600,  # per-step reference; long_running ignores it for total duration
             description="Orchestrated bucket + admin key provisioning. Atomic with rollback. The rw/ro keys are added on demand via garage_provision_additional_key.",
             sensitive_output=True,  # secrets ride in stdout/extras
@@ -382,7 +497,9 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_delete_provisioned_bucket": CommandDef(
             group="garage",
-            command=["garage_delete_provisioned_bucket"],  # internal - handled by JobManager
+            command=[
+                "garage_delete_provisioned_bucket"
+            ],  # internal - handled by JobManager
             timeout=120,
             requires_confirmation=True,
             description="Orchestrated bucket deletion: detaches all aliases (using a temp global to bypass the orphan-rule deadlock when only locals exist), then deletes. Atomic with rollback.",
@@ -398,7 +515,9 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_provision_additional_key": CommandDef(
             group="garage",
-            command=["garage_provision_additional_key"],  # internal - handled by JobManager
+            command=[
+                "garage_provision_additional_key"
+            ],  # internal - handled by JobManager
             timeout=120,
             description="Orchestrated provisioning of an additional rw or ro key on an existing bucket. Atomic with rollback.",
             sensitive_output=True,  # the new secret rides in stdout/extras
@@ -472,7 +591,9 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_clear": CommandDef(
             group="garage",
-            command=["garage_bucket_clear"],  # internal - handled by JobManager, not a subprocess
+            command=[
+                "garage_bucket_clear"
+            ],  # internal - handled by JobManager, not a subprocess
             timeout=600,  # per-batch reference; long_running ignores it for total duration
             description="Bulk-delete every object in a bucket via the local Garage S3 endpoint",
             requires_confirmation=True,
@@ -513,7 +634,9 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_set_cors": CommandDef(
             group="garage",
-            command=["garage_bucket_set_cors"],  # internal - handled by JobManager, not a subprocess
+            command=[
+                "garage_bucket_set_cors"
+            ],  # internal - handled by JobManager, not a subprocess
             timeout=30,  # single API call; long_running ignores this for total duration
             description="Apply the platform-default CORS rule to a bucket via the local Garage S3 endpoint",
             sensitive_output=True,  # the secret arrives in params; never log them
@@ -623,9 +746,20 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         ),
         "garage_bucket_deny": CommandDef(
             group="garage",
-            command=[docker, "exec", container, garage, "bucket", "deny",
-                     "--read", "--write", "--owner",
-                     "{bucket_name}", "--key", "{key_id}"],
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "deny",
+                "--read",
+                "--write",
+                "--owner",
+                "{bucket_name}",
+                "--key",
+                "{key_id}",
+            ],
             timeout=15,
             requires_confirmation=True,
             description="Revoke all access to a bucket for a key",

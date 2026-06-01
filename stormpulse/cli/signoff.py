@@ -25,7 +25,7 @@ logger = logging.getLogger("stormpulse")
 _DEFAULT_CONFIG = default_config_path()
 
 
-def _load_state(args: argparse.Namespace) -> tuple["SignoffState", Path]:
+def _load_state(args: argparse.Namespace) -> tuple[SignoffState, Path]:
     """Resolve config and return a SignoffState plus the state dir."""
     from stormpulse.config import ConfigError, load_config
     from stormpulse.signoff import SignoffState, state_dir_from_db_path
@@ -120,7 +120,8 @@ def cmd_signoff_unseal(args: argparse.Namespace) -> None:
     state.unseal()
     logger.warning(
         "signoff_unsealed host=%s state_path=%s",
-        hostname, state.path,
+        hostname,
+        state.path,
     )
     print(f"Unsealed. Verify-block dispatch is RE-ENABLED ({state.path}).")
     print(

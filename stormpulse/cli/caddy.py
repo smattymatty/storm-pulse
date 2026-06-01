@@ -32,13 +32,15 @@ def cmd_caddy_init(args: argparse.Namespace) -> None:
 def add_caddy_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
     """Add the ``caddy`` subcommand group with nested subcommands."""
     caddy_parser = subparsers.add_parser(
-        "caddy", help="Caddy reverse-proxy integration",
+        "caddy",
+        help="Caddy reverse-proxy integration",
     )
     caddy_sub = caddy_parser.add_subparsers(dest="caddy_command")
 
     # --- caddy init ---
     init_parser = caddy_sub.add_parser(
-        "init", help="detect and configure Caddy integration",
+        "init",
+        help="detect and configure Caddy integration",
     )
     init_parser.add_argument(
         "--config",

@@ -9,3 +9,4 @@ build/
 _temp/
 storm-pulse.wiki/
 .env
+venv/

@@ -8,7 +8,6 @@ from unittest.mock import patch
 
 import pytest
 
-from stormpulse.init import InitError
 from stormpulse.garage.init import (
     _find_compose_file,
     append_garage_section,
@@ -19,7 +18,7 @@ from stormpulse.garage.init import (
     remove_garage_section,
     run_garage_init,
 )
-
+from stormpulse.init import InitError
 
 # ---------------------------------------------------------------------------
 # Compose parsing
@@ -166,11 +165,15 @@ class TestFindGarageConfig:
         cfg = home_user / "garage.toml"
         cfg.write_text("[s3_api]\n")
         glob_pattern = str(tmp_path / "*" / "garage" / "etc" / "garage.toml")
-        with patch(
-            "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS", [],
-        ), patch(
-            "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
-            [glob_pattern],
+        with (
+            patch(
+                "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS",
+                [],
+            ),
+            patch(
+                "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
+                [glob_pattern],
+            ),
         ):
             assert find_garage_config() == cfg
 
@@ -188,22 +191,29 @@ class TestFindGarageConfig:
         rootless_cfg = rootless / "garage.toml"
         rootless_cfg.write_text("[s3_api]\n# rootless\n")
 
-        with patch(
-            "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS",
-            [legacy_cfg],
-        ), patch(
-            "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
-            [str(tmp_path / "*" / "garage" / "etc" / "garage.toml")],
+        with (
+            patch(
+                "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS",
+                [legacy_cfg],
+            ),
+            patch(
+                "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
+                [str(tmp_path / "*" / "garage" / "etc" / "garage.toml")],
+            ),
         ):
             assert find_garage_config() == legacy_cfg
 
     def test_glob_no_matches_returns_none(self, tmp_path: Path) -> None:
         glob_pattern = str(tmp_path / "*" / "garage" / "etc" / "garage.toml")
-        with patch(
-            "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS", [],
-        ), patch(
-            "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
-            [glob_pattern],
+        with (
+            patch(
+                "stormpulse.garage.init._GARAGE_CONFIG_SEARCH_PATHS",
+                [],
+            ),
+            patch(
+                "stormpulse.garage.init._GARAGE_CONFIG_GLOB_PATTERNS",
+                [glob_pattern],
+            ),
         ):
             assert find_garage_config() is None
 
@@ -430,10 +440,9 @@ class TestGarageInitStep:
         cfg.write_text(_BASE_TOML)
         gcfg = tmp_path / "garage.toml"
         gcfg.write_text("[s3_api]\n")
-        with patch(
-            "stormpulse.garage.init.find_garage_config", return_value=gcfg
-        ), patch(
-            "stormpulse.garage.init.prompt_confirm", return_value=False
+        with (
+            patch("stormpulse.garage.init.find_garage_config", return_value=gcfg),
+            patch("stormpulse.garage.init.prompt_confirm", return_value=False),
         ):
             garage_init_step(cfg)
         assert has_garage_section(cfg) is False
@@ -450,12 +459,10 @@ class TestGarageInitStep:
             "garage_config_path": str(gcfg),
             "state_push_interval_seconds": 30,
         }
-        with patch(
-            "stormpulse.garage.init.find_garage_config", return_value=gcfg
-        ), patch(
-            "stormpulse.garage.init.prompt_confirm", return_value=True
-        ), patch(
-            "stormpulse.garage.init.prompt_garage_values", return_value=values
+        with (
+            patch("stormpulse.garage.init.find_garage_config", return_value=gcfg),
+            patch("stormpulse.garage.init.prompt_confirm", return_value=True),
+            patch("stormpulse.garage.init.prompt_garage_values", return_value=values),
         ):
             garage_init_step(cfg)
         with open(cfg, "rb") as f:

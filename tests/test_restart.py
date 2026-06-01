@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from stormpulse.cli.restart import cmd_restart
-from stormpulse.init.system import restart_or_hint
 from stormpulse.init.mode import InstallMode
+from stormpulse.init.system import restart_or_hint
 
 
 class TestRestartOrHint:
@@ -27,7 +27,8 @@ class TestRestartOrHint:
         assert calls == [["systemctl", "--user", "restart", "stormpulse"]]
 
     def test_user_mode_propagates_systemctl_exit_code(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         with patch(
             "stormpulse.init.system.subprocess.run",
@@ -39,7 +40,8 @@ class TestRestartOrHint:
         assert "exited 5" in caplog.text
 
     def test_system_mode_prints_hint_does_not_exec(
-        self, capsys: pytest.CaptureFixture[str],
+        self,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         with patch("stormpulse.init.system.subprocess.run") as run_mock:
             code = restart_or_hint(InstallMode.SYSTEM)
@@ -81,7 +83,8 @@ class TestCmdRestart:
         assert exc.value.code == 7
 
     def test_system_mode_returns_normally_after_hint(
-        self, capsys: pytest.CaptureFixture[str],
+        self,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         with patch("stormpulse.init.system.subprocess.run") as run_mock:
             with patch(

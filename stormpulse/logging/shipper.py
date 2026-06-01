@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.parsers import PARSERS
@@ -26,7 +27,11 @@ class Batch:
 class LogShipper:
     """Pull lines from a tailer, filter, parse, and batch for shipping."""
 
-    def __init__(self, group: LogGroupConfig, tailer: LogTailer | DockerTailer | StreamingDockerTailer) -> None:
+    def __init__(
+        self,
+        group: LogGroupConfig,
+        tailer: LogTailer | DockerTailer | StreamingDockerTailer,
+    ) -> None:
         self._group = group
         self._tailer = tailer
         parser = PARSERS.get(group.parser)

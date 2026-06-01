@@ -15,7 +15,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage.s3 import (
@@ -37,7 +36,13 @@ def make_clear_bucket_handler(params: dict[str, str]) -> JobHandler | None:
     Returns None if a required param is missing - the caller emits a
     structured no-handler failure rather than crashing.
     """
-    required = ("bucket_name", "s3_endpoint", "region", "access_key_id", "secret_access_key")
+    required = (
+        "bucket_name",
+        "s3_endpoint",
+        "region",
+        "access_key_id",
+        "secret_access_key",
+    )
     if not all(params.get(k) for k in required):
         logger.error(
             "garage_bucket_clear missing required params: %s",
@@ -119,7 +124,9 @@ async def run_clear_bucket(
     while True:
         try:
             page = await asyncio.to_thread(
-                client.list_objects_v2, bucket, continuation,
+                client.list_objects_v2,
+                bucket,
+                continuation,
             )
         except S3Error as exc:
             return JobOutcome(
@@ -159,10 +166,12 @@ async def run_clear_bucket(
     deleted_total = 0
     error_entries: list[dict[str, str]] = []
     for i in range(0, total, _BATCH_SIZE):
-        batch = all_keys[i:i + _BATCH_SIZE]
+        batch = all_keys[i : i + _BATCH_SIZE]
         try:
             result = await asyncio.to_thread(
-                client.delete_objects, bucket, batch,
+                client.delete_objects,
+                bucket,
+                batch,
             )
         except S3Error as exc:
             return JobOutcome(
@@ -184,7 +193,9 @@ async def run_clear_bucket(
                 {"Key": err.key, "Code": err.code, "Message": err.message},
             )
         await progress(
-            "running", deleted_total, total,
+            "running",
+            deleted_total,
+            total,
             f"Deleted {deleted_total} of {total}",
         )
 

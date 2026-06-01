@@ -32,7 +32,7 @@ State is two files in the agent state directory:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 _SEAL_FILENAME = "signoff.sealed"
@@ -116,7 +116,7 @@ class SignoffState:
         # a window of "unsealed without a marker" if a crash hit between
         # the two operations.
         self._dir.mkdir(parents=True, exist_ok=True)
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = datetime.now(UTC).isoformat()
         self._unsealed_at_path.write_text(now_iso, encoding="utf-8")
         self._unsealed_at_path.chmod(0o640)
         self._seal_path.unlink()
@@ -139,7 +139,7 @@ def format_unsealed_duration(unsealed_since: datetime | None) -> str:
     """
     if unsealed_since is None:
         return "unknown"
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     delta = now - unsealed_since
     total_seconds = int(delta.total_seconds())
     if total_seconds < 0:

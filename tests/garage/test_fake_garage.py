@@ -46,7 +46,10 @@ def _config() -> GarageConfig:
 async def test_bucket_create_accepts_valid_name() -> None:
     fake = FakeGarage()
     rc, stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "create", "my-bucket-001",
+        _config(),
+        "bucket",
+        "create",
+        "my-bucket-001",
     )
     assert rc == 0
     assert stderr == ""
@@ -57,20 +60,26 @@ async def test_bucket_create_accepts_valid_name() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", [
-    "_provisioning_abc",  # leading underscore (the bug from this morning)
-    "Bucket-Caps",        # uppercase
-    "ab",                 # too short
-    "a" * 64,             # too long (max 63)
-    "-leading-hyphen",
-    "trailing-hyphen-",
-    "has_underscore",
-    "has spaces",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_provisioning_abc",  # leading underscore (the bug from this morning)
+        "Bucket-Caps",  # uppercase
+        "ab",  # too short
+        "a" * 64,  # too long (max 63)
+        "-leading-hyphen",
+        "trailing-hyphen-",
+        "has_underscore",
+        "has spaces",
+    ],
+)
 async def test_bucket_create_rejects_invalid_names(name: str) -> None:
     fake = FakeGarage()
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "create", name,
+        _config(),
+        "bucket",
+        "create",
+        name,
     )
     assert rc == 1
     assert "InvalidBucketName" in stderr
@@ -81,7 +90,10 @@ async def test_bucket_create_rejects_duplicate_global_alias() -> None:
     fake = FakeGarage()
     await fake.run_garage(_config(), "bucket", "create", "twin")
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "create", "twin",
+        _config(),
+        "bucket",
+        "create",
+        "twin",
     )
     assert rc == 1
     assert "BucketAlreadyExists" in stderr
@@ -101,7 +113,10 @@ async def test_bucket_unalias_global_succeeds_when_other_aliases_exist() -> None
     bucket.global_aliases.add("secondary")
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "unalias", "primary",
+        _config(),
+        "bucket",
+        "unalias",
+        "primary",
     )
     assert rc == 0
     assert "primary" not in bucket.global_aliases
@@ -123,7 +138,10 @@ async def test_bucket_unalias_global_succeeds_when_local_aliases_exist() -> None
     bucket.local_aliases[key_id] = "local-alias"
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "unalias", "with-local",
+        _config(),
+        "bucket",
+        "unalias",
+        "with-local",
     )
     assert rc == 0
     assert "with-local" not in bucket.global_aliases
@@ -136,7 +154,10 @@ async def test_bucket_unalias_global_rejects_when_only_alias() -> None:
     await fake.run_garage(_config(), "bucket", "create", "lonely")
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "unalias", "lonely",
+        _config(),
+        "bucket",
+        "unalias",
+        "lonely",
     )
     assert rc == 1
     assert "doesn't have other aliases" in stderr
@@ -158,7 +179,12 @@ async def test_bucket_unalias_local_one_positional_succeeds() -> None:
     bucket.local_aliases[key_id] = "media"
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "unalias", "--local", key_id, "media",
+        _config(),
+        "bucket",
+        "unalias",
+        "--local",
+        key_id,
+        "media",
     )
     assert rc == 0
     assert key_id not in bucket.local_aliases
@@ -174,8 +200,13 @@ async def test_bucket_unalias_local_three_positional_form_rejected() -> None:
     bucket = next(iter(fake.buckets.values()))
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "unalias", "--local",
-        key_id, bucket.bucket_id[:16], "media",
+        _config(),
+        "bucket",
+        "unalias",
+        "--local",
+        key_id,
+        bucket.bucket_id[:16],
+        "media",
     )
     assert rc == 1
     assert "USAGE" in stderr
@@ -195,8 +226,13 @@ async def test_bucket_alias_local_three_positional_succeeds() -> None:
     bucket = next(iter(fake.buckets.values()))
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "alias", "--local",
-        key_id, bucket.bucket_id[:16], "my-name",
+        _config(),
+        "bucket",
+        "alias",
+        "--local",
+        key_id,
+        bucket.bucket_id[:16],
+        "my-name",
     )
     assert rc == 0
     assert bucket.local_aliases[key_id] == "my-name"
@@ -208,8 +244,13 @@ async def test_bucket_alias_local_unknown_key_rejected() -> None:
     await fake.run_garage(_config(), "bucket", "create", "host")
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "alias", "--local",
-        "GKnonexistent", "host", "my-name",
+        _config(),
+        "bucket",
+        "alias",
+        "--local",
+        "GKnonexistent",
+        "host",
+        "my-name",
     )
     assert rc == 1
     assert "NoSuchKey" in stderr
@@ -230,12 +271,20 @@ async def test_bucket_allow_grants_permissions() -> None:
 
     rc, _stdout, _stderr = await fake.run_garage(
         _config(),
-        "bucket", "allow", "--read", "--write", "--owner",
-        bucket.bucket_id[:16], "--key", key_id,
+        "bucket",
+        "allow",
+        "--read",
+        "--write",
+        "--owner",
+        bucket.bucket_id[:16],
+        "--key",
+        key_id,
     )
     assert rc == 0
     assert fake.keys[key_id].permissions[bucket.bucket_id] == {
-        "read", "write", "owner",
+        "read",
+        "write",
+        "owner",
     }
 
 
@@ -247,13 +296,20 @@ async def test_bucket_deny_revokes_permissions() -> None:
     key_id = next(iter(fake.keys))
     bucket = next(iter(fake.buckets.values()))
     fake.keys[key_id].permissions[bucket.bucket_id] = {
-        "read", "write", "owner",
+        "read",
+        "write",
+        "owner",
     }
 
     rc, _stdout, _stderr = await fake.run_garage(
         _config(),
-        "bucket", "deny", "--write", "--owner",
-        bucket.bucket_id[:16], "--key", key_id,
+        "bucket",
+        "deny",
+        "--write",
+        "--owner",
+        bucket.bucket_id[:16],
+        "--key",
+        key_id,
     )
     assert rc == 0
     assert fake.keys[key_id].permissions[bucket.bucket_id] == {"read"}
@@ -267,7 +323,12 @@ async def test_bucket_allow_with_no_flags_rejected() -> None:
     key_id = next(iter(fake.keys))
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "allow", "host", "--key", key_id,
+        _config(),
+        "bucket",
+        "allow",
+        "host",
+        "--key",
+        key_id,
     )
     assert rc == 1
     assert "USAGE" in stderr
@@ -284,7 +345,11 @@ async def test_bucket_delete_empty_succeeds() -> None:
     await fake.run_garage(_config(), "bucket", "create", "doomed")
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "delete", "--yes", "doomed",
+        _config(),
+        "bucket",
+        "delete",
+        "--yes",
+        "doomed",
     )
     assert rc == 0
     assert not fake.buckets
@@ -298,7 +363,11 @@ async def test_bucket_delete_non_empty_rejected() -> None:
     bucket.object_count = 5
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "delete", "--yes", "occupied",
+        _config(),
+        "bucket",
+        "delete",
+        "--yes",
+        "occupied",
     )
     assert rc == 1
     assert "BucketNotEmpty" in stderr
@@ -315,7 +384,11 @@ async def test_bucket_delete_revokes_referencing_permissions() -> None:
     fake.keys[key_id].permissions[bucket.bucket_id] = {"read"}
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "delete", "--yes", "shared",
+        _config(),
+        "bucket",
+        "delete",
+        "--yes",
+        "shared",
     )
     assert rc == 0
     assert bucket.bucket_id not in fake.keys[key_id].permissions
@@ -330,7 +403,10 @@ async def test_bucket_delete_revokes_referencing_permissions() -> None:
 async def test_key_create_returns_parseable_stdout() -> None:
     fake = FakeGarage()
     rc, stdout, _stderr = await fake.run_garage(
-        _config(), "key", "create", "my-key",
+        _config(),
+        "key",
+        "create",
+        "my-key",
     )
     assert rc == 0
     result = parse_key_create(stdout)
@@ -362,7 +438,10 @@ async def test_resolve_by_global_alias() -> None:
     fake = FakeGarage()
     await fake.run_garage(_config(), "bucket", "create", "by-name")
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "info", "by-name",
+        _config(),
+        "bucket",
+        "info",
+        "by-name",
     )
     assert rc == 0
 
@@ -374,7 +453,10 @@ async def test_resolve_by_16_char_prefix() -> None:
     bucket = next(iter(fake.buckets.values()))
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "info", bucket.bucket_id[:16],
+        _config(),
+        "bucket",
+        "info",
+        bucket.bucket_id[:16],
     )
     assert rc == 0
 
@@ -392,7 +474,10 @@ async def test_resolve_by_64_char_rejected() -> None:
     bucket = next(iter(fake.buckets.values()))
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "info", bucket.bucket_id,
+        _config(),
+        "bucket",
+        "info",
+        bucket.bucket_id,
     )
     assert rc == 1
     assert "NoSuchBucket" in stderr
@@ -408,7 +493,10 @@ async def test_local_alias_not_globally_resolvable() -> None:
     bucket.local_aliases[key_id] = "private-name"
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "info", "private-name",
+        _config(),
+        "bucket",
+        "info",
+        "private-name",
     )
     assert rc == 1
     assert "NoSuchBucket" in stderr
@@ -432,7 +520,10 @@ async def test_bucket_info_excludes_keys_without_permissions() -> None:
     bucket.local_aliases[key_id] = "lonely-alias"
 
     rc, stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "info", "host",
+        _config(),
+        "bucket",
+        "info",
+        "host",
     )
     assert rc == 0
     info = parse_bucket_info(stdout)
@@ -449,7 +540,10 @@ async def test_bucket_info_includes_keys_with_permissions() -> None:
     fake.keys[key_id].permissions[bucket.bucket_id] = {"read"}
 
     rc, stdout, _stderr = await fake.run_garage(
-        _config(), "bucket", "info", "host",
+        _config(),
+        "bucket",
+        "info",
+        "host",
     )
     assert rc == 0
     info = parse_bucket_info(stdout)
@@ -472,7 +566,11 @@ async def test_key_delete_strips_local_aliases() -> None:
     bucket.local_aliases[key_id] = "via-doomed-key"
 
     rc, _stdout, _stderr = await fake.run_garage(
-        _config(), "key", "delete", "--yes", key_id,
+        _config(),
+        "key",
+        "delete",
+        "--yes",
+        key_id,
     )
     assert rc == 0
     assert key_id not in fake.keys
@@ -490,7 +588,10 @@ async def test_fail_next_overrides_dispatch() -> None:
     fake.fail_next("bucket_create", rc=1, stderr="injected failure")
 
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "create", "valid-name",
+        _config(),
+        "bucket",
+        "create",
+        "valid-name",
     )
     assert rc == 1
     assert "injected" in stderr
@@ -505,13 +606,22 @@ async def test_fail_next_queues_per_verb() -> None:
     fake.fail_next("bucket_create", stderr="second")
 
     _, _, stderr1 = await fake.run_garage(
-        _config(), "bucket", "create", "first-bucket",
+        _config(),
+        "bucket",
+        "create",
+        "first-bucket",
     )
     _, _, stderr2 = await fake.run_garage(
-        _config(), "bucket", "create", "second-bucket",
+        _config(),
+        "bucket",
+        "create",
+        "second-bucket",
     )
     rc3, _, _ = await fake.run_garage(
-        _config(), "bucket", "create", "third-bucket",
+        _config(),
+        "bucket",
+        "create",
+        "third-bucket",
     )
 
     assert "first" in stderr1
@@ -539,7 +649,10 @@ async def test_floor_repro_underscore_throwaway_rejected() -> None:
     """
     fake = FakeGarage()
     rc, _stdout, stderr = await fake.run_garage(
-        _config(), "bucket", "create", "_provisioning_abc123",
+        _config(),
+        "bucket",
+        "create",
+        "_provisioning_abc123",
     )
     assert rc == 1
     assert "InvalidBucketName" in stderr

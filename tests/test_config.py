@@ -9,7 +9,6 @@ import pytest
 
 from stormpulse.config import CommandDef, ConfigError, load_config
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -53,10 +52,12 @@ db_path = "/tmp/stormpulse.db"
 @pytest.fixture
 def write_config(tmp_path: Path) -> Callable[[str], Path]:
     """Write a TOML string to a temp file and return its path."""
+
     def _write(content: str) -> Path:
         p = tmp_path / "stormpulse.toml"
         p.write_text(content)
         return p
+
     return _write
 
 
@@ -107,12 +108,26 @@ def test_int_coerced_to_float(write_config: Callable[[str], Path]) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("section", [
-    "agent", "dashboard", "tls", "auth", "metrics", "project", "storage",
-])
-def test_missing_section_raises(write_config: Callable[[str], Path], section: str) -> None:
-    lines = [line for line in MINIMAL_VALID.splitlines(keepends=True)
-             if not line.strip().startswith(f"[{section}]")]
+@pytest.mark.parametrize(
+    "section",
+    [
+        "agent",
+        "dashboard",
+        "tls",
+        "auth",
+        "metrics",
+        "project",
+        "storage",
+    ],
+)
+def test_missing_section_raises(
+    write_config: Callable[[str], Path], section: str
+) -> None:
+    lines = [
+        line
+        for line in MINIMAL_VALID.splitlines(keepends=True)
+        if not line.strip().startswith(f"[{section}]")
+    ]
     filtered: list[str] = []
     skip = False
     for line in lines:
@@ -162,8 +177,12 @@ def test_wrong_type_for_url_raises(write_config: Callable[[str], Path]) -> None:
         load_config(write_config(content))
 
 
-def test_wrong_type_for_collect_containers_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("collect_containers = false", 'collect_containers = "yes"')
+def test_wrong_type_for_collect_containers_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    content = MINIMAL_VALID.replace(
+        "collect_containers = false", 'collect_containers = "yes"'
+    )
     with pytest.raises(ConfigError, match="bool"):
         load_config(write_config(content))
 
@@ -174,43 +193,57 @@ def test_wrong_type_for_collect_containers_raises(write_config: Callable[[str], 
 
 
 def test_negative_reconnect_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("reconnect_min_seconds = 1", "reconnect_min_seconds = -1")
+    content = MINIMAL_VALID.replace(
+        "reconnect_min_seconds = 1", "reconnect_min_seconds = -1"
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(content))
 
 
 def test_zero_reconnect_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("reconnect_min_seconds = 1", "reconnect_min_seconds = 0")
+    content = MINIMAL_VALID.replace(
+        "reconnect_min_seconds = 1", "reconnect_min_seconds = 0"
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(content))
 
 
 def test_min_greater_than_max_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("reconnect_min_seconds = 1", "reconnect_min_seconds = 100")
+    content = MINIMAL_VALID.replace(
+        "reconnect_min_seconds = 1", "reconnect_min_seconds = 100"
+    )
     with pytest.raises(ConfigError, match="<="):
         load_config(write_config(content))
 
 
 def test_negative_max_age_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("command_max_age_seconds = 60", "command_max_age_seconds = -1")
+    content = MINIMAL_VALID.replace(
+        "command_max_age_seconds = 60", "command_max_age_seconds = -1"
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(content))
 
 
 def test_zero_max_age_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("command_max_age_seconds = 60", "command_max_age_seconds = 0")
+    content = MINIMAL_VALID.replace(
+        "command_max_age_seconds = 60", "command_max_age_seconds = 0"
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(content))
 
 
 def test_negative_push_interval_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("push_interval_seconds = 10", "push_interval_seconds = 0")
+    content = MINIMAL_VALID.replace(
+        "push_interval_seconds = 10", "push_interval_seconds = 0"
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(content))
 
 
 def test_zero_heartbeat_interval_raises(write_config: Callable[[str], Path]) -> None:
-    content = MINIMAL_VALID.replace("heartbeat_interval_seconds = 30", "heartbeat_interval_seconds = 0")
+    content = MINIMAL_VALID.replace(
+        "heartbeat_interval_seconds = 30", "heartbeat_interval_seconds = 0"
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(content))
 
@@ -295,7 +328,9 @@ description = "Restart Caddy reverse proxy"
 """
 
 
-def test_no_commands_section_gives_empty_dict(write_config: Callable[[str], Path]) -> None:
+def test_no_commands_section_gives_empty_dict(
+    write_config: Callable[[str], Path],
+) -> None:
     config = load_config(write_config(MINIMAL_VALID))
     assert config.commands == {}
 
@@ -313,12 +348,15 @@ def test_custom_command_parsed(write_config: Callable[[str], Path]) -> None:
 
 
 def test_custom_command_defaults(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.simple]
 group = "test"
 command = ["/bin/true"]
 timeout = 5
 """
+    )
     config = load_config(write_config(toml))
     cmd = config.commands["simple"]
     assert cmd.requires_confirmation is False
@@ -327,31 +365,41 @@ timeout = 5
 
 
 def test_custom_command_long_running(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bulk_op]
 group = "maintenance"
 command = ["/usr/bin/true"]
 timeout = 600
 long_running = true
 """
+    )
     config = load_config(write_config(toml))
     assert config.commands["bulk_op"].long_running is True
 
 
-def test_custom_command_long_running_wrong_type_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_custom_command_long_running_wrong_type_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "x"
 command = ["/bin/true"]
 timeout = 10
 long_running = "yes"
 """
+    )
     with pytest.raises(ConfigError, match="long_running"):
         load_config(write_config(toml))
 
 
 def test_multiple_custom_commands(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.cmd_a]
 group = "a"
 command = ["/bin/true"]
@@ -362,6 +410,7 @@ group = "b"
 command = ["/bin/false"]
 timeout = 20
 """
+    )
     config = load_config(write_config(toml))
     assert len(config.commands) == 2
     assert "cmd_a" in config.commands
@@ -369,121 +418,160 @@ timeout = 20
 
 
 def test_command_missing_group_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 command = ["/bin/true"]
 timeout = 10
 """
+    )
     with pytest.raises(ConfigError, match="group"):
         load_config(write_config(toml))
 
 
 def test_command_missing_command_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 timeout = 10
 """
+    )
     with pytest.raises(ConfigError, match="command"):
         load_config(write_config(toml))
 
 
 def test_command_missing_timeout_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
 """
+    )
     with pytest.raises(ConfigError, match="timeout"):
         load_config(write_config(toml))
 
 
 def test_command_non_absolute_path_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["relative/bin", "arg"]
 timeout = 10
 """
+    )
     with pytest.raises(ConfigError, match="absolute path"):
         load_config(write_config(toml))
 
 
 def test_command_empty_command_list_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = []
 timeout = 10
 """
+    )
     with pytest.raises(ConfigError, match="non-empty"):
         load_config(write_config(toml))
 
 
 def test_command_negative_timeout_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
 timeout = -1
 """
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(toml))
 
 
 def test_command_zero_timeout_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
 timeout = 0
 """
+    )
     with pytest.raises(ConfigError, match="positive"):
         load_config(write_config(toml))
 
 
-def test_command_wrong_type_requires_confirmation_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_wrong_type_requires_confirmation_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
 timeout = 10
 requires_confirmation = "yes"
 """
+    )
     with pytest.raises(ConfigError, match="bool"):
         load_config(write_config(toml))
 
 
-def test_command_wrong_type_description_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_wrong_type_description_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
 timeout = 10
 description = 42
 """
+    )
     with pytest.raises(ConfigError, match="string"):
         load_config(write_config(toml))
 
 
-def test_command_non_string_in_command_list_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_non_string_in_command_list_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true", 42]
 timeout = 10
 """
+    )
     with pytest.raises(ConfigError, match="string"):
         load_config(write_config(toml))
 
 
 def test_command_empty_group_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = ""
 command = ["/bin/true"]
 timeout = 10
 """
+    )
     with pytest.raises(ConfigError, match="empty"):
         load_config(write_config(toml))
 
@@ -511,14 +599,15 @@ def test_disabled_commands_parsed(write_config: Callable[[str], Path]) -> None:
 def test_disabled_commands_empty_list(write_config: Callable[[str], Path]) -> None:
     content = MINIMAL_VALID.replace(
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
-        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
-        'disabled_commands = []',
+        'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\ndisabled_commands = []',
     )
     config = load_config(write_config(content))
     assert config.agent.disabled_commands == frozenset()
 
 
-def test_disabled_commands_wrong_type_raises(write_config: Callable[[str], Path]) -> None:
+def test_disabled_commands_wrong_type_raises(
+    write_config: Callable[[str], Path],
+) -> None:
     content = MINIMAL_VALID.replace(
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
@@ -528,7 +617,9 @@ def test_disabled_commands_wrong_type_raises(write_config: Callable[[str], Path]
         load_config(write_config(content))
 
 
-def test_disabled_commands_non_string_item_raises(write_config: Callable[[str], Path]) -> None:
+def test_disabled_commands_non_string_item_raises(
+    write_config: Callable[[str], Path],
+) -> None:
     content = MINIMAL_VALID.replace(
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"',
         'pulse_token = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"\n'
@@ -578,14 +669,18 @@ def test_command_params_parsed(write_config: Callable[[str], Path]) -> None:
     assert p.description == "Docker Compose service name"
 
 
-def test_command_params_omitted_is_empty_dict(write_config: Callable[[str], Path]) -> None:
+def test_command_params_omitted_is_empty_dict(
+    write_config: Callable[[str], Path],
+) -> None:
     config = load_config(write_config(MINIMAL_VALID + CUSTOM_COMMAND_TOML))
     cmd = config.commands["restart_caddy"]
     assert cmd.params == {}
 
 
 def test_command_params_none_default(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.logs]
 group = "diagnostics"
 command = ["/usr/bin/docker", "logs", "{service}"]
@@ -595,13 +690,18 @@ timeout = 30
 placeholder = "service"
 pattern = "[a-zA-Z0-9_-]+"
 """
+    )
     config = load_config(write_config(toml))
     p = config.commands["logs"].params["service"]
     assert p.default is None
 
 
-def test_command_params_protected_placeholder_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_params_protected_placeholder_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true", "{project_dir}"]
@@ -612,12 +712,17 @@ placeholder = "project_dir"
 default = "/hacked"
 pattern = ".*"
 """
+    )
     with pytest.raises(ConfigError, match="protected"):
         load_config(write_config(toml))
 
 
-def test_command_params_invalid_regex_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_params_invalid_regex_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true", "{svc}"]
@@ -628,12 +733,17 @@ placeholder = "svc"
 default = "web"
 pattern = "[invalid("
 """
+    )
     with pytest.raises(ConfigError, match="regex"):
         load_config(write_config(toml))
 
 
-def test_command_params_missing_placeholder_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_params_missing_placeholder_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
@@ -643,12 +753,17 @@ timeout = 10
 default = "web"
 pattern = ".*"
 """
+    )
     with pytest.raises(ConfigError, match="placeholder"):
         load_config(write_config(toml))
 
 
-def test_command_params_missing_pattern_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_params_missing_pattern_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
@@ -658,24 +773,32 @@ timeout = 10
 placeholder = "svc"
 default = "web"
 """
+    )
     with pytest.raises(ConfigError, match="pattern"):
         load_config(write_config(toml))
 
 
 def test_command_params_wrong_type_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true"]
 timeout = 10
 params = "not a table"
 """
+    )
     with pytest.raises(ConfigError, match="table"):
         load_config(write_config(toml))
 
 
-def test_command_params_placeholder_mismatch_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_command_params_placeholder_mismatch_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [commands.bad]
 group = "test"
 command = ["/bin/true", "{svc}"]
@@ -686,6 +809,7 @@ placeholder = "different_name"
 default = "web"
 pattern = ".*"
 """
+    )
     with pytest.raises(ConfigError, match="match"):
         load_config(write_config(toml))
 
@@ -733,7 +857,9 @@ def test_log_groups_duplicate_name_raises(write_config: Callable[[str], Path]) -
 
 
 def test_log_groups_invalid_name_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "bad name with spaces"
 enabled = true
@@ -744,12 +870,17 @@ ship_interval_seconds = 10
 max_lines_per_batch = 200
 retention_days = 90
 """
+    )
     with pytest.raises(ConfigError, match="alphanumeric"):
         load_config(write_config(toml))
 
 
-def test_log_groups_non_file_source_type_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_log_groups_non_file_source_type_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -760,12 +891,15 @@ ship_interval_seconds = 10
 max_lines_per_batch = 200
 retention_days = 90
 """
+    )
     with pytest.raises(ConfigError, match="'source_type'"):
         load_config(write_config(toml))
 
 
 def test_log_groups_relative_path_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -776,12 +910,15 @@ ship_interval_seconds = 10
 max_lines_per_batch = 200
 retention_days = 90
 """
+    )
     with pytest.raises(ConfigError, match="absolute"):
         load_config(write_config(toml))
 
 
 def test_log_groups_unknown_parser_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -792,12 +929,17 @@ ship_interval_seconds = 10
 max_lines_per_batch = 200
 retention_days = 90
 """
+    )
     with pytest.raises(ConfigError, match="'parser'"):
         load_config(write_config(toml))
 
 
-def test_log_groups_interval_too_low_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_log_groups_interval_too_low_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -808,12 +950,15 @@ ship_interval_seconds = 1
 max_lines_per_batch = 200
 retention_days = 90
 """
+    )
     with pytest.raises(ConfigError, match="ship_interval_seconds"):
         load_config(write_config(toml))
 
 
 def test_log_groups_batch_too_large_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -824,12 +969,17 @@ ship_interval_seconds = 10
 max_lines_per_batch = 500
 retention_days = 90
 """
+    )
     with pytest.raises(ConfigError, match="max_lines_per_batch"):
         load_config(write_config(toml))
 
 
-def test_log_groups_retention_out_of_range_raises(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_log_groups_retention_out_of_range_raises(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -840,6 +990,7 @@ ship_interval_seconds = 10
 max_lines_per_batch = 200
 retention_days = 0
 """
+    )
     with pytest.raises(ConfigError, match="retention_days"):
         load_config(write_config(toml))
 
@@ -881,7 +1032,8 @@ def test_garage_must_be_table(write_config: Callable[[str], Path]) -> None:
 
 def test_garage_empty_container_name(write_config: Callable[[str], Path]) -> None:
     toml = MINIMAL_VALID + _VALID_GARAGE.replace(
-        'container_name = "garaged"', 'container_name = ""',
+        'container_name = "garaged"',
+        'container_name = ""',
     )
     with pytest.raises(ConfigError, match="container_name.*must not be empty"):
         load_config(write_config(toml))
@@ -889,15 +1041,19 @@ def test_garage_empty_container_name(write_config: Callable[[str], Path]) -> Non
 
 def test_garage_empty_binary(write_config: Callable[[str], Path]) -> None:
     toml = MINIMAL_VALID + _VALID_GARAGE.replace(
-        'garage_binary = "/garage"', 'garage_binary = ""',
+        'garage_binary = "/garage"',
+        'garage_binary = ""',
     )
     with pytest.raises(ConfigError, match="garage_binary.*must not be empty"):
         load_config(write_config(toml))
 
 
-def test_garage_docker_binary_must_be_absolute(write_config: Callable[[str], Path]) -> None:
+def test_garage_docker_binary_must_be_absolute(
+    write_config: Callable[[str], Path],
+) -> None:
     toml = MINIMAL_VALID + _VALID_GARAGE.replace(
-        'docker_binary = "/usr/bin/docker"', 'docker_binary = "docker"',
+        'docker_binary = "/usr/bin/docker"',
+        'docker_binary = "docker"',
     )
     with pytest.raises(ConfigError, match="docker_binary.*absolute path"):
         load_config(write_config(toml))
@@ -905,7 +1061,8 @@ def test_garage_docker_binary_must_be_absolute(write_config: Callable[[str], Pat
 
 def test_garage_interval_must_be_positive(write_config: Callable[[str], Path]) -> None:
     toml = MINIMAL_VALID + _VALID_GARAGE.replace(
-        "state_push_interval_seconds = 300", "state_push_interval_seconds = 0",
+        "state_push_interval_seconds = 300",
+        "state_push_interval_seconds = 0",
     )
     with pytest.raises(ConfigError, match="state_push_interval_seconds.*positive"):
         load_config(write_config(toml))
@@ -922,8 +1079,12 @@ def test_log_groups_must_be_array(write_config: Callable[[str], Path]) -> None:
         load_config(write_config(toml))
 
 
-def test_log_groups_filter_contains_must_be_string(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + """
+def test_log_groups_filter_contains_must_be_string(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -935,6 +1096,7 @@ max_lines_per_batch = 100
 retention_days = 30
 filter_contains = 42
 """
+    )
     with pytest.raises(ConfigError, match="filter_contains"):
         load_config(write_config(toml))
 
@@ -942,7 +1104,9 @@ filter_contains = 42
 def test_log_groups_filter_contains_defaults_to_empty(
     write_config: Callable[[str], Path],
 ) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -953,6 +1117,7 @@ ship_interval_seconds = 10
 max_lines_per_batch = 100
 retention_days = 30
 """
+    )
     cfg = load_config(write_config(toml))
     assert cfg.log_groups[0].filter_contains == ""
 
@@ -960,7 +1125,9 @@ retention_days = 30
 def test_log_groups_ship_interval_boundary_5_accepted(
     write_config: Callable[[str], Path],
 ) -> None:
-    toml = MINIMAL_VALID + """
+    toml = (
+        MINIMAL_VALID
+        + """
 [[log_groups]]
 name = "x"
 enabled = true
@@ -971,6 +1138,7 @@ ship_interval_seconds = 5
 max_lines_per_batch = 200
 retention_days = 365
 """
+    )
     cfg = load_config(write_config(toml))
     assert cfg.log_groups[0].ship_interval_seconds == 5.0
     assert cfg.log_groups[0].max_lines_per_batch == 200

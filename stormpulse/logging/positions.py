@@ -18,11 +18,20 @@ class LogPositionStore:
 
     def __init__(self, db_path: Path) -> None:
         self._conn = sqlite3.connect(
-            str(db_path), timeout=5.0, check_same_thread=False,
+            str(db_path),
+            timeout=5.0,
+            check_same_thread=False,
         )
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._lock = threading.Lock()
-        self._ensure_table()
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._lock = threading.Lock()
+            self._ensure_table()
+        except Exception:
+            # _ensure_table() can raise on schema migration / disk errors.
+            # Close the connection we just opened so we don't leak it; the
+            # OS would reap it on agent exit, but explicit is cleaner.
+            self._conn.close()
+            raise
 
     def _ensure_table(self) -> None:
         self._conn.execute(

@@ -27,7 +27,6 @@ import pytest
 
 from stormpulse.garage.s3 import GarageS3Client, S3AuthError
 
-
 _ENDPOINT = os.environ.get("STORM_PULSE_GARAGE_TEST_ENDPOINT")
 _REGION = os.environ.get("STORM_PULSE_GARAGE_TEST_REGION", "garage")
 _ACCESS_KEY = os.environ.get("STORM_PULSE_GARAGE_TEST_ACCESS_KEY")

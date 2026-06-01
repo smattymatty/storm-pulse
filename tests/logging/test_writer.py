@@ -54,7 +54,10 @@ def test_command_result_sensitive_omits_output(tmp_path: Path) -> None:
     log = tmp_path / "agent.log"
     pl = PulseLogger(log, "a")
     pl.log_command_result(
-        "garage_key_create", success=True, duration_ms=40, sensitive=True,
+        "garage_key_create",
+        success=True,
+        duration_ms=40,
+        sensitive=True,
     )
     content = log.read_text()
     # The API surface doesn't take stdout/stderr, but also confirm
@@ -79,7 +82,11 @@ def test_command_result_with_sequence_id(tmp_path: Path) -> None:
     log = tmp_path / "agent.log"
     pl = PulseLogger(log, "a")
     pl.log_command_result(
-        "x", success=True, duration_ms=10, sensitive=False, sequence_id="seq-1",
+        "x",
+        success=True,
+        duration_ms=10,
+        sensitive=False,
+        sequence_id="seq-1",
     )
     entry = _read_lines(log)[0]
     assert entry["detail"]["sequence_id"] == "seq-1"
@@ -93,6 +100,7 @@ def test_append_across_calls(tmp_path: Path) -> None:
     pl.info("three", "connection")
     assert len(_read_lines(log)) == 3
 
+
 def test_creates_log_file_if_missing(tmp_path: Path) -> None:
     log = tmp_path / "subdir" / "agent.log"
     log.parent.mkdir()
@@ -101,6 +109,7 @@ def test_creates_log_file_if_missing(tmp_path: Path) -> None:
     assert log.exists()
     assert len(_read_lines(log)) == 1
 
+
 def test_unwritable_path_does_not_crash(tmp_path: Path) -> None:
     log = tmp_path / "agent.log"
     log.touch()
@@ -108,8 +117,10 @@ def test_unwritable_path_does_not_crash(tmp_path: Path) -> None:
     pl = PulseLogger(log, "a")
     pl.info("this should not crash", "connection")  # falls back to stdlib logger
 
+
 def test_timestamp_format(tmp_path: Path) -> None:
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     log = tmp_path / "agent.log"
     pl = PulseLogger(log, "a")
     pl.info("x", "connection")
@@ -117,6 +128,7 @@ def test_timestamp_format(tmp_path: Path) -> None:
     ts = entry["ts"]
     assert ts.endswith("Z")
     datetime.fromisoformat(ts.replace("Z", "+00:00"))  # must parse cleanly
+
 
 def test_each_line_is_valid_json(tmp_path: Path) -> None:
     log = tmp_path / "agent.log"

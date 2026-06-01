@@ -22,7 +22,6 @@ from stormpulse.config import (
 )
 from stormpulse.metrics import _collect_containers, collect_metrics, prime_cpu_percent
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -32,8 +31,17 @@ from stormpulse.metrics import _collect_containers, collect_metrics, prime_cpu_p
 def config() -> Config:
     return Config(
         agent=AgentConfig(id="test-01", pulse_token="tok-test-123"),
-        dashboard=DashboardConfig(url="wss://example.com/ws/", reconnect_min_seconds=1.0, reconnect_max_seconds=30.0, heartbeat_interval_seconds=30.0),
-        tls=TlsConfig(ca_cert=Path("/tmp/ca.pem"), client_cert=Path("/tmp/agent.pem"), client_key=Path("/tmp/key.pem")),
+        dashboard=DashboardConfig(
+            url="wss://example.com/ws/",
+            reconnect_min_seconds=1.0,
+            reconnect_max_seconds=30.0,
+            heartbeat_interval_seconds=30.0,
+        ),
+        tls=TlsConfig(
+            ca_cert=Path("/tmp/ca.pem"),
+            client_cert=Path("/tmp/agent.pem"),
+            client_key=Path("/tmp/key.pem"),
+        ),
         auth=AuthConfig(hmac_secret=Path("/tmp/hmac.key"), command_max_age_seconds=60),
         metrics=MetricsConfig(push_interval_seconds=15.0, collect_containers=True),
         project=ProjectConfig(
@@ -70,10 +78,12 @@ def _mock_psutil() -> dict[str, Any]:
 
 NDJSON_OUTPUT = '{"Name":"web","State":"running","Image":"myapp:latest"}\n{"Name":"db","State":"running","Image":"postgres:16"}\n'
 
-JSON_ARRAY_OUTPUT = json.dumps([
-    {"Name": "web", "State": "running", "Image": "myapp:latest"},
-    {"Name": "db", "State": "running", "Image": "postgres:16"},
-])
+JSON_ARRAY_OUTPUT = json.dumps(
+    [
+        {"Name": "web", "State": "running", "Image": "myapp:latest"},
+        {"Name": "db", "State": "running", "Image": "postgres:16"},
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +215,10 @@ def test_collect_metrics_containers_disabled(
 @patch("stormpulse.metrics.subprocess.run")
 def test_collect_containers_ndjson(mock_run: MagicMock) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=NDJSON_OUTPUT, stderr="",
+        args=[],
+        returncode=0,
+        stdout=NDJSON_OUTPUT,
+        stderr="",
     )
     containers = _collect_containers(Path("/opt/myapp/docker-compose.yml"))
     assert len(containers) == 2
@@ -222,7 +235,10 @@ def test_collect_containers_ndjson(mock_run: MagicMock) -> None:
 @patch("stormpulse.metrics.subprocess.run")
 def test_collect_containers_json_array(mock_run: MagicMock) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=JSON_ARRAY_OUTPUT, stderr="",
+        args=[],
+        returncode=0,
+        stdout=JSON_ARRAY_OUTPUT,
+        stderr="",
     )
     containers = _collect_containers(Path("/opt/myapp/docker-compose.yml"))
     assert len(containers) == 2
@@ -252,7 +268,10 @@ def test_collect_containers_timeout(mock_run: MagicMock) -> None:
 @patch("stormpulse.metrics.subprocess.run")
 def test_collect_containers_bad_json(mock_run: MagicMock) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="not json at all\n", stderr="",
+        args=[],
+        returncode=0,
+        stdout="not json at all\n",
+        stderr="",
     )
     containers = _collect_containers(Path("/opt/myapp/docker-compose.yml"))
     assert containers == []
@@ -261,7 +280,10 @@ def test_collect_containers_bad_json(mock_run: MagicMock) -> None:
 @patch("stormpulse.metrics.subprocess.run")
 def test_collect_containers_nonzero_exit(mock_run: MagicMock) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=1, stdout="", stderr="error\n",
+        args=[],
+        returncode=1,
+        stdout="",
+        stderr="error\n",
     )
     containers = _collect_containers(Path("/opt/myapp/docker-compose.yml"))
     assert containers == []
@@ -270,7 +292,10 @@ def test_collect_containers_nonzero_exit(mock_run: MagicMock) -> None:
 @patch("stormpulse.metrics.subprocess.run")
 def test_collect_containers_empty_output(mock_run: MagicMock) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="", stderr="",
+        args=[],
+        returncode=0,
+        stdout="",
+        stderr="",
     )
     containers = _collect_containers(Path("/opt/myapp/docker-compose.yml"))
     assert containers == []
@@ -280,7 +305,10 @@ def test_collect_containers_empty_output(mock_run: MagicMock) -> None:
 def test_collect_containers_lowercase_keys(mock_run: MagicMock) -> None:
     output = '{"name":"web","state":"up","image":"app:1"}\n'
     mock_run.return_value = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout=output, stderr="",
+        args=[],
+        returncode=0,
+        stdout=output,
+        stderr="",
     )
     containers = _collect_containers(Path("/opt/myapp/docker-compose.yml"))
     assert len(containers) == 1

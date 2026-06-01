@@ -10,6 +10,7 @@ from stormpulse.protocol import CommandResultPayload
 
 from .registry import execute_command, get_command
 
+
 def run_deploy_sequence(
     commands: list[str],
     config: ProjectConfig,
@@ -29,7 +30,11 @@ def run_deploy_sequence(
 
     for name in commands:
         result = execute_command(
-            name, config, str(uuid.uuid4()), sequence_id, registry=registry,
+            name,
+            config,
+            str(uuid.uuid4()),
+            sequence_id,
+            registry=registry,
         )
         yield result
         if stop_on_failure and not result.success:

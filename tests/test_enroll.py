@@ -26,7 +26,6 @@ from stormpulse.enroll import (
     write_enroll_metadata,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -116,7 +115,10 @@ class TestRequestCertificate:
         mock_urlopen.return_value = _mock_urlopen(response_data)
 
         result = request_certificate(
-            "https://example.com/api/enroll/", "agent-1", "tok", b"CSR_PEM",
+            "https://example.com/api/enroll/",
+            "agent-1",
+            "tok",
+            b"CSR_PEM",
         )
         assert result["client_cert_pem"] == response_data["client_cert_pem"]
         assert result["ca_cert_pem"] == response_data["ca_cert_pem"]
@@ -125,11 +127,18 @@ class TestRequestCertificate:
     @patch("stormpulse.enroll.urllib.request.urlopen")
     def test_http_401_raises_with_hint(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.side_effect = urllib.error.HTTPError(
-            "url", 401, "Unauthorized", email.message.Message(), None,
+            "url",
+            401,
+            "Unauthorized",
+            email.message.Message(),
+            None,
         )
         with pytest.raises(EnrollError, match="single-use"):
             request_certificate(
-                "https://example.com/api/enroll/", "a", "bad", b"csr",
+                "https://example.com/api/enroll/",
+                "a",
+                "bad",
+                b"csr",
             )
 
     @patch("stormpulse.enroll.urllib.request.urlopen")
@@ -137,7 +146,10 @@ class TestRequestCertificate:
         mock_urlopen.side_effect = urllib.error.URLError("Connection refused")
         with pytest.raises(EnrollError, match="Is the dashboard running"):
             request_certificate(
-                "https://example.com/api/enroll/", "a", "t", b"csr",
+                "https://example.com/api/enroll/",
+                "a",
+                "t",
+                b"csr",
             )
 
     @patch("stormpulse.enroll.urllib.request.urlopen")
@@ -145,7 +157,10 @@ class TestRequestCertificate:
         mock_urlopen.return_value = _mock_urlopen({"client_cert_pem": "x"})
         with pytest.raises(EnrollError, match="missing 'ca_cert_pem'"):
             request_certificate(
-                "https://example.com/api/enroll/", "a", "t", b"csr",
+                "https://example.com/api/enroll/",
+                "a",
+                "t",
+                b"csr",
             )
 
     @patch("stormpulse.enroll.urllib.request.urlopen")
@@ -157,7 +172,10 @@ class TestRequestCertificate:
         mock_urlopen.return_value = mock_resp
         with pytest.raises(EnrollError, match="correct enrollment URL"):
             request_certificate(
-                "https://example.com/api/enroll/", "a", "t", b"csr",
+                "https://example.com/api/enroll/",
+                "a",
+                "t",
+                b"csr",
             )
 
 
@@ -291,21 +309,28 @@ class TestPreflightCredsDir:
 class TestDefaultCredsDir:
     def test_root_gets_etc_stormpulse(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from stormpulse.cli import _default_creds_dir
+
         monkeypatch.setattr(os, "geteuid", lambda: 0)
         assert _default_creds_dir() == "/etc/stormpulse"
 
     def test_user_gets_xdg_config(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         from stormpulse.cli import _default_creds_dir
+
         monkeypatch.setattr(os, "geteuid", lambda: 1000)
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
         assert _default_creds_dir() == str(tmp_path / "xdg" / "stormpulse")
 
     def test_user_falls_back_to_home_config(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
     ) -> None:
         from stormpulse.cli import _default_creds_dir
+
         monkeypatch.setattr(os, "geteuid", lambda: 1000)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -323,7 +348,10 @@ class TestHTTPWarning:
         mock_urlopen.return_value = _mock_urlopen(_mock_response())
         with patch("stormpulse.enroll.logger") as mock_logger:
             request_certificate(
-                "http://example.com/api/enroll/", "a", "t", b"csr",
+                "http://example.com/api/enroll/",
+                "a",
+                "t",
+                b"csr",
             )
             mock_logger.warning.assert_called_once()
             assert "plain HTTP" in mock_logger.warning.call_args[0][0]
@@ -333,7 +361,10 @@ class TestHTTPWarning:
         mock_urlopen.return_value = _mock_urlopen(_mock_response())
         with patch("stormpulse.enroll.logger") as mock_logger:
             request_certificate(
-                "https://example.com/api/enroll/", "a", "t", b"csr",
+                "https://example.com/api/enroll/",
+                "a",
+                "t",
+                b"csr",
             )
             mock_logger.warning.assert_not_called()
 
@@ -348,7 +379,9 @@ class TestWriteEnrollMetadata:
         creds_dir = tmp_path / "creds"
         creds_dir.mkdir()
         path = write_enroll_metadata(
-            creds_dir, "https://example.com/api/enroll/", "agent-01",
+            creds_dir,
+            "https://example.com/api/enroll/",
+            "agent-01",
         )
         data = json.loads(path.read_text())
         assert data["endpoint"] == "https://example.com/api/enroll/"
@@ -381,7 +414,9 @@ class TestWriteEnrollMetadata:
 class TestIntegration:
     @patch("stormpulse.enroll.urllib.request.urlopen")
     def test_full_enrollment_flow(
-        self, mock_urlopen: MagicMock, tmp_path: Path,
+        self,
+        mock_urlopen: MagicMock,
+        tmp_path: Path,
     ) -> None:
         private_key, key_pem = generate_keypair()
         csr_pem = build_csr(private_key, "test-agent-01")
@@ -393,7 +428,10 @@ class TestIntegration:
         mock_urlopen.return_value = _mock_urlopen(response_data)
 
         server_response = request_certificate(
-            "https://example.com/api/enroll/", "test-agent-01", "tok", csr_pem,
+            "https://example.com/api/enroll/",
+            "test-agent-01",
+            "tok",
+            csr_pem,
         )
         creds = write_credentials(tmp_path / "creds", key_pem, server_response)
 
@@ -404,7 +442,9 @@ class TestIntegration:
 
     @patch("stormpulse.enroll.urllib.request.urlopen")
     def test_private_key_never_in_request_body(
-        self, mock_urlopen: MagicMock, tmp_path: Path,
+        self,
+        mock_urlopen: MagicMock,
+        tmp_path: Path,
     ) -> None:
         private_key, key_pem = generate_keypair()
         csr_pem = build_csr(private_key, "test-agent-02")
@@ -413,7 +453,10 @@ class TestIntegration:
         mock_urlopen.return_value = _mock_urlopen(response_data)
 
         request_certificate(
-            "https://example.com/api/enroll/", "test-agent-02", "tok", csr_pem,
+            "https://example.com/api/enroll/",
+            "test-agent-02",
+            "tok",
+            csr_pem,
         )
 
         call_args = mock_urlopen.call_args[0][0]

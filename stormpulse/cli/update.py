@@ -32,7 +32,9 @@ PACKAGE_NAME = "storm-pulse-agent"
 
 
 def _build_pipx_argv(
-    source: str, branch: str | None, version: str | None,
+    source: str,
+    branch: str | None,
+    version: str | None,
 ) -> list[str]:
     """Compose the pipx invocation for the chosen source.
 
@@ -72,15 +74,22 @@ def cmd_update(args: argparse.Namespace) -> None:
     target = argv[-1]
     print(f"Updating {PACKAGE_NAME} from {target}...", file=sys.stderr)
 
-    result = subprocess.run(argv)
+    try:
+        result = subprocess.run(argv, timeout=600)
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "pipx did not finish within 600s. Check your network "
+            "connection and retry. If pipx is genuinely slow on this "
+            "host, raise the timeout by editing stormpulse/cli/update.py.",
+        )
+        sys.exit(1)
     if result.returncode != 0:
         logger.error("pipx exited %d; see output above", result.returncode)
         sys.exit(result.returncode)
 
     if not args.restart:
         print(
-            "Skipping restart. When ready: "
-            "systemctl --user restart stormpulse",
+            "Skipping restart. When ready: systemctl --user restart stormpulse",
             file=sys.stderr,
         )
         return

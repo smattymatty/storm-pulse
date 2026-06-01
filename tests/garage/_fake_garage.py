@@ -293,7 +293,7 @@ class FakeGarage:
             lines.append(f"{perm_str}  {key_id}  {local}")
         return "\n".join(lines) + "\n"
 
-    def _render_key_info(self, key: "_Key") -> str:
+    def _render_key_info(self, key: _Key) -> str:
         """Render ``key info <id>`` stdout. Used by orchestrators that
         need to check whether a key has any remaining buckets before
         deciding to delete it.
@@ -324,11 +324,7 @@ class FakeGarage:
 
     @staticmethod
     def _render_key_create(key_id: str, name: str, secret: str) -> str:
-        return (
-            f"Key name: {name}\n"
-            f"Key ID: {key_id}\n"
-            f"Secret key: {secret}\n"
-        )
+        return f"Key name: {name}\nKey ID: {key_id}\nSecret key: {secret}\n"
 
     # --- Dispatch ----------------------------------------------------
 
@@ -342,7 +338,8 @@ class FakeGarage:
                 return self._bucket_unalias_local(key_id, name)
             case ("bucket", "unalias", "--local", *_):
                 return (
-                    1, "",
+                    1,
+                    "",
                     f"USAGE: garage bucket unalias --local <key> <name> "
                     f"(got {len(args) - 3} positionals after --local <key>; "
                     f"expected 1). Args: {args}",
@@ -378,7 +375,8 @@ class FakeGarage:
     def _bucket_create(self, name: str) -> tuple[int, str, str]:
         if not _S3_BUCKET_NAME_RE.match(name):
             return (
-                1, "",
+                1,
+                "",
                 f"InvalidBucketName: '{name}' does not satisfy S3 strict "
                 f"naming (3-63 chars, lowercase alphanumeric + hyphens, "
                 f"must start and end alphanumeric)",
@@ -402,7 +400,8 @@ class FakeGarage:
             if name in bucket.global_aliases:
                 if self._alias_count(bucket) <= 1:
                     return (
-                        1, "",
+                        1,
+                        "",
                         f"RemoveBucketAlias returned InvalidRequest "
                         f"(400): Bad request: Bucket {name} doesn't have "
                         f"other aliases, please delete it instead of "
@@ -413,7 +412,9 @@ class FakeGarage:
         return (1, "", f"NoSuchBucketAlias: {name}")
 
     def _bucket_unalias_local(
-        self, key_id: str, name: str,
+        self,
+        key_id: str,
+        name: str,
     ) -> tuple[int, str, str]:
         if key_id not in self.keys:
             return (1, "", f"NoSuchKey: {key_id}")
@@ -421,7 +422,8 @@ class FakeGarage:
             if bucket.local_aliases.get(key_id) == name:
                 if self._alias_count(bucket) <= 1:
                     return (
-                        1, "",
+                        1,
+                        "",
                         f"RemoveBucketAlias returned InvalidRequest "
                         f"(400): Bad request: Bucket {name} doesn't have "
                         f"other aliases, please delete it instead of "
@@ -430,12 +432,15 @@ class FakeGarage:
                 del bucket.local_aliases[key_id]
                 return (0, "", "")
         return (
-            1, "",
+            1,
+            "",
             f"NoSuchBucketAlias: {name} in local namespace of key {key_id}",
         )
 
     def _bucket_alias_global(
-        self, existing: str, new: str,
+        self,
+        existing: str,
+        new: str,
     ) -> tuple[int, str, str]:
         bucket = self._resolve_bucket(existing)
         if bucket is None:
@@ -449,7 +454,10 @@ class FakeGarage:
         return (0, "", "")
 
     def _bucket_alias_local(
-        self, key_id: str, existing: str, new: str,
+        self,
+        key_id: str,
+        existing: str,
+        new: str,
     ) -> tuple[int, str, str]:
         if key_id not in self.keys:
             return (1, "", f"NoSuchKey: {key_id}")
@@ -459,15 +467,18 @@ class FakeGarage:
         for other in self.buckets.values():
             if other.local_aliases.get(key_id) == new:
                 return (
-                    1, "",
-                    f"BucketAlreadyExists: {new} in local namespace of "
-                    f"key {key_id}",
+                    1,
+                    "",
+                    f"BucketAlreadyExists: {new} in local namespace of key {key_id}",
                 )
         bucket.local_aliases[key_id] = new
         return (0, "", "")
 
     def _bucket_allow_or_deny(
-        self, rest: tuple[str, ...], *, deny: bool,
+        self,
+        rest: tuple[str, ...],
+        *,
+        deny: bool,
     ) -> tuple[int, str, str]:
         flags: list[str] = []
         ref: str | None = None
@@ -486,7 +497,8 @@ class FakeGarage:
             else:
                 if ref is not None:
                     return (
-                        1, "",
+                        1,
+                        "",
                         f"USAGE: unexpected positional {tok!r}; only one "
                         f"bucket reference allowed",
                     )
@@ -495,12 +507,14 @@ class FakeGarage:
         verb = "deny" if deny else "allow"
         if ref is None or key_id is None:
             return (
-                1, "",
+                1,
+                "",
                 f"USAGE: bucket {verb} <flags> <bucket> --key <key>",
             )
         if not flags:
             return (
-                1, "",
+                1,
+                "",
                 f"USAGE: bucket {verb} requires at least one of "
                 f"--read, --write, --owner",
             )
@@ -527,9 +541,9 @@ class FakeGarage:
             return (1, "", f"NoSuchBucket: {ref}")
         if bucket.object_count > 0:
             return (
-                1, "",
-                f"BucketNotEmpty: {ref} contains {bucket.object_count} "
-                f"objects",
+                1,
+                "",
+                f"BucketNotEmpty: {ref} contains {bucket.object_count} objects",
             )
         # Real Garage v2.2.0 rule: when the bucket is addressed by ID
         # (16-char prefix), ``bucket delete --yes`` rejects if any
@@ -544,7 +558,8 @@ class FakeGarage:
             # Delete proceeds only if the alias being passed in is the
             # last alias (which it would be only when no locals exist).
             return (
-                1, "",
+                1,
+                "",
                 f"Bucket {bucket.bucket_id} still has other local "
                 f"aliases. Use `bucket unalias` to delete them one by "
                 f"one.",
@@ -567,7 +582,9 @@ class FakeGarage:
     def _key_create(self, name: str) -> tuple[int, str, str]:
         key_id, secret = self._next_key_credentials()
         self.keys[key_id] = _Key(
-            key_id=key_id, name=name, secret_key=secret,
+            key_id=key_id,
+            name=name,
+            secret_key=secret,
         )
         return (0, self._render_key_create(key_id, name, secret), "")
 

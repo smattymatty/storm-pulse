@@ -23,16 +23,25 @@ class TestBuildGarageCommands:
     def test_all_commands_present(self) -> None:
         cmds = build_garage_commands(_make_config())
         expected = {
-            "garage_status", "garage_stats",
-            "garage_bucket_list", "garage_bucket_info",
+            "garage_status",
+            "garage_stats",
+            "garage_bucket_list",
+            "garage_bucket_info",
             "garage_key_list",
-            "garage_bucket_create", "garage_bucket_delete",
-            "garage_key_create", "garage_key_delete",
-            "garage_bucket_allow", "garage_bucket_allow_rw", "garage_bucket_allow_ro",
+            "garage_bucket_create",
+            "garage_bucket_delete",
+            "garage_key_create",
+            "garage_key_delete",
+            "garage_bucket_allow",
+            "garage_bucket_allow_rw",
+            "garage_bucket_allow_ro",
             "garage_bucket_deny",
-            "garage_bucket_website_allow", "garage_bucket_website_deny",
-            "garage_bucket_alias_global_add", "garage_bucket_alias_global_remove",
-            "garage_bucket_alias_local_add", "garage_bucket_alias_local_remove",
+            "garage_bucket_website_allow",
+            "garage_bucket_website_deny",
+            "garage_bucket_alias_global_add",
+            "garage_bucket_alias_global_remove",
+            "garage_bucket_alias_local_add",
+            "garage_bucket_alias_local_remove",
             "garage_refresh",
             "garage_bucket_clear",
             "garage_bucket_set_cors",
@@ -69,18 +78,28 @@ class TestBuildGarageCommands:
 
     def test_destructive_commands_require_confirmation(self) -> None:
         cmds = build_garage_commands(_make_config())
-        for name in ("garage_bucket_delete", "garage_key_delete", "garage_bucket_deny",
-                     "garage_bucket_website_deny",
-                     "garage_bucket_alias_global_remove",
-                     "garage_bucket_alias_local_remove"):
+        for name in (
+            "garage_bucket_delete",
+            "garage_key_delete",
+            "garage_bucket_deny",
+            "garage_bucket_website_deny",
+            "garage_bucket_alias_global_remove",
+            "garage_bucket_alias_local_remove",
+        ):
             assert cmds[name].requires_confirmation is True, (
                 f"{name} should require confirmation"
             )
 
     def test_read_only_commands_no_confirmation(self) -> None:
         cmds = build_garage_commands(_make_config())
-        for name in ("garage_status", "garage_stats", "garage_bucket_list",
-                      "garage_bucket_info", "garage_key_list", "garage_refresh"):
+        for name in (
+            "garage_status",
+            "garage_stats",
+            "garage_bucket_list",
+            "garage_bucket_info",
+            "garage_key_list",
+            "garage_refresh",
+        ):
             assert cmds[name].requires_confirmation is False, (
                 f"{name} should not require confirmation"
             )
@@ -149,23 +168,25 @@ class TestBuildGarageCommands:
         permissive pattern allowed.
         """
         import re
+
         cmds = build_garage_commands(_make_config())
         pattern = cmds["garage_bucket_info"].params["bucket_name"].pattern
         assert pattern is not None
         # Flag-smuggling and S3-illegal names rejected.
         for bad in (
-            "--help", "-c", "-h", "--rpc-host",  # flag smuggling
-            "_provisioning_abc",                 # leading underscore (S3 rejects)
-            "with_underscore",                   # any underscore (S3 rejects)
-            "UpperCase",                         # uppercase (S3 rejects)
-            "a",                                 # too short (min 3)
-            "ab",                                # too short (min 3)
-            "-leading",                          # leading hyphen
-            "trailing-",                         # trailing hyphen
+            "--help",
+            "-c",
+            "-h",
+            "--rpc-host",  # flag smuggling
+            "_provisioning_abc",  # leading underscore (S3 rejects)
+            "with_underscore",  # any underscore (S3 rejects)
+            "UpperCase",  # uppercase (S3 rejects)
+            "a",  # too short (min 3)
+            "ab",  # too short (min 3)
+            "-leading",  # leading hyphen
+            "trailing-",  # trailing hyphen
         ):
-            assert re.fullmatch(pattern, bad) is None, (
-                f"pattern should reject {bad!r}"
-            )
+            assert re.fullmatch(pattern, bad) is None, f"pattern should reject {bad!r}"
         # Valid S3-strict bucket names accepted (display names, alias
         # references, and 16-char hex UUID prefixes).
         for good in (
@@ -174,7 +195,7 @@ class TestBuildGarageCommands:
             "obsidian",
             "0bucket",
             "provisioning-abc123",
-            "5c8d6c0bb73f0770",   # 16-char UUID prefix
+            "5c8d6c0bb73f0770",  # 16-char UUID prefix
         ):
             assert re.fullmatch(pattern, good) is not None, (
                 f"pattern should accept {good!r}"
@@ -189,6 +210,7 @@ class TestBuildGarageCommands:
         the dashboard, it arrives at full length. Match both.
         """
         import re
+
         cmds = build_garage_commands(_make_config())
         for cmd_name in (
             "garage_delete_provisioned_bucket",
@@ -207,13 +229,13 @@ class TestBuildGarageCommands:
                 )
             # Non-hex, uppercase, and out-of-range lengths rejected.
             for bad in (
-                "",                       # empty
-                "abc",                    # too short (min 16)
-                "G" * 32,                 # non-hex (uppercase/non-hex)
-                "d05213985bdf79DA",       # uppercase hex
-                "d05213985bdf79da-bad",   # contains hyphen
-                "x" * 65,                 # too long (max 64)
-                "--help",                 # flag smuggling
+                "",  # empty
+                "abc",  # too short (min 16)
+                "G" * 32,  # non-hex (uppercase/non-hex)
+                "d05213985bdf79DA",  # uppercase hex
+                "d05213985bdf79da-bad",  # contains hyphen
+                "x" * 65,  # too long (max 64)
+                "--help",  # flag smuggling
             ):
                 assert re.fullmatch(pattern, bad) is None, (
                     f"{cmd_name}.bucket_id should reject {bad!r}"
@@ -221,6 +243,7 @@ class TestBuildGarageCommands:
 
     def test_key_name_pattern_rejects_leading_hyphen(self) -> None:
         import re
+
         cmds = build_garage_commands(_make_config())
         pattern = cmds["garage_key_create"].params["key_name"].pattern
         assert pattern is not None
@@ -252,7 +275,11 @@ class TestBuildGarageCommands:
 
     def test_bucket_allow_variants_no_confirmation(self) -> None:
         cmds = build_garage_commands(_make_config())
-        for name in ("garage_bucket_allow", "garage_bucket_allow_rw", "garage_bucket_allow_ro"):
+        for name in (
+            "garage_bucket_allow",
+            "garage_bucket_allow_rw",
+            "garage_bucket_allow_ro",
+        ):
             assert cmds[name].requires_confirmation is False, (
                 f"{name} should not require confirmation"
             )

@@ -1,0 +1,28 @@
+# Pre-commit hooks: ruff lint + format, plus the `make check` umbrella
+# (mypy strict + fitness functions + import topology).
+#
+# Setup: `pre-commit install` once after cloning.
+# Bypass (use sparingly, fix-forward preferred): `git commit --no-verify`.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.15
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict)
+        entry: .venv/bin/python -m mypy .
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: fitness
+        name: fitness (import topology + custom checks)
+        entry: bash -c '.venv/bin/lint-imports && .venv/bin/python -m fitness'
+        language: system
+        pass_filenames: false

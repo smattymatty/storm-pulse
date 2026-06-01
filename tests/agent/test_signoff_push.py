@@ -17,8 +17,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from stormpulse.agent import Agent
-from stormpulse.agent import signoff_push
+from stormpulse.agent import Agent, signoff_push
 
 
 @pytest.fixture
@@ -150,12 +149,14 @@ async def test_double_flip_emits_two_envelopes(
 
 @pytest.mark.asyncio
 async def test_exits_promptly_on_shutdown(
-    agent: Agent, shutdown: asyncio.Event,
+    agent: Agent,
+    shutdown: asyncio.Event,
 ) -> None:
     """Shutdown fired before the first wait should still terminate the loop."""
     agent._signoff_state.seal()
     shutdown.set()
     ws = AsyncMock()
     await asyncio.wait_for(
-        signoff_push.signoff_state_push_loop(agent, ws), timeout=1.0,
+        signoff_push.signoff_state_push_loop(agent, ws),
+        timeout=1.0,
     )

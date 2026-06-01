@@ -18,7 +18,6 @@ from __future__ import annotations
 import pytest
 
 from stormpulse.garage.s3 import (
-    GarageS3Client,
     ListResult,
     S3AuthError,
     S3Error,
@@ -42,7 +41,12 @@ class _FakeS3Client:
     ) -> None:
         self._head_raises = head_raises
         self._pages = pages or [
-            ListResult(contents=[], is_truncated=False, next_continuation_token=None, key_count=0),
+            ListResult(
+                contents=[],
+                is_truncated=False,
+                next_continuation_token=None,
+                key_count=0,
+            ),
         ]
         self._page_index = 0
         self._list_raises = list_raises
@@ -59,12 +63,14 @@ class _FakeS3Client:
         max_keys: int = 1000,
         prefix: str | None = None,
     ) -> ListResult:
-        self.list_calls.append({
-            "bucket": bucket,
-            "continuation_token": continuation_token,
-            "max_keys": max_keys,
-            "prefix": prefix,
-        })
+        self.list_calls.append(
+            {
+                "bucket": bucket,
+                "continuation_token": continuation_token,
+                "max_keys": max_keys,
+                "prefix": prefix,
+            }
+        )
         if self._list_raises is not None:
             raise self._list_raises
         page = self._pages[self._page_index]
@@ -85,7 +91,11 @@ async def _noop_progress(*args: object, **kwargs: object) -> None:
 async def test_auth_failed_short_circuits_before_list() -> None:
     client = _FakeS3Client(head_raises=S3AuthError("forbidden", status=403))
     outcome = await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "", 100_000,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "",
+        100_000,
     )
     assert outcome.success is False
     assert outcome.failure_reason == "auth_failed"
@@ -99,7 +109,11 @@ async def test_auth_failed_short_circuits_before_list() -> None:
 async def test_os_error_during_list_returns_partial_counts() -> None:
     client = _FakeS3Client(list_raises=S3Error("server down", status=500))
     outcome = await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "", 100_000,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "",
+        100_000,
     )
     assert outcome.success is False
     assert outcome.failure_reason == "os_error"
@@ -113,7 +127,11 @@ async def test_os_error_during_list_returns_partial_counts() -> None:
 async def test_empty_listing_returns_zero_counts_and_success() -> None:
     client = _FakeS3Client()  # default page is empty
     outcome = await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "", 100_000,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "",
+        100_000,
     )
     assert outcome.success is True
     assert outcome.extras["count"] == 0
@@ -135,7 +153,11 @@ async def test_single_page_walk_sums_count_and_bytes() -> None:
     )
     client = _FakeS3Client(pages=[page])
     outcome = await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "", 100_000,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "",
+        100_000,
     )
     assert outcome.success is True
     assert outcome.extras["count"] == 3
@@ -161,7 +183,11 @@ async def test_paginated_walk_follows_continuation_token() -> None:
     ]
     client = _FakeS3Client(pages=pages)
     outcome = await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "", 100_000,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "",
+        100_000,
     )
     assert outcome.success is True
     assert outcome.extras["count"] == 3
@@ -189,7 +215,11 @@ async def test_max_objects_cap_returns_truncated_true_with_partial_counts() -> N
     )
     client = _FakeS3Client(pages=[page])
     outcome = await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "", 2,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "",
+        2,
     )
     assert outcome.success is True
     assert outcome.extras["count"] == 2
@@ -210,7 +240,11 @@ async def test_prefix_is_forwarded_to_list_call() -> None:
     )
     client = _FakeS3Client(pages=[page])
     await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "photos/", 100_000,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "photos/",
+        100_000,
     )
     assert client.list_calls[0]["prefix"] == "photos/"
 
@@ -225,7 +259,11 @@ async def test_empty_prefix_passes_none_to_client() -> None:
     )
     client = _FakeS3Client(pages=[page])
     await run_walk_bucket_stats(
-        _noop_progress, client, "vault", "", 100_000,  # type: ignore[arg-type]
+        _noop_progress,
+        client,  # type: ignore[arg-type]
+        "vault",
+        "",
+        100_000,
     )
     # Empty prefix → None on the client call (matches the
     # ``prefix or None`` line in the handler; the S3 query string omits
@@ -239,26 +277,30 @@ async def test_empty_prefix_passes_none_to_client() -> None:
 
 
 def test_factory_returns_none_when_required_param_missing() -> None:
-    handler = make_walk_bucket_stats_handler({
-        "bucket_name": "vault",
-        # missing s3_endpoint
-        "region": "garage",
-        "access_key_id": "GKADMIN",
-        "secret_access_key": "shh",
-    })
+    handler = make_walk_bucket_stats_handler(
+        {
+            "bucket_name": "vault",
+            # missing s3_endpoint
+            "region": "garage",
+            "access_key_id": "GKADMIN",
+            "secret_access_key": "shh",
+        }
+    )
     assert handler is None
 
 
 def test_factory_constructs_handler_when_params_complete() -> None:
-    handler = make_walk_bucket_stats_handler({
-        "bucket_name": "vault",
-        "s3_endpoint": "https://s3.local.test",
-        "region": "garage",
-        "access_key_id": "GKADMIN",
-        "secret_access_key": "shh",
-        "prefix": "photos/",
-        "max_objects": "100",
-    })
+    handler = make_walk_bucket_stats_handler(
+        {
+            "bucket_name": "vault",
+            "s3_endpoint": "https://s3.local.test",
+            "region": "garage",
+            "access_key_id": "GKADMIN",
+            "secret_access_key": "shh",
+            "prefix": "photos/",
+            "max_objects": "100",
+        }
+    )
     assert handler is not None
 
 
@@ -266,12 +308,14 @@ def test_factory_invalid_max_objects_falls_back_to_default() -> None:
     # max_objects="not-a-number" - handler shouldn't crash; falls back
     # to the default cap. We can't easily test the value without running
     # the handler, but at least constructing it must succeed.
-    handler = make_walk_bucket_stats_handler({
-        "bucket_name": "vault",
-        "s3_endpoint": "https://s3.local.test",
-        "region": "garage",
-        "access_key_id": "GKADMIN",
-        "secret_access_key": "shh",
-        "max_objects": "not-a-number",
-    })
+    handler = make_walk_bucket_stats_handler(
+        {
+            "bucket_name": "vault",
+            "s3_endpoint": "https://s3.local.test",
+            "region": "garage",
+            "access_key_id": "GKADMIN",
+            "secret_access_key": "shh",
+            "max_objects": "not-a-number",
+        }
+    )
     assert handler is not None

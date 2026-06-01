@@ -26,14 +26,17 @@ SEALED_COMMANDS = frozenset({VERIFY_BLOCK_COMMAND, APPLY_BLOCK_COMMAND})
 
 
 def is_blocked_by_seal(
-    state: SignoffState, commands: Iterable[str],
+    state: SignoffState,
+    commands: Iterable[str],
 ) -> bool:
     """Return ``True`` when any of *commands* is a sealed hatch AND the agent is sealed."""
     return state.is_sealed() and bool(SEALED_COMMANDS & set(commands))
 
 
 def sealed_refusal_result(
-    request_id: str, command: str, cmd_def: CommandDef | None,
+    request_id: str,
+    command: str,
+    cmd_def: CommandDef | None,
 ) -> CommandResultPayload:
     """Build the structured failure the agent emits when refusing a sealed verify or apply block."""
     return CommandResultPayload(

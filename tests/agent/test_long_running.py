@@ -22,7 +22,6 @@ from stormpulse.config import CommandDef, GarageConfig, ParamDef
 from stormpulse.garage.commands import build_garage_commands
 from stormpulse.protocol import CommandRequestPayload, Envelope, MessageType
 
-
 # ---------------------------------------------------------------------------
 # Synthetic CommandDef param-validation contract
 # ---------------------------------------------------------------------------
@@ -162,7 +161,10 @@ async def test_no_registered_factory_emits_structured_failure(
     agent._job_manager = JobManager(agent._config.agent.id, fake_send)
 
     payload = CommandRequestPayload(
-        command="unregistered", params={}, hmac="x", nonce="x",
+        command="unregistered",
+        params={},
+        hmac="x",
+        nonce="x",
     )
     await agent._dispatch_long_running("req-no-handler", payload, test_cmd)
 

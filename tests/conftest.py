@@ -15,7 +15,6 @@ from stormpulse.agent import Agent
 from stormpulse.agent import bootstrap as agent_bootstrap
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
-
 from tests.helpers import SECRET, build_config
 
 
@@ -34,7 +33,9 @@ def _garage_preconditions_pass_in_tests() -> Generator[None, None, None]:
     return value.
     """
     with patch.object(
-        agent_bootstrap, "run_garage_preconditions", return_value=None,
+        agent_bootstrap,
+        "run_garage_preconditions",
+        return_value=None,
     ):
         yield
 

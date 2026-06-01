@@ -72,7 +72,7 @@ def parse_status(stdout: str) -> list[GaragePeer]:
             continue
 
         # After tags: zone, capacity (with unit), data_avail (with unit and percent), version
-        rest = parts[tags_idx + 1:]
+        rest = parts[tags_idx + 1 :]
         if len(rest) < 5:
             continue
 
@@ -90,17 +90,19 @@ def parse_status(stdout: str) -> list[GaragePeer]:
 
         version = rest[version_idx] if len(rest) > version_idx else "unknown"
 
-        nodes.append(GaragePeer(
-            node_id=node_id,
-            hostname=hostname,
-            address=address,
-            zone=zone,
-            capacity_gb=capacity_gb,
-            data_avail_gb=data_avail_gb,
-            data_avail_percent=data_avail_percent,
-            version=version,
-            healthy=in_healthy and not in_sick,
-        ))
+        nodes.append(
+            GaragePeer(
+                node_id=node_id,
+                hostname=hostname,
+                address=address,
+                zone=zone,
+                capacity_gb=capacity_gb,
+                data_avail_gb=data_avail_gb,
+                data_avail_percent=data_avail_percent,
+                version=version,
+                healthy=in_healthy and not in_sick,
+            )
+        )
 
     return nodes
 
@@ -108,11 +110,11 @@ def parse_status(stdout: str) -> list[GaragePeer]:
 _SIZE_MULTIPLIERS: dict[str, int] = {
     # SI (decimal). Garage uses these in the parenthesised
     # human-readable side of size lines, e.g. ``Size: 5.7 kiB (5.8 KB)``.
-    "B":   1,
-    "KB":  1_000,
-    "MB":  1_000_000,
-    "GB":  1_000_000_000,
-    "TB":  1_000_000_000_000,
+    "B": 1,
+    "KB": 1_000,
+    "MB": 1_000_000,
+    "GB": 1_000_000_000,
+    "TB": 1_000_000_000_000,
     # IEC (binary). Garage uses these for the authoritative size in
     # ``bucket info`` and ``garage status``.
     "KIB": 1_024,
@@ -248,10 +250,12 @@ def parse_bucket_list(stdout: str) -> list[GarageBucketListEntry]:
         if len(parts) >= 3 and ":" not in parts[2]:
             global_alias = parts[2]
 
-        buckets.append(GarageBucketListEntry(
-            bucket_id=bucket_id,
-            global_alias=global_alias,
-        ))
+        buckets.append(
+            GarageBucketListEntry(
+                bucket_id=bucket_id,
+                global_alias=global_alias,
+            )
+        )
 
     return buckets
 
@@ -325,11 +329,13 @@ def parse_bucket_info(stdout: str) -> GarageBucketInfo:
                     local_alias = parts[2]
                 else:
                     local_alias = ""
-                keys.append(GarageBucketKeyEntry(
-                    permissions=permissions,
-                    access_key_id=access_key_id,
-                    local_alias=local_alias,
-                ))
+                keys.append(
+                    GarageBucketKeyEntry(
+                        permissions=permissions,
+                        access_key_id=access_key_id,
+                        local_alias=local_alias,
+                    )
+                )
             continue
 
         if stripped.startswith("Bucket:"):
@@ -506,11 +512,13 @@ def parse_key_info(stdout: str) -> GarageKeyInfo:
                 bucket_id = parts[1]
                 # Last column is local alias if present
                 local_alias = parts[-1] if len(parts) >= 3 else ""
-                buckets.append(GarageKeyInfoBucketRef(
-                    bucket_id=bucket_id,
-                    permissions=permissions,
-                    local_alias=local_alias,
-                ))
+                buckets.append(
+                    GarageKeyInfoBucketRef(
+                        bucket_id=bucket_id,
+                        permissions=permissions,
+                        local_alias=local_alias,
+                    )
+                )
             continue
 
         if stripped.startswith("Key name:"):
@@ -561,6 +569,8 @@ def parse_key_create(stdout: str) -> GarageKeyCreateResult:
             secret_key = stripped.split(":", 1)[1].strip()
 
     if not key_id or not secret_key:
-        raise GarageParseError("Could not parse key ID or secret from key create output")
+        raise GarageParseError(
+            "Could not parse key ID or secret from key create output"
+        )
 
     return GarageKeyCreateResult(key_id=key_id, name=name, secret_key=secret_key)

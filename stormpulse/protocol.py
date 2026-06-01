@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import MISSING, asdict, dataclass, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Self
 
@@ -40,7 +40,9 @@ class MessageType(StrEnum):
     ERROR = "error"
 
 
-def _payload_from_dict[T](cls: type[T], data: Any, *, nested: dict[str, type] | None = None) -> T:
+def _payload_from_dict[T](
+    cls: type[T], data: Any, *, nested: dict[str, type] | None = None
+) -> T:
     """Validate required fields and construct a payload dataclass.
 
     Args:
@@ -53,7 +55,11 @@ def _payload_from_dict[T](cls: type[T], data: Any, *, nested: dict[str, type] | 
         raise ProtocolError(f"{cls.__name__}: expected dict, got {type(data).__name__}")
 
     cls_fields = fields(cls)  # type: ignore[arg-type]
-    required = {f.name for f in cls_fields if f.default is MISSING and f.default_factory is MISSING}
+    required = {
+        f.name
+        for f in cls_fields
+        if f.default is MISSING and f.default_factory is MISSING
+    }
 
     missing_fields = required - data.keys()
     if missing_fields:
@@ -329,7 +335,9 @@ class Envelope:
         if not isinstance(payload, dict):
             raise ProtocolError(f"payload must be a dict, got {type(payload).__name__}")
 
-        return cls(v=1, type=msg_type, id=data["id"], ts=ts, agent_id=agent_id, payload=payload)
+        return cls(
+            v=1, type=msg_type, id=data["id"], ts=ts, agent_id=agent_id, payload=payload
+        )
 
     def to_json(self) -> str:
         """Serialize this Envelope to compact JSON."""
@@ -347,13 +355,15 @@ class Envelope:
         }
 
 
-def _make_envelope(agent_id: str, msg_type: MessageType, payload: dict[str, Any]) -> Envelope:
+def _make_envelope(
+    agent_id: str, msg_type: MessageType, payload: dict[str, Any]
+) -> Envelope:
     """Internal helper to build an Envelope with fresh id and timestamp."""
     return Envelope(
         v=1,
         type=msg_type,
         id=str(uuid.uuid4()),
-        ts=datetime.now(timezone.utc),
+        ts=datetime.now(UTC),
         agent_id=agent_id,
         payload=payload,
     )
@@ -377,14 +387,20 @@ def make_register(
 ) -> Envelope:
     """Create a register envelope."""
     return _make_envelope(
-        agent_id, MessageType.REGISTER,
-        asdict(RegisterPayload(
-            version=version, pulse_token=pulse_token,
-            commands=commands, garage=garage, log_groups=log_groups,
-            system_inventory=system_inventory,
-            signoff_sealed=signoff_sealed,
-            unsealed_since=unsealed_since,
-        )),
+        agent_id,
+        MessageType.REGISTER,
+        asdict(
+            RegisterPayload(
+                version=version,
+                pulse_token=pulse_token,
+                commands=commands,
+                garage=garage,
+                log_groups=log_groups,
+                system_inventory=system_inventory,
+                signoff_sealed=signoff_sealed,
+                unsealed_since=unsealed_since,
+            )
+        ),
     )
 
 
@@ -428,7 +444,10 @@ def make_command_progress(agent_id: str, progress: CommandProgressPayload) -> En
 
 
 def make_signoff_state(
-    agent_id: str, *, sealed: bool, unsealed_since: str | None = None,
+    agent_id: str,
+    *,
+    sealed: bool,
+    unsealed_since: str | None = None,
 ) -> Envelope:
     """Create a signoff.state envelope.
 
@@ -438,10 +457,14 @@ def make_signoff_state(
     unsealed; see ADR DEVELOPER-005.
     """
     return _make_envelope(
-        agent_id, MessageType.SIGNOFF_STATE,
-        asdict(SignoffStatePayload(
-            signoff_sealed=sealed, unsealed_since=unsealed_since,
-        )),
+        agent_id,
+        MessageType.SIGNOFF_STATE,
+        asdict(
+            SignoffStatePayload(
+                signoff_sealed=sealed,
+                unsealed_since=unsealed_since,
+            )
+        ),
     )
 
 
@@ -457,10 +480,17 @@ def make_log_batch(
 ) -> Envelope:
     """Create a log.batch envelope."""
     return _make_envelope(
-        agent_id, MessageType.LOG_BATCH,
-        asdict(LogBatchPayload(
-            group=group, parser=parser, batch_id=batch_id,
-            lines=lines, dropped=dropped,
-            from_position=from_position, to_position=to_position,
-        )),
+        agent_id,
+        MessageType.LOG_BATCH,
+        asdict(
+            LogBatchPayload(
+                group=group,
+                parser=parser,
+                batch_id=batch_id,
+                lines=lines,
+                dropped=dropped,
+                from_position=from_position,
+                to_position=to_position,
+            )
+        ),
     )

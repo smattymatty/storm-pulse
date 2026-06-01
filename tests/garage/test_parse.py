@@ -34,7 +34,6 @@ from tests.garage.fixtures import (
     STATUS_OUTPUT_MULTI_NODE,
 )
 
-
 # ---------------------------------------------------------------------------
 # garage status
 # ---------------------------------------------------------------------------
@@ -137,6 +136,7 @@ class TestParseBucketList:
         garage-one (v2.2.0).
         """
         from stormpulse.garage.parse import parse_bucket_info
+
         output = (
             "==== BUCKET INFORMATION ====\n"
             "Bucket:          5c8d6c0bb73f0770e5a7a7d471c0d434fb9b37098017d66f40ee3300a040bc3c\n"

@@ -27,9 +27,14 @@ def _make_docker_group(name: str = "web", container: str = "web") -> LogGroupCon
     )
 
 
-def _mk_result(stdout: str = "", stderr: str = "", rc: int = 0) -> subprocess.CompletedProcess[str]:
+def _mk_result(
+    stdout: str = "", stderr: str = "", rc: int = 0
+) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
-        args=[], returncode=rc, stdout=stdout, stderr=stderr,
+        args=[],
+        returncode=rc,
+        stdout=stdout,
+        stderr=stderr,
     )
 
 
@@ -72,7 +77,9 @@ def test_docker_binary_missing(tmp_path: Path) -> None:
     store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
     tailer = DockerTailer(group, store)
 
-    with patch("stormpulse.logging.tailer.subprocess.run", side_effect=FileNotFoundError):
+    with patch(
+        "stormpulse.logging.tailer.subprocess.run", side_effect=FileNotFoundError
+    ):
         lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
     assert lines == []
     assert from_ts == to_ts == "2026-04-15T13:00:00.000000Z"
@@ -183,8 +190,10 @@ def test_docker_command_args(tmp_path: Path) -> None:
     args = mock_run.call_args.args[0]
     kwargs = mock_run.call_args.kwargs
     assert args == [
-        "/usr/bin/docker", "logs",
-        "--since", "2026-04-15T13:00:00.000000Z",
+        "/usr/bin/docker",
+        "logs",
+        "--since",
+        "2026-04-15T13:00:00.000000Z",
         "--timestamps",
         "my_web_1",
     ]
@@ -230,6 +239,7 @@ def test_cursor_does_not_stall_on_boundary_line(tmp_path: Path) -> None:
 def test_advance_nanos_microsecond_precision(tmp_path: Path) -> None:
     """Cursor advances by 1µs (Docker only accepts microsecond precision)."""
     from stormpulse.logging.tailer import _advance_nanos
+
     # Nanosecond input gets truncated to µs then bumped
     assert _advance_nanos("2026-04-16T15:37:00.600193533Z") == (
         "2026-04-16T15:37:00.600194Z"
@@ -243,9 +253,7 @@ def test_advance_nanos_microsecond_precision(tmp_path: Path) -> None:
         "2026-04-16T15:37:01.000000Z"
     )
     # No fractional part
-    assert _advance_nanos("2026-04-16T15:37:00Z") == (
-        "2026-04-16T15:37:00.000001Z"
-    )
+    assert _advance_nanos("2026-04-16T15:37:00Z") == ("2026-04-16T15:37:00.000001Z")
 
 
 def test_empty_output_does_not_advance(tmp_path: Path) -> None:

@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage.parse import GarageParseError
-from stormpulse.garage.state import run_garage, collect_garage_state
+from stormpulse.garage.state import collect_garage_state, run_garage
 from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT,
     BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
@@ -38,8 +38,10 @@ def _make_config(tmp_path: Path) -> GarageConfig:
 
 def _mock_run_garage(outputs: dict[tuple[str, ...], str | None]) -> object:
     """Create a side_effect function for run_garage that maps args to outputs."""
+
     def side_effect(config: GarageConfig, *args: str) -> str | None:
         return outputs.get(args)
+
     return side_effect
 
 
@@ -142,12 +144,15 @@ class TestCollectGarageState:
     def test_status_parse_error_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         outputs: dict[tuple[str, ...], str | None] = {("status",): STATUS_OUTPUT}
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(outputs),
-        ), patch(
-            "stormpulse.garage.state.parse_status",
-            side_effect=GarageParseError("bad"),
+        with (
+            patch(
+                "stormpulse.garage.state.run_garage",
+                side_effect=_mock_run_garage(outputs),
+            ),
+            patch(
+                "stormpulse.garage.state.parse_status",
+                side_effect=GarageParseError("bad"),
+            ),
         ):
             assert collect_garage_state(cfg) is None
 
@@ -159,12 +164,15 @@ class TestCollectGarageState:
             ("key", "list"): KEY_LIST_OUTPUT,
             ("bucket", "list"): BUCKET_LIST_OUTPUT_EMPTY,
         }
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(outputs),
-        ), patch(
-            "stormpulse.garage.state.parse_stats",
-            side_effect=GarageParseError("bad"),
+        with (
+            patch(
+                "stormpulse.garage.state.run_garage",
+                side_effect=_mock_run_garage(outputs),
+            ),
+            patch(
+                "stormpulse.garage.state.parse_stats",
+                side_effect=GarageParseError("bad"),
+            ),
         ):
             state = collect_garage_state(cfg)
         assert state is not None
@@ -181,12 +189,15 @@ class TestCollectGarageState:
             ("bucket", "list"): BUCKET_LIST_OUTPUT,
             ("bucket", "info", "obsidian-vault"): BUCKET_INFO_OUTPUT,
         }
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(outputs),
-        ), patch(
-            "stormpulse.garage.state.parse_key_list",
-            side_effect=GarageParseError("bad"),
+        with (
+            patch(
+                "stormpulse.garage.state.run_garage",
+                side_effect=_mock_run_garage(outputs),
+            ),
+            patch(
+                "stormpulse.garage.state.parse_key_list",
+                side_effect=GarageParseError("bad"),
+            ),
         ):
             state = collect_garage_state(cfg)
         assert state is not None
@@ -202,12 +213,15 @@ class TestCollectGarageState:
             ("key", "list"): KEY_LIST_OUTPUT,
             ("bucket", "list"): BUCKET_LIST_OUTPUT,
         }
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(outputs),
-        ), patch(
-            "stormpulse.garage.state.parse_bucket_list",
-            side_effect=GarageParseError("bad"),
+        with (
+            patch(
+                "stormpulse.garage.state.run_garage",
+                side_effect=_mock_run_garage(outputs),
+            ),
+            patch(
+                "stormpulse.garage.state.parse_bucket_list",
+                side_effect=GarageParseError("bad"),
+            ),
         ):
             state = collect_garage_state(cfg)
         assert state is not None
@@ -224,7 +238,8 @@ class TestCollectGarageState:
             ("bucket", "info", "backups"): "GARBAGE",
         }
         real_parse_bucket_info = __import__(
-            "stormpulse.garage.parse", fromlist=["parse_bucket_info"],
+            "stormpulse.garage.parse",
+            fromlist=["parse_bucket_info"],
         ).parse_bucket_info
 
         def flaky_parse(out: str) -> object:
@@ -232,12 +247,15 @@ class TestCollectGarageState:
                 raise GarageParseError("bad")
             return real_parse_bucket_info(out)
 
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(outputs),
-        ), patch(
-            "stormpulse.garage.state.parse_bucket_info",
-            side_effect=flaky_parse,
+        with (
+            patch(
+                "stormpulse.garage.state.run_garage",
+                side_effect=_mock_run_garage(outputs),
+            ),
+            patch(
+                "stormpulse.garage.state.parse_bucket_info",
+                side_effect=flaky_parse,
+            ),
         ):
             state = collect_garage_state(cfg)
         assert state is not None
@@ -269,7 +287,11 @@ class TestCollectGarageState:
             state = collect_garage_state(cfg)
         assert state is not None
         assert len(state.peers) == 3
-        assert {p.hostname for p in state.peers} == {"garage-one", "garage-two", "garage-pi"}
+        assert {p.hostname for p in state.peers} == {
+            "garage-one",
+            "garage-two",
+            "garage-pi",
+        }
         # node_id picks first node
         assert state.node_id == "7a58a5fa192ad6dd"
 
@@ -291,7 +313,9 @@ class TestCollectGarageState:
         assert state is not None
         assert {b.alias for b in state.buckets} == {"obsidian-vault", "backups"}
 
-    def test_bucket_without_global_alias_addressed_by_uuid(self, tmp_path: Path) -> None:
+    def test_bucket_without_global_alias_addressed_by_uuid(
+        self, tmp_path: Path
+    ) -> None:
         """Alias-less buckets (post-bucket-naming-refactor) must still be collected.
 
         Most customer buckets won't have a global alias - only website-hosted ones
@@ -311,19 +335,27 @@ class TestCollectGarageState:
             # Bucket info is addressed by UUID, not alias.
             ("bucket", "info", bucket_uuid): BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
         }
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(outputs),
-        ), patch(
-            "stormpulse.garage.state.parse_bucket_list",
-            return_value=[GarageBucketListEntry(bucket_id=bucket_uuid, global_alias="")],
+        with (
+            patch(
+                "stormpulse.garage.state.run_garage",
+                side_effect=_mock_run_garage(outputs),
+            ),
+            patch(
+                "stormpulse.garage.state.parse_bucket_list",
+                return_value=[
+                    GarageBucketListEntry(bucket_id=bucket_uuid, global_alias="")
+                ],
+            ),
         ):
             state = collect_garage_state(cfg)
         assert state is not None
         assert len(state.buckets) == 1
         bucket = state.buckets[0]
         # id is the full UUID parsed from bucket info (how Cellar joins).
-        assert bucket.id == "a9b8c7d6e5f4032110aabbccddeeff00112233445566778899aabbccddeeff00"
+        assert (
+            bucket.id
+            == "a9b8c7d6e5f4032110aabbccddeeff00112233445566778899aabbccddeeff00"
+        )
         assert bucket.alias == ""
         assert bucket.size_bytes == 5800
         assert bucket.object_count == 2
@@ -346,12 +378,17 @@ class TestCollectGarageState:
                 ("bucket", "info", bucket_uuid): BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS,
             }.get(args)
 
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=recording_run_garage,
-        ), patch(
-            "stormpulse.garage.state.parse_bucket_list",
-            return_value=[GarageBucketListEntry(bucket_id=bucket_uuid, global_alias="")],
+        with (
+            patch(
+                "stormpulse.garage.state.run_garage",
+                side_effect=recording_run_garage,
+            ),
+            patch(
+                "stormpulse.garage.state.parse_bucket_list",
+                return_value=[
+                    GarageBucketListEntry(bucket_id=bucket_uuid, global_alias="")
+                ],
+            ),
         ):
             collect_garage_state(cfg)
 
@@ -408,7 +445,10 @@ class TestRunGarage:
     def test_returns_stdout_on_success(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         completed = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="hello\n", stderr="",
+            args=[],
+            returncode=0,
+            stdout="hello\n",
+            stderr="",
         )
         with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
             assert run_garage(cfg, "status") == "hello\n"
@@ -432,7 +472,10 @@ class TestRunGarage:
     def test_nonzero_exit_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         completed = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="boom\n",
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="boom\n",
         )
         with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
             assert run_garage(cfg, "status") is None

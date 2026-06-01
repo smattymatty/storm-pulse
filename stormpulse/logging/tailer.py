@@ -16,7 +16,7 @@ import re
 import select
 import subprocess
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
@@ -64,7 +64,9 @@ class LogTailer:
         if stored_inode is not None and stored_inode != current_inode:
             logger.info(
                 "Log rotation detected for group %s (inode %s -> %s)",
-                self._group.name, stored_inode, current_inode,
+                self._group.name,
+                stored_inode,
+                current_inode,
             )
             stored_position = 0
 
@@ -104,13 +106,18 @@ class LogTailer:
             except OSError:
                 return
         self._store.set(
-            self._group.name, str(self._group.source_path), to_position, inode,
+            self._group.name,
+            str(self._group.source_path),
+            to_position,
+            inode,
         )
         self._pending_position = None
         self._pending_inode = None
 
 
-_DOCKER_TS_PREFIX_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s")
+_DOCKER_TS_PREFIX_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s"
+)
 _MAX_LINE_BYTES = 4096
 _DOCKER_TIMEOUT_SECONDS = 30.0
 
@@ -143,7 +150,7 @@ def _advance_nanos(ts: str) -> str:
                 )
             else:
                 return ts
-    advanced = parsed.replace(tzinfo=timezone.utc) + timedelta(microseconds=1)
+    advanced = parsed.replace(tzinfo=UTC) + timedelta(microseconds=1)
     return advanced.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
@@ -172,14 +179,16 @@ class DockerTailer:
         """
         stored = self._store.get_docker_ts(self._group.name)
         if stored is None:
-            from_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            from_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             # Persist the seed immediately so the next interval actually
             # queries a back-window. Without this, every call would re-seed
             # to "now" and nothing would ever be shipped until the first
             # confirmed batch - and the first batch can't happen if the
             # window is empty.
             self._store.set_docker_ts(
-                self._group.name, self._group.container_name, from_ts,
+                self._group.name,
+                self._group.container_name,
+                from_ts,
             )
         else:
             from_ts = stored
@@ -187,7 +196,8 @@ class DockerTailer:
         cmd = [
             self._group.docker_binary,
             "logs",
-            "--since", from_ts,
+            "--since",
+            from_ts,
             "--timestamps",
             self._group.container_name,
         ]
@@ -204,7 +214,8 @@ class DockerTailer:
         except FileNotFoundError:
             logger.warning(
                 "Docker binary not found for group %s: %s",
-                self._group.name, self._group.docker_binary,
+                self._group.name,
+                self._group.docker_binary,
             )
             return ([], from_ts, from_ts)
         except subprocess.TimeoutExpired:
@@ -214,7 +225,9 @@ class DockerTailer:
         if result.returncode != 0:
             logger.warning(
                 "docker logs failed for group %s (exit %d): %s",
-                self._group.name, result.returncode, result.stderr.strip()[:200],
+                self._group.name,
+                result.returncode,
+                result.stderr.strip()[:200],
             )
             return ([], from_ts, from_ts)
 
@@ -235,7 +248,9 @@ class DockerTailer:
     def confirm_shipped(self, to_ts: str) -> None:
         """Persist ``to_ts`` as the new stored last_ts for this group."""
         self._store.set_docker_ts(
-            self._group.name, self._group.container_name, to_ts,
+            self._group.name,
+            self._group.container_name,
+            to_ts,
         )
 
 
@@ -277,9 +292,11 @@ class StreamingDockerTailer:
         """
         stored = self._store.get_docker_ts(self._group.name)
         if stored is None:
-            from_ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            from_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             self._store.set_docker_ts(
-                self._group.name, self._group.container_name, from_ts,
+                self._group.name,
+                self._group.container_name,
+                from_ts,
             )
         else:
             from_ts = stored
@@ -306,7 +323,9 @@ class StreamingDockerTailer:
     def confirm_shipped(self, to_ts: str) -> None:
         """Persist ``to_ts`` as the new stored last_ts for this group."""
         self._store.set_docker_ts(
-            self._group.name, self._group.container_name, to_ts,
+            self._group.name,
+            self._group.container_name,
+            to_ts,
         )
 
     def close(self) -> None:
@@ -323,7 +342,8 @@ class StreamingDockerTailer:
             except subprocess.TimeoutExpired:
                 pass
             logger.warning(
-                "docker logs process died for group %s", self._group.name,
+                "docker logs process died for group %s",
+                self._group.name,
             )
             self._proc = None
             self._buffer = b""
@@ -336,7 +356,7 @@ class StreamingDockerTailer:
     def _spawn(self) -> bool:
         """Spawn ``docker logs --follow --timestamps --since <last_ts>``."""
         stored = self._store.get_docker_ts(self._group.name)
-        from_ts = stored or datetime.now(timezone.utc).strftime(
+        from_ts = stored or datetime.now(UTC).strftime(
             "%Y-%m-%dT%H:%M:%S.%fZ",
         )
         cmd = [
@@ -344,7 +364,8 @@ class StreamingDockerTailer:
             "logs",
             "--follow",
             "--timestamps",
-            "--since", from_ts,
+            "--since",
+            from_ts,
             self._group.container_name,
         ]
         try:
@@ -358,14 +379,16 @@ class StreamingDockerTailer:
         except FileNotFoundError:
             logger.warning(
                 "Docker binary not found for group %s: %s",
-                self._group.name, self._group.docker_binary,
+                self._group.name,
+                self._group.docker_binary,
             )
             self._proc = None
             return False
         except OSError as exc:
             logger.warning(
                 "Failed to spawn docker logs for group %s: %s",
-                self._group.name, exc,
+                self._group.name,
+                exc,
             )
             self._proc = None
             return False
@@ -378,7 +401,8 @@ class StreamingDockerTailer:
         except OSError as exc:
             logger.warning(
                 "Failed to set non-blocking on docker logs pipe for group %s: %s",
-                self._group.name, exc,
+                self._group.name,
+                exc,
             )
             self._terminate()
             self._proc = None
@@ -386,7 +410,8 @@ class StreamingDockerTailer:
         self._buffer = b""
         logger.info(
             "Spawned docker logs --follow for group %s (since %s)",
-            self._group.name, from_ts,
+            self._group.name,
+            from_ts,
         )
         return True
 

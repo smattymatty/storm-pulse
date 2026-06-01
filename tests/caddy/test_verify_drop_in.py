@@ -94,7 +94,9 @@ class TestVerifyDropInImported:
         assert err is not None
         assert "not found" in err
 
-    def test_glob_pattern_does_not_match_wrong_directory(self, caddy_root: Path) -> None:
+    def test_glob_pattern_does_not_match_wrong_directory(
+        self, caddy_root: Path
+    ) -> None:
         # import conf.d/*.caddy must NOT match a drop-in in a different dir.
         drop_in = caddy_root / "elsewhere" / "cellar-custom-domains.caddy"
         drop_in.parent.mkdir()

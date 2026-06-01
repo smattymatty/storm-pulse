@@ -21,6 +21,7 @@ def test_set_and_get_roundtrip(tmp_path: Path) -> None:
     assert inode == 999
     store.close()
 
+
 def test_inode_zero_roundtrip(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     store.set("storage", "/a.log", 0, 0)
@@ -28,6 +29,7 @@ def test_inode_zero_roundtrip(tmp_path: Path) -> None:
     assert pos == 0
     assert inode == 0  # not None - zero is a valid inode
     store.close()
+
 
 def test_position_zero_after_rotation(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
@@ -37,6 +39,7 @@ def test_position_zero_after_rotation(tmp_path: Path) -> None:
     assert pos == 0
     assert inode == 99
     store.close()
+
 
 def test_two_connections_same_db(tmp_path: Path) -> None:
     db = tmp_path / "pos.db"
@@ -48,6 +51,7 @@ def test_two_connections_same_db(tmp_path: Path) -> None:
     assert s2.get("storage") == (100, 1)
     s1.close()
     s2.close()
+
 
 def test_upsert_overwrites(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")

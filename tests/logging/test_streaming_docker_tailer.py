@@ -69,7 +69,8 @@ def _make_pipe_nonblocking() -> tuple[int, int]:
 
 
 def _inject_fake_proc(
-    tailer: StreamingDockerTailer, proc: _FakeProc,
+    tailer: StreamingDockerTailer,
+    proc: _FakeProc,
 ) -> None:
     """Install ``proc`` as the tailer's running subprocess."""
     tailer._proc = proc  # type: ignore[assignment]
@@ -91,15 +92,19 @@ def test_spawns_with_correct_args(tmp_path: Path) -> None:
     fake = _FakeProc(read_fd=r)
     try:
         with patch(
-            "stormpulse.logging.tailer.subprocess.Popen", return_value=fake,
+            "stormpulse.logging.tailer.subprocess.Popen",
+            return_value=fake,
         ) as mock_popen:
             tailer._ensure_running()
         args = mock_popen.call_args.args[0]
         kwargs = mock_popen.call_args.kwargs
         assert args == [
-            "/usr/bin/docker", "logs",
-            "--follow", "--timestamps",
-            "--since", "2026-04-15T13:00:00.000000Z",
+            "/usr/bin/docker",
+            "logs",
+            "--follow",
+            "--timestamps",
+            "--since",
+            "2026-04-15T13:00:00.000000Z",
             "my_web_1",
         ]
         assert kwargs["stdout"] == subprocess.PIPE
@@ -121,9 +126,13 @@ def test_first_run_seeds_from_now(tmp_path: Path) -> None:
     r, w = _make_pipe_nonblocking()
     fake = _FakeProc(read_fd=r)
     try:
-        with patch(
-            "stormpulse.logging.tailer.subprocess.Popen", return_value=fake,
-        ), patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.05):
+        with (
+            patch(
+                "stormpulse.logging.tailer.subprocess.Popen",
+                return_value=fake,
+            ),
+            patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.05),
+        ):
             lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
     finally:
         os.close(w)
@@ -302,10 +311,13 @@ def test_respawn_after_backoff(tmp_path: Path) -> None:
     r, w = _make_pipe_nonblocking()
     fake = _FakeProc(read_fd=r)
     try:
-        with patch.object(tailer, "_RESPAWN_DELAY_SECONDS", 0.05), patch(
-            "stormpulse.logging.tailer.subprocess.Popen",
-            side_effect=[FileNotFoundError, fake],
-        ) as mock_popen:
+        with (
+            patch.object(tailer, "_RESPAWN_DELAY_SECONDS", 0.05),
+            patch(
+                "stormpulse.logging.tailer.subprocess.Popen",
+                side_effect=[FileNotFoundError, fake],
+            ) as mock_popen,
+        ):
             assert tailer._ensure_running() is False
             time.sleep(0.08)
             assert tailer._ensure_running() is True
@@ -454,7 +466,8 @@ def test_merges_stderr_into_stdout(tmp_path: Path) -> None:
     fake = _FakeProc(read_fd=r)
     try:
         with patch(
-            "stormpulse.logging.tailer.subprocess.Popen", return_value=fake,
+            "stormpulse.logging.tailer.subprocess.Popen",
+            return_value=fake,
         ) as mock_popen:
             tailer._ensure_running()
         assert mock_popen.call_args.kwargs["stderr"] == subprocess.STDOUT
@@ -495,10 +508,13 @@ def test_read_new_lines_never_raises(tmp_path: Path) -> None:
         # Put bytes on the pipe so select() reports ready and os.read is called.
         os.write(w, b"anything\n")
         _inject_fake_proc(tailer, fake)
-        with patch(
-            "stormpulse.logging.tailer.os.read",
-            side_effect=OSError(errno.EIO, "pipe error"),
-        ), patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.2):
+        with (
+            patch(
+                "stormpulse.logging.tailer.os.read",
+                side_effect=OSError(errno.EIO, "pipe error"),
+            ),
+            patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.2),
+        ):
             lines, _, _ = tailer.read_new_lines(max_lines=10)
     finally:
         os.close(w)
