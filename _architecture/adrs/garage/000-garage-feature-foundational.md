@@ -9,7 +9,7 @@ adr:
 
 # ADR: Garage Feature foundational decisions
 
-**Status:** Accepted. The original ZFS substrate precondition was removed when [CELLAR-003](../../../../website/_architecture/adrs/cellar/003-zfs-substrate-for-garage.md) was amended (alpha provider's LVM-ext4 topology makes ZFS-on-clean-disk unworkable; durability moved one layer up into `garage.toml` via `metadata_fsync = true` and `metadata_auto_snapshot_interval`). That responsibility is now the 002-garage playbook's sign-off concern, not the agent's startup gate.
+**Status:** Accepted. The original ZFS substrate precondition was removed when [BUCKETS-003](../../../../website/_architecture/adrs/buckets/003-zfs-substrate-for-garage.md) was amended (alpha provider's LVM-ext4 topology makes ZFS-on-clean-disk unworkable; durability moved one layer up into `garage.toml` via `metadata_fsync = true` and `metadata_auto_snapshot_interval`). That responsibility is now the 002-garage playbook's sign-off concern, not the agent's startup gate.
 
 `stormpulse/garage/` is the Feature module the agent uses to operate Garage on a Storm box. Per [CORE-000](../core/000-internal-module-architecture.md), Features layer.
 
@@ -19,7 +19,7 @@ adr:
 |---|---|
 | Where Garage runs | Docker container. Agent never installs a host-side garage binary. |
 | How agent talks to it | `docker exec <container> /garage <args>`. No admin API HTTP. No socket RPC. |
-| Substrate | Filesystem-agnostic at the agent layer. The 002-garage playbook commits to a substrate (currently ext4 with `metadata_fsync = true` + auto-snapshots per CELLAR-003 amendment); the agent does not enforce. |
+| Substrate | Filesystem-agnostic at the agent layer. The 002-garage playbook commits to a substrate (currently ext4 with `metadata_fsync = true` + auto-snapshots per BUCKETS-003 amendment); the agent does not enforce. |
 | Garage version | v2.x only. Tested against v2.3.0. Enforced at agent start. |
 | Runtime config | `[garage]` section in `stormpulse.toml`: `enabled, container_name, garage_binary, docker_binary, config_path, state_push_interval_seconds`. Schema in `stormpulse/config.py`. |
 | Command surface | Curated named set in `commands.py`. No raw `garage` shell. No caller-supplied flags. |
@@ -55,7 +55,7 @@ Substrate (filesystem-level CoW or fs-level fsync semantics) is no longer an age
 - Host-installed garage binary. Container is the boundary.
 - Multi-version compatibility. Exactly v2.x.
 - Snapshot orchestration. Future GARAGE-* ADR.
-- Multi-tenancy mapping. Lives in website's cellar ADRs.
+- Multi-tenancy mapping. Lives in website's buckets ADRs.
 
 ## Implementation status
 
@@ -64,7 +64,7 @@ Substrate (filesystem-level CoW or fs-level fsync semantics) is no longer an age
 | Garage v2 version check | `garage/preconditions.py:check_garage_version` |
 | `garage status` smoke-call precondition | `garage/preconditions.py:check_rpc_secret` |
 | `GarageState.disabled_reason` field | `garage/state.py:GarageState` |
-| ZFS substrate precondition | removed (CELLAR-003 amendment) |
+| ZFS substrate precondition | removed (BUCKETS-003 amendment) |
 | `docker exec` CLI invocation | `garage/runner.py`, `garage/state.py` |
 | State sync loop with configured interval | `agent/garage_actions.py` |
 | `garage_refresh` internal command | `agent/garage_actions.py:40` |
@@ -79,5 +79,5 @@ Substrate (filesystem-level CoW or fs-level fsync semantics) is no longer an age
 
 - [CORE-000](../core/000-internal-module-architecture.md): puts `garage/` in Features.
 - [CORE-004](../core/004-signoff-verify-hatch-and-seal.md): verify-hatch dispatch the 002-garage playbook uses.
-- [CELLAR-003](../../../../website/_architecture/adrs/cellar/003-zfs-substrate-for-garage.md): substrate commitment this ADR enforces agent-side.
+- [BUCKETS-003](../../../../website/_architecture/adrs/buckets/003-zfs-substrate-for-garage.md): substrate commitment this ADR enforces agent-side.
 - [DEVELOPER-010](../../../../website/_architecture/adrs/developer/010-verify-block-matcher-contract.md): matcher contract the 002-garage sign-off rows use.

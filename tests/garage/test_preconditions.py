@@ -41,9 +41,9 @@ def _completed(
 
 # Note: the original GARAGE-000 included a substrate precondition that
 # asserted /var/lib/garage/{meta,data} were ZFS mounts. It was dropped
-# when CELLAR-003 was amended (alpha provider's LVM-ext4 topology made
+# when BUCKETS-003 was amended (alpha provider's LVM-ext4 topology made
 # ZFS-on-clean-disk unworkable; durability moved up to garage.toml).
-# See CELLAR-003 amendment + the preconditions.py module docstring.
+# See BUCKETS-003 amendment + the preconditions.py module docstring.
 
 
 # ---- check_garage_version -------------------------------------------

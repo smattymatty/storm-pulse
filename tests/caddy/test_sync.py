@@ -47,7 +47,7 @@ def _make_config(
         enabled=True,
         admin_url="http://localhost:2019",
         main_caddyfile=main_caddyfile,
-        drop_in_path=tmp_path / "conf.d" / "cellar-custom-domains.caddy",
+        drop_in_path=tmp_path / "conf.d" / "buckets-custom-domains.caddy",
     )
 
 

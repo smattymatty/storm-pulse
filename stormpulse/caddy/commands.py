@@ -5,7 +5,7 @@ from __future__ import annotations
 from stormpulse.commands.jobs import LongRunningFactory
 from stormpulse.config import CaddyConfig, CommandDef, ParamDef
 
-CELLAR_CUSTOM_DOMAIN_CADDY_SYNC = "cellar_custom_domain_caddy_sync"
+BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC = "buckets_custom_domain_caddy_sync"
 
 # Region identifier: short lowercase alphanumeric + hyphen. Matches the
 # CustomerBucket.Region choices on the Django side (vancouver-1,
@@ -34,9 +34,9 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
     home.
     """
     return {
-        CELLAR_CUSTOM_DOMAIN_CADDY_SYNC: CommandDef(
+        BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC: CommandDef(
             group="caddy",
-            command=[CELLAR_CUSTOM_DOMAIN_CADDY_SYNC],  # internal - JobManager
+            command=[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC],  # internal - JobManager
             timeout=30,
             description=(
                 "Write the per-region Caddyfile fragment for "
@@ -71,7 +71,7 @@ def long_running_factories(config: CaddyConfig) -> dict[str, LongRunningFactory]
     from stormpulse.caddy.sync import make_caddy_sync_handler
 
     return {
-        CELLAR_CUSTOM_DOMAIN_CADDY_SYNC: (
+        BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC: (
             lambda params: make_caddy_sync_handler(config, params)
         ),
     }

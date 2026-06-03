@@ -96,7 +96,7 @@ def make_caddy_sync_handler(
     caddy: CaddyConfig,
     params: dict[str, str],
 ) -> JobHandler:
-    """Build a long-running handler for cellar_custom_domain_caddy_sync.
+    """Build a long-running handler for buckets_custom_domain_caddy_sync.
 
     Workflow:
 

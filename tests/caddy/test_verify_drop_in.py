@@ -24,7 +24,7 @@ def _write_main(caddy_root: Path, content: str) -> Path:
 
 class TestVerifyDropInImported:
     def test_exact_absolute_import_matches(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(
             caddy_root,
             f"{{\n\tadmin localhost:2019\n}}\n\nimport {drop_in}\n",
@@ -32,20 +32,20 @@ class TestVerifyDropInImported:
         assert verify_drop_in_imported(main, drop_in) is None
 
     def test_relative_import_matches(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(
             caddy_root,
-            "import conf.d/cellar-custom-domains.caddy\n",
+            "import conf.d/buckets-custom-domains.caddy\n",
         )
         assert verify_drop_in_imported(main, drop_in) is None
 
     def test_glob_import_matches(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(caddy_root, "import conf.d/*.caddy\n")
         assert verify_drop_in_imported(main, drop_in) is None
 
     def test_glob_absolute_matches(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(caddy_root, f"import {caddy_root}/conf.d/*\n")
         assert verify_drop_in_imported(main, drop_in) is None
 
@@ -57,21 +57,21 @@ class TestVerifyDropInImported:
         assert verify_drop_in_imported(main, drop_in) is None
 
     def test_no_import_returns_error(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(caddy_root, ":80 {\n\trespond \"ok\"\n}\n")
         err = verify_drop_in_imported(main, drop_in)
         assert err is not None
         assert "does not import" in err
 
     def test_unrelated_import_returns_error(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(caddy_root, "import other.caddy\n")
         err = verify_drop_in_imported(main, drop_in)
         assert err is not None
 
     def test_comment_lines_ignored(self, caddy_root: Path) -> None:
         # Commented-out import does not count as configured.
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(
             caddy_root,
             f"# import {drop_in}\n:80 {{ respond \"ok\" }}\n",
@@ -80,7 +80,7 @@ class TestVerifyDropInImported:
         assert err is not None
 
     def test_inline_comments_stripped(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         main = _write_main(
             caddy_root,
             "import conf.d/*.caddy  # auto-managed by Pulse\n",
@@ -88,7 +88,7 @@ class TestVerifyDropInImported:
         assert verify_drop_in_imported(main, drop_in) is None
 
     def test_missing_main_caddyfile_returns_error(self, caddy_root: Path) -> None:
-        drop_in = caddy_root / "conf.d" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "conf.d" / "buckets-custom-domains.caddy"
         missing_main = caddy_root / "does-not-exist"
         err = verify_drop_in_imported(missing_main, drop_in)
         assert err is not None
@@ -98,7 +98,7 @@ class TestVerifyDropInImported:
         self, caddy_root: Path
     ) -> None:
         # import conf.d/*.caddy must NOT match a drop-in in a different dir.
-        drop_in = caddy_root / "elsewhere" / "cellar-custom-domains.caddy"
+        drop_in = caddy_root / "elsewhere" / "buckets-custom-domains.caddy"
         drop_in.parent.mkdir()
         main = _write_main(caddy_root, "import conf.d/*.caddy\n")
         err = verify_drop_in_imported(main, drop_in)

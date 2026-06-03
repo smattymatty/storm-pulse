@@ -39,7 +39,7 @@ def test_no_features_yields_built_in_commands_only(tmp_path: Path) -> None:
     assert "docker_logs" in deps.registry
     # No feature commands when no feature is configured.
     assert not any(name.startswith("garage_") for name in deps.registry)
-    assert not any(name.startswith("cellar_") for name in deps.registry)
+    assert not any(name.startswith("buckets_") for name in deps.registry)
 
 
 def test_garage_enabled_merges_garage_commands(tmp_path: Path) -> None:
@@ -188,8 +188,8 @@ def test_caddy_imported_drop_in_succeeds(tmp_path: Path) -> None:
         signoff_sealed=False,
         log_position_store=None,
     )
-    assert "cellar_custom_domain_caddy_sync" in deps.registry
-    assert "cellar_custom_domain_caddy_sync" in deps.long_running_factories
+    assert "buckets_custom_domain_caddy_sync" in deps.registry
+    assert "buckets_custom_domain_caddy_sync" in deps.long_running_factories
 
 
 def test_caddy_disabled_does_not_check_drop_in(tmp_path: Path) -> None:
@@ -206,7 +206,7 @@ def test_caddy_disabled_does_not_check_drop_in(tmp_path: Path) -> None:
         signoff_sealed=False,
         log_position_store=None,
     )
-    assert "cellar_custom_domain_caddy_sync" not in deps.registry
+    assert "buckets_custom_domain_caddy_sync" not in deps.registry
 
 
 # ---------------------------------------------------------------------------

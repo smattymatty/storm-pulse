@@ -158,7 +158,7 @@ def prompt_caddy_values(
     /etc/caddy or /opt/garage.
     """
     default_drop_in = drop_in_path or str(
-        main_caddyfile.parent / "conf.d" / "cellar-custom-domains.caddy"
+        main_caddyfile.parent / "conf.d" / "buckets-custom-domains.caddy"
     )
 
     while True:

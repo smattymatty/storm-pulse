@@ -8,7 +8,7 @@ navigation in the dashboard's file browser would pollute the customer's
 activity feed.
 
 Short-running, but uses the long-running plumbing because that's the
-dispatch path the dashboard uses for result fan-out via cellar_relay.
+dispatch path the dashboard uses for result fan-out via buckets_relay.
 
 Failure reasons: ``auth_failed``, ``os_error``. Truncation at
 ``max_objects`` returns ``truncated=True`` with the partial count + bytes.
@@ -30,7 +30,7 @@ from stormpulse.garage.s3 import (
 logger = logging.getLogger(__name__)
 
 
-_DEFAULT_MAX_OBJECTS = 100_000  # mirrors stormcellar._STATS_MAX_OBJECTS
+_DEFAULT_MAX_OBJECTS = 100_000  # mirrors stormbuckets._STATS_MAX_OBJECTS
 
 
 def make_walk_bucket_stats_handler(params: dict[str, str]) -> JobHandler | None:

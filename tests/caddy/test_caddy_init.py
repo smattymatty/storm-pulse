@@ -131,13 +131,13 @@ class TestAppendCaddySection:
             cfg,
             admin_url="http://localhost:2019",
             main_caddyfile="/etc/caddy/Caddyfile",
-            drop_in_path="/etc/caddy/conf.d/cellar.caddy",
+            drop_in_path="/etc/caddy/conf.d/buckets.caddy",
         )
         content = cfg.read_text()
         assert "[caddy]" in content
         assert 'admin_url = "http://localhost:2019"' in content
         assert 'main_caddyfile = "/etc/caddy/Caddyfile"' in content
-        assert 'drop_in_path = "/etc/caddy/conf.d/cellar.caddy"' in content
+        assert 'drop_in_path = "/etc/caddy/conf.d/buckets.caddy"' in content
 
     def test_blocks_if_section_exists_without_force(self, tmp_path: Path) -> None:
         cfg = tmp_path / "stormpulse.toml"
@@ -160,7 +160,7 @@ class TestAppendCaddySection:
             cfg,
             admin_url="http://new:2019",
             main_caddyfile="/etc/caddy/Caddyfile",
-            drop_in_path="/etc/caddy/conf.d/cellar.caddy",
+            drop_in_path="/etc/caddy/conf.d/buckets.caddy",
             force=True,
         )
         content = cfg.read_text()
@@ -268,7 +268,7 @@ class TestRunCaddyInit:
         # Default drop-in derived from main Caddyfile's parent.
         assert (
             'drop_in_path = "'
-            + str(tmp_path / "conf.d" / "cellar-custom-domains.caddy")
+            + str(tmp_path / "conf.d" / "buckets-custom-domains.caddy")
             + '"'
             in content
         )
@@ -344,7 +344,7 @@ class TestCaddyTomlTemplate:
         rendered = _CADDY_TOML_TEMPLATE.format(
             admin_url="http://localhost:2019",
             main_caddyfile="/etc/caddy/Caddyfile",
-            drop_in_path="/etc/caddy/conf.d/cellar.caddy",
+            drop_in_path="/etc/caddy/conf.d/buckets.caddy",
         )
         parsed = tomllib.loads(rendered)
         assert parsed["caddy"]["enabled"] is True
