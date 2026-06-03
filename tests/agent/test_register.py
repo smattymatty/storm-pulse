@@ -35,9 +35,9 @@ async def test_send_register_sends_register_envelope(agent: Agent) -> None:
     ws.send.assert_called_once()
     data = json.loads(ws.send.call_args[0][0])
     assert data["type"] == "register"
-    assert data["agent_id"] == agent._config.agent.id
+    assert data["agent_id"] == agent.config.agent.id
     payload = data["payload"]
-    assert payload["pulse_token"] == agent._config.agent.pulse_token
+    assert payload["pulse_token"] == agent.config.agent.pulse_token
     assert payload["version"]
     assert payload["garage"] is None
     assert "git_pull" in payload["commands"]
@@ -61,7 +61,7 @@ async def test_send_register_includes_garage_snapshot_when_enabled(
     data = json.loads(ws.send.call_args[0][0])
     assert data["payload"]["garage"] is not None
     assert data["payload"]["garage"]["node_id"] == fake_state.node_id
-    assert ag._garage_state is fake_state
+    assert ag.garage_state is fake_state
 
 
 @pytest.mark.asyncio

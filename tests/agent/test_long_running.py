@@ -4,7 +4,7 @@ These verify the param-validation contract (regex pattern enforcement
 before the handler factory runs) and the factory plumbing (validated
 params reach the factory with defaults merged in).
 
-Tests inject fake factories into ``agent._long_running_factories``
+Tests inject fake factories into ``agent.long_running_factories``
 directly — the same seam production uses — rather than monkey-patching
 ``_make_long_running_handler``. That keeps test setup symmetrical with
 how a real Feature publishes its handlers.
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from stormpulse.agent import Agent
+from stormpulse.agent import Agent, dispatch
 from stormpulse.commands.jobs import JobManager
 from stormpulse.config import CommandDef, GarageConfig, ParamDef
 from stormpulse.garage.commands import build_garage_commands
@@ -48,14 +48,14 @@ async def test_long_running_dispatch_rejects_params_failing_regex(
             ),
         },
     )
-    agent._registry["test_long_running"] = test_cmd
+    agent.registry["test_long_running"] = test_cmd
 
     sent: list[Envelope] = []
 
     async def fake_send(env: Envelope) -> None:
         sent.append(env)
 
-    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+    agent.job_manager = JobManager(agent.config.agent.id, fake_send)
 
     factory_invocations: list[dict[str, str]] = []
 
@@ -63,7 +63,7 @@ async def test_long_running_dispatch_rejects_params_failing_regex(
         factory_invocations.append(params)
         return None
 
-    agent._long_running_factories["test_long_running"] = fake_factory
+    agent.long_running_factories["test_long_running"] = fake_factory
 
     payload = CommandRequestPayload(
         command="test_long_running",
@@ -71,7 +71,7 @@ async def test_long_running_dispatch_rejects_params_failing_regex(
         hmac="x",
         nonce="x",
     )
-    await agent._dispatch_long_running("req-bad", payload, test_cmd)
+    await dispatch.dispatch_long_running(agent, "req-bad", payload, test_cmd)
 
     assert factory_invocations == []
     assert len(sent) == 1
@@ -82,7 +82,7 @@ async def test_long_running_dispatch_rejects_params_failing_regex(
     assert failure.payload["failure_reason"] == "os_error"
     assert "does not match pattern" in failure.payload["stderr"]
 
-    await agent._job_manager.shutdown_all()
+    await agent.job_manager.shutdown_all()
 
 
 @pytest.mark.asyncio
@@ -111,12 +111,12 @@ async def test_long_running_dispatch_passes_validated_params_to_factory(
             ),
         },
     )
-    agent._registry["test_long_running"] = test_cmd
+    agent.registry["test_long_running"] = test_cmd
 
     async def fake_send(env: Envelope) -> None:
         pass
 
-    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+    agent.job_manager = JobManager(agent.config.agent.id, fake_send)
 
     captured: list[dict[str, str]] = []
 
@@ -124,7 +124,7 @@ async def test_long_running_dispatch_passes_validated_params_to_factory(
         captured.append(dict(params))
         return None
 
-    agent._long_running_factories["test_long_running"] = fake_factory
+    agent.long_running_factories["test_long_running"] = fake_factory
 
     payload = CommandRequestPayload(
         command="test_long_running",
@@ -132,11 +132,11 @@ async def test_long_running_dispatch_passes_validated_params_to_factory(
         hmac="x",
         nonce="x",
     )
-    await agent._dispatch_long_running("req-ok", payload, test_cmd)
+    await dispatch.dispatch_long_running(agent, "req-ok", payload, test_cmd)
 
     assert captured == [{"bucket_name": "valid-bucket", "mode": "fast"}]
 
-    await agent._job_manager.shutdown_all()
+    await agent.job_manager.shutdown_all()
 
 
 @pytest.mark.asyncio
@@ -151,14 +151,14 @@ async def test_no_registered_factory_emits_structured_failure(
         timeout=60,
         long_running=True,
     )
-    agent._registry["unregistered"] = test_cmd
+    agent.registry["unregistered"] = test_cmd
 
     sent: list[Envelope] = []
 
     async def fake_send(env: Envelope) -> None:
         sent.append(env)
 
-    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+    agent.job_manager = JobManager(agent.config.agent.id, fake_send)
 
     payload = CommandRequestPayload(
         command="unregistered",
@@ -166,7 +166,7 @@ async def test_no_registered_factory_emits_structured_failure(
         hmac="x",
         nonce="x",
     )
-    await agent._dispatch_long_running("req-no-handler", payload, test_cmd)
+    await dispatch.dispatch_long_running(agent, "req-no-handler", payload, test_cmd)
 
     assert len(sent) == 1
     failure = sent[0]
@@ -174,7 +174,7 @@ async def test_no_registered_factory_emits_structured_failure(
     assert failure.payload["success"] is False
     assert "No long-running handler" in failure.payload["stderr"]
 
-    await agent._job_manager.shutdown_all()
+    await agent.job_manager.shutdown_all()
 
 
 # ---------------------------------------------------------------------------
@@ -217,14 +217,14 @@ async def test_garage_bucket_set_cors_dispatch_validates_origins_pattern(
     the dispatcher must emit a structured failure before the factory
     runs."""
     cmd_def = _set_cors_cmd_def()
-    agent._registry["garage_bucket_set_cors"] = cmd_def
+    agent.registry["garage_bucket_set_cors"] = cmd_def
 
     sent: list[Envelope] = []
 
     async def fake_send(env: Envelope) -> None:
         sent.append(env)
 
-    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+    agent.job_manager = JobManager(agent.config.agent.id, fake_send)
 
     factory_invocations: list[dict[str, str]] = []
 
@@ -232,7 +232,7 @@ async def test_garage_bucket_set_cors_dispatch_validates_origins_pattern(
         factory_invocations.append(params)
         return None
 
-    agent._long_running_factories["garage_bucket_set_cors"] = fake_factory
+    agent.long_running_factories["garage_bucket_set_cors"] = fake_factory
 
     bad_params = dict(_SET_CORS_VALID_PARAMS)
     bad_params["origins"] = "not-bracketed"
@@ -242,7 +242,7 @@ async def test_garage_bucket_set_cors_dispatch_validates_origins_pattern(
         hmac="x",
         nonce="x",
     )
-    await agent._dispatch_long_running("req-bad-origins", payload, cmd_def)
+    await dispatch.dispatch_long_running(agent, "req-bad-origins", payload, cmd_def)
 
     assert factory_invocations == []
     assert len(sent) == 1
@@ -253,7 +253,7 @@ async def test_garage_bucket_set_cors_dispatch_validates_origins_pattern(
     assert failure.payload["failure_reason"] == "os_error"
     assert "does not match pattern" in failure.payload["stderr"]
 
-    await agent._job_manager.shutdown_all()
+    await agent.job_manager.shutdown_all()
 
 
 @pytest.mark.asyncio
@@ -264,12 +264,12 @@ async def test_garage_bucket_set_cors_dispatch_passes_json_origins_to_factory(
     string — the factory decodes; the dispatcher just shuttles strings.
     """
     cmd_def = _set_cors_cmd_def()
-    agent._registry["garage_bucket_set_cors"] = cmd_def
+    agent.registry["garage_bucket_set_cors"] = cmd_def
 
     async def fake_send(env: Envelope) -> None:
         pass
 
-    agent._job_manager = JobManager(agent._config.agent.id, fake_send)
+    agent.job_manager = JobManager(agent.config.agent.id, fake_send)
 
     captured: list[dict[str, str]] = []
 
@@ -277,7 +277,7 @@ async def test_garage_bucket_set_cors_dispatch_passes_json_origins_to_factory(
         captured.append(dict(params))
         return None
 
-    agent._long_running_factories["garage_bucket_set_cors"] = fake_factory
+    agent.long_running_factories["garage_bucket_set_cors"] = fake_factory
 
     payload = CommandRequestPayload(
         command="garage_bucket_set_cors",
@@ -285,7 +285,7 @@ async def test_garage_bucket_set_cors_dispatch_passes_json_origins_to_factory(
         hmac="x",
         nonce="x",
     )
-    await agent._dispatch_long_running("req-ok", payload, cmd_def)
+    await dispatch.dispatch_long_running(agent, "req-ok", payload, cmd_def)
 
     assert len(captured) == 1
     seen = captured[0]
@@ -294,4 +294,4 @@ async def test_garage_bucket_set_cors_dispatch_passes_json_origins_to_factory(
     assert isinstance(seen["origins"], str)
     assert seen["origins"].startswith("[") and seen["origins"].endswith("]")
 
-    await agent._job_manager.shutdown_all()
+    await agent.job_manager.shutdown_all()

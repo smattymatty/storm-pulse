@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from stormpulse.agent import Agent
+from stormpulse.agent import Agent, dispatch, garage_actions
 from tests.helpers import FAKE_METRICS, make_fake_garage_state, sign_command_request
 
 
@@ -33,7 +33,9 @@ async def test_garage_refresh_command_success(
     ag = agent_with_garage()
     ws = AsyncMock()
 
-    await ag._dispatch(ws, sign_command_request(command="garage_refresh"))
+    await dispatch.dispatch_message(
+        ag, ws, sign_command_request(command="garage_refresh")
+    )
 
     # First send = command.result, second send = immediate metrics push
     assert ws.send.call_count == 2
@@ -42,7 +44,7 @@ async def test_garage_refresh_command_success(
     assert result_env["type"] == "command.result"
     assert result_env["payload"]["success"] is True
     assert metrics_env["type"] == "metrics.push"
-    assert ag._garage_state is fake_state
+    assert ag.garage_state is fake_state
 
 
 @pytest.mark.asyncio
@@ -50,7 +52,7 @@ async def test_garage_refresh_when_disabled_returns_failure(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     ag = agent_with_garage(enabled=False)
-    result = await ag._handle_garage_refresh("req-1")
+    result = await garage_actions.handle_garage_refresh(ag, "req-1")
     assert result.success is False
     assert result.failure_reason == "not_configured"
 
@@ -62,6 +64,6 @@ async def test_garage_refresh_collection_failure(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     ag = agent_with_garage()
-    result = await ag._handle_garage_refresh("req-1")
+    result = await garage_actions.handle_garage_refresh(ag, "req-1")
     assert result.success is False
     assert result.failure_reason == "collection_failed"

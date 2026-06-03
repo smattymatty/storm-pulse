@@ -41,12 +41,12 @@ async def run_with_backoff(agent: Agent) -> None:
     delay is multiplied by 1.5 (with up to 25% jitter), clamped to
     ``reconnect_max_seconds``. A clean connect resets the delay.
     """
-    url = agent._config.dashboard.url
-    delay = agent._config.dashboard.reconnect_min_seconds
+    url = agent.config.dashboard.url
+    delay = agent.config.dashboard.reconnect_min_seconds
     attempts = 0
     first_failure_at: float | None = None
 
-    while not agent._shutdown.is_set():
+    while not agent.shutdown.is_set():
         try:
             attempts += 1
             if attempts == 1:
@@ -77,7 +77,7 @@ async def run_with_backoff(agent: Agent) -> None:
                 # NEXT outage starts counting from zero.
                 attempts = 0
                 first_failure_at = None
-                delay = agent._config.dashboard.reconnect_min_seconds
+                delay = agent.config.dashboard.reconnect_min_seconds
         except* ConnectionClosed as eg:
             if first_failure_at is None:
                 first_failure_at = time.monotonic()
@@ -107,12 +107,12 @@ async def run_with_backoff(agent: Agent) -> None:
                 category="error",
             )
 
-        if agent._shutdown.is_set():
+        if agent.shutdown.is_set():
             break
 
         delay = await _sleep_with_jitter(agent, delay)
 
-    for tailer in agent._streaming_tailers:
+    for tailer in agent.streaming_tailers:
         tailer.close()
     logger.info("Agent shutting down")
 
@@ -128,8 +128,8 @@ async def _run_session(
     async def ws_send(env: Envelope) -> None:
         await ws.send(env.to_json())
 
-    agent_id = agent._config.agent.id
-    agent._job_manager = JobManager(agent_id, ws_send)
+    agent_id = agent.config.agent.id
+    agent.job_manager = JobManager(agent_id, ws_send)
     try:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(_shutdown_watcher(agent, ws))
@@ -139,11 +139,11 @@ async def _run_session(
             tg.create_task(loops.garage_loop(agent, ws))
             tg.create_task(signoff_nag_loop(agent, ws))
             tg.create_task(signoff_state_push_loop(agent, ws))
-            for group_name in agent._shippers:
+            for group_name in agent.shippers:
                 tg.create_task(loops.log_loop(agent, ws, group_name))
     finally:
-        await agent._job_manager.shutdown_all()
-        agent._job_manager = None
+        await agent.job_manager.shutdown_all()
+        agent.job_manager = None
 
 
 async def _shutdown_watcher(agent: Agent, ws: ClientConnection) -> None:
@@ -153,7 +153,7 @@ async def _shutdown_watcher(agent: Agent, ws: ClientConnection) -> None:
     the task group waits on it until systemd's ``TimeoutStopSec`` elapses
     and SIGKILL arrives.
     """
-    await agent._shutdown.wait()
+    await agent.shutdown.wait()
     await ws.close()
 
 
@@ -168,10 +168,10 @@ async def _sleep_with_jitter(agent: Agent, delay: float) -> float:
     wait = delay + jitter
     logger.info("Reconnecting in %.1fs", wait)
     try:
-        await asyncio.wait_for(agent._shutdown.wait(), timeout=wait)
+        await asyncio.wait_for(agent.shutdown.wait(), timeout=wait)
     except TimeoutError:
         pass
-    return min(delay * 1.5, agent._config.dashboard.reconnect_max_seconds)
+    return min(delay * 1.5, agent.config.dashboard.reconnect_max_seconds)
 
 
 def _log_connection_event(
@@ -187,7 +187,7 @@ def _log_connection_event(
         logger.error("%s: %s", message, exc, exc_info=True)
     else:
         logger.warning("%s: %s", message, exc)
-    if agent._pulse_logger is None:
+    if agent.pulse_logger is None:
         return
-    log_fn = getattr(agent._pulse_logger, level)
+    log_fn = getattr(agent.pulse_logger, level)
     log_fn(message, category, {"reason": str(exc)})

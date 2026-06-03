@@ -5,8 +5,9 @@ concurrent tasks per connection (heartbeat, metrics push, garage state
 refresh, inbound message dispatch, and per-log-group shipping). It
 reconnects with exponential backoff when the session drops.
 
-The ``Agent`` class is the composition root. The actual work lives in
-focused submodules:
+The ``Agent`` class is a composition root: it holds the per-process
+state and exposes one public entry point, ``run()``. The actual work
+lives in free functions in focused submodules:
 
 ============================  ==============================================
 ``bootstrap``                 Assemble registry + log shippers from Config.
@@ -21,6 +22,14 @@ focused submodules:
 ``long_running``              Resolve long-running commands to handlers.
 ``signoff_guard``             Sign-off seal predicate + refusal builder.
 ============================  ==============================================
+
+Submodules in this package are collaborators of ``Agent`` and read its
+instance state directly. That state is therefore public (``agent.config``,
+``agent.registry``, ``agent.garage_state``). The only exception is the
+three cryptographic attributes — ``_secret``, ``_nonce_store``,
+``_ssl_ctx`` — kept underscore-prefixed as a deliberate sigil meaning
+"handle with care." Reads of those names should stand out at the call
+site; everything else is plain shared state.
 """
 
 from __future__ import annotations
@@ -28,27 +37,20 @@ from __future__ import annotations
 import asyncio
 import ssl
 
-from websockets.asyncio.client import ClientConnection
-
-from stormpulse.agent import dispatch, garage_actions, loops, reconnect
+from stormpulse.agent import reconnect
 from stormpulse.agent.bootstrap import build_agent_dependencies
 from stormpulse.agent.log_batches import PendingBatches
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
 from stormpulse.agent.ssl_context import create_ssl_context
 from stormpulse.auth import NonceStore
 from stormpulse.commands.jobs import JobManager, LongRunningFactory
-from stormpulse.config import CommandDef, Config
+from stormpulse.config import Config
 from stormpulse.garage.state import GarageState
 from stormpulse.logging import (
     LogPositionStore,
     LogShipper,
     PulseLogger,
     StreamingDockerTailer,
-)
-from stormpulse.protocol import (
-    CommandRequestPayload,
-    CommandResultPayload,
-    Envelope,
 )
 from stormpulse.signoff import SignoffState
 
@@ -74,99 +76,45 @@ class Agent:
         pulse_logger: PulseLogger | None = None,
         signoff_state: SignoffState | None = None,
     ) -> None:
-        self._config = config
+        self.config = config
         self._secret = secret
         self._nonce_store = nonce_store
         self._ssl_ctx = ssl_context
-        self._shutdown = shutdown
-        self._pulse_logger = pulse_logger
+        self.shutdown = shutdown
+        self.pulse_logger = pulse_logger
         # SignoffState gates dashboard verify-block dispatch (ADR
         # CORE-004). Tests construct Agent without a state object;
         # default to an unsealed sentinel so the existing test surface
         # stays unchanged.
-        self._signoff_state = signoff_state or SignoffState(
+        self.signoff_state = signoff_state or SignoffState(
             config.storage.db_path.parent,
         )
         deps = build_agent_dependencies(
             config,
-            signoff_sealed=self._signoff_state.is_sealed(),
+            signoff_sealed=self.signoff_state.is_sealed(),
             log_position_store=log_position_store,
         )
-        self._registry = deps.registry
-        self._long_running_factories: dict[str, LongRunningFactory] = (
+        self.registry = deps.registry
+        self.long_running_factories: dict[str, LongRunningFactory] = (
             deps.long_running_factories
         )
-        self._shippers: dict[str, LogShipper] = deps.shippers
-        self._streaming_tailers: list[StreamingDockerTailer] = deps.streaming_tailers
+        self.shippers: dict[str, LogShipper] = deps.shippers
+        self.streaming_tailers: list[StreamingDockerTailer] = deps.streaming_tailers
         # ADR GARAGE-000: a precondition failure at bootstrap skips
         # garage command registration; the reason rides to the
         # dashboard as the initial GarageState until the operator
         # fixes the host and restarts the agent.
-        self._garage_disabled_reason: str | None = deps.garage_disabled_reason
-        self._garage_state: GarageState | None = (
-            GarageState.disabled(self._garage_disabled_reason)
-            if self._garage_disabled_reason is not None
+        self.garage_disabled_reason: str | None = deps.garage_disabled_reason
+        self.garage_state: GarageState | None = (
+            GarageState.disabled(self.garage_disabled_reason)
+            if self.garage_disabled_reason is not None
             else None
         )
-        self._pending_batches = PendingBatches()
+        self.pending_batches = PendingBatches()
         # One JobManager per active connection. Recreated on reconnect;
         # jobs do not survive across connections.
-        self._job_manager: JobManager | None = None
+        self.job_manager: JobManager | None = None
 
     async def run(self) -> None:
         """Connect, run tasks, reconnect on failure until shutdown."""
         await reconnect.run_with_backoff(self)
-
-    # ------------------------------------------------------------------
-    # Periodic tasks — bodies live in ``stormpulse.agent.loops``
-    # ------------------------------------------------------------------
-
-    async def _heartbeat_loop(self, ws: ClientConnection) -> None:
-        await loops.heartbeat_loop(self, ws)
-
-    async def _metrics_loop(self, ws: ClientConnection) -> None:
-        await loops.metrics_loop(self, ws)
-
-    async def _garage_loop(self, ws: ClientConnection) -> None:
-        await loops.garage_loop(self, ws)
-
-    async def _log_loop(self, ws: ClientConnection, group_name: str) -> None:
-        await loops.log_loop(self, ws, group_name)
-
-    # ------------------------------------------------------------------
-    # Inbound dispatch — bodies live in ``stormpulse.agent.dispatch``
-    # ------------------------------------------------------------------
-
-    async def _receive_loop(self, ws: ClientConnection) -> None:
-        await dispatch.receive_loop(self, ws)
-
-    async def _dispatch(self, ws: ClientConnection, raw: str | bytes) -> None:
-        await dispatch.dispatch_message(self, ws, raw)
-
-    async def _handle_command_request(
-        self,
-        ws: ClientConnection,
-        envelope: Envelope,
-    ) -> None:
-        await dispatch.handle_command_request(self, ws, envelope)
-
-    async def _handle_command_sequence(
-        self,
-        ws: ClientConnection,
-        envelope: Envelope,
-    ) -> None:
-        await dispatch.handle_command_sequence(self, ws, envelope)
-
-    async def _handle_log_batch_ack(self, envelope: Envelope) -> None:
-        await dispatch.handle_log_batch_ack(self, envelope)
-
-    async def _handle_garage_refresh(self, request_id: str) -> CommandResultPayload:
-        return await garage_actions.handle_garage_refresh(self, request_id)
-
-    async def _dispatch_long_running(
-        self,
-        request_id: str,
-        payload: CommandRequestPayload,
-        cmd_def: CommandDef,
-    ) -> None:
-        await dispatch.dispatch_long_running(self, request_id, payload, cmd_def)

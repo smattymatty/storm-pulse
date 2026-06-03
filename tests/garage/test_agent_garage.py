@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from stormpulse.agent import Agent
+from stormpulse.agent import Agent, garage_actions, loops
 from stormpulse.auth import NonceStore
 from stormpulse.config import (
     AgentConfig,
@@ -70,7 +70,7 @@ class TestGarageLoopNoOp:
         agent, shutdown = _make_agent(config, tmp_path)
         ws = AsyncMock()
         # Should return immediately without doing anything
-        await agent._garage_loop(ws)
+        await loops.garage_loop(agent, ws)
         # No sends should have happened
         ws.send.assert_not_called()
 
@@ -87,7 +87,7 @@ class TestGarageLoopNoOp:
         config = _make_config(tmp_path, garage=garage_cfg)
         agent, shutdown = _make_agent(config, tmp_path)
         ws = AsyncMock()
-        await agent._garage_loop(ws)
+        await loops.garage_loop(agent, ws)
         ws.send.assert_not_called()
 
 
@@ -129,14 +129,14 @@ class TestGarageLoopEnabled:
                 "stormpulse.agent.loops.collect_garage_state",
                 return_value=fake_state,
             ):
-                task = asyncio.create_task(agent._garage_loop(ws))
+                task = asyncio.create_task(loops.garage_loop(agent, ws))
                 await asyncio.sleep(0.15)
                 shutdown.set()
                 await task
 
         await run_loop()
-        assert agent._garage_state is not None
-        assert agent._garage_state.node_id == "abc123"
+        assert agent.garage_state is not None
+        assert agent.garage_state.node_id == "abc123"
 
     @pytest.mark.asyncio
     async def test_collects_before_first_wait(self, tmp_path: Path) -> None:
@@ -175,7 +175,7 @@ class TestGarageLoopEnabled:
                 "stormpulse.agent.loops.collect_garage_state",
                 return_value=fake_state,
             ) as mock_collect:
-                task = asyncio.create_task(agent._garage_loop(ws))
+                task = asyncio.create_task(loops.garage_loop(agent, ws))
                 # Give just enough time for the collect to run, but nowhere
                 # near 600s - proves collect happens before the wait
                 await asyncio.sleep(0.1)
@@ -186,8 +186,8 @@ class TestGarageLoopEnabled:
                 await task
 
         await run_loop()
-        assert agent._garage_state is not None
-        assert agent._garage_state.node_id == "immediate"
+        assert agent.garage_state is not None
+        assert agent.garage_state.node_id == "immediate"
 
 
 class TestGarageCommandsInRegistry:
@@ -204,16 +204,16 @@ class TestGarageCommandsInRegistry:
         )
         config = _make_config(tmp_path, garage=garage_cfg)
         agent, _ = _make_agent(config, tmp_path)
-        assert "garage_status" in agent._registry
-        assert "garage_bucket_list" in agent._registry
-        assert "garage_key_create" in agent._registry
+        assert "garage_status" in agent.registry
+        assert "garage_bucket_list" in agent.registry
+        assert "garage_key_create" in agent.registry
 
     def test_no_garage_commands_without_config(self, tmp_path: Path) -> None:
         config = _make_config(tmp_path, garage=None)
         agent, _ = _make_agent(config, tmp_path)
-        assert "garage_status" not in agent._registry
+        assert "garage_status" not in agent.registry
         # Original commands still present
-        assert "git_pull" in agent._registry
+        assert "git_pull" in agent.registry
 
 
 class TestGarageRefresh:
@@ -253,20 +253,20 @@ class TestGarageRefresh:
             "stormpulse.agent.garage_actions.collect_garage_state",
             return_value=fake_state,
         ):
-            result = await agent._handle_garage_refresh("req-1")
+            result = await garage_actions.handle_garage_refresh(agent, "req-1")
 
         assert result.success is True
         assert result.command == "garage_refresh"
         assert "0 buckets" in result.stdout
-        assert agent._garage_state is not None
-        assert agent._garage_state.node_id == "abc123"
+        assert agent.garage_state is not None
+        assert agent.garage_state.node_id == "abc123"
 
     @pytest.mark.asyncio
     async def test_refresh_not_configured(self, tmp_path: Path) -> None:
         config = _make_config(tmp_path, garage=None)
         agent, _ = _make_agent(config, tmp_path)
 
-        result = await agent._handle_garage_refresh("req-1")
+        result = await garage_actions.handle_garage_refresh(agent, "req-1")
 
         assert result.success is False
         assert result.failure_reason == "not_configured"
@@ -280,16 +280,16 @@ class TestGarageRefresh:
             "stormpulse.agent.garage_actions.collect_garage_state",
             return_value=None,
         ):
-            result = await agent._handle_garage_refresh("req-1")
+            result = await garage_actions.handle_garage_refresh(agent, "req-1")
 
         assert result.success is False
         assert result.failure_reason == "collection_failed"
-        assert agent._garage_state is None
+        assert agent.garage_state is None
 
     def test_garage_refresh_in_registry(self, tmp_path: Path) -> None:
         config = _make_config(tmp_path, garage=self._garage_cfg(tmp_path))
         agent, _ = _make_agent(config, tmp_path)
-        assert "garage_refresh" in agent._registry
+        assert "garage_refresh" in agent.registry
 
 
 class TestSensitiveOutputLogging:
@@ -306,5 +306,5 @@ class TestSensitiveOutputLogging:
         )
         config = _make_config(tmp_path, garage=garage_cfg)
         agent, _ = _make_agent(config, tmp_path)
-        cmd_def = agent._registry["garage_key_create"]
+        cmd_def = agent.registry["garage_key_create"]
         assert cmd_def.sensitive_output is True

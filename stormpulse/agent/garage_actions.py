@@ -46,7 +46,7 @@ async def handle_garage_refresh(
     Returns a ``CommandResultPayload``. The caller emits a
     ``metrics.push`` carrying the updated state separately.
     """
-    gc = agent._config.garage
+    gc = agent.config.garage
     if gc is None or not gc.enabled:
         return CommandResultPayload(
             request_id=request_id,
@@ -63,7 +63,7 @@ async def handle_garage_refresh(
     state = await asyncio.to_thread(collect_garage_state, gc)
     duration_ms = int((time.monotonic() - start) * 1000)
     if state is not None:
-        agent._garage_state = state
+        agent.garage_state = state
         return CommandResultPayload(
             request_id=request_id,
             command="garage_refresh",
@@ -124,16 +124,16 @@ def post_success_hook(
     """
     if cmd_def.group != "garage":
         return None
-    gc = agent._config.garage
+    gc = agent.config.garage
     if gc is None or not gc.enabled:
         return None
 
     async def refresh_and_push() -> None:
-        if agent._job_manager is None:
+        if agent.job_manager is None:
             return
         await refresh_garage_state(agent)
         envelope = await build_metrics_envelope(agent)
-        await agent._job_manager.send_now(envelope)
+        await agent.job_manager.send_now(envelope)
         logger.info("Sent post-mutation metrics push for %s", command)
 
     return refresh_and_push
@@ -141,20 +141,20 @@ def post_success_hook(
 
 async def refresh_garage_state(agent: Agent) -> None:
     """Collect a fresh Garage snapshot and store it on the agent."""
-    gc = agent._config.garage
+    gc = agent.config.garage
     if gc is None:
         return
     state = await asyncio.to_thread(collect_garage_state, gc)
     if state is not None:
-        agent._garage_state = state
+        agent.garage_state = state
 
 
 async def build_metrics_envelope(agent: Agent) -> Envelope:
     """Bundle host metrics + the latest Garage snapshot into a ``metrics.push``."""
-    metrics = await asyncio.to_thread(collect_metrics, agent._config)
-    garage_dict = agent._garage_state.to_dict() if agent._garage_state else None
+    metrics = await asyncio.to_thread(collect_metrics, agent.config)
+    garage_dict = agent.garage_state.to_dict() if agent.garage_state else None
     return make_metrics_push(
-        agent._config.agent.id,
+        agent.config.agent.id,
         metrics,
         garage=garage_dict,
     )

@@ -87,7 +87,7 @@ async def receive_loop(agent: Agent, ws: ClientConnection) -> None:
     early without executing anything, so swallowing here cannot cause
     an unauthorized command to run; worst case is a logged bug.
     """
-    while not agent._shutdown.is_set():
+    while not agent.shutdown.is_set():
         message = await ws.recv()
         try:
             await dispatch_message(agent, ws, message)
@@ -128,12 +128,12 @@ async def handle_log_batch_ack(agent: Agent, envelope: Envelope) -> None:
     if not isinstance(batch_id, str):
         logger.warning("log.batch.ack missing batch_id")
         return
-    pending = agent._pending_batches.pop(batch_id)
+    pending = agent.pending_batches.pop(batch_id)
     if pending is None:
         logger.debug("log.batch.ack for unknown batch_id %s", batch_id)
         return
     group_name, to_position = pending
-    shipper = agent._shippers.get(group_name)
+    shipper = agent.shippers.get(group_name)
     if shipper is None:
         return
     await asyncio.to_thread(shipper.tailer.confirm_shipped, to_position)  # type: ignore[arg-type]
@@ -160,7 +160,7 @@ async def handle_command_request(
     payload = _verify_request_payload(agent, envelope)
     if payload is None:
         return
-    cmd_def = agent._registry.get(payload.command)
+    cmd_def = agent.registry.get(payload.command)
 
     if await _refuse_if_sealed(agent, ws, envelope, payload, cmd_def):
         return
@@ -198,7 +198,7 @@ def _verify_request_payload(
             envelope,
             agent._secret,
             agent._nonce_store,
-            agent._config.auth.command_max_age_seconds,
+            agent.config.auth.command_max_age_seconds,
         )
     except AuthError as exc:
         logger.warning("Auth failed for %s: %s", envelope.id, exc)
@@ -227,10 +227,10 @@ async def _refuse_if_sealed(
     registry still contains the seal-gated commands, but the seal file
     now says "no". See ADR CORE-004.
     """
-    if not is_blocked_by_seal(agent._signoff_state, [payload.command]):
+    if not is_blocked_by_seal(agent.signoff_state, [payload.command]):
         return False
     sealed = sealed_refusal_result(envelope.id, payload.command, cmd_def)
-    await ws.send(make_command_result(agent._config.agent.id, sealed).to_json())
+    await ws.send(make_command_result(agent.config.agent.id, sealed).to_json())
     logger.warning(
         "Refused %s (request %s): signoff is sealed",
         payload.command,
@@ -254,9 +254,9 @@ async def _run_subprocess_command(
         return await asyncio.to_thread(
             execute_command,
             payload.command,
-            agent._config.project,
+            agent.config.project,
             request_id,
-            registry=agent._registry,
+            registry=agent.registry,
             runtime_params=payload.params or None,
         )
     except (CommandError, ParamValidationError) as exc:
@@ -270,7 +270,7 @@ async def _send_result(
     result: CommandResultPayload,
 ) -> None:
     """Send a ``command.result`` envelope and log the outcome."""
-    response = make_command_result(agent._config.agent.id, result)
+    response = make_command_result(agent.config.agent.id, result)
     await ws.send(response.to_json())
     logger.info(
         "Sent result for %r: success=%s, %dms",
@@ -286,11 +286,11 @@ def _log_to_pulse(
     result: CommandResultPayload,
 ) -> None:
     """Mirror a command result to the PulseLogger (if configured)."""
-    if agent._pulse_logger is None:
+    if agent.pulse_logger is None:
         return
-    cmd_def = agent._registry.get(command)
+    cmd_def = agent.registry.get(command)
     sensitive = cmd_def.sensitive_output if cmd_def else False
-    agent._pulse_logger.log_command_result(
+    agent.pulse_logger.log_command_result(
         command=result.command,
         success=result.success,
         duration_ms=result.duration_ms,
@@ -310,7 +310,7 @@ async def dispatch_long_running(
     ``long_running`` but no internal handler is registered (config bug)
     or the connection is no longer active.
     """
-    if agent._job_manager is None:
+    if agent.job_manager is None:
         logger.error("Cannot dispatch %r: no active JobManager", payload.command)
         return
 
@@ -335,13 +335,13 @@ async def dispatch_long_running(
             duration_ms=0,
             failure_reason="os_error",
         )
-        await agent._job_manager.send_now(
-            make_command_result(agent._config.agent.id, failure)
+        await agent.job_manager.send_now(
+            make_command_result(agent.config.agent.id, failure)
         )
         return
 
     handler = resolve_long_running_handler(
-        agent._long_running_factories,
+        agent.long_running_factories,
         payload.command,
         validated_params,
     )
@@ -361,14 +361,14 @@ async def dispatch_long_running(
             duration_ms=0,
             failure_reason="os_error",
         )
-        await agent._job_manager.send_now(
-            make_command_result(agent._config.agent.id, failure)
+        await agent.job_manager.send_now(
+            make_command_result(agent.config.agent.id, failure)
         )
         return
 
     on_success = post_success_hook(agent, cmd_def, payload.command)
     try:
-        agent._job_manager.start(
+        agent.job_manager.start(
             request_id,
             payload.command,
             cmd_def.group,
@@ -390,7 +390,7 @@ async def handle_command_sequence(
             envelope,
             agent._secret,
             agent._nonce_store,
-            agent._config.auth.command_max_age_seconds,
+            agent.config.auth.command_max_age_seconds,
         )
     except AuthError as exc:
         logger.warning("Auth failed for sequence %s: %s", envelope.id, exc)
@@ -407,7 +407,7 @@ async def handle_command_sequence(
 
     try:
         for name in payload.commands:
-            get_command(name, registry=agent._registry)
+            get_command(name, registry=agent.registry)
     except CommandError as exc:
         logger.warning("Sequence %s has invalid command: %s", payload.sequence_id, exc)
         return
@@ -415,7 +415,7 @@ async def handle_command_sequence(
     # Same dispatch-time seal recheck as the single-command path: refuse
     # the sequence pre-flight if any step is a seal-gated command and
     # the agent was sealed since the registry was built.
-    if is_blocked_by_seal(agent._signoff_state, payload.commands):
+    if is_blocked_by_seal(agent.signoff_state, payload.commands):
         sealed_in_sequence = sorted(SEALED_COMMANDS & set(payload.commands))
         logger.warning(
             "Refused sequence %s: contains %s while sealed",
@@ -424,8 +424,8 @@ async def handle_command_sequence(
         )
         return
 
-    agent_id = agent._config.agent.id
-    project = agent._config.project
+    agent_id = agent.config.agent.id
+    project = agent.config.project
     for name in payload.commands:
         request_id = str(uuid.uuid4())
         result = await asyncio.to_thread(
@@ -434,7 +434,7 @@ async def handle_command_sequence(
             project,
             request_id,
             payload.sequence_id,
-            registry=agent._registry,
+            registry=agent.registry,
         )
         response = make_command_result(agent_id, result)
         await ws.send(response.to_json())
