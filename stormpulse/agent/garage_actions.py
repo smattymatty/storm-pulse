@@ -1,15 +1,19 @@
 """Garage-state side effects of command dispatch.
 
 ``garage_refresh`` is the one internal command the dispatcher handles
-inline (no subprocess, no JobManager). When it succeeds — or when any
-``garage``-group long-running command finishes successfully — the
-agent pushes a fresh ``metrics.push`` so the dashboard sees the
-post-mutation snapshot in the same tick, not after the next scheduled
-``state_push_interval_seconds`` window.
+inline (no subprocess, no JobManager): ``handle_garage_refresh`` owns
+its full ceremony — collect, send the command.result, push a fresh
+metrics envelope — so the dispatcher can early-return on this branch
+the same way it does for long-running commands. Any other ``garage``
+group long-running command goes through ``post_success_hook``, which
+the JobManager fires after a successful finish.
 
-These helpers own that side-effect cluster: state refresh, envelope
-build, and the two emission paths (sync via the websocket, async via
-the JobManager's send_now).
+Both paths exist so the dashboard sees the post-mutation snapshot in
+the same tick as the result, rather than waiting up to
+``state_push_interval_seconds`` for the next scheduled push. The two
+emission channels (sync ``ws.send`` for the inline path, async
+``JobManager.send_now`` for long-runners) reflect where each command
+is dispatched from, not parallel mechanisms.
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
     CommandResultPayload,
     Envelope,
+    make_command_result,
     make_metrics_push,
 )
 
@@ -37,14 +42,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def handle_garage_refresh(
+async def collect_refresh_result(
     agent: Agent,
     request_id: str,
 ) -> CommandResultPayload:
-    """Collect fresh Garage state and update shared state.
+    """Collect a fresh Garage snapshot and build the resulting payload.
 
-    Returns a ``CommandResultPayload``. The caller emits a
-    ``metrics.push`` carrying the updated state separately.
+    Updates ``agent.garage_state`` on success. Returns a structured
+    failure payload when garage is disabled or collection failed. No
+    wire IO — the caller is responsible for sending and for the
+    post-success metrics push.
     """
     gc = agent.config.garage
     if gc is None or not gc.enabled:
@@ -87,19 +94,46 @@ async def handle_garage_refresh(
     )
 
 
-async def push_post_refresh_metrics(
+async def handle_garage_refresh(
     agent: Agent,
     ws: ClientConnection,
+    request_id: str,
 ) -> None:
-    """Push a fresh metrics envelope right after a successful sync refresh.
+    """Run the inline ``garage_refresh`` dispatch ceremony.
 
-    Used inline by ``handle_command_request`` for the ``garage_refresh``
-    command. Swallows errors so a metrics-push failure doesn't mask the
+    Symmetric with ``dispatch_long_running`` for the long-running path:
+    this function owns the full per-command IO (collect, send the
+    command.result, pulse-log, push fresh metrics on success). The
+    dispatcher early-returns after calling this and never touches the
+    result.
+
+    The immediate metrics push lets the dashboard see the post-refresh
+    snapshot in the same tick as the result rather than waiting up to
+    ``state_push_interval_seconds`` for the next scheduled push. A
+    metrics-push failure here is swallowed so it doesn't mask the
     successful refresh.
     """
+    result = await collect_refresh_result(agent, request_id)
+    await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+    logger.info(
+        "Sent result for 'garage_refresh': success=%s, %dms",
+        result.success,
+        result.duration_ms,
+    )
+    if agent.pulse_logger is not None:
+        cmd_def = agent.registry.get("garage_refresh")
+        sensitive = cmd_def.sensitive_output if cmd_def else False
+        agent.pulse_logger.log_command_result(
+            command=result.command,
+            success=result.success,
+            duration_ms=result.duration_ms,
+            sensitive=sensitive,
+        )
+    if not result.success:
+        return
     try:
-        envelope_out = await build_metrics_envelope(agent)
-        await ws.send(envelope_out.to_json())
+        envelope = await build_metrics_envelope(agent)
+        await ws.send(envelope.to_json())
         logger.info("Sent immediate metrics push after garage_refresh")
     except Exception:
         logger.warning(
