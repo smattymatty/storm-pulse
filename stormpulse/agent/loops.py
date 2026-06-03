@@ -53,24 +53,24 @@ async def sleep_or_shutdown(
 
 async def heartbeat_loop(agent: Agent, ws: ClientConnection) -> None:
     """Send periodic heartbeats until shutdown or disconnect."""
-    interval = agent._config.dashboard.heartbeat_interval_seconds
-    agent_id = agent._config.agent.id
-    while not agent._shutdown.is_set():
+    interval = agent.config.dashboard.heartbeat_interval_seconds
+    agent_id = agent.config.agent.id
+    while not agent.shutdown.is_set():
         heartbeat = make_heartbeat(agent_id)
         await ws.send(heartbeat.to_json())
         logger.debug("Sent heartbeat %s", heartbeat.id)
-        if await sleep_or_shutdown(agent._shutdown, interval):
+        if await sleep_or_shutdown(agent.shutdown, interval):
             return
 
 
 async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
     """Collect and push metrics at the configured interval."""
-    interval = agent._config.metrics.push_interval_seconds
-    agent_id = agent._config.agent.id
-    while not agent._shutdown.is_set():
+    interval = agent.config.metrics.push_interval_seconds
+    agent_id = agent.config.agent.id
+    while not agent.shutdown.is_set():
         try:
-            metrics = await asyncio.to_thread(collect_metrics, agent._config)
-            garage_dict = agent._garage_state.to_dict() if agent._garage_state else None
+            metrics = await asyncio.to_thread(collect_metrics, agent.config)
+            garage_dict = agent.garage_state.to_dict() if agent.garage_state else None
             envelope = make_metrics_push(agent_id, metrics, garage=garage_dict)
             await ws.send(envelope.to_json())
             logger.debug("Sent metrics push %s", envelope.id)
@@ -78,7 +78,7 @@ async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
             raise
         except Exception:
             logger.warning("Failed to collect/send metrics", exc_info=True)
-        if await sleep_or_shutdown(agent._shutdown, interval):
+        if await sleep_or_shutdown(agent.shutdown, interval):
             return
 
 
@@ -91,32 +91,32 @@ async def garage_loop(agent: Agent, ws: ClientConnection) -> None:
     disabled sentinel from Agent.__init__ stays on ``_garage_state``
     until the operator fixes the host and restarts the agent.
     """
-    gc = agent._config.garage
+    gc = agent.config.garage
     if gc is None or not gc.enabled:
         return
-    if agent._garage_disabled_reason is not None:
+    if agent.garage_disabled_reason is not None:
         return
     interval = gc.state_push_interval_seconds
-    while not agent._shutdown.is_set():
+    while not agent.shutdown.is_set():
         try:
             state = await asyncio.to_thread(collect_garage_state, gc)
             if state is not None:
-                agent._garage_state = state
+                agent.garage_state = state
                 logger.debug("Refreshed garage state")
         except Exception:
             logger.warning("Failed to collect garage state", exc_info=True)
-        if await sleep_or_shutdown(agent._shutdown, interval):
+        if await sleep_or_shutdown(agent.shutdown, interval):
             return
 
 
 async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
     """Tail, parse, batch, and ship logs for one group."""
-    shipper = agent._shippers[group_name]
+    shipper = agent.shippers[group_name]
     interval = shipper.ship_interval_seconds
-    agent_id = agent._config.agent.id
-    while not agent._shutdown.is_set():
+    agent_id = agent.config.agent.id
+    while not agent.shutdown.is_set():
         try:
-            agent._pending_batches.prune_stale()
+            agent.pending_batches.prune_stale()
 
             batch = await asyncio.to_thread(shipper.collect_batch)
             if batch is not None:
@@ -131,7 +131,7 @@ async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
                     from_position=batch.from_position,
                     to_position=batch.to_position,
                 )
-                agent._pending_batches.add(batch_id, group_name, batch.to_position)
+                agent.pending_batches.add(batch_id, group_name, batch.to_position)
                 await ws.send(envelope.to_json())
                 logger.debug(
                     "Sent log.batch %s group=%s lines=%d dropped=%d",
@@ -145,5 +145,5 @@ async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
         except Exception:
             logger.warning("Log loop error for group %s", group_name, exc_info=True)
 
-        if await sleep_or_shutdown(agent._shutdown, interval):
+        if await sleep_or_shutdown(agent.shutdown, interval):
             return

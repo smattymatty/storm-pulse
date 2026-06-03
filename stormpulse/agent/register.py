@@ -32,22 +32,22 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
     logger.info("Connected to dashboard at %s", url)
 
     garage_dict = None
-    if agent._config.garage and agent._config.garage.enabled:
-        if agent._garage_disabled_reason is not None:
+    if agent.config.garage and agent.config.garage.enabled:
+        if agent.garage_disabled_reason is not None:
             # ADR GARAGE-000: precondition failed at bootstrap. The
             # disabled sentinel was seeded on Agent.__init__; ride it
             # to the dashboard verbatim, do not call discover_garage.
-            if agent._garage_state is not None:
-                garage_dict = agent._garage_state.to_dict()
+            if agent.garage_state is not None:
+                garage_dict = agent.garage_state.to_dict()
         else:
-            agent._garage_state = await asyncio.to_thread(
+            agent.garage_state = await asyncio.to_thread(
                 discover_garage,
-                agent._config.garage,
+                agent.config.garage,
             )
-            if agent._garage_state:
-                garage_dict = agent._garage_state.to_dict()
+            if agent.garage_state:
+                garage_dict = agent.garage_state.to_dict()
 
-    log_group_names = sorted(agent._shippers.keys()) or None
+    log_group_names = sorted(agent.shippers.keys()) or None
     system_inventory = (
         await asyncio.to_thread(
             collect_system_inventory,
@@ -61,15 +61,15 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
     # timestamp rides alongside so the dashboard's "unsealed for X" /
     # "unsealed > N hours" pager has the authoritative wall-clock from
     # the agent rather than having to guess from its register history.
-    sealed_now = agent._signoff_state.is_sealed()
-    since = agent._signoff_state.unsealed_since()
+    sealed_now = agent.signoff_state.is_sealed()
+    since = agent.signoff_state.unsealed_since()
     register = make_register(
-        agent._config.agent.id,
+        agent.config.agent.id,
         __version__,
-        agent._config.agent.pulse_token,
+        agent.config.agent.pulse_token,
         commands=build_commands_metadata(
-            agent._registry,
-            agent._config.project,
+            agent.registry,
+            agent.config.project,
         ),
         garage=garage_dict,
         log_groups=log_group_names,
@@ -79,8 +79,8 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
     )
     await ws.send(register.to_json())
     logger.info("Sent register (v%s)", __version__)
-    if agent._pulse_logger is not None:
-        agent._pulse_logger.info(
+    if agent.pulse_logger is not None:
+        agent.pulse_logger.info(
             "Connected to dashboard",
             "connection",
             {"url": url, "version": __version__},

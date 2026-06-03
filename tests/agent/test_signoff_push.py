@@ -49,7 +49,7 @@ async def test_no_emit_when_state_unchanged(
     fast_push_interval: None,
 ) -> None:
     """A sealed agent that stays sealed emits no signoff.state."""
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     ws = AsyncMock()
 
     async def stop_after() -> None:
@@ -70,12 +70,12 @@ async def test_emits_on_sealed_to_unsealed_transition(
     fast_push_interval: None,
 ) -> None:
     """A flip from sealed to unsealed pushes exactly one signoff.state."""
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     ws = AsyncMock()
 
     async def flip_then_stop() -> None:
         await asyncio.sleep(0.05)
-        agent._signoff_state.unseal()
+        agent.signoff_state.unseal()
         await asyncio.sleep(0.1)
         shutdown.set()
 
@@ -98,13 +98,13 @@ async def test_emits_on_unsealed_to_sealed_transition(
     fast_push_interval: None,
 ) -> None:
     """A reseal pushes signoff_sealed=True with unsealed_since cleared."""
-    agent._signoff_state.seal()
-    agent._signoff_state.unseal()
+    agent.signoff_state.seal()
+    agent.signoff_state.unseal()
     ws = AsyncMock()
 
     async def flip_then_stop() -> None:
         await asyncio.sleep(0.05)
-        agent._signoff_state.seal()
+        agent.signoff_state.seal()
         await asyncio.sleep(0.1)
         shutdown.set()
 
@@ -126,14 +126,14 @@ async def test_double_flip_emits_two_envelopes(
     fast_push_interval: None,
 ) -> None:
     """Each transition emits its own envelope; no batching across ticks."""
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     ws = AsyncMock()
 
     async def flip_then_stop() -> None:
         await asyncio.sleep(0.05)
-        agent._signoff_state.unseal()
+        agent.signoff_state.unseal()
         await asyncio.sleep(0.1)
-        agent._signoff_state.seal()
+        agent.signoff_state.seal()
         await asyncio.sleep(0.1)
         shutdown.set()
 
@@ -153,7 +153,7 @@ async def test_exits_promptly_on_shutdown(
     shutdown: asyncio.Event,
 ) -> None:
     """Shutdown fired before the first wait should still terminate the loop."""
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     shutdown.set()
     ws = AsyncMock()
     await asyncio.wait_for(
