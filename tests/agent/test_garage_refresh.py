@@ -52,7 +52,7 @@ async def test_garage_refresh_when_disabled_returns_failure(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     ag = agent_with_garage(enabled=False)
-    result = await garage_actions.handle_garage_refresh(ag, "req-1")
+    result = await garage_actions.collect_refresh_result(ag, "req-1")
     assert result.success is False
     assert result.failure_reason == "not_configured"
 
@@ -64,6 +64,6 @@ async def test_garage_refresh_collection_failure(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     ag = agent_with_garage()
-    result = await garage_actions.handle_garage_refresh(ag, "req-1")
+    result = await garage_actions.collect_refresh_result(ag, "req-1")
     assert result.success is False
     assert result.failure_reason == "collection_failed"

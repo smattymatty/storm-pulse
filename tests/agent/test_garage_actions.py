@@ -2,15 +2,13 @@
 
 The dispatcher-level path is covered by ``test_garage_refresh.py``;
 these focus on the building blocks in isolation: the metrics-envelope
-builder, the state-refresh helper, the post-success hook factory, and
-the post-refresh push closure.
+builder, the state-refresh helper, and the post-success hook factory.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -18,7 +16,6 @@ from stormpulse.agent import Agent
 from stormpulse.agent.garage_actions import (
     build_metrics_envelope,
     post_success_hook,
-    push_post_refresh_metrics,
     refresh_garage_state,
 )
 from stormpulse.commands.jobs import JobManager
@@ -165,36 +162,3 @@ async def test_post_success_hook_refreshes_and_pushes(
     assert sent[0].payload["garage"] is not None
 
     await ag.job_manager.shutdown_all()
-
-
-# ---------------------------------------------------------------------------
-# push_post_refresh_metrics
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-@patch("stormpulse.agent.garage_actions.collect_metrics")
-async def test_push_post_refresh_metrics_sends_envelope(
-    mock_collect: MagicMock,
-    agent: Agent,
-) -> None:
-    mock_collect.return_value = FAKE_METRICS
-    ws = AsyncMock()
-    await push_post_refresh_metrics(agent, ws)
-    ws.send.assert_called_once()
-    data = json.loads(ws.send.call_args[0][0])
-    assert data["type"] == "metrics.push"
-
-
-@pytest.mark.asyncio
-@patch(
-    "stormpulse.agent.garage_actions.collect_metrics", side_effect=RuntimeError("boom")
-)
-async def test_push_post_refresh_metrics_swallows_errors(
-    _mock: MagicMock,
-    agent: Agent,
-) -> None:
-    """A failed push must not raise — the underlying refresh already succeeded."""
-    ws = AsyncMock()
-    await push_post_refresh_metrics(agent, ws)
-    ws.send.assert_not_called()

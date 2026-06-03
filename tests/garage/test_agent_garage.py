@@ -253,7 +253,7 @@ class TestGarageRefresh:
             "stormpulse.agent.garage_actions.collect_garage_state",
             return_value=fake_state,
         ):
-            result = await garage_actions.handle_garage_refresh(agent, "req-1")
+            result = await garage_actions.collect_refresh_result(agent, "req-1")
 
         assert result.success is True
         assert result.command == "garage_refresh"
@@ -266,7 +266,7 @@ class TestGarageRefresh:
         config = _make_config(tmp_path, garage=None)
         agent, _ = _make_agent(config, tmp_path)
 
-        result = await garage_actions.handle_garage_refresh(agent, "req-1")
+        result = await garage_actions.collect_refresh_result(agent, "req-1")
 
         assert result.success is False
         assert result.failure_reason == "not_configured"
@@ -280,7 +280,7 @@ class TestGarageRefresh:
             "stormpulse.agent.garage_actions.collect_garage_state",
             return_value=None,
         ):
-            result = await garage_actions.handle_garage_refresh(agent, "req-1")
+            result = await garage_actions.collect_refresh_result(agent, "req-1")
 
         assert result.success is False
         assert result.failure_reason == "collection_failed"
