@@ -23,6 +23,7 @@ from stormpulse.config import (
     TlsConfig,
 )
 from stormpulse.garage.state import GarageState
+from stormpulse.signoff import SignoffState
 
 SECRET = b"test-secret-key-256-bits-long!!!"
 
@@ -57,7 +58,14 @@ def _make_agent(config: Config, tmp_path: Path) -> tuple[Agent, asyncio.Event]:
     nonce_store = NonceStore(tmp_path / "nonces.db")
     shutdown = asyncio.Event()
     ssl_ctx = MagicMock(spec=ssl.SSLContext)
-    agent = Agent(config, SECRET, nonce_store, ssl_ctx, shutdown)
+    agent = Agent(
+        config,
+        SECRET,
+        nonce_store,
+        ssl_ctx,
+        shutdown,
+        signoff_state=SignoffState(config.storage.db_path.parent),
+    )
     return agent, shutdown
 
 
