@@ -1,16 +1,4 @@
-"""Sign-off seal enforcement at dispatch time.
-
-The agent re-checks the seal flag whenever a command request arrives,
-not just when the registry is built, because the operator can run
-``stormpulse signoff seal`` at any time and the next inbound
-``run_verify_block`` or ``run_apply_block`` must be refused. Both the
-single-command and the sequence dispatch paths consult the same
-predicate here so the rule cannot drift between them.
-
-See ADR CORE-004 for the threat model behind the verify and apply
-hatches and why the seal is enforced on both registry build and
-dispatch.
-"""
+"""Dispatch-time seal recheck for verify/apply blocks (ADR CORE-004). Shared by single-command and sequence paths."""
 
 from __future__ import annotations
 

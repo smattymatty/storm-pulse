@@ -1,15 +1,4 @@
-"""The four periodic tasks the Agent runs concurrently per connection.
-
-Each loop is a free async function so it can be unit-tested with a
-fake ``Agent`` context rather than a full Agent instance. The loops
-read state from the agent (config, garage_state, shippers,
-pending_batches) and write back where applicable; they do not own the
-websocket lifecycle (the outer ``Agent.run`` does).
-
-The shutdown event is checked at every iteration boundary via
-``sleep_or_shutdown`` so loops exit promptly when the agent is torn
-down.
-"""
+"""Periodic per-connection task bodies (heartbeat, metrics, garage, log shipping) plus shared ``sleep_or_shutdown``."""
 
 from __future__ import annotations
 

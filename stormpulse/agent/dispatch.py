@@ -1,30 +1,11 @@
-"""Inbound message dispatch.
-
-The receive loop pulls envelopes off the websocket; ``dispatch_message``
-routes them by type. Command requests are auth-verified, seal-checked,
-and routed to one of three execution paths:
-
-- ``garage_refresh`` is handled inline (synchronous Garage state collect
-  followed by an immediate metrics push so the dashboard sees the
-  refreshed counts in the same tick).
-- Long-running commands hand off to ``JobManager`` after param validation.
-- Everything else runs as a one-shot subprocess via ``execute_command``.
-
-Command sequences run the same subprocess path, streaming a
-``command.result`` per step, halting on first failure when
-``stop_on_failure`` is set.
-
-Free functions take the Agent as a context object so state ownership
-stays on the Agent (registry, signoff_state, garage_state,
-job_manager) while the dispatch logic stays testable in isolation.
-"""
+"""Inbound message dispatch: auth-verify, seal-check, route to inline / long-running / subprocess paths."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from websockets.asyncio.client import ClientConnection
 
@@ -158,9 +139,10 @@ async def handle_command_request(
     everything else runs as a one-shot subprocess via
     ``execute_command`` with the result-send epilogue handled here.
     """
-    payload = _verify_request_payload(agent, envelope)
+    payload = _verify_typed_payload(agent, envelope, CommandRequestPayload)
     if payload is None:
         return
+    logger.info("Executing command %r (request %s)", payload.command, envelope.id)
     cmd_def = agent.registry.get(payload.command)
 
     if await _refuse_if_sealed(agent, ws, envelope, payload, cmd_def):
@@ -180,11 +162,15 @@ async def handle_command_request(
     _log_to_pulse(agent, payload.command, result)
 
 
-def _verify_request_payload(
+_PayloadT = TypeVar("_PayloadT")
+
+
+def _verify_typed_payload(
     agent: Agent,
     envelope: Envelope,
-) -> CommandRequestPayload | None:
-    """Verify the envelope auth + type, or return ``None`` to drop it."""
+    expected_type: type[_PayloadT],
+) -> _PayloadT | None:
+    """Verify envelope auth and assert payload type, or return ``None`` to drop."""
     try:
         payload = verify_envelope(
             envelope,
@@ -195,13 +181,11 @@ def _verify_request_payload(
     except AuthError as exc:
         logger.warning("Auth failed for %s: %s", envelope.id, exc)
         return None
-    if not isinstance(payload, CommandRequestPayload):
+    if not isinstance(payload, expected_type):
         logger.error(
-            "Expected CommandRequestPayload, got %s",
-            type(payload).__name__,
+            "Expected %s, got %s", expected_type.__name__, type(payload).__name__
         )
         return None
-    logger.info("Executing command %r (request %s)", payload.command, envelope.id)
     return payload
 
 
@@ -377,19 +361,8 @@ async def handle_command_sequence(
     envelope: Envelope,
 ) -> None:
     """Verify and execute a command sequence, streaming results."""
-    try:
-        payload = verify_envelope(
-            envelope,
-            agent._secret,
-            agent._nonce_store,
-            agent.config.auth.command_max_age_seconds,
-        )
-    except AuthError as exc:
-        logger.warning("Auth failed for sequence %s: %s", envelope.id, exc)
-        return
-
-    if not isinstance(payload, CommandSequencePayload):
-        logger.error("Expected CommandSequencePayload, got %s", type(payload).__name__)
+    payload = _verify_typed_payload(agent, envelope, CommandSequencePayload)
+    if payload is None:
         return
     logger.info(
         "Executing sequence %s: %s",

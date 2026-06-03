@@ -1,14 +1,4 @@
-"""In-flight log-batch tracking.
-
-The agent ships log batches asynchronously and advances the on-disk
-position only when the dashboard acks the batch. ``PendingBatches`` owns
-that bookkeeping in one place: it tracks (group, target position,
-sent-at) per batch id, prunes batches the dashboard never acked within
-the timeout window, and resolves ack lookups.
-
-Kept separate from the Agent class so its invariants (idempotent pop,
-monotonic time-based pruning) are unit-testable without a websocket.
-"""
+"""In-flight log-batch tracking: batch_id → (group, target_position, sent_at), with stale-pruning by timeout."""
 
 from __future__ import annotations
 

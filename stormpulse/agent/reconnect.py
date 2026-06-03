@@ -1,14 +1,4 @@
-"""The outer connect / run-tasks / reconnect-with-backoff loop.
-
-The agent's lifetime is a sequence of WebSocket sessions: open a
-connection, run the per-session task group until the connection drops
-(or shutdown fires), wait with exponential backoff + jitter, repeat.
-
-``run_with_backoff`` owns the loop itself; the per-session work — the
-register handshake, the heartbeat / metrics / dispatch task group —
-lives in ``register.send_register`` and the loop bodies in
-``loops`` / ``dispatch``.
-"""
+"""Outer connect / run-tasks / reconnect-with-backoff loop. ``run_with_backoff`` is what ``Agent.run`` calls."""
 
 from __future__ import annotations
 
