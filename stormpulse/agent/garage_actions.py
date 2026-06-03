@@ -30,13 +30,7 @@ async def collect_refresh_result(
     agent: Agent,
     request_id: str,
 ) -> CommandResultPayload:
-    """Collect a fresh Garage snapshot and build the resulting payload.
-
-    Updates ``agent.garage_state`` on success. Returns a structured
-    failure payload when garage is disabled or collection failed. No
-    wire IO — the caller is responsible for sending and for the
-    post-success metrics push.
-    """
+    """Collect a fresh Garage snapshot and return the payload; updates ``agent.garage_state`` on success. No wire IO."""
     gc = agent.config.garage
     if gc is None or not gc.enabled:
         return CommandResultPayload(
@@ -83,20 +77,7 @@ async def handle_garage_refresh(
     ws: ClientConnection,
     request_id: str,
 ) -> None:
-    """Run the inline ``garage_refresh`` dispatch ceremony.
-
-    Symmetric with ``dispatch_long_running`` for the long-running path:
-    this function owns the full per-command IO (collect, send the
-    command.result, pulse-log, push fresh metrics on success). The
-    dispatcher early-returns after calling this and never touches the
-    result.
-
-    The immediate metrics push lets the dashboard see the post-refresh
-    snapshot in the same tick as the result rather than waiting up to
-    ``state_push_interval_seconds`` for the next scheduled push. A
-    metrics-push failure here is swallowed so it doesn't mask the
-    successful refresh.
-    """
+    """Inline garage_refresh ceremony: collect, send result, pulse-log, push metrics on success."""
     result = await collect_refresh_result(agent, request_id)
     await ws.send(make_command_result(agent.config.agent.id, result).to_json())
     logger.info(
@@ -131,11 +112,7 @@ def post_success_hook(
     cmd_def: CommandDef,
     command: str,
 ) -> Callable[[], Awaitable[None]] | None:
-    """Build the after-success callback for a long-running command, or ``None``.
-
-    Garage long-runners push fresh state immediately so the next scheduled
-    metrics window doesn't overwrite the dashboard with the pre-mutation snapshot.
-    """
+    """Build the after-success callback for a garage long-runner (immediate refresh+push), or ``None`` for non-garage."""
     if cmd_def.group != "garage":
         return None
 

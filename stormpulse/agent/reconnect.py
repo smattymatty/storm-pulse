@@ -25,12 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_with_backoff(agent: Agent) -> None:
-    """Connect, run the per-session task group, reconnect on failure.
-
-    Exits when the shutdown event fires. On each failed session the
-    delay is multiplied by 1.5 (with up to 25% jitter), clamped to
-    ``reconnect_max_seconds``. A clean connect resets the delay.
-    """
+    """Connect, run the per-session task group, reconnect on failure (1.5× backoff + 25% jitter, clamped)."""
     url = agent.config.dashboard.url
     delay = agent.config.dashboard.reconnect_min_seconds
     attempts = 0
@@ -62,9 +57,7 @@ async def run_with_backoff(agent: Agent) -> None:
                 compression=None,
             ) as ws:
                 await _run_session(agent, ws, url)
-                # A session that returns cleanly has been connected for at
-                # least one register handshake. Reset attempt tracking so the
-                # NEXT outage starts counting from zero.
+                # Clean return = registered at least once; reset attempt tracking.
                 attempts = 0
                 first_failure_at = None
                 delay = agent.config.dashboard.reconnect_min_seconds
@@ -138,23 +131,13 @@ async def _run_session(
 
 
 async def _shutdown_watcher(agent: Agent, ws: ClientConnection) -> None:
-    """Close the websocket when shutdown fires so ``recv()`` unblocks.
-
-    Without this, the receive loop stays parked inside ``ws.recv()`` and
-    the task group waits on it until systemd's ``TimeoutStopSec`` elapses
-    and SIGKILL arrives.
-    """
+    """Close the websocket on shutdown so ``recv()`` unblocks (otherwise systemd SIGKILLs us at ``TimeoutStopSec``)."""
     await agent.shutdown.wait()
     await ws.close()
 
 
 async def _sleep_with_jitter(agent: Agent, delay: float) -> float:
-    """Wait *delay* seconds (plus up to 25% jitter) and return the next delay.
-
-    Returns the next session's starting delay, exponentially backed off
-    up to ``reconnect_max_seconds``. Exits early if shutdown fires
-    during the wait.
-    """
+    """Wait *delay* (+25% jitter); return the next exponentially-backed-off delay, clamped to ``reconnect_max_seconds``."""
     jitter = random.uniform(0, delay * 0.25)
     wait = delay + jitter
     logger.info("Reconnecting in %.1fs", wait)
