@@ -15,6 +15,7 @@ from stormpulse.agent import Agent
 from stormpulse.agent import bootstrap as agent_bootstrap
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
+from stormpulse.signoff import SignoffState
 from tests.helpers import SECRET, build_config
 
 
@@ -72,10 +73,19 @@ def config(tmp_path: Path) -> Config:
 
 
 @pytest.fixture
+def signoff_state(config: Config) -> SignoffState:
+    """Default unsealed SignoffState rooted at the test's tmp_path."""
+    return SignoffState(config.storage.db_path.parent)
+
+
+@pytest.fixture
 def agent(
     config: Config,
     nonce_store: NonceStore,
     ssl_ctx: MagicMock,
     shutdown: asyncio.Event,
+    signoff_state: SignoffState,
 ) -> Agent:
-    return Agent(config, SECRET, nonce_store, ssl_ctx, shutdown)
+    return Agent(
+        config, SECRET, nonce_store, ssl_ctx, shutdown, signoff_state=signoff_state
+    )

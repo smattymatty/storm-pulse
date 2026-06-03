@@ -13,6 +13,7 @@ import pytest
 from stormpulse.agent import Agent, signoff_nag
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
+from stormpulse.signoff import SignoffState
 
 
 @pytest.fixture
@@ -94,6 +95,7 @@ async def test_nag_loop_mirrors_to_pulse_logger(
         nonce_store,
         ssl_ctx,
         shutdown,
+        signoff_state=SignoffState(config.storage.db_path.parent),
         pulse_logger=pulse_logger,
     )
     ag.signoff_state.seal()
