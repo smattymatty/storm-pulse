@@ -80,7 +80,7 @@ Adds Storm Pulse's first Caddy integration, enabling per-region custom-domain ho
 
 ### Added
 
-- **Caddy integration.** New `[caddy]` config section enables Storm Cellar's per-region custom-domain hosting. Run `stormpulse caddy init` to set up. See [Caddy Integration](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Caddy-Integration).
+- **Caddy integration.** New `[caddy]` config section enables Storm Buckets's per-region custom-domain hosting. Run `stormpulse caddy init` to set up. See [Caddy Integration](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Caddy-Integration).
 - **Boot-time Caddyfile import check.** The agent refuses to start if the main Caddyfile does not import the configured drop-in path - catches "fragment written but never served" misconfigurations at boot, not weeks later when a customer activation hangs.
 - **`caddy_json` parser ships TLS cert events.** Log lines from `tls.*` loggers now pass through with cert-lifecycle fields preserved (`logger`, `msg`, `identifier`, `names`, `error`). Previously: silently dropped.
 
@@ -94,7 +94,7 @@ Adds customer bucket provisioning, alias management, and additional data-plane o
 
 ### Added
 
-- **Customer bucket provisioning commands.** `garage_provision_customer_bucket`, `garage_delete_provisioned_bucket`, `garage_provision_additional_key`, `garage_rotate_customer_key` - long-running, dispatched by Storm Cellar. See [Garage Integration - Customer bucket provisioning](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Garage-Integration#customer-bucket-provisioning).
+- **Customer bucket provisioning commands.** `garage_provision_customer_bucket`, `garage_delete_provisioned_bucket`, `garage_provision_additional_key`, `garage_rotate_customer_key` - long-running, dispatched by Storm Buckets. See [Garage Integration - Customer bucket provisioning](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Garage-Integration#customer-bucket-provisioning).
 - **Data-plane commands.** `garage_bucket_set_cors` (configure CORS rules) and `garage_walk_bucket_stats` (count objects and bytes under a prefix). Long-running, use the SigV4 client introduced in 0.1.4.
 - **Alias management commands.** `garage_bucket_alias_global_add`, `garage_bucket_alias_global_remove`, `garage_bucket_alias_local_add`, `garage_bucket_alias_local_remove`. See [Garage Integration - Aliases](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Garage-Integration#aliases).
 - **Tiered permission commands.** `garage_bucket_allow_rw` and `garage_bucket_allow_ro` split the `garage_bucket_allow` flow by tier, avoiding a conditional `permissions` parameter.

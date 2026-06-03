@@ -321,7 +321,7 @@ class TestCollectGarageState:
         Most customer buckets won't have a global alias - only website-hosted ones
         do. The agent addresses them by UUID (Garage CLI accepts a UUID anywhere
         it accepts a global alias). The metrics push entry carries the UUID in
-        ``id`` (Cellar joins on this) and an empty ``alias``.
+        ``id`` (Buckets joins on this) and an empty ``alias``.
         """
         cfg = _make_config(tmp_path)
         from stormpulse.garage.parse import GarageBucketListEntry
@@ -351,7 +351,7 @@ class TestCollectGarageState:
         assert state is not None
         assert len(state.buckets) == 1
         bucket = state.buckets[0]
-        # id is the full UUID parsed from bucket info (how Cellar joins).
+        # id is the full UUID parsed from bucket info (how Buckets joins).
         assert (
             bucket.id
             == "a9b8c7d6e5f4032110aabbccddeeff00112233445566778899aabbccddeeff00"

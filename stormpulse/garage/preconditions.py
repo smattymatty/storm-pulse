@@ -17,13 +17,13 @@ Reasons (closed set):
 
 The original GARAGE-000 included a substrate precondition that asserted
 ``/var/lib/garage/{meta,data}`` were ZFS mounts (per the original
-CELLAR-003 commitment). That check was dropped because the alpha
+BUCKETS-003 commitment). That check was dropped because the alpha
 provider's disk topology (ServaRica delivers storage as a multi-disk
 LVM ext4 root) makes ZFS-on-clean-disk unworkable. The substrate
 durability story moved one layer up the stack to garage.toml
 (``metadata_fsync = true`` + ``metadata_auto_snapshot_interval``);
 that's now the 002-garage playbook's sign-off responsibility, not the
-agent's startup gate. See CELLAR-003 amendment for the full pivot.
+agent's startup gate. See BUCKETS-003 amendment for the full pivot.
 
 These checks are synchronous so the bootstrap code path can run them
 without spinning an event loop. Each one wraps its subprocess in a

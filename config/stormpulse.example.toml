@@ -103,7 +103,7 @@ db_path = "/opt/stormpulse/data/stormpulse.db"
 # ---------------------------------------------------------------------------
 # Caddy (optional) - present on regional VPS agents that serve customer
 # custom-domain HTTPS via Caddy. Enables the
-# cellar_custom_domain_caddy_sync command. The agent hard-fails at boot
+# buckets_custom_domain_caddy_sync command. The agent hard-fails at boot
 # if main_caddyfile does not have an `import` directive resolving to
 # drop_in_path (exact path or glob both count).
 # ---------------------------------------------------------------------------
@@ -112,4 +112,4 @@ db_path = "/opt/stormpulse/data/stormpulse.db"
 # enabled = true
 # admin_url = "http://localhost:2019"
 # main_caddyfile = "/etc/caddy/Caddyfile"
-# drop_in_path = "/etc/caddy/conf.d/cellar-custom-domains.caddy"
+# drop_in_path = "/etc/caddy/conf.d/buckets-custom-domains.caddy"
