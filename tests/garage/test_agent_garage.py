@@ -69,21 +69,15 @@ def _make_agent(config: Config, tmp_path: Path) -> tuple[Agent, asyncio.Event]:
     return agent, shutdown
 
 
-class TestGarageLoopNoOp:
-    """Garage loop must be a no-op when config.garage is None or disabled."""
+class TestGarageLiveGate:
+    """Bootstrap publishes ``garage_live`` so runtime gates have one bool to read."""
 
-    @pytest.mark.asyncio
-    async def test_no_garage_config(self, tmp_path: Path) -> None:
+    def test_garage_live_false_without_config(self, tmp_path: Path) -> None:
         config = _make_config(tmp_path, garage=None)
-        agent, shutdown = _make_agent(config, tmp_path)
-        ws = AsyncMock()
-        # Should return immediately without doing anything
-        await loops.garage_loop(agent, ws)
-        # No sends should have happened
-        ws.send.assert_not_called()
+        agent, _ = _make_agent(config, tmp_path)
+        assert agent.garage_live is False
 
-    @pytest.mark.asyncio
-    async def test_garage_disabled(self, tmp_path: Path) -> None:
+    def test_garage_live_false_when_disabled(self, tmp_path: Path) -> None:
         garage_cfg = GarageConfig(
             enabled=False,
             container_name="garaged",
@@ -93,10 +87,25 @@ class TestGarageLoopNoOp:
             state_push_interval_seconds=0.05,
         )
         config = _make_config(tmp_path, garage=garage_cfg)
-        agent, shutdown = _make_agent(config, tmp_path)
-        ws = AsyncMock()
-        await loops.garage_loop(agent, ws)
-        ws.send.assert_not_called()
+        agent, _ = _make_agent(config, tmp_path)
+        assert agent.garage_live is False
+
+    def test_garage_live_true_when_enabled_and_preconditions_pass(
+        self, tmp_path: Path
+    ) -> None:
+        # Preconditions are stubbed to pass by the autouse fixture in
+        # tests/conftest.py.
+        garage_cfg = GarageConfig(
+            enabled=True,
+            container_name="garaged",
+            garage_binary="/garage",
+            docker_binary="/usr/bin/docker",
+            config_path=tmp_path / "garage.toml",
+            state_push_interval_seconds=0.05,
+        )
+        config = _make_config(tmp_path, garage=garage_cfg)
+        agent, _ = _make_agent(config, tmp_path)
+        assert agent.garage_live is True
 
 
 class TestGarageLoopEnabled:

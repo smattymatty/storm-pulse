@@ -114,19 +114,8 @@ async def test_metrics_loop_survives_collection_error(
 
 
 # ---------------------------------------------------------------------------
-# Garage loop
+# Garage loop (disabled case gated at reconnect — see TestGarageLiveGate)
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_garage_loop_noop_when_disabled(
-    agent_with_garage: Callable[..., Agent],
-) -> None:
-    ag = agent_with_garage(enabled=False)
-    ws = AsyncMock()
-    with patch("stormpulse.agent.loops.collect_garage_state") as mock_collect:
-        await loops.garage_loop(ag, ws)
-        mock_collect.assert_not_called()
 
 
 @pytest.mark.asyncio

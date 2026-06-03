@@ -61,17 +61,6 @@ async def test_build_metrics_envelope_includes_garage_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_refresh_garage_state_noop_without_garage_config(
-    agent: Agent,
-) -> None:
-    """An agent with no [garage] config keeps ``_garage_state = None``."""
-    with patch("stormpulse.agent.garage_actions.collect_garage_state") as mock_collect:
-        await refresh_garage_state(agent)
-        mock_collect.assert_not_called()
-    assert agent.garage_state is None
-
-
-@pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_garage_state")
 async def test_refresh_garage_state_writes_to_agent(
     mock_collect: MagicMock,
@@ -106,17 +95,6 @@ async def test_refresh_garage_state_leaves_state_untouched_on_collect_failure(
 def test_post_success_hook_none_for_non_garage_group(agent: Agent) -> None:
     cmd_def = CommandDef(group="deploy", command=["/bin/git", "pull"], timeout=60)
     assert post_success_hook(agent, cmd_def, "git_pull") is None
-
-
-def test_post_success_hook_none_when_garage_disabled(
-    agent_with_garage: Callable[..., Agent],
-) -> None:
-    """A garage-group command on an agent with [garage].enabled=False gets no hook."""
-    cmd_def = CommandDef(
-        group="garage", command=["/garage"], timeout=60, long_running=True
-    )
-    ag = agent_with_garage(enabled=False)
-    assert post_success_hook(ag, cmd_def, "garage_bucket_clear") is None
 
 
 def test_post_success_hook_present_when_garage_enabled(
