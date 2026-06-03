@@ -21,7 +21,8 @@ jobs:
       - name: Checkout code
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install dependencies
         run: pip install --cache-dir /pip-cache -e ".[dev]"
@@ -49,7 +50,8 @@ jobs:
       - name: Checkout code
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          git clone --depth 1 --branch "${GITHUB_REF_NAME}" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install dependencies
         run: pip install --cache-dir /pip-cache -e ".[dev]"
