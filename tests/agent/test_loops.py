@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from stormpulse.agent import Agent
+from stormpulse.agent import Agent, loops
 from stormpulse.protocol import MetricsPayload
 from tests.helpers import FAKE_METRICS, make_fake_garage_state
 
@@ -31,7 +31,7 @@ async def test_heartbeat_loop_sends_messages(
         shutdown.set()
 
     await asyncio.gather(
-        agent._heartbeat_loop(ws),
+        loops.heartbeat_loop(agent, ws),
         stop_after_delay(),
     )
     assert len(sent) >= 2
@@ -46,7 +46,7 @@ async def test_heartbeat_loop_stops_on_shutdown(
 ) -> None:
     ws = AsyncMock()
     shutdown.set()
-    await agent._heartbeat_loop(ws)
+    await loops.heartbeat_loop(agent, ws)
     ws.send.assert_not_called()
 
 
@@ -72,7 +72,7 @@ async def test_metrics_loop_sends_metrics(
         shutdown.set()
 
     await asyncio.gather(
-        agent._metrics_loop(ws),
+        loops.metrics_loop(agent, ws),
         stop_after_delay(),
     )
     assert len(sent) >= 2
@@ -106,7 +106,7 @@ async def test_metrics_loop_survives_collection_error(
         shutdown.set()
 
     await asyncio.gather(
-        agent._metrics_loop(ws),
+        loops.metrics_loop(agent, ws),
         stop_after_delay(),
     )
     # Should have continued past the error and sent at least one metrics push
@@ -125,7 +125,7 @@ async def test_garage_loop_noop_when_disabled(
     ag = agent_with_garage(enabled=False)
     ws = AsyncMock()
     with patch("stormpulse.agent.loops.collect_garage_state") as mock_collect:
-        await ag._garage_loop(ws)
+        await loops.garage_loop(ag, ws)
         mock_collect.assert_not_called()
 
 
@@ -145,6 +145,6 @@ async def test_garage_loop_updates_state(
         await asyncio.sleep(0.12)
         shutdown.set()
 
-    await asyncio.gather(ag._garage_loop(ws), stop_after_delay())
-    assert ag._garage_state is fake
+    await asyncio.gather(loops.garage_loop(ag, ws), stop_after_delay())
+    assert ag.garage_state is fake
     assert mock_collect.call_count >= 1

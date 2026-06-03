@@ -52,7 +52,7 @@ async def test_build_metrics_envelope_includes_garage_snapshot(
 ) -> None:
     """When garage state is present it rides as a dict on the envelope."""
     mock_collect.return_value = FAKE_METRICS
-    agent._garage_state = make_fake_garage_state()
+    agent.garage_state = make_fake_garage_state()
     envelope = await build_metrics_envelope(agent)
     assert envelope.payload["garage"] is not None
     assert envelope.payload["garage"]["node_id"] == "n1"
@@ -71,7 +71,7 @@ async def test_refresh_garage_state_noop_without_garage_config(
     with patch("stormpulse.agent.garage_actions.collect_garage_state") as mock_collect:
         await refresh_garage_state(agent)
         mock_collect.assert_not_called()
-    assert agent._garage_state is None
+    assert agent.garage_state is None
 
 
 @pytest.mark.asyncio
@@ -84,7 +84,7 @@ async def test_refresh_garage_state_writes_to_agent(
     mock_collect.return_value = fake
     ag = agent_with_garage()
     await refresh_garage_state(ag)
-    assert ag._garage_state is fake
+    assert ag.garage_state is fake
 
 
 @pytest.mark.asyncio
@@ -96,9 +96,9 @@ async def test_refresh_garage_state_leaves_state_untouched_on_collect_failure(
     """A None result from the collector must not overwrite an existing snapshot."""
     ag = agent_with_garage()
     prior = make_fake_garage_state()
-    ag._garage_state = prior
+    ag.garage_state = prior
     await refresh_garage_state(ag)
-    assert ag._garage_state is prior
+    assert ag.garage_state is prior
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +151,7 @@ async def test_post_success_hook_refreshes_and_pushes(
     async def fake_send(env: Envelope) -> None:
         sent.append(env)
 
-    ag._job_manager = JobManager(ag._config.agent.id, fake_send)
+    ag.job_manager = JobManager(ag.config.agent.id, fake_send)
 
     cmd_def = CommandDef(
         group="garage", command=["/garage"], timeout=60, long_running=True
@@ -160,11 +160,11 @@ async def test_post_success_hook_refreshes_and_pushes(
     assert hook is not None
     await hook()
 
-    assert ag._garage_state is fake_state
+    assert ag.garage_state is fake_state
     assert len(sent) == 1
     assert sent[0].payload["garage"] is not None
 
-    await ag._job_manager.shutdown_all()
+    await ag.job_manager.shutdown_all()
 
 
 # ---------------------------------------------------------------------------

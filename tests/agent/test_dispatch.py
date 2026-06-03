@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from stormpulse.agent import Agent
+from stormpulse.agent import Agent, dispatch
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.protocol import Envelope, MessageType, make_heartbeat
@@ -37,7 +37,7 @@ async def test_dispatch_command_request(
     mock_exec.return_value = make_successful_result()
     ws = AsyncMock()
 
-    await agent._dispatch(ws, sign_command_request())
+    await dispatch.dispatch_message(agent, ws, sign_command_request())
 
     mock_exec.assert_called_once()
     ws.send.assert_called_once()
@@ -49,7 +49,7 @@ async def test_dispatch_command_request(
 @pytest.mark.asyncio
 async def test_dispatch_bad_json(agent: Agent) -> None:
     ws = AsyncMock()
-    await agent._dispatch(ws, "not json{{{")
+    await dispatch.dispatch_message(agent, ws, "not json{{{")
     ws.send.assert_not_called()
 
 
@@ -64,7 +64,7 @@ async def test_dispatch_bad_hmac(agent: Agent) -> None:
         agent_id=AGENT_ID,
         payload={"command": "git_pull", "params": {}, "hmac": "bad", "nonce": "n"},
     )
-    await agent._dispatch(ws, envelope.to_json())
+    await dispatch.dispatch_message(agent, ws, envelope.to_json())
     ws.send.assert_not_called()
 
 
@@ -72,7 +72,7 @@ async def test_dispatch_bad_hmac(agent: Agent) -> None:
 async def test_dispatch_unexpected_type(agent: Agent) -> None:
     ws = AsyncMock()
     heartbeat = make_heartbeat(AGENT_ID)
-    await agent._dispatch(ws, heartbeat.to_json())
+    await dispatch.dispatch_message(agent, ws, heartbeat.to_json())
     ws.send.assert_not_called()
 
 
@@ -100,7 +100,7 @@ async def test_dispatch_ack_types_ignored(
         agent_id=AGENT_ID,
         payload={},
     )
-    await agent._dispatch(ws, envelope.to_json())
+    await dispatch.dispatch_message(agent, ws, envelope.to_json())
     ws.send.assert_not_called()
 
 
@@ -115,10 +115,11 @@ async def test_dispatch_refuses_run_verify_block_when_sealed(
     mock_exec: MagicMock,
     agent: Agent,
 ) -> None:
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     ws = AsyncMock()
 
-    await agent._dispatch(
+    await dispatch.dispatch_message(
+        agent,
         ws,
         sign_command_request(
             command="run_verify_block",
@@ -141,10 +142,11 @@ async def test_dispatch_refuses_run_apply_block_when_sealed(
     mock_exec: MagicMock,
     agent: Agent,
 ) -> None:
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     ws = AsyncMock()
 
-    await agent._dispatch(
+    await dispatch.dispatch_message(
+        agent,
         ws,
         sign_command_request(
             command="run_apply_block",
@@ -171,7 +173,8 @@ async def test_dispatch_runs_run_apply_block_when_unsealed(
     mock_exec.return_value = make_successful_result(command="run_apply_block")
     ws = AsyncMock()
 
-    await agent._dispatch(
+    await dispatch.dispatch_message(
+        agent,
         ws,
         sign_command_request(
             command="run_apply_block",
@@ -200,7 +203,9 @@ async def test_dispatch_command_sequence(
     mock_exec.return_value = make_successful_result()
     ws = AsyncMock()
 
-    await agent._dispatch(ws, sign_command_sequence(["git_pull", "docker_logs"]))
+    await dispatch.dispatch_message(
+        agent, ws, sign_command_sequence(["git_pull", "docker_logs"])
+    )
 
     assert mock_exec.call_count == 2
     assert ws.send.call_count == 2
@@ -215,7 +220,8 @@ async def test_dispatch_sequence_stop_on_failure(
     mock_exec.return_value = make_failed_result(command="git_pull")
     ws = AsyncMock()
 
-    await agent._dispatch(
+    await dispatch.dispatch_message(
+        agent,
         ws,
         sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=True),
     )
@@ -233,7 +239,8 @@ async def test_dispatch_sequence_continues_past_failure(
     mock_exec.return_value = make_failed_result(command="git_pull")
     ws = AsyncMock()
 
-    await agent._dispatch(
+    await dispatch.dispatch_message(
+        agent,
         ws,
         sign_command_sequence(["git_pull", "docker_logs"], stop_on_failure=False),
     )
@@ -249,7 +256,9 @@ async def test_dispatch_sequence_invalid_command_aborts(
     agent: Agent,
 ) -> None:
     ws = AsyncMock()
-    await agent._dispatch(ws, sign_command_sequence(["this_command_does_not_exist"]))
+    await dispatch.dispatch_message(
+        agent, ws, sign_command_sequence(["this_command_does_not_exist"])
+    )
     mock_exec.assert_not_called()
     ws.send.assert_not_called()
 
@@ -270,7 +279,7 @@ async def test_log_batch_ack_missing_batch_id(agent: Agent) -> None:
         payload={},
     )
     # Should not raise
-    await agent._handle_log_batch_ack(envelope)
+    await dispatch.handle_log_batch_ack(agent, envelope)
 
 
 @pytest.mark.asyncio
@@ -283,15 +292,15 @@ async def test_log_batch_ack_unknown_batch_is_noop(agent: Agent) -> None:
         agent_id=AGENT_ID,
         payload={"batch_id": "never-sent"},
     )
-    await agent._handle_log_batch_ack(envelope)
+    await dispatch.handle_log_batch_ack(agent, envelope)
 
 
 @pytest.mark.asyncio
 async def test_log_batch_ack_advances_position(agent: Agent) -> None:
     fake_shipper = MagicMock()
     fake_shipper.tailer.confirm_shipped = MagicMock()
-    agent._shippers["grp"] = fake_shipper
-    agent._pending_batches.add("bid-1", "grp", 4242)
+    agent.shippers["grp"] = fake_shipper
+    agent.pending_batches.add("bid-1", "grp", 4242)
 
     envelope = Envelope(
         v=1,
@@ -301,10 +310,10 @@ async def test_log_batch_ack_advances_position(agent: Agent) -> None:
         agent_id=AGENT_ID,
         payload={"batch_id": "bid-1"},
     )
-    await agent._handle_log_batch_ack(envelope)
+    await dispatch.handle_log_batch_ack(agent, envelope)
 
     fake_shipper.tailer.confirm_shipped.assert_called_once_with(4242)
-    assert "bid-1" not in agent._pending_batches
+    assert "bid-1" not in agent.pending_batches
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +341,7 @@ async def test_command_result_logged_to_pulse_logger(
         pulse_logger=pulse_logger,
     )
     ws = AsyncMock()
-    await ag._dispatch(ws, sign_command_request())
+    await dispatch.dispatch_message(ag, ws, sign_command_request())
     pulse_logger.log_command_result.assert_called_once()
     kwargs = pulse_logger.log_command_result.call_args.kwargs
     assert kwargs["command"] == "git_pull"
