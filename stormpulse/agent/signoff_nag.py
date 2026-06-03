@@ -38,10 +38,10 @@ async def signoff_nag_loop(agent: Agent, ws: ClientConnection) -> None:
     task group can launch this the same way as the others.
     """
     del ws  # interface symmetry with other loops
-    while not agent._shutdown.is_set():
-        if not agent._signoff_state.is_sealed():
+    while not agent.shutdown.is_set():
+        if not agent.signoff_state.is_sealed():
             duration = format_unsealed_duration(
-                agent._signoff_state.unsealed_since(),
+                agent.signoff_state.unsealed_since(),
             )
             logger.warning(
                 "Agent is UNSEALED (for %s). The dashboard verify-block "
@@ -49,11 +49,11 @@ async def signoff_nag_loop(agent: Agent, ws: ClientConnection) -> None:
                 "soon as verification is complete.",
                 duration,
             )
-            if agent._pulse_logger is not None:
-                agent._pulse_logger.warning(
+            if agent.pulse_logger is not None:
+                agent.pulse_logger.warning(
                     "Agent unsealed",
                     "signoff",
                     {"duration": duration},
                 )
-        if await sleep_or_shutdown(agent._shutdown, NAG_INTERVAL_SECONDS):
+        if await sleep_or_shutdown(agent.shutdown, NAG_INTERVAL_SECONDS):
             return

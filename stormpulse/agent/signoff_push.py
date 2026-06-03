@@ -44,11 +44,11 @@ async def signoff_state_push_loop(
     ws: ClientConnection,
 ) -> None:
     """Push ``signoff.state`` on every observed seal transition."""
-    agent_id = agent._config.agent.id
-    state = agent._signoff_state
+    agent_id = agent.config.agent.id
+    state = agent.signoff_state
     last_sealed = state.is_sealed()
-    while not agent._shutdown.is_set():
-        if await sleep_or_shutdown(agent._shutdown, POLL_INTERVAL_SECONDS):
+    while not agent.shutdown.is_set():
+        if await sleep_or_shutdown(agent.shutdown, POLL_INTERVAL_SECONDS):
             return
         current_sealed = state.is_sealed()
         if current_sealed == last_sealed:
@@ -75,8 +75,8 @@ async def signoff_state_push_loop(
             current_sealed,
         )
         last_sealed = current_sealed
-        if agent._pulse_logger is not None:
-            agent._pulse_logger.info(
+        if agent.pulse_logger is not None:
+            agent.pulse_logger.info(
                 "Seal state changed",
                 "signoff",
                 {"sealed": current_sealed},

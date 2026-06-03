@@ -34,7 +34,7 @@ async def test_nag_loop_silent_when_sealed(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A sealed agent emits no warning regardless of how long the loop runs."""
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     ws = AsyncMock()
 
     async def stop_after() -> None:
@@ -57,8 +57,8 @@ async def test_nag_loop_warns_while_unsealed(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Each tick while unsealed emits one warning naming the duration."""
-    agent._signoff_state.seal()
-    agent._signoff_state.unseal()
+    agent.signoff_state.seal()
+    agent.signoff_state.unseal()
     ws = AsyncMock()
 
     async def stop_after() -> None:
@@ -96,8 +96,8 @@ async def test_nag_loop_mirrors_to_pulse_logger(
         shutdown,
         pulse_logger=pulse_logger,
     )
-    ag._signoff_state.seal()
-    ag._signoff_state.unseal()
+    ag.signoff_state.seal()
+    ag.signoff_state.unseal()
     ws = AsyncMock()
 
     async def stop_after() -> None:
@@ -121,7 +121,7 @@ async def test_nag_loop_exits_promptly_on_shutdown(
     shutdown: asyncio.Event,
 ) -> None:
     """Shutdown fired before the first wait should still terminate the loop."""
-    agent._signoff_state.seal()
+    agent.signoff_state.seal()
     shutdown.set()
     ws = AsyncMock()
     await asyncio.wait_for(signoff_nag.signoff_nag_loop(agent, ws), timeout=1.0)
