@@ -1,16 +1,4 @@
-"""Periodic warning loop while the agent is unsealed.
-
-The seal closes the dashboard's verify-block hatch (ADR CORE-004).
-The agent ships sealed; the operator unseals to verify, then reseals.
-While the seal is *off*, the agent emits a warning log every five
-minutes — visible in journalctl, mirrored to ``PulseLogger`` if one
-is wired — so a forgotten unseal can't sit silently. The dashboard
-sees the seal state via the register payload; this loop is the
-host-side complement.
-
-The loop is cheap (one ``stat`` per tick) so it runs unconditionally;
-when the agent is sealed it logs nothing and just sleeps.
-"""
+"""Periodic warning loop while the agent is unsealed (ADR CORE-004). Cheap; no-op when sealed."""
 
 from __future__ import annotations
 

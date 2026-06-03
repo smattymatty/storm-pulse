@@ -1,20 +1,4 @@
-"""Garage-state side effects of command dispatch.
-
-``garage_refresh`` is the one internal command the dispatcher handles
-inline (no subprocess, no JobManager): ``handle_garage_refresh`` owns
-its full ceremony — collect, send the command.result, push a fresh
-metrics envelope — so the dispatcher can early-return on this branch
-the same way it does for long-running commands. Any other ``garage``
-group long-running command goes through ``post_success_hook``, which
-the JobManager fires after a successful finish.
-
-Both paths exist so the dashboard sees the post-mutation snapshot in
-the same tick as the result, rather than waiting up to
-``state_push_interval_seconds`` for the next scheduled push. The two
-emission channels (sync ``ws.send`` for the inline path, async
-``JobManager.send_now`` for long-runners) reflect where each command
-is dispatched from, not parallel mechanisms.
-"""
+"""Garage-state side effects: ``handle_garage_refresh`` (inline ceremony) and ``post_success_hook`` (JobManager after-success)."""
 
 from __future__ import annotations
 

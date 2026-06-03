@@ -1,11 +1,4 @@
-"""Assemble the runtime objects an Agent needs from its Config.
-
-The Agent constructor is composition only. Anything that touches the
-file system, merges feature command sets, composes feature
-long-running handler factories, or can fail with a ``ConfigError``
-lives here so startup failures are raised by the CLI boot path, not
-buried inside ``Agent.__init__``.
-"""
+"""Assemble registry, factories, log shippers from Config. Anything fs-touching or ``ConfigError``-raising lives here, not in ``Agent.__init__``."""
 
 from __future__ import annotations
 
