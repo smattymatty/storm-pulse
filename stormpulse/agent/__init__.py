@@ -1,13 +1,10 @@
-"""The Storm Pulse agent: a long-lived WebSocket client.
+"""The Storm Pulse agent: a long-lived WebSocket client over mutual TLS.
 
-The agent connects to the dashboard over mutual TLS, then runs five
-concurrent tasks per connection (heartbeat, metrics push, garage state
-refresh, inbound message dispatch, and per-log-group shipping). It
-reconnects with exponential backoff when the session drops.
+Five concurrent tasks per session (heartbeat, metrics, garage refresh,
+dispatch, log shipping); exponential reconnect when the session drops.
 
-The ``Agent`` class is a composition root: it holds the per-process
-state and exposes one public entry point, ``run()``. The actual work
-lives in free functions in focused submodules:
+``Agent`` is a composition root: per-process state plus one public ``run()``. 
+The actual work lives in free functions in focused submodules:
 
 ============================  ==============================================
 ``bootstrap``                 Assemble registry + log shippers from Config.
@@ -23,13 +20,8 @@ lives in free functions in focused submodules:
 ``signoff_guard``             Sign-off seal predicate + refusal builder.
 ============================  ==============================================
 
-Submodules in this package are collaborators of ``Agent`` and read its
-instance state directly. That state is therefore public (``agent.config``,
-``agent.registry``, ``agent.garage_state``). The only exception is the
-three cryptographic attributes — ``_secret``, ``_nonce_store``,
-``_ssl_ctx`` — kept underscore-prefixed as a deliberate sigil meaning
-"handle with care." Reads of those names should stand out at the call
-site; everything else is plain shared state.
+Submodules read ``Agent``'s state directly — it's all public, except
+``_secret``, ``_nonce_store``, ``_ssl_ctx`` (underscore sigil = cryptographic).
 """
 
 from __future__ import annotations
@@ -82,10 +74,7 @@ class Agent:
         self._ssl_ctx = ssl_context
         self.shutdown = shutdown
         self.pulse_logger = pulse_logger
-        # SignoffState gates dashboard verify-block dispatch (ADR
-        # CORE-004). Tests construct Agent without a state object;
-        # default to an unsealed sentinel so the existing test surface
-        # stays unchanged.
+        # Default sentinel for tests; production always passes one in (finding #5).
         self.signoff_state = signoff_state or SignoffState(
             config.storage.db_path.parent,
         )
@@ -100,14 +89,11 @@ class Agent:
         )
         self.shippers: dict[str, LogShipper] = deps.shippers
         self.streaming_tailers: list[StreamingDockerTailer] = deps.streaming_tailers
-        # ADR GARAGE-000: a precondition failure at bootstrap skips
-        # garage command registration; the reason rides to the
-        # dashboard as the initial GarageState until the operator
-        # fixes the host and restarts the agent.
-        self.garage_disabled_reason: str | None = deps.garage_disabled_reason
+        # ADR GARAGE-000: bootstrap publishes garage_live; runtime reads it.
+        self.garage_live: bool = deps.garage_live
         self.garage_state: GarageState | None = (
-            GarageState.disabled(self.garage_disabled_reason)
-            if self.garage_disabled_reason is not None
+            GarageState.disabled(deps.garage_disabled_reason)
+            if deps.garage_disabled_reason is not None
             else None
         )
         self.pending_batches = PendingBatches()

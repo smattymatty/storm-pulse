@@ -136,7 +136,8 @@ async def _run_session(
             tg.create_task(loops.heartbeat_loop(agent, ws))
             tg.create_task(loops.metrics_loop(agent, ws))
             tg.create_task(dispatch.receive_loop(agent, ws))
-            tg.create_task(loops.garage_loop(agent, ws))
+            if agent.garage_live:
+                tg.create_task(loops.garage_loop(agent, ws))
             tg.create_task(signoff_nag_loop(agent, ws))
             tg.create_task(signoff_state_push_loop(agent, ws))
             for group_name in agent.shippers:

@@ -149,17 +149,10 @@ def post_success_hook(
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the after-success callback for a long-running command, or ``None``.
 
-    Any successful long-running command in the ``garage`` group
-    triggers an immediate Garage state refresh + ``metrics.push``.
-    Otherwise the next scheduled metrics push (up to
-    ``state_push_interval_seconds`` later) would overwrite the
-    dashboard's just-updated bucket counts with the pre-mutation
-    snapshot.
+    Garage long-runners push fresh state immediately so the next scheduled
+    metrics window doesn't overwrite the dashboard with the pre-mutation snapshot.
     """
     if cmd_def.group != "garage":
-        return None
-    gc = agent.config.garage
-    if gc is None or not gc.enabled:
         return None
 
     async def refresh_and_push() -> None:
@@ -176,8 +169,7 @@ def post_success_hook(
 async def refresh_garage_state(agent: Agent) -> None:
     """Collect a fresh Garage snapshot and store it on the agent."""
     gc = agent.config.garage
-    if gc is None:
-        return
+    assert gc is not None
     state = await asyncio.to_thread(collect_garage_state, gc)
     if state is not None:
         agent.garage_state = state
