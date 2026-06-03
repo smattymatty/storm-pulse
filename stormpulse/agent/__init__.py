@@ -72,9 +72,10 @@ class Agent:
         nonce_store: NonceStore,
         ssl_context: ssl.SSLContext,
         shutdown: asyncio.Event,
+        *,
+        signoff_state: SignoffState,
         log_position_store: LogPositionStore | None = None,
         pulse_logger: PulseLogger | None = None,
-        signoff_state: SignoffState | None = None,
     ) -> None:
         self.config = config
         self._secret = secret
@@ -82,13 +83,7 @@ class Agent:
         self._ssl_ctx = ssl_context
         self.shutdown = shutdown
         self.pulse_logger = pulse_logger
-        # SignoffState gates dashboard verify-block dispatch (ADR
-        # CORE-004). Tests construct Agent without a state object;
-        # default to an unsealed sentinel so the existing test surface
-        # stays unchanged.
-        self.signoff_state = signoff_state or SignoffState(
-            config.storage.db_path.parent,
-        )
+        self.signoff_state = signoff_state
         deps = build_agent_dependencies(
             config,
             signoff_sealed=self.signoff_state.is_sealed(),
