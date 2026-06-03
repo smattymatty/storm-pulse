@@ -31,21 +31,13 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
     """Build and send the register envelope after a fresh connection."""
     logger.info("Connected to dashboard at %s", url)
 
-    garage_dict = None
-    if agent.config.garage and agent.config.garage.enabled:
-        if agent.garage_disabled_reason is not None:
-            # ADR GARAGE-000: precondition failed at bootstrap. The
-            # disabled sentinel was seeded on Agent.__init__; ride it
-            # to the dashboard verbatim, do not call discover_garage.
-            if agent.garage_state is not None:
-                garage_dict = agent.garage_state.to_dict()
-        else:
-            agent.garage_state = await asyncio.to_thread(
-                discover_garage,
-                agent.config.garage,
-            )
-            if agent.garage_state:
-                garage_dict = agent.garage_state.to_dict()
+    # ADR GARAGE-000: discover on first live register; disabled sentinel rides as-is.
+    if agent.garage_live and agent.garage_state is None:
+        agent.garage_state = await asyncio.to_thread(
+            discover_garage,
+            agent.config.garage,
+        )
+    garage_dict = agent.garage_state.to_dict() if agent.garage_state else None
 
     log_group_names = sorted(agent.shippers.keys()) or None
     system_inventory = (
