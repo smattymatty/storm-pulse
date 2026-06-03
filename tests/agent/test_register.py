@@ -14,6 +14,7 @@ from stormpulse.agent import Agent
 from stormpulse.agent.register import send_register
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
+from stormpulse.signoff import SignoffState
 from tests.helpers import SECRET, make_fake_garage_state
 
 
@@ -73,10 +74,7 @@ async def test_send_register_reports_seal_state(
     tmp_path: Path,
 ) -> None:
     """The register frame advertises the agent's current seal state."""
-    from stormpulse.signoff import SignoffState
-
-    state_dir = config.storage.db_path.parent
-    sealed_state = SignoffState(state_dir)
+    sealed_state = SignoffState(config.storage.db_path.parent)
     sealed_state.seal()
     try:
         ag = Agent(
@@ -118,10 +116,7 @@ async def test_send_register_advertises_unsealed_since(
     """
     from datetime import datetime
 
-    from stormpulse.signoff import SignoffState
-
-    state_dir = config.storage.db_path.parent
-    state = SignoffState(state_dir)
+    state = SignoffState(config.storage.db_path.parent)
     state.seal()
     state.unseal()  # now has a real unsealed_since marker
     ag = Agent(
@@ -163,6 +158,7 @@ async def test_send_register_mirrors_to_pulse_logger(
         nonce_store,
         ssl_ctx,
         shutdown,
+        signoff_state=SignoffState(config.storage.db_path.parent),
         pulse_logger=pulse_logger,
     )
     ws = AsyncMock()

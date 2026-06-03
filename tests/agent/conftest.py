@@ -12,6 +12,7 @@ import pytest
 
 from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore
+from stormpulse.signoff import SignoffState
 from tests.helpers import SECRET, build_config, build_garage_config
 
 
@@ -22,17 +23,20 @@ def agent_with_garage(
     ssl_ctx: MagicMock,
     shutdown: asyncio.Event,
 ) -> Callable[..., Agent]:
-    """Factory: build an Agent whose Config has [garage] populated.
-
-    Use ``agent_with_garage()`` for an enabled garage, or
-    ``agent_with_garage(enabled=False)`` for the disabled-but-present case.
-    """
+    """Factory: build an Agent whose Config has [garage] populated."""
 
     def _build(*, enabled: bool = True) -> Agent:
         garage = build_garage_config(tmp_path)
         if not enabled:
             garage = replace(garage, enabled=False)
         cfg = build_config(tmp_path, garage=garage)
-        return Agent(cfg, SECRET, nonce_store, ssl_ctx, shutdown)
+        return Agent(
+            cfg,
+            SECRET,
+            nonce_store,
+            ssl_ctx,
+            shutdown,
+            signoff_state=SignoffState(cfg.storage.db_path.parent),
+        )
 
     return _build
