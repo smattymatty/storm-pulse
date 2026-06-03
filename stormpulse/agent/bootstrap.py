@@ -28,19 +28,7 @@ from stormpulse.logging import (
 
 @dataclass(frozen=True, slots=True)
 class AgentDependencies:
-    """The agent's per-process runtime, built once at startup.
-
-    ``registry`` is the resolved command set (built-ins + feature
-    additions + signoff sealing applied). ``long_running_factories``
-    maps a command name to the closure that builds its ``JobHandler``
-    given the runtime params; the dispatcher looks each command up
-    here when its CommandDef is marked ``long_running``. ``shippers``
-    and ``streaming_tailers`` are the log-shipping plumbing — only
-    populated when a ``LogPositionStore`` is supplied.
-
-    ``garage_live`` gates runtime garage code; ``garage_disabled_reason``
-    seeds the disabled sentinel for the dashboard. See ADR GARAGE-000.
-    """
+    """Per-process runtime built once at startup. ``garage_live`` gates runtime; ``garage_disabled_reason`` seeds the disabled sentinel (ADR GARAGE-000)."""
 
     registry: dict[str, CommandDef]
     long_running_factories: dict[str, LongRunningFactory]
@@ -56,23 +44,13 @@ def build_agent_dependencies(
     signoff_sealed: bool,
     log_position_store: LogPositionStore | None,
 ) -> AgentDependencies:
-    """Assemble the registry, factories, and log shippers an Agent will use.
-
-    Raises ``ConfigError`` when the system is configured with Caddy
-    integration but the operator's main Caddyfile does not import our
-    drop-in. Failing fast here is deliberate: silent success at this
-    point would mean fragments written but never served, which surfaces
-    as hung customer activations weeks later.
-    """
+    """Assemble the registry, factories, and log shippers an Agent will use. Raises ``ConfigError`` on Caddy drop-in misconfig."""
     commands = dict(config.commands)
     long_running: dict[str, LongRunningFactory] = {}
     garage_live = False
     garage_disabled_reason: str | None = None
     if config.garage and config.garage.enabled:
-        # ADR GARAGE-000: run substrate + version + auth preconditions
-        # before registering the garage command set. On failure, skip
-        # registration and let the named reason ride to the dashboard
-        # via GarageState.disabled_reason.
+        # ADR GARAGE-000: preconditions gate registration; failure rides to dashboard.
         garage_disabled_reason = run_garage_preconditions(config.garage)
         if garage_disabled_reason is None:
             garage_live = True

@@ -28,11 +28,7 @@ async def sleep_or_shutdown(
     shutdown: asyncio.Event,
     interval: float,
 ) -> bool:
-    """Sleep *interval* seconds or return early when ``shutdown`` fires.
-
-    Returns ``True`` when shutdown triggered, ``False`` on timeout. Shared by
-    every periodic loop so each one doesn't re-implement the ``wait_for`` dance.
-    """
+    """Sleep *interval* seconds; returns ``True`` if shutdown fired, ``False`` on timeout."""
     try:
         await asyncio.wait_for(shutdown.wait(), timeout=interval)
         return True

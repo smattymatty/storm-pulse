@@ -43,11 +43,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Dashboard acknowledgement types, received but not actionable.
-# SIGNOFF_STATE_ACK belongs in this set once the signoff.state envelope
-# lands. The enum value is not yet defined in protocol.py on main, so
-# referencing it here crash-loops the agent at import. Re-add it in the
-# same commit as the protocol.py enum addition.
+# Dashboard acks, received but not actionable. Add SIGNOFF_STATE_ACK when the protocol enum lands.
 ACK_TYPES = frozenset(
     {
         MessageType.REGISTER_OK,
@@ -60,13 +56,7 @@ ACK_TYPES = frozenset(
 
 
 async def receive_loop(agent: Agent, ws: ClientConnection) -> None:
-    """Receive and dispatch inbound messages.
-
-    A malformed or buggy message must not kill the receive loop — the
-    agent drops it and keeps serving. Auth failures already return
-    early without executing anything, so swallowing here cannot cause
-    an unauthorized command to run; worst case is a logged bug.
-    """
+    """Receive and dispatch inbound messages; swallow per-message errors so the loop stays up."""
     while not agent.shutdown.is_set():
         message = await ws.recv()
         try:
@@ -130,15 +120,7 @@ async def handle_command_request(
     ws: ClientConnection,
     envelope: Envelope,
 ) -> None:
-    """Verify and execute a single command request.
-
-    Three execution paths, each owned end-to-end by its handler:
-    ``garage_refresh`` runs inline (collect + result + immediate
-    metrics push, all inside ``handle_garage_refresh``); long-running
-    commands hand off to ``JobManager`` via ``dispatch_long_running``;
-    everything else runs as a one-shot subprocess via
-    ``execute_command`` with the result-send epilogue handled here.
-    """
+    """Verify and execute a single command request. Three paths: inline garage_refresh, long-running, one-shot subprocess."""
     payload = _verify_typed_payload(agent, envelope, CommandRequestPayload)
     if payload is None:
         return
@@ -196,13 +178,7 @@ async def _refuse_if_sealed(
     payload: CommandRequestPayload,
     cmd_def: CommandDef | None,
 ) -> bool:
-    """Refuse a sealed verify or apply block inline. Returns ``True`` if handled.
-
-    Dispatch-time recheck catches the case where the operator ran
-    ``stormpulse signoff seal`` after the registry was built: the
-    registry still contains the seal-gated commands, but the seal file
-    now says "no". See ADR CORE-004.
-    """
+    """Refuse a sealed verify/apply block inline. Returns ``True`` if handled (ADR CORE-004)."""
     if not is_blocked_by_seal(agent.signoff_state, [payload.command]):
         return False
     sealed = sealed_refusal_result(envelope.id, payload.command, cmd_def)
@@ -220,12 +196,7 @@ async def _run_subprocess_command(
     payload: CommandRequestPayload,
     request_id: str,
 ) -> CommandResultPayload | None:
-    """Run a whitelisted subprocess command, or return ``None`` on dispatch error.
-
-    A ``None`` return means a registry / validation error was logged
-    and the dispatcher should drop the request — never silently send a
-    misleading success result.
-    """
+    """Run a whitelisted subprocess command; ``None`` means logged error, drop the request."""
     try:
         return await asyncio.to_thread(
             execute_command,
@@ -280,22 +251,12 @@ async def dispatch_long_running(
     payload: CommandRequestPayload,
     cmd_def: CommandDef,
 ) -> None:
-    """Hand a long-running command off to the JobManager.
-
-    Sends a synthetic failure result inline if the command is marked
-    ``long_running`` but no internal handler is registered (config bug)
-    or the connection is no longer active.
-    """
+    """Hand a long-running command off to the JobManager; emits synthetic failure on missing handler or no JobManager."""
     if agent.job_manager is None:
         logger.error("Cannot dispatch %r: no active JobManager", payload.command)
         return
 
-    # Enforce the same param-validation contract the subprocess path
-    # uses. CommandDef declares regex patterns for every param;
-    # honoring them here closes the asymmetry between the two dispatch
-    # paths and prevents malformed values (e.g. a bucket name with path
-    # traversal characters, or an s3_endpoint pointing somewhere
-    # unintended) from reaching the handler.
+    # Same regex-param-validation as the subprocess path; closes the dispatch asymmetry.
     try:
         validated_params = validate_params(cmd_def, payload.params or {})
     except ParamValidationError as exc:
@@ -377,9 +338,7 @@ async def handle_command_sequence(
         logger.warning("Sequence %s has invalid command: %s", payload.sequence_id, exc)
         return
 
-    # Same dispatch-time seal recheck as the single-command path: refuse
-    # the sequence pre-flight if any step is a seal-gated command and
-    # the agent was sealed since the registry was built.
+    # Sequence seal recheck mirrors the single-command path (ADR CORE-004).
     if is_blocked_by_seal(agent.signoff_state, payload.commands):
         sealed_in_sequence = sorted(SEALED_COMMANDS & set(payload.commands))
         logger.warning(

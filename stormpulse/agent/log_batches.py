@@ -14,11 +14,7 @@ class _Entry:
 
 
 class PendingBatches:
-    """Tracks log batches in flight to the dashboard awaiting ack.
-
-    All time values are ``time.monotonic()`` — wall-clock jumps must not
-    cause stale-pruning churn or premature drops.
-    """
+    """Tracks log batches in flight; uses ``time.monotonic()`` so wall-clock jumps don't perturb pruning."""
 
     def __init__(self, ack_timeout_seconds: float = 30.0) -> None:
         self._ack_timeout = ack_timeout_seconds
@@ -36,12 +32,7 @@ class PendingBatches:
         return entry.group, entry.to_position
 
     def prune_stale(self, *, now: float | None = None) -> int:
-        """Drop entries whose ack has not arrived within the timeout window.
-
-        Returns the number of entries dropped. The dashboard re-acks fresh
-        sends, so a dropped entry simply means the next batch for the same
-        group will retransmit the same range — at-least-once, not at-most-once.
-        """
+        """Drop entries past the timeout; returns count. Dropped batches retransmit (at-least-once)."""
         cut = (now if now is not None else time.monotonic()) - self._ack_timeout
         stale = [bid for bid, e in self._entries.items() if e.sent_at < cut]
         for bid in stale:

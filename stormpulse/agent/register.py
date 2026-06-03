@@ -1,11 +1,4 @@
-"""Initial register envelope sent immediately after a connection comes up.
-
-The dashboard needs the agent's identity, version, command catalogue,
-Garage state snapshot (if any), enabled log groups, and a best-effort
-system inventory before it can route work to this agent. The seal flag
-is re-stat'd here so an operator-driven seal between sessions
-advertises promptly to the dashboard.
-"""
+"""Initial ``register`` envelope sent on every fresh connection; carries identity, command surface, garage snapshot, and seal state."""
 
 from __future__ import annotations
 
@@ -47,12 +40,7 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
         or None
     )
 
-    # Re-stat the seal file at register time so a fresh connect after
-    # `stormpulse signoff seal` advertises the new state to the
-    # dashboard immediately (see ADR CORE-004). The unsealed_since
-    # timestamp rides alongside so the dashboard's "unsealed for X" /
-    # "unsealed > N hours" pager has the authoritative wall-clock from
-    # the agent rather than having to guess from its register history.
+    # Re-stat seal at register time so post-seal connects advertise promptly (ADR CORE-004).
     sealed_now = agent.signoff_state.is_sealed()
     since = agent.signoff_state.unsealed_since()
     register = make_register(

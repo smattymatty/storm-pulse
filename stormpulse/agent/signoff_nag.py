@@ -19,12 +19,7 @@ NAG_INTERVAL_SECONDS = 300.0  # 5 minutes
 
 
 async def signoff_nag_loop(agent: Agent, ws: ClientConnection) -> None:
-    """Warn periodically while the agent is unsealed.
-
-    ``ws`` is unused (the dashboard learns seal state via register); the
-    parameter is here to match the other loop bodies' signature so the
-    task group can launch this the same way as the others.
-    """
+    """Warn periodically while unsealed. ``ws`` is unused; signature matches the other loops."""
     del ws  # interface symmetry with other loops
     while not agent.shutdown.is_set():
         if not agent.signoff_state.is_sealed():
