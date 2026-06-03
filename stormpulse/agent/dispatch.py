@@ -31,7 +31,6 @@ from websockets.asyncio.client import ClientConnection
 from stormpulse.agent.garage_actions import (
     handle_garage_refresh,
     post_success_hook,
-    push_post_refresh_metrics,
 )
 from stormpulse.agent.long_running import resolve_long_running_handler
 from stormpulse.agent.signoff_guard import (
@@ -152,10 +151,12 @@ async def handle_command_request(
 ) -> None:
     """Verify and execute a single command request.
 
-    Three execution paths: ``garage_refresh`` runs inline (synchronous
-    state collect + immediate metrics push), long-running commands
-    hand off to ``JobManager``, everything else runs as a one-shot
-    subprocess via ``execute_command``.
+    Three execution paths, each owned end-to-end by its handler:
+    ``garage_refresh`` runs inline (collect + result + immediate
+    metrics push, all inside ``handle_garage_refresh``); long-running
+    commands hand off to ``JobManager`` via ``dispatch_long_running``;
+    everything else runs as a one-shot subprocess via
+    ``execute_command`` with the result-send epilogue handled here.
     """
     payload = _verify_request_payload(agent, envelope)
     if payload is None:
@@ -165,27 +166,18 @@ async def handle_command_request(
     if await _refuse_if_sealed(agent, ws, envelope, payload, cmd_def):
         return
 
-    result: CommandResultPayload
     if payload.command == "garage_refresh":
-        result = await handle_garage_refresh(agent, envelope.id)
-    elif cmd_def is not None and cmd_def.long_running:
+        await handle_garage_refresh(agent, ws, envelope.id)
+        return
+    if cmd_def is not None and cmd_def.long_running:
         await dispatch_long_running(agent, envelope.id, payload, cmd_def)
         return
-    else:
-        subprocess_result = await _run_subprocess_command(
-            agent,
-            payload,
-            envelope.id,
-        )
-        if subprocess_result is None:
-            return
-        result = subprocess_result
 
+    result = await _run_subprocess_command(agent, payload, envelope.id)
+    if result is None:
+        return
     await _send_result(agent, ws, result)
     _log_to_pulse(agent, payload.command, result)
-
-    if payload.command == "garage_refresh" and result.success:
-        await push_post_refresh_metrics(agent, ws)
 
 
 def _verify_request_payload(
