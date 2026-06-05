@@ -32,11 +32,50 @@ timeout and never raises; the worst case is a named reason.
 
 from __future__ import annotations
 
+import logging
 import subprocess
+import tomllib
 
 from stormpulse.config import GarageConfig
 
+logger = logging.getLogger(__name__)
+
 _TIMEOUT_SECONDS = 15
+
+
+def warn_if_s3_root_domain_set(config: GarageConfig) -> None:
+    """Loud boot warning if garage.toml enables S3 virtual-host addressing.
+
+    Not a gate: ``s3_api.root_domain`` being set is legal. But it is the
+    2026-06-05 trap. If any S3 API endpoint host is a subdomain of
+    ``s3_api.root_domain``, Garage parses the endpoint's own label as a
+    virtual-host bucket name and returns NoSuchBucket for *every* request
+    (the website's HeadBucket preflight then 503s, CORS and rotate fail).
+    The agent cannot see the per-request endpoints at boot, so it cannot
+    compare them here; the request-time hard catch lives on the website
+    side (a Storm-known bucket returning NoSuchBucket logs a named
+    endpoint/root_domain alarm). This warning makes the dangerous config
+    impossible to reintroduce *silently*.
+
+    Path-only stacks should leave ``s3_api.root_domain`` unset. See
+    ``core/buckets-customer-truth.md``.
+    """
+    try:
+        with open(config.config_path, "rb") as fh:
+            raw = tomllib.load(fh)
+    except (OSError, tomllib.TOMLDecodeError):
+        return
+    root_domain = (raw.get("s3_api") or {}).get("root_domain")
+    if root_domain:
+        logger.warning(
+            "garage.toml [s3_api].root_domain = %r: S3 virtual-host "
+            "addressing is ON. Ensure NO S3 endpoint host is a subdomain of "
+            "it, or Garage parses the endpoint's own label as a bucket name "
+            "and returns NoSuchBucket for every request (the root_domain "
+            "trap). Path-only stacks should leave s3_api.root_domain unset. "
+            "Verify the live S3 layer with s3-scripts/test_head_bucket.py.",
+            root_domain,
+        )
 
 
 def check_garage_version(config: GarageConfig) -> str | None:
@@ -113,7 +152,11 @@ def run_preconditions(config: GarageConfig) -> str | None:
     round-trip). Both run through ``docker exec``, so the container
     being up + reachable is implicitly required; ``garage_unreachable``
     covers that path.
+
+    Also emits the informational ``root_domain`` trap warning (never
+    gates) so a re-introduced vhost-collision config screams at boot.
     """
+    warn_if_s3_root_domain_set(config)
     reason = check_garage_version(config)
     if reason:
         return reason
