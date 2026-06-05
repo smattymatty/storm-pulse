@@ -9,6 +9,7 @@ from pathlib import Path
 
 from stormpulse.init import InitError, prompt
 from stormpulse.init.files import default_config_path
+from stormpulse.init.host_native_logs import offer_caddy_log_group
 from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
@@ -204,30 +205,38 @@ def run_logging_init(config_path: Path) -> None:
 
     print("\nChecking for Docker containers...", file=sys.stderr)
     containers = detect_docker_containers()
-    if not containers:
+    wrote_anything = False
+    if containers:
+        print(
+            f"  Found {len(containers)} running container(s): {', '.join(containers)}",
+            file=sys.stderr,
+        )
+        existing = _existing_log_group_names(config_path)
+        groups = prompt_logging_setup(containers, existing)
+        if groups:
+            append_log_groups(config_path, groups)
+            for g in groups:
+                print(f"  Added: {g['name']} (docker_stream)", file=sys.stderr)
+            print(
+                f"\n  {len(groups)} log group(s) written to {config_path}",
+                file=sys.stderr,
+            )
+            wrote_anything = True
+        else:
+            print("  No log groups to add.", file=sys.stderr)
+    else:
         print(
             "  No running containers found (or Docker unavailable).",
             file=sys.stderr,
         )
+
+    # Always offer the host-native Caddy log group: a box may have zero
+    # Docker containers and still want Caddy access logs shipped.
+    if offer_caddy_log_group(config_path):
+        wrote_anything = True
+
+    if not wrote_anything:
         return
-
-    print(
-        f"  Found {len(containers)} running container(s): {', '.join(containers)}",
-        file=sys.stderr,
-    )
-
-    existing = _existing_log_group_names(config_path)
-    groups = prompt_logging_setup(containers, existing)
-    if not groups:
-        print("  No log groups to add.", file=sys.stderr)
-        return
-
-    append_log_groups(config_path, groups)
-    for g in groups:
-        # source_type is hardcoded in _LOG_GROUP_TEMPLATE above; if the
-        # template changes per-group, switch this to g['source_type'].
-        print(f"  Added: {g['name']} (docker_stream)", file=sys.stderr)
-    print(f"\n  {len(groups)} log group(s) written to {config_path}", file=sys.stderr)
 
     # No-escalation posture (see stormpulse.init.system): SYSTEM mode
     # prints the hint and never shells out; USER mode runs the user
