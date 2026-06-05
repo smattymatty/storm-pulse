@@ -12,6 +12,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from stormpulse.config import GarageConfig
 from stormpulse.garage import preconditions
 from stormpulse.garage.state import GarageState
@@ -261,3 +263,43 @@ class TestBootstrapWiring:
             )
         assert deps.garage_disabled_reason is None
         assert any(k.startswith("garage_") for k in deps.registry)
+
+
+# ---------------------------------------------------------------------------
+# root_domain trap warning (the 2026-06-05 regression: an S3 endpoint host
+# sitting inside s3_api.root_domain makes Garage 404 every server-side call)
+# ---------------------------------------------------------------------------
+
+
+def test_warn_when_root_domain_set(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    config = _make_config(tmp_path)
+    (tmp_path / "garage.toml").write_text(
+        '[s3_api]\nroot_domain = ".buckets.stormdevelopments.ca"\n'
+    )
+    with caplog.at_level("WARNING"):
+        preconditions.warn_if_s3_root_domain_set(config)
+    msgs = [r.getMessage() for r in caplog.records]
+    assert any("root_domain" in m for m in msgs)
+    assert any("buckets.stormdevelopments.ca" in m for m in msgs)
+
+
+def test_silent_when_root_domain_unset(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    config = _make_config(tmp_path)
+    (tmp_path / "garage.toml").write_text("[s3_api]\napi_bind_addr = '[::]:3900'\n")
+    with caplog.at_level("WARNING"):
+        preconditions.warn_if_s3_root_domain_set(config)
+    assert not any("root_domain" in r.getMessage() for r in caplog.records)
+
+
+def test_silent_when_config_missing(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # No garage.toml written: must not raise and must not warn.
+    config = _make_config(tmp_path)
+    with caplog.at_level("WARNING"):
+        preconditions.warn_if_s3_root_domain_set(config)
+    assert not any("root_domain" in r.getMessage() for r in caplog.records)
