@@ -146,6 +146,41 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        # The BUCKETS-006 Headroom wall. The website's recompute + provision
+        # dispatch this with bucket_name = garage_bucket_id (never the local
+        # alias, which the admin CLI cannot resolve) and max_size in decimal
+        # bytes. Without this handler the dispatch lands nowhere and buckets
+        # silently carry no quota.
+        "garage_bucket_set_quota": CommandDef(
+            group="garage",
+            command=[
+                docker,
+                "exec",
+                container,
+                garage,
+                "bucket",
+                "set-quotas",
+                "{bucket_id}",
+                "--max-size",
+                "{max_size}",
+            ],
+            timeout=15,
+            description="Set the max-size Headroom quota on a bucket (BUCKETS-006)",
+            params={
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
+                    default=None,
+                    pattern=_BUCKET_ID_PATTERN,
+                    description="Bucket id (garage_bucket_id), never the local alias",
+                ),
+                "max_size": ParamDef(
+                    placeholder="max_size",
+                    default=None,
+                    pattern=r"[0-9]+",
+                    description="Maximum size in bytes (decimal)",
+                ),
+            },
+        ),
         "garage_key_create": CommandDef(
             group="garage",
             command=[docker, "exec", container, garage, "key", "create", "{key_name}"],

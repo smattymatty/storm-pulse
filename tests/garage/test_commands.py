@@ -30,6 +30,7 @@ class TestBuildGarageCommands:
             "garage_key_list",
             "garage_bucket_create",
             "garage_bucket_delete",
+            "garage_bucket_set_quota",
             "garage_key_create",
             "garage_key_delete",
             "garage_bucket_allow",
@@ -216,6 +217,7 @@ class TestBuildGarageCommands:
             "garage_delete_provisioned_bucket",
             "garage_provision_additional_key",
             "garage_rotate_customer_key",
+            "garage_bucket_set_quota",
         ):
             pattern = cmds[cmd_name].params["bucket_id"].pattern
             assert pattern is not None
