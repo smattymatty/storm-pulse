@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -21,7 +22,7 @@ def cfg(tmp_path: Path) -> Path:
     return p
 
 
-def _patch_log_path_exists(exists: bool):
+def _patch_log_path_exists(exists: bool) -> Any:
     return patch.object(
         type(DEFAULT_CADDY_ACCESS_LOG), "exists", return_value=exists, autospec=False
     )
