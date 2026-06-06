@@ -630,9 +630,15 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
         interval = float(
             _require_key(entry, "ship_interval_seconds", (int, float), ctx)
         )
-        if interval < 5.0:
+        # Floor is 2s so the activity feed can keep pace with the 2s metrics/state
+        # push and feel real-time alongside the storage bars. Logs are a heavier
+        # stream than a metric snapshot (one line per S3 request), but each ship is
+        # capped by max_lines_per_batch, so a tighter interval just flushes more
+        # often, it does not enlarge a batch. The `logging init` wizard still
+        # DEFAULTS to a slower interval; this only permits going tighter on purpose.
+        if interval < 2.0:
             raise ConfigError(
-                f"'ship_interval_seconds' in {ctx} must be >= 5.0, got {interval}"
+                f"'ship_interval_seconds' in {ctx} must be >= 2.0, got {interval}"
             )
 
         batch_max = _require_key(entry, "max_lines_per_batch", int, ctx)
