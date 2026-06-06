@@ -116,6 +116,14 @@ def post_success_hook(
     if cmd_def.group != "garage":
         return None
 
+    # set-quota is the recompute's OWN action (BUCKETS-006). Refreshing + pushing
+    # metrics after it re-enters the website recompute, which dispatches more
+    # set-quotas, a runaway feedback loop (each set_quota fans out into more).
+    # A quota change does not alter customer-visible usage either, so there is
+    # nothing for the push to deliver. Skip the hook for it.
+    if command == "garage_bucket_set_quota":
+        return None
+
     async def refresh_and_push() -> None:
         if agent.job_manager is None:
             return

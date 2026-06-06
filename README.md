@@ -1,7 +1,7 @@
 # Storm Pulse Agent
 
 [![CI](https://git.stormdevelopments.ca/official-public/storm-pulse/actions/workflows/test.yml/badge.svg)](https://git.stormdevelopments.ca/official-public/storm-pulse/actions)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Typed: mypy strict](https://img.shields.io/badge/mypy-strict-blue.svg)](https://mypy-lang.org/)
 
 Secure server management agent for [Storm Developments](https://stormdevelopments.ca). Connects outbound to a Django dashboard over WebSocket with mTLS, pushes system metrics, and executes whitelisted deploy commands. Zero listening ports.
@@ -115,4 +115,6 @@ make fitness    # architecture + security invariants
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+AGPL-3.0 - see [LICENSE](LICENSE).
+
+Copyright (c) 2026 Mathew Storm.
