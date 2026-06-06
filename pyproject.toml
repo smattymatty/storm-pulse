@@ -8,7 +8,7 @@ version = "0.1.10"
 description = "Secure server management agent for Storm Developments infrastructure"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
+license = "AGPL-3.0"
 dependencies = [
     "websockets>=14.0,<15.0",
     "psutil>=6.0",
