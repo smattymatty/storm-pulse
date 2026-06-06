@@ -146,26 +146,18 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        # The BUCKETS-006 Headroom wall. The website's recompute + provision
-        # dispatch this with bucket_name = garage_bucket_id (never the local
-        # alias, which the admin CLI cannot resolve) and max_size in decimal
-        # bytes. Without this handler the dispatch lands nowhere and buckets
-        # silently carry no quota.
+        # The BUCKETS-006 Headroom wall, applied via the Garage admin HTTP API
+        # (UpdateBucket), not the CLI: a typed call instead of scraping CLI text,
+        # addressing the bucket by id (garage_bucket_id, never the local alias).
+        # Handled by the JobManager, see garage/set_quota.py. The website's
+        # recompute + provision dispatch this with bucket_id + max_size (decimal
+        # bytes); without it, buckets silently carry no quota.
         "garage_bucket_set_quota": CommandDef(
             group="garage",
-            command=[
-                docker,
-                "exec",
-                container,
-                garage,
-                "bucket",
-                "set-quotas",
-                "{bucket_id}",
-                "--max-size",
-                "{max_size}",
-            ],
-            timeout=15,
-            description="Set the max-size Headroom quota on a bucket (BUCKETS-006)",
+            command=["garage_bucket_set_quota"],  # internal - handled by JobManager
+            timeout=30,  # single admin API call; long_running ignores this for duration
+            description="Set the max-size Headroom quota on a bucket via the Garage admin API (BUCKETS-006)",
+            long_running=True,
             params={
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
@@ -836,11 +828,17 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     )
     from stormpulse.garage.rotate_key import make_rotate_customer_key_handler
     from stormpulse.garage.set_cors import make_set_cors_handler
+    from stormpulse.garage.set_quota import make_set_quota_handler
     from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
 
     return {
         "garage_bucket_clear": make_clear_bucket_handler,
         "garage_bucket_set_cors": make_set_cors_handler,
+        "garage_bucket_set_quota": (
+            lambda params: make_set_quota_handler(
+                params, admin_url=config.admin_url, admin_token=config.admin_token,
+            )
+        ),
         "garage_walk_bucket_stats": make_walk_bucket_stats_handler,
         "garage_provision_customer_bucket": (
             lambda params: make_provision_customer_bucket_handler(config, params)

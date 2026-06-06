@@ -61,6 +61,7 @@ class TestBuildGarageCommands:
                 "garage_refresh",
                 "garage_bucket_clear",
                 "garage_bucket_set_cors",
+                "garage_bucket_set_quota",
                 "garage_provision_customer_bucket",
                 "garage_provision_additional_key",
                 "garage_delete_provisioned_bucket",
@@ -117,6 +118,13 @@ class TestBuildGarageCommands:
     def test_bucket_clear_is_long_running(self) -> None:
         cmds = build_garage_commands(_make_config())
         assert cmds["garage_bucket_clear"].long_running is True
+
+    def test_set_quota_is_long_running_admin_api(self) -> None:
+        # Applied via the Garage admin HTTP API (UpdateBucket), not a CLI
+        # subprocess, so it rides the long-running JobManager path.
+        cmds = build_garage_commands(_make_config())
+        assert cmds["garage_bucket_set_quota"].long_running is True
+        assert cmds["garage_bucket_set_quota"].command == ["garage_bucket_set_quota"]
 
     def test_other_commands_not_sensitive(self) -> None:
         cmds = build_garage_commands(_make_config())
