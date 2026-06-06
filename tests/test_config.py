@@ -1019,6 +1019,48 @@ def test_garage_section_parses(write_config: Callable[[str], Path]) -> None:
     assert cfg.garage.state_push_interval_seconds == 300.0
 
 
+def test_garage_admin_token_file_is_read_and_stripped(
+    write_config: Callable[[str], Path], tmp_path: Path,
+) -> None:
+    tok = tmp_path / "admin_token"
+    tok.write_text("s3cr3t\n")
+    toml = MINIMAL_VALID + _VALID_GARAGE + (
+        'admin_url = "http://127.0.0.1:3903"\n'
+        f'admin_token_file = "{tok}"\n'
+    )
+    cfg = load_config(write_config(toml))
+    assert cfg.garage is not None
+    assert cfg.garage.admin_url == "http://127.0.0.1:3903"
+    assert cfg.garage.admin_token == "s3cr3t"
+
+
+def test_garage_admin_inline_token(write_config: Callable[[str], Path]) -> None:
+    toml = MINIMAL_VALID + _VALID_GARAGE + (
+        'admin_url = "http://127.0.0.1:3903"\n'
+        'admin_token = "inline-tok"\n'
+    )
+    cfg = load_config(write_config(toml))
+    assert cfg.garage is not None
+    assert cfg.garage.admin_token == "inline-tok"
+
+
+def test_garage_unreadable_admin_token_file_degrades_not_crashes(
+    write_config: Callable[[str], Path], tmp_path: Path,
+) -> None:
+    # REGRESSION: an unreadable admin_token_file used to raise ConfigError, which
+    # crash-looped the whole agent. It must degrade to the admin API disabled
+    # (admin_token = "") and leave the rest of the config intact.
+    missing = tmp_path / "nope" / "admin_token"
+    toml = MINIMAL_VALID + _VALID_GARAGE + (
+        'admin_url = "http://127.0.0.1:3903"\n'
+        f'admin_token_file = "{missing}"\n'
+    )
+    cfg = load_config(write_config(toml))  # must NOT raise
+    assert cfg.garage is not None
+    assert cfg.garage.admin_url == "http://127.0.0.1:3903"
+    assert cfg.garage.admin_token == ""
+
+
 def test_garage_section_absent_is_none(write_config: Callable[[str], Path]) -> None:
     cfg = load_config(write_config(MINIMAL_VALID))
     assert cfg.garage is None

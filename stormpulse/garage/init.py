@@ -149,14 +149,38 @@ admin_token_file = "{admin_token_file}"
 """
 
 
+def _resolve_host_token_path(garage_config_path: Path, token_file_raw: str) -> str:
+    """Find a *host-readable* path to the admin token.
+
+    garage.toml's ``admin_token_file`` is the path inside Garage's container
+    (bind-mounted), which the host agent usually cannot read. Try the raw value
+    first (host-native installs), then the Storm rootless convention of a
+    ``secrets/`` dir alongside garage.toml on the host. Returns "" if neither is
+    a readable file, so init never emits a path that crash-loops the agent.
+    """
+    if not token_file_raw:
+        return ""
+    candidates = [
+        Path(token_file_raw),
+        garage_config_path.parent / "secrets" / Path(token_file_raw).name,
+    ]
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.R_OK):
+            return str(candidate)
+    return ""
+
+
 def discover_admin_api(garage_config_path: Path) -> tuple[str, str]:
     """Read garage.toml's ``[admin]`` block, return ``(admin_url, admin_token_file)``.
 
     Derives the loopback admin URL from ``api_bind_addr`` (a ``0.0.0.0`` / ``::``
     bind becomes ``127.0.0.1`` since the agent connects from the same host) and
-    reuses Garage's own ``admin_token_file`` so the token stays in one place.
-    Returns ``("", "")`` if the admin API isn't enabled, or only an inline
-    ``admin_token`` (no file) is set, in which case the operator wires it by hand.
+    resolves a *host-readable* token path (garage.toml's value is container-
+    relative, so it is re-rooted against the host secrets dir and verified to
+    exist). Either element is "" when not found: ``("", "")`` if the admin API
+    isn't enabled, ``(url, "")`` if it is but no readable token file was located
+    (the operator then wires the token by hand rather than init writing a path
+    that doesn't exist on the host).
     """
     try:
         with open(garage_config_path, "rb") as f:
@@ -168,7 +192,7 @@ def discover_admin_api(garage_config_path: Path) -> tuple[str, str]:
         return "", ""
     bind = admin.get("api_bind_addr", "")
     token_file = admin.get("admin_token_file", "")
-    if not (isinstance(bind, str) and bind and isinstance(token_file, str) and token_file):
+    if not (isinstance(bind, str) and bind):
         return "", ""
     host, _, port = bind.rpartition(":")
     if not port.isdigit():
@@ -176,7 +200,11 @@ def discover_admin_api(garage_config_path: Path) -> tuple[str, str]:
     host = host.strip("[]")
     if host in ("", "0.0.0.0", "::", "*"):
         host = "127.0.0.1"
-    return f"http://{host}:{port}", token_file
+    admin_url = f"http://{host}:{port}"
+    host_token = _resolve_host_token_path(
+        garage_config_path, token_file if isinstance(token_file, str) else "",
+    )
+    return admin_url, host_token
 
 
 def has_garage_section(config_path: Path) -> bool:
@@ -377,9 +405,16 @@ def run_garage_init(
     # Auto-discover the admin HTTP API from garage.toml's [admin] block, so the
     # quota write (UpdateBucket) works without the operator hand-editing config.
     admin_url, admin_token_file = discover_admin_api(garage_config)
-    if admin_url:
+    if admin_url and admin_token_file:
         print(
             f"  Admin API: {admin_url}  (token: {admin_token_file})",
+            file=sys.stderr,
+        )
+    elif admin_url:
+        print(
+            "  Garage admin API detected, but no host-readable admin token file "
+            "was found (garage.toml's path is container-internal). Add [garage] "
+            "admin_token_file (or admin_token) by hand; quota writes need it.",
             file=sys.stderr,
         )
     else:
