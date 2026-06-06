@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import http.client
 import json
+from typing import Any
 from urllib.parse import urlencode, urlparse
 
 _TIMEOUT_SECONDS = 15.0
@@ -52,6 +53,73 @@ def set_bucket_quota(
     if 200 <= status < 300:
         return True, ""
     return False, f"HTTP {status}: {resp.strip()[:500]}"
+
+
+def list_buckets(
+    *, admin_url: str, admin_token: str,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """List every bucket via ``GET /v2/ListBuckets``.
+
+    Returns ``(items, "")`` where each item carries at least ``id`` and
+    ``globalAliases`` (per the v2 ``ListBucketsResponseItem`` schema), or
+    ``(None, error)`` when the endpoint can't be reached or returns non-2xx.
+    The caller fetches per-bucket detail via :func:`get_bucket_info`.
+    """
+    data, err = _get_json(admin_url, admin_token, "/v2/ListBuckets")
+    if data is None:
+        return None, err
+    if not isinstance(data, list):
+        return None, "ListBuckets returned a non-list body"
+    return [b for b in data if isinstance(b, dict)], ""
+
+
+def get_bucket_info(
+    *, admin_url: str, admin_token: str, bucket_ref: str,
+) -> tuple[dict[str, Any] | None, str]:
+    """Fetch one bucket's full info via ``GET /v2/GetBucketInfo``.
+
+    ``bucket_ref`` may be Garage's full 64-char id (looked up exactly via
+    ``?id=``) or Storm's 16-char prefix (resolved via ``?search=``). When the
+    prefix path is used we verify the returned ``id`` actually starts with it,
+    so a partial-match collision can never return the wrong bucket's stats.
+
+    Returns the parsed ``GetBucketInfoResponse`` dict (exact integer
+    ``bytes``/``objects`` and ``quotas.maxSize``/``maxObjects``, JSON, never
+    scraped text), or ``(None, error)``.
+    """
+    if len(bucket_ref) == _FULL_BUCKET_ID_LEN:
+        path = "/v2/GetBucketInfo?" + urlencode({"id": bucket_ref})
+    else:
+        path = "/v2/GetBucketInfo?" + urlencode({"search": bucket_ref})
+    data, err = _get_json(admin_url, admin_token, path)
+    if data is None:
+        return None, err
+    if not isinstance(data, dict):
+        return None, f"GetBucketInfo {bucket_ref!r} returned a non-object body"
+    full = data.get("id", "")
+    if not (isinstance(full, str) and full.startswith(bucket_ref)):
+        return None, (
+            f"GetBucketInfo {bucket_ref!r}: returned id {full!r} does not match "
+            "the requested prefix"
+        )
+    return data, ""
+
+
+def _get_json(
+    admin_url: str, admin_token: str, path: str,
+) -> tuple[object | None, str]:
+    """GET ``path`` and parse a JSON body. Returns ``(parsed, "")`` or
+    ``(None, error)`` on transport, status, or decode failure."""
+    auth = {"Authorization": f"Bearer {admin_token}"}
+    status, resp = _request(admin_url, "GET", path, auth)
+    if status is None:
+        return None, resp
+    if not (200 <= status < 300):
+        return None, f"HTTP {status}: {resp.strip()[:300]}"
+    try:
+        return json.loads(resp), ""
+    except json.JSONDecodeError:
+        return None, f"admin API returned non-JSON for {path}"
 
 
 def _resolve_full_bucket_id(

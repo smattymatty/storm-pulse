@@ -2,8 +2,13 @@
 
 ## Status
 
-Accepted, partially implemented (2026-06-06). Quota write done; reads and
-provisioning are the planned follow-ups.
+Accepted, partially implemented (2026-06-06). Quota write done. The per-bucket
+state read (follow-up #1) is done: `collect_garage_state` now reads bucket sizes,
+object counts, quotas, and keys via `ListBuckets` + `GetBucketInfo`, and the
+website anchors BUCKETS-006's `quota_bytes` on that exact JSON (see the
+control-loop amendment in website ADR buckets/006). Node telemetry
+(`status`/`stats`/`key list`), activity-scoped fetching, and provisioning remain
+follow-ups.
 
 ## Context
 
@@ -59,15 +64,23 @@ gains optional `admin_url` + `admin_token` (resolved from inline or
 
 Do these in order; each is its own change.
 
-1. **State read loop (highest value).** Replace `collect_garage_state`'s
-   `status` + `stats` + per-bucket `bucket info` CLI calls with `GetClusterStatus`
-   + `ListBuckets` + `GetBucketInfo` over the admin API. This is the hot path
-   every `state_push_interval_seconds` and where both the spawn cost and the
-   parser fragility concentrate. `GetBucketInfo` returns `bytes`/`objects`/
-   `quotas.maxSize` directly, so it also feeds the website's quota-anchor
-   reconcile (BUCKETS-006) with structured data instead of scraped text.
+1. **State read loop (highest value). DONE (2026-06-06).** The per-bucket leg of
+   `collect_garage_state` now reads `ListBuckets` + `GetBucketInfo` over the admin
+   API (`admin_api.list_buckets` / `admin_api.get_bucket_info`), mapping exact
+   `bytes`/`objects`/`quotas.maxSize`/`maxObjects` and the inline `keys[]` JSON
+   into `GarageBucket`. This removed the per-bucket `bucket info` spawn and the
+   lossy `_parse_size_bytes` quota scrape, which is what lets the website anchor
+   BUCKETS-006's `quota_bytes` on exact JSON (see that ADR's control-loop
+   amendment). Graceful degrade: a single bucket whose `GetBucketInfo` fails is
+   skipped; if `ListBuckets` is unreachable or the admin API is unconfigured the
+   whole tick is skipped (no empty-set push). Scoped deliberately: node telemetry
+   (`status` + `stats` + `key list`) stayed on the CLI in this pass because the v2
+   `NodeResp`/`GetClusterStatistics` mapping is a separate, telemetry-only change,
+   and the bucket leg is where the spawn cost and the quota-anchor value are.
 2. **Delta, not full scan.** Once on the API, fetch detail only for buckets that
-   showed activity rather than every bucket every tick.
+   showed activity rather than every bucket every tick. (Still a full `ListBuckets`
+   + per-bucket `GetBucketInfo` scan; the constant factor dropped from a process
+   spawn to an HTTP GET, but the loop is still O(buckets) per tick.)
 3. **Provisioning.** Move bucket/key create + the local-alias binding
    (`AddBucketAlias` local variant) off the CLI. Lower frequency, so the value
    here is brittleness and structured errors, not speed. Do this last; it is the
