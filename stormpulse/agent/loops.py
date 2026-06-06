@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from typing import TYPE_CHECKING
 
@@ -93,6 +94,7 @@ async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
         try:
             agent.pending_batches.prune_stale()
 
+            started = time.monotonic()
             batch = await asyncio.to_thread(shipper.collect_batch)
             if batch is not None:
                 batch_id = str(uuid.uuid4())
@@ -108,12 +110,17 @@ async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
                 )
                 agent.pending_batches.add(batch_id, group_name, batch.to_position)
                 await ws.send(envelope.to_json())
-                logger.debug(
-                    "Sent log.batch %s group=%s lines=%d dropped=%d",
+                # INFO + duration_ms while bringing log shipping up, same shape as
+                # the garage job logs, so the collect+ship cost is visible at a 2s
+                # interval. Drop to logger.debug once shipping is proven steady.
+                duration_ms = int((time.monotonic() - started) * 1000)
+                logger.info(
+                    "Shipped log.batch %s group=%s lines=%d dropped=%d duration_ms=%d",
                     batch_id,
                     group_name,
                     len(batch.lines),
                     batch.dropped,
+                    duration_ms,
                 )
         except ConnectionClosed:
             raise

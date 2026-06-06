@@ -955,6 +955,30 @@ retention_days = 90
         load_config(write_config(toml))
 
 
+def test_log_groups_interval_two_seconds_accepted(
+    write_config: Callable[[str], Path],
+) -> None:
+    """2s is the floor: it lets the activity feed keep pace with the 2s metrics
+    push. Anything below 2 still raises (see the too-low test above)."""
+    toml = (
+        MINIMAL_VALID
+        + """
+[[log_groups]]
+name = "storage"
+enabled = true
+source_type = "file"
+source_path = "/var/log/garage/garaged.log"
+filter_contains = "garage_api_common"
+parser = "garage_s3"
+ship_interval_seconds = 2
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    )
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups[0].ship_interval_seconds == 2.0
+
+
 def test_log_groups_batch_too_large_raises(write_config: Callable[[str], Path]) -> None:
     toml = (
         MINIMAL_VALID
