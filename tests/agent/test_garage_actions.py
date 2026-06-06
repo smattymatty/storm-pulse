@@ -107,6 +107,22 @@ def test_post_success_hook_present_when_garage_enabled(
     assert post_success_hook(ag, cmd_def, "garage_bucket_clear") is not None
 
 
+def test_post_success_hook_none_for_set_quota(
+    agent_with_garage: Callable[..., Agent],
+) -> None:
+    # BUCKETS-006 invariant 2: set_quota is the recompute's OWN action, so it must
+    # not emit a post-mutation metrics push, which would re-trigger the recompute
+    # (the feedback storm). Its hook is None even though it is a garage command.
+    cmd_def = CommandDef(
+        group="garage",
+        command=["garage_bucket_set_quota"],
+        timeout=30,
+        long_running=True,
+    )
+    ag = agent_with_garage()
+    assert post_success_hook(ag, cmd_def, "garage_bucket_set_quota") is None
+
+
 @pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_metrics")
 @patch("stormpulse.agent.garage_actions.collect_garage_state")
