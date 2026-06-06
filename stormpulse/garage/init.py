@@ -140,6 +140,44 @@ config_path = "{config_path}"
 state_push_interval_seconds = {state_push_interval_seconds}
 """
 
+# Appended only when garage.toml's [admin] block is detected. Powers the
+# BUCKETS-006 quota write (UpdateBucket via the admin API). The token is a node
+# secret, pointed at the same file Garage uses, never copied or sent over the wire.
+_GARAGE_ADMIN_LINES = """\
+admin_url = "{admin_url}"
+admin_token_file = "{admin_token_file}"
+"""
+
+
+def discover_admin_api(garage_config_path: Path) -> tuple[str, str]:
+    """Read garage.toml's ``[admin]`` block, return ``(admin_url, admin_token_file)``.
+
+    Derives the loopback admin URL from ``api_bind_addr`` (a ``0.0.0.0`` / ``::``
+    bind becomes ``127.0.0.1`` since the agent connects from the same host) and
+    reuses Garage's own ``admin_token_file`` so the token stays in one place.
+    Returns ``("", "")`` if the admin API isn't enabled, or only an inline
+    ``admin_token`` (no file) is set, in which case the operator wires it by hand.
+    """
+    try:
+        with open(garage_config_path, "rb") as f:
+            raw = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError):
+        return "", ""
+    admin = raw.get("admin")
+    if not isinstance(admin, dict):
+        return "", ""
+    bind = admin.get("api_bind_addr", "")
+    token_file = admin.get("admin_token_file", "")
+    if not (isinstance(bind, str) and bind and isinstance(token_file, str) and token_file):
+        return "", ""
+    host, _, port = bind.rpartition(":")
+    if not port.isdigit():
+        return "", ""
+    host = host.strip("[]")
+    if host in ("", "0.0.0.0", "::", "*"):
+        host = "127.0.0.1"
+    return f"http://{host}:{port}", token_file
+
 
 def has_garage_section(config_path: Path) -> bool:
     """Check if the TOML file already has a [garage] section."""
@@ -190,12 +228,16 @@ def append_garage_section(
     docker_binary: str,
     garage_config_path: str,
     state_push_interval_seconds: int,
+    admin_url: str = "",
+    admin_token_file: str = "",
     force: bool = False,
 ) -> None:
     """Append [garage] section to an existing stormpulse.toml.
 
     If force=True and a [garage] section already exists, removes
-    it first before appending the new one.
+    it first before appending the new one. When ``admin_url`` +
+    ``admin_token_file`` are given (auto-discovered from garage.toml), the
+    admin-API keys are emitted too.
 
     Raises InitError on file errors.
     """
@@ -226,6 +268,10 @@ def append_garage_section(
         config_path=garage_config_path,
         state_push_interval_seconds=state_push_interval_seconds,
     )
+    if admin_url and admin_token_file:
+        block += _GARAGE_ADMIN_LINES.format(
+            admin_url=admin_url, admin_token_file=admin_token_file,
+        )
 
     try:
         with open(config_path, "a") as f:
@@ -328,6 +374,21 @@ def run_garage_init(
             file=sys.stderr,
         )
 
+    # Auto-discover the admin HTTP API from garage.toml's [admin] block, so the
+    # quota write (UpdateBucket) works without the operator hand-editing config.
+    admin_url, admin_token_file = discover_admin_api(garage_config)
+    if admin_url:
+        print(
+            f"  Admin API: {admin_url}  (token: {admin_token_file})",
+            file=sys.stderr,
+        )
+    else:
+        print(
+            "  Garage admin API not detected in garage.toml; quota writes will "
+            "need [garage] admin_url + admin_token added by hand.",
+            file=sys.stderr,
+        )
+
     # Prompt for values
     values = prompt_garage_values(
         container_name=container_name,
@@ -347,6 +408,8 @@ def run_garage_init(
         docker_binary=str(values["docker_binary"]),
         garage_config_path=str(values["garage_config_path"]),
         state_push_interval_seconds=int(values["state_push_interval_seconds"]),
+        admin_url=admin_url,
+        admin_token_file=admin_token_file,
         force=force,
     )
     print(f"\n  [garage] section written to {config_path}", file=sys.stderr)

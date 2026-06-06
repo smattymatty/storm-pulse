@@ -11,6 +11,7 @@ import pytest
 from stormpulse.garage.init import (
     _find_compose_file,
     append_garage_section,
+    discover_admin_api,
     find_garage_config,
     garage_init_step,
     has_garage_section,
@@ -469,3 +470,75 @@ class TestGarageInitStep:
             raw = tomllib.load(f)
         assert raw["garage"]["enabled"] is True
         assert raw["garage"]["container_name"] == "garaged"
+
+
+_GARAGE_TOML_WITH_ADMIN = """\
+[s3_api]
+api_bind_addr = "0.0.0.0:3900"
+
+[admin]
+api_bind_addr = "0.0.0.0:3903"
+admin_token_file = "/etc/garage/secrets/admin_token"
+"""
+
+_BASE_PULSE_TOML = '[agent]\npulse_token = "x"\n'
+
+
+class TestDiscoverAdminApi:
+    def test_derives_loopback_url_and_token_file(self, tmp_path: Path) -> None:
+        gt = tmp_path / "garage.toml"
+        gt.write_text(_GARAGE_TOML_WITH_ADMIN)
+        assert discover_admin_api(gt) == (
+            "http://127.0.0.1:3903",
+            "/etc/garage/secrets/admin_token",
+        )
+
+    def test_empty_when_no_admin_section(self, tmp_path: Path) -> None:
+        gt = tmp_path / "garage.toml"
+        gt.write_text('[s3_api]\napi_bind_addr = "0.0.0.0:3900"\n')
+        assert discover_admin_api(gt) == ("", "")
+
+    def test_empty_when_inline_token_only(self, tmp_path: Path) -> None:
+        # No admin_token_file to point at; operator wires the token by hand.
+        gt = tmp_path / "garage.toml"
+        gt.write_text('[admin]\napi_bind_addr = "0.0.0.0:3903"\nadmin_token = "inline"\n')
+        assert discover_admin_api(gt) == ("", "")
+
+    def test_empty_when_file_missing(self, tmp_path: Path) -> None:
+        assert discover_admin_api(tmp_path / "nope.toml") == ("", "")
+
+
+class TestAppendEmitsAdminLines:
+    def test_admin_keys_written_when_discovered(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "stormpulse.toml"
+        cfg.write_text(_BASE_PULSE_TOML)
+        append_garage_section(
+            cfg,
+            container_name="garaged",
+            garage_binary="/garage",
+            docker_binary="/usr/bin/docker",
+            garage_config_path="/home/storm/garage/etc/garage.toml",
+            state_push_interval_seconds=5,
+            admin_url="http://127.0.0.1:3903",
+            admin_token_file="/etc/garage/secrets/admin_token",
+        )
+        with open(cfg, "rb") as f:
+            raw = tomllib.load(f)
+        assert raw["garage"]["admin_url"] == "http://127.0.0.1:3903"
+        assert raw["garage"]["admin_token_file"] == "/etc/garage/secrets/admin_token"
+
+    def test_no_admin_keys_when_not_discovered(self, tmp_path: Path) -> None:
+        cfg = tmp_path / "stormpulse.toml"
+        cfg.write_text(_BASE_PULSE_TOML)
+        append_garage_section(
+            cfg,
+            container_name="garaged",
+            garage_binary="/garage",
+            docker_binary="/usr/bin/docker",
+            garage_config_path="/home/storm/garage/etc/garage.toml",
+            state_push_interval_seconds=5,
+        )
+        with open(cfg, "rb") as f:
+            raw = tomllib.load(f)
+        assert "admin_url" not in raw["garage"]
+        assert "admin_token_file" not in raw["garage"]

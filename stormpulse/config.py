@@ -142,6 +142,12 @@ class GarageConfig:
     docker_binary: str
     config_path: Path
     state_push_interval_seconds: float
+    # Garage admin HTTP API (port 3903). Optional: empty when not configured,
+    # in which case admin-API-backed commands (set-quota) fail loudly rather
+    # than silently. admin_token is the resolved Bearer token (a node secret,
+    # never sent over the wire), read inline or from admin_token_file.
+    admin_url: str = ""
+    admin_token: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -490,6 +496,25 @@ def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
     if interval <= 0:
         raise ConfigError("'state_push_interval_seconds' in [garage] must be positive")
 
+    # Optional admin HTTP API wiring. admin_token may be given inline or, like
+    # Garage's own garage.toml, via a file path; the file wins is read once at
+    # startup. Both absent means the admin API is simply not configured.
+    admin_url = section.get("admin_url", "")
+    if admin_url and not admin_url.startswith(("http://", "https://")):
+        raise ConfigError(
+            f"'admin_url' in [garage] must start with http:// or https://, got {admin_url!r}"
+        )
+    admin_token = section.get("admin_token", "")
+    admin_token_file = section.get("admin_token_file", "")
+    if admin_token_file and not admin_token:
+        try:
+            admin_token = Path(admin_token_file).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(
+                f"'admin_token_file' in [garage] could not be read "
+                f"({admin_token_file!r}): {exc}"
+            )
+
     return GarageConfig(
         enabled=enabled,
         container_name=container_name,
@@ -497,6 +522,8 @@ def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
         docker_binary=docker_binary,
         config_path=config_path,
         state_push_interval_seconds=interval,
+        admin_url=admin_url,
+        admin_token=admin_token,
     )
 
 
