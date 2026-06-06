@@ -9,11 +9,10 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 from stormpulse.config import GarageConfig
+from stormpulse.garage import admin_api
 from stormpulse.garage.parse import (
     GarageParseError,
     GaragePeer,
-    parse_bucket_info,
-    parse_bucket_list,
     parse_key_list,
     parse_stats,
     parse_status,
@@ -150,10 +149,114 @@ def _try_parse[T](
         return None
 
 
-def collect_garage_state(config: GarageConfig) -> GarageState | None:
-    """Collect full Garage state by running status, stats, and bucket info commands.
+def _perm_flags(permissions: dict[str, Any] | None) -> str:
+    """Render Garage's structured key permissions as the legacy ``RWO`` string.
 
-    Returns None if the node is unreachable or the output can't be parsed.
+    The CLI ``bucket info`` keys table printed read/write/owner as the flags
+    ``R``/``W``/``O``; the admin API returns ``{"read","write","owner"}`` booleans
+    (``ApiBucketKeyPerm``). We keep emitting the same string so nothing
+    downstream of the state push changes shape.
+    """
+    p = permissions or {}
+    return (
+        ("R" if p.get("read") else "")
+        + ("W" if p.get("write") else "")
+        + ("O" if p.get("owner") else "")
+    )
+
+
+def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
+    """Map a ``GetBucketInfoResponse`` (admin API v2 JSON) to a GarageBucket.
+
+    Field names are the exact v2 schema: ``bytes``/``objects`` are int64,
+    ``quotas.maxSize``/``maxObjects`` are int-or-null, ``websiteConfig`` is an
+    object-or-null, and each key carries ``accessKeyId``/``name``/``permissions``
+    inline (so the separate ``key list`` lookup is no longer needed for buckets).
+    Every read is defensive: a missing or null field degrades to a zero-value,
+    never a KeyError that would crash the tick.
+    """
+    quotas = info.get("quotas") or {}
+    website = info.get("websiteConfig") or {}
+    global_aliases = info.get("globalAliases") or []
+    keys: list[GarageKeyRef] = []
+    for k in info.get("keys") or []:
+        # bucketLocalAliases is per-key in the v2 schema but GarageKeyRef carries
+        # only id/name/permissions, matching the old CLI state push, so it's dropped.
+        keys.append(
+            GarageKeyRef(
+                key_id=k.get("accessKeyId", "") or "",
+                key_name=k.get("name", "") or "",
+                permissions=_perm_flags(k.get("permissions")),
+            )
+        )
+    return GarageBucket(
+        id=info.get("id", "") or "",
+        alias=global_aliases[0] if global_aliases else "",
+        size_bytes=int(info.get("bytes") or 0),
+        object_count=int(info.get("objects") or 0),
+        keys=keys,
+        website_access=bool(info.get("websiteAccess", False)),
+        website_index_document=website.get("indexDocument") or "index.html",
+        website_error_document=website.get("errorDocument"),
+        quota_max_size_bytes=quotas.get("maxSize"),
+        quota_max_objects=quotas.get("maxObjects"),
+    )
+
+
+def _collect_buckets_via_admin(config: GarageConfig) -> list[GarageBucket] | None:
+    """List buckets and fetch each one's info over the admin HTTP API.
+
+    Returns the bucket list, or **None** when the cluster can't be enumerated
+    (admin API unconfigured, or ``ListBuckets`` unreachable). The caller treats
+    None as "skip this tick": pushing an empty set would read downstream as
+    "every bucket vanished" (BUCKETS-006 invariant 4 - no fresh read, no action).
+    A single bucket whose ``GetBucketInfo`` fails is skipped and logged, never
+    crashing the tick - stale-and-missing-one beats acting on a bad read.
+
+    This is the migration of ADR garage/001 follow-up #1: it replaces the
+    per-bucket CLI ``bucket info`` spawn (and its lossy text size/quota parse)
+    with exact-integer JSON, which is what lets the website anchor BUCKETS-006's
+    quota_bytes on this read.
+    """
+    admin_url, admin_token = config.admin_url, config.admin_token
+    if not (admin_url and admin_token):
+        logger.error(
+            "Garage admin API not configured (admin_url + admin_token); cannot "
+            "collect bucket state. Set [garage] admin_url and admin_token_file."
+        )
+        return None
+    items, err = admin_api.list_buckets(admin_url=admin_url, admin_token=admin_token)
+    if items is None:
+        logger.warning("ListBuckets failed; skipping bucket state this tick: %s", err)
+        return None
+    buckets: list[GarageBucket] = []
+    for item in items:
+        bucket_id = item.get("id", "")
+        if not bucket_id:
+            continue
+        info, err = admin_api.get_bucket_info(
+            admin_url=admin_url, admin_token=admin_token, bucket_ref=bucket_id,
+        )
+        if info is None:
+            logger.warning(
+                "GetBucketInfo failed for %s; skipping this bucket: %s",
+                bucket_id, err,
+            )
+            continue
+        buckets.append(_bucket_from_admin_info(info))
+    return buckets
+
+
+def collect_garage_state(config: GarageConfig) -> GarageState | None:
+    """Collect full Garage node state for the state push.
+
+    Node telemetry (status, stats, key list) is read via the Garage CLI; the
+    per-bucket state (sizes, object counts, quotas, keys) is read via the admin
+    HTTP API (ADR garage/001 follow-up #1) so the website can anchor
+    BUCKETS-006's quota_bytes on exact JSON instead of scraped text.
+
+    Returns None if the node is unreachable, the CLI output can't be parsed, or
+    the bucket set can't be enumerated this tick - the caller skips the push.
     """
     nodes = _try_parse(config, parse_status, "status", what="status")
     if not nodes:
@@ -167,50 +270,14 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
     )
     key_name_map = {k.key_id: k.name for k in key_entries}
 
-    buckets: list[GarageBucket] = []
-    for entry in (
-        _try_parse(config, parse_bucket_list, "bucket", "list", what="bucket list")
-        or []
-    ):
-        # Address bucket info by global alias when present, otherwise by UUID.
-        # The Garage CLI accepts a bucket UUID anywhere it accepts a global alias.
-        # Post-bucket-naming-refactor most customer buckets won't have a global
-        # alias - only website-hosted ones do - so dropping alias-less buckets
-        # here would silently hide them from the dashboard.
-        bucket_ref = entry.global_alias or entry.bucket_id
-        if not bucket_ref:
-            continue
-        info = _try_parse(
-            config,
-            parse_bucket_info,
-            "bucket",
-            "info",
-            bucket_ref,
-            what=f"bucket info for {bucket_ref}",
-        )
-        if info is None:
-            continue
-        buckets.append(
-            GarageBucket(
-                id=info.bucket_id,
-                alias=entry.global_alias,
-                size_bytes=info.size_bytes,
-                object_count=info.object_count,
-                keys=[
-                    GarageKeyRef(
-                        k.access_key_id,
-                        key_name_map.get(k.access_key_id, ""),
-                        k.permissions,
-                    )
-                    for k in info.keys
-                ],
-                website_access=info.website_access,
-                website_index_document=info.website_index_document,
-                website_error_document=info.website_error_document,
-                quota_max_size_bytes=info.quota_max_size_bytes,
-                quota_max_objects=info.quota_max_objects,
-            )
-        )
+    buckets = _collect_buckets_via_admin(config)
+    if buckets is None:
+        # Admin API unconfigured/unreachable or ListBuckets failed. Skip the whole
+        # tick rather than push an empty bucket set, which reads downstream as
+        # "every bucket vanished". The dashboard sees no fresh push and shows
+        # degraded; the next tick retries (BUCKETS-006 invariant 4).
+        logger.warning("Bucket state unavailable this tick; skipping state push")
+        return None
 
     return GarageState(
         node_id=node.node_id,
