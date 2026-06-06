@@ -10,3 +10,5 @@ _temp/
 storm-pulse.wiki/
 .env
 venv/
+__pycache__/
+*.pyc
