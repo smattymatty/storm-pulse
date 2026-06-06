@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from pathlib import Path
 
@@ -850,13 +851,27 @@ def test_log_groups_parsed(write_config: Callable[[str], Path]) -> None:
     assert g.retention_days == 90
 
 
-def test_log_groups_duplicate_name_raises(write_config: Callable[[str], Path]) -> None:
+# A malformed individual log group is SKIPPED with a warning, not fatal
+# (degrade-don't-crash, 2026-06-06). The valid groups still load; the bad one is
+# dropped and its reason is logged. Only `log_groups` not being an array is fatal
+# (see test_log_groups_must_be_array). Each test below asserts the bad group did
+# not load AND that the specific validation reason was warned.
+
+
+def test_log_groups_duplicate_name_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
     toml = MINIMAL_VALID + _VALID_LOG_GROUP + _VALID_LOG_GROUP
-    with pytest.raises(ConfigError, match="Duplicate"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert len(cfg.log_groups) == 1  # first kept, duplicate dropped
+    assert "Duplicate" in caplog.text
 
 
-def test_log_groups_invalid_name_raises(write_config: Callable[[str], Path]) -> None:
+def test_log_groups_invalid_name_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -871,13 +886,15 @@ max_lines_per_batch = 200
 retention_days = 90
 """
     )
-    with pytest.raises(ConfigError, match="alphanumeric"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "alphanumeric" in caplog.text
 
 
-def test_log_groups_non_file_source_type_raises(
-    write_config: Callable[[str], Path],
+def test_log_groups_non_file_source_type_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -892,11 +909,15 @@ max_lines_per_batch = 200
 retention_days = 90
 """
     )
-    with pytest.raises(ConfigError, match="'source_type'"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "source_type" in caplog.text
 
 
-def test_log_groups_relative_path_raises(write_config: Callable[[str], Path]) -> None:
+def test_log_groups_relative_path_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -911,11 +932,41 @@ max_lines_per_batch = 200
 retention_days = 90
 """
     )
-    with pytest.raises(ConfigError, match="absolute"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "absolute" in caplog.text
 
 
-def test_log_groups_unknown_parser_raises(write_config: Callable[[str], Path]) -> None:
+def test_log_groups_file_source_missing_source_path_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The 2026-06-06 incident: the caddy log offer wrote `path` instead of
+    `source_path`. A file group missing `source_path` must skip (warned), not
+    crash-loop the whole agent."""
+    caplog.set_level(logging.WARNING)
+    toml = (
+        MINIMAL_VALID
+        + """
+[[log_groups]]
+name = "caddy"
+enabled = true
+source_type = "file"
+path = "/var/log/caddy/access.log"
+parser = "caddy_json"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    )
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "source_path" in caplog.text
+
+
+def test_log_groups_unknown_parser_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -930,13 +981,35 @@ max_lines_per_batch = 200
 retention_days = 90
 """
     )
-    with pytest.raises(ConfigError, match="'parser'"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "parser" in caplog.text
 
 
-def test_log_groups_interval_too_low_raises(
-    write_config: Callable[[str], Path],
+def test_log_groups_one_bad_one_good_keeps_good(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """A bad group does not take the valid ones down with it."""
+    caplog.set_level(logging.WARNING)
+    bad = """
+[[log_groups]]
+name = "broken"
+enabled = true
+source_type = "file"
+parser = "stormpulse"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+retention_days = 90
+"""
+    cfg = load_config(write_config(MINIMAL_VALID + _VALID_LOG_GROUP + bad))
+    assert [g.name for g in cfg.log_groups] == ["storage"]
+    assert "broken" in caplog.text or "index 1" in caplog.text
+
+
+def test_log_groups_interval_too_low_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -951,8 +1024,9 @@ max_lines_per_batch = 200
 retention_days = 90
 """
     )
-    with pytest.raises(ConfigError, match="ship_interval_seconds"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "ship_interval_seconds" in caplog.text
 
 
 def test_log_groups_interval_two_seconds_accepted(
@@ -979,7 +1053,10 @@ retention_days = 90
     assert cfg.log_groups[0].ship_interval_seconds == 2.0
 
 
-def test_log_groups_batch_too_large_raises(write_config: Callable[[str], Path]) -> None:
+def test_log_groups_batch_too_large_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -994,13 +1071,15 @@ max_lines_per_batch = 500
 retention_days = 90
 """
     )
-    with pytest.raises(ConfigError, match="max_lines_per_batch"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "max_lines_per_batch" in caplog.text
 
 
-def test_log_groups_retention_out_of_range_raises(
-    write_config: Callable[[str], Path],
+def test_log_groups_retention_out_of_range_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -1015,8 +1094,9 @@ max_lines_per_batch = 200
 retention_days = 0
 """
     )
-    with pytest.raises(ConfigError, match="retention_days"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "retention_days" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -1145,9 +1225,10 @@ def test_log_groups_must_be_array(write_config: Callable[[str], Path]) -> None:
         load_config(write_config(toml))
 
 
-def test_log_groups_filter_contains_must_be_string(
-    write_config: Callable[[str], Path],
+def test_log_groups_filter_contains_must_be_string_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
 ) -> None:
+    caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
         + """
@@ -1163,8 +1244,9 @@ retention_days = 30
 filter_contains = 42
 """
     )
-    with pytest.raises(ConfigError, match="filter_contains"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "filter_contains" in caplog.text
 
 
 def test_log_groups_filter_contains_defaults_to_empty(
