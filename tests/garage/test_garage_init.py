@@ -485,24 +485,37 @@ _BASE_PULSE_TOML = '[agent]\npulse_token = "x"\n'
 
 
 class TestDiscoverAdminApi:
-    def test_derives_loopback_url_and_token_file(self, tmp_path: Path) -> None:
+    def test_resolves_host_token_path_alongside_garage_toml(self, tmp_path: Path) -> None:
+        # garage.toml's admin_token_file is the container path (/etc/garage/...),
+        # unreadable on the host. Discovery must re-root it to the secrets/ dir
+        # beside garage.toml and verify it exists, the fix for the crash loop.
         gt = tmp_path / "garage.toml"
-        gt.write_text(_GARAGE_TOML_WITH_ADMIN)
+        gt.write_text(_GARAGE_TOML_WITH_ADMIN)  # admin_token_file = /etc/garage/secrets/admin_token
+        secrets = tmp_path / "secrets"
+        secrets.mkdir()
+        (secrets / "admin_token").write_text("tok")
         assert discover_admin_api(gt) == (
             "http://127.0.0.1:3903",
-            "/etc/garage/secrets/admin_token",
+            str(secrets / "admin_token"),
         )
+
+    def test_url_but_no_token_when_file_unfindable(self, tmp_path: Path) -> None:
+        # API enabled but no readable token on the host -> (url, ""), so init
+        # warns rather than writing a path that crash-loops the agent.
+        gt = tmp_path / "garage.toml"
+        gt.write_text(_GARAGE_TOML_WITH_ADMIN)
+        assert discover_admin_api(gt) == ("http://127.0.0.1:3903", "")
 
     def test_empty_when_no_admin_section(self, tmp_path: Path) -> None:
         gt = tmp_path / "garage.toml"
         gt.write_text('[s3_api]\napi_bind_addr = "0.0.0.0:3900"\n')
         assert discover_admin_api(gt) == ("", "")
 
-    def test_empty_when_inline_token_only(self, tmp_path: Path) -> None:
-        # No admin_token_file to point at; operator wires the token by hand.
+    def test_url_but_no_token_when_inline_only(self, tmp_path: Path) -> None:
+        # Inline admin_token, no file to point at: API found, token wired by hand.
         gt = tmp_path / "garage.toml"
         gt.write_text('[admin]\napi_bind_addr = "0.0.0.0:3903"\nadmin_token = "inline"\n')
-        assert discover_admin_api(gt) == ("", "")
+        assert discover_admin_api(gt) == ("http://127.0.0.1:3903", "")
 
     def test_empty_when_file_missing(self, tmp_path: Path) -> None:
         assert discover_admin_api(tmp_path / "nope.toml") == ("", "")

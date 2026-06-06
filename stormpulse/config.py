@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class ConfigError(Exception):
@@ -510,10 +513,16 @@ def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
         try:
             admin_token = Path(admin_token_file).read_text(encoding="utf-8").strip()
         except OSError as exc:
-            raise ConfigError(
-                f"'admin_token_file' in [garage] could not be read "
-                f"({admin_token_file!r}): {exc}"
+            # The admin API is optional; a bad token path must NOT crash the whole
+            # agent into a restart loop. Degrade: disable the admin API (quota
+            # writes then fail loudly per-command) and keep everything else running.
+            logger.warning(
+                "[garage] admin_token_file %r could not be read (%s); disabling the "
+                "Garage admin API. Quota writes will fail until this is fixed; the "
+                "rest of the agent runs normally.",
+                admin_token_file, exc,
             )
+            admin_token = ""
 
     return GarageConfig(
         enabled=enabled,
