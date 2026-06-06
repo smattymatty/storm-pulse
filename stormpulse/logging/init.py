@@ -272,7 +272,12 @@ def logging_init_step(config_path: Path) -> None:
         f"  Found {len(containers)} running container(s): {', '.join(containers)}",
         file=sys.stderr,
     )
-    log_groups = prompt_logging_setup(containers, existing_groups=[])
+    # Read existing group names so re-running init never appends a duplicate block
+    # (a duplicate name is now skipped-with-warning at load, but not writing it in
+    # the first place is cleaner). The `logging init` command already does this via
+    # run_init; this is the framework-step path catching up.
+    existing = _existing_log_group_names(config_path)
+    log_groups = prompt_logging_setup(containers, existing_groups=existing)
     if not log_groups:
         return
 

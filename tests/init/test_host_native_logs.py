@@ -47,7 +47,12 @@ def test_log_file_signal_appends_on_confirm(cfg: Path) -> None:
     caddy_group = next(g for g in raw["log_groups"] if g["name"] == "caddy")
     assert caddy_group["source_type"] == "file"
     assert caddy_group["parser"] == "caddy_json"
-    assert caddy_group["path"] == str(DEFAULT_CADDY_ACCESS_LOG)
+    # Must be `source_path` (the schema key the loader requires for file sources),
+    # NOT `path`. Asserting `path` here is what let the 2026-06-06 crash-loop ship:
+    # the template wrote `path`, the loader needs `source_path`, and this test
+    # rubber-stamped the wrong key.
+    assert "path" not in caddy_group
+    assert caddy_group["source_path"] == str(DEFAULT_CADDY_ACCESS_LOG)
 
 
 def test_section_signal_appends_on_confirm(cfg: Path) -> None:
