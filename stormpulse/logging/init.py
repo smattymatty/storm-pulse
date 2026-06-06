@@ -115,9 +115,12 @@ def prompt_logging_setup(
         interval_str = prompt("Ship interval seconds", default="10")
         try:
             interval = int(interval_str)
-            if interval >= 5:
+            # Floor matches config.py's load-time check (2s), so the feed can keep
+            # pace with the 2s metrics push. Default stays 10 to keep new installs
+            # conservative; tighter is opt-in.
+            if interval >= 2:
                 break
-            print("  Must be >= 5", file=sys.stderr)
+            print("  Must be >= 2", file=sys.stderr)
         except ValueError:
             print("  Must be a positive integer", file=sys.stderr)
 
