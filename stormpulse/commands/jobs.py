@@ -183,6 +183,12 @@ class JobManager:
     ) -> None:
         """Drive one job from spawn to terminal result."""
         start = time.monotonic()
+        # In-flight job count at this job's start. A burst of concurrent
+        # dispatches (e.g. the BUCKETS-006 recompute setting N bucket quotas at
+        # once) then reads as overlapping work, not escalating per-job slowness:
+        # the durations within a wave climb only because the jobs run together and
+        # contend, so the wave's wall-clock is ~the slowest one, NOT the sum.
+        concurrent = len(self._jobs)
         progress = self._make_progress_callback(request_id, command, group)
         outcome: JobOutcome
         try:
@@ -220,11 +226,12 @@ class JobManager:
 
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
-            "Job %s (request_id=%s) finished success=%s duration_ms=%d",
+            "Job %s (request_id=%s) finished success=%s duration_ms=%d concurrent=%d",
             command,
             request_id,
             outcome.success,
             duration_ms,
+            concurrent,
         )
         result = CommandResultPayload(
             request_id=request_id,
