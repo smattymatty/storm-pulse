@@ -131,7 +131,7 @@ def test_first_run_seeds_from_now(tmp_path: Path) -> None:
                 "stormpulse.logging.tailer.subprocess.Popen",
                 return_value=fake,
             ),
-            patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.05),
+            patch.object(tailer, "_read_timeout", 0.05),
         ):
             lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
     finally:
@@ -163,7 +163,7 @@ def test_drains_available_lines(tmp_path: Path) -> None:
         os.write(w, b"2026-04-15T13:00:01.000000000Z first\n")
         os.write(w, b"2026-04-15T13:00:02.000000000Z second\n")
         _inject_fake_proc(tailer, fake)
-        with patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.2):
+        with patch.object(tailer, "_read_timeout", 0.2):
             lines = tailer._drain_lines(max_lines=10)
     finally:
         os.close(w)
@@ -187,7 +187,7 @@ def test_returns_empty_when_silent(tmp_path: Path) -> None:
     fake = _FakeProc(read_fd=r)
     try:
         _inject_fake_proc(tailer, fake)
-        with patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.1):
+        with patch.object(tailer, "_read_timeout", 0.1):
             started = time.monotonic()
             lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
             elapsed = time.monotonic() - started
@@ -214,7 +214,7 @@ def test_max_lines_respected(tmp_path: Path) -> None:
         for i in range(20):
             os.write(w, f"2026-04-15T13:00:{i:02d}.000000Z line {i}\n".encode())
         _inject_fake_proc(tailer, fake)
-        with patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.2):
+        with patch.object(tailer, "_read_timeout", 0.2):
             lines = tailer._drain_lines(max_lines=5)
     finally:
         os.close(w)
@@ -235,10 +235,10 @@ def test_partial_line_buffered_across_calls(tmp_path: Path) -> None:
     try:
         os.write(w, b"2026-04-15T13:00:01.000000Z par")
         _inject_fake_proc(tailer, fake)
-        with patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.1):
+        with patch.object(tailer, "_read_timeout", 0.1):
             first = tailer._drain_lines(max_lines=10)
         os.write(w, b"tial\n")
-        with patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.1):
+        with patch.object(tailer, "_read_timeout", 0.1):
             second = tailer._drain_lines(max_lines=10)
     finally:
         os.close(w)
@@ -345,7 +345,7 @@ def test_to_ts_advanced_past_last_line(tmp_path: Path) -> None:
         os.write(w, b"2026-04-15T13:23:51.766230288Z first\n")
         os.write(w, b"2026-04-15T13:23:53.100000000Z last\n")
         _inject_fake_proc(tailer, fake)
-        with patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.2):
+        with patch.object(tailer, "_read_timeout", 0.2):
             lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
     finally:
         os.close(w)
@@ -378,7 +378,7 @@ def test_position_not_advanced_without_confirm(tmp_path: Path) -> None:
     try:
         os.write(w, b"2026-04-15T13:23:51.000000Z new line\n")
         _inject_fake_proc(tailer, fake)
-        with patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.2):
+        with patch.object(tailer, "_read_timeout", 0.2):
             tailer.read_new_lines(max_lines=10)
     finally:
         os.close(w)
@@ -513,7 +513,7 @@ def test_read_new_lines_never_raises(tmp_path: Path) -> None:
                 "stormpulse.logging.tailer.os.read",
                 side_effect=OSError(errno.EIO, "pipe error"),
             ),
-            patch.object(tailer, "_READ_TIMEOUT_SECONDS", 0.2),
+            patch.object(tailer, "_read_timeout", 0.2),
         ):
             lines, _, _ = tailer.read_new_lines(max_lines=10)
     finally:

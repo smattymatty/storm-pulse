@@ -268,11 +268,11 @@ class StreamingDockerTailer:
     """
 
     _RESPAWN_DELAY_SECONDS = 5.0
-    # Slightly less than ship_interval_seconds=10 so read_new_lines always
-    # returns before the caller's next tick even on a silent container.
-    _READ_TIMEOUT_SECONDS = 9.0
     _READ_CHUNK_BYTES = 65536
     _TERMINATE_GRACE_SECONDS = 3.0
+    # Floor for the per-drain read window, so a sub-second ship_interval still
+    # coalesces a burst rather than returning empty-handed every cycle.
+    _MIN_READ_TIMEOUT_SECONDS = 0.5
 
     def __init__(self, group: LogGroupConfig, position_store: LogPositionStore) -> None:
         self._group = group
@@ -281,6 +281,16 @@ class StreamingDockerTailer:
         self._buffer: bytes = b""
         # Seed so the first ever call attempts a spawn (won't be throttled).
         self._last_respawn_attempt: float = float("-inf")
+        # The per-drain read window TRACKS ship_interval (slightly under it, so a
+        # busy container's drain returns before the caller's next tick) instead of
+        # a hardcoded 9s. The old 9s constant was sized for the old 10s default
+        # and never scaled down: with ship_interval=2 it pinned the activity feed
+        # at ~9-11s regardless of the setting. Now a 2s interval drains ~1.8s and
+        # the feed keeps pace with the 2s metrics push.
+        self._read_timeout = max(
+            self._MIN_READ_TIMEOUT_SECONDS,
+            self._group.ship_interval_seconds * 0.9,
+        )
 
     def read_new_lines(self, max_lines: int) -> tuple[list[str], str, str]:
         """Drain up to ``max_lines`` lines from the running subprocess stdout.
@@ -421,7 +431,7 @@ class StreamingDockerTailer:
             return []
         fd = self._proc.stdout.fileno()
         lines: list[str] = []
-        deadline = time.monotonic() + self._READ_TIMEOUT_SECONDS
+        deadline = time.monotonic() + self._read_timeout
         eof = False
 
         while len(lines) < max_lines:
