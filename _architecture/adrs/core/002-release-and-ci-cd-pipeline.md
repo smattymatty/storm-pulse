@@ -13,7 +13,7 @@ adr:
 
 ## Context
 
-storm-pulse ships as `pip install storm-pulse-agent` from PyPI. The agent runs as root on every VPS Storm operates, which makes a compromised PyPI credential the worst class of supply-chain attack: anyone who can publish storm-pulse-agent owns every host that installs it.
+storm-pulse ships as `pip install storm-pulse-agent` from PyPI. The agent runs on every VPS Storm operates and, even rootless (CORE-003), holds enough local privilege to manage that host's Garage and read its admin token. That makes a compromised PyPI credential the worst class of supply-chain attack: anyone who can publish storm-pulse-agent reaches every host that installs it.
 
 Project-scoping limits the blast radius of a leaked credential to one package, but here that one package is the one that matters. The strongest mitigation is to keep no standing PyPI credential on any server. Publishing happens by hand, from my workstation.
 
