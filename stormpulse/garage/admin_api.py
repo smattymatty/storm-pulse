@@ -174,6 +174,35 @@ def create_key(
     return data, ""
 
 
+def create_bucket(
+    *,
+    admin_url: str,
+    admin_token: str,
+    local_alias: dict[str, Any] | None = None,
+    global_alias: str | None = None,
+) -> tuple[dict[str, Any] | None, str]:
+    """Create a bucket via ``POST /v2/CreateBucket``.
+
+    Both aliases are optional; omit both for an alias-less bucket. A
+    ``local_alias`` of ``{"accessKeyId", "alias", "allow": {read,write,owner}}``
+    makes Garage atomically create the bucket, bind that key's local alias, and
+    grant its permissions in one call. Returns the ``GetBucketInfoResponse``
+    dict (carrying the full ``id``), or ``(None, error)``.
+    """
+    payload: dict[str, Any] = {}
+    if global_alias is not None:
+        payload["globalAlias"] = global_alias
+    if local_alias is not None:
+        payload["localAlias"] = local_alias
+    body = json.dumps(payload).encode("utf-8")
+    data, err = _post_json(admin_url, admin_token, "/v2/CreateBucket", body)
+    if data is None:
+        return None, err
+    if not isinstance(data, dict):
+        return None, "CreateBucket returned a non-object body"
+    return data, ""
+
+
 def delete_key(
     *, admin_url: str, admin_token: str, access_key_id: str,
 ) -> tuple[bool, str]:
