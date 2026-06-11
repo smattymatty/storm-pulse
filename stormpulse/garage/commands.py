@@ -622,7 +622,13 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "garage_bucket_clear"
             ],  # internal - handled by JobManager, not a subprocess
             timeout=600,  # per-batch reference; long_running ignores it for total duration
-            description="Bulk-delete every object in a bucket via the local Garage S3 endpoint",
+            description=(
+                "Bulk-delete every object in a bucket via the local Garage "
+                "S3 endpoint. Two modes: customer-secret (bucket_name + "
+                "credentials) or credential-less purge (bucket_id, no "
+                "credentials; the agent self-mints a temporary key, ADR "
+                "BUCKETS-010)"
+            ),
             requires_confirmation=True,
             sensitive_output=True,  # the secret arrives in params; never log them
             long_running=True,
@@ -631,7 +637,16 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     placeholder="bucket_name",
                     default=None,
                     pattern=_BUCKET_NAME_PATTERN,
-                    description="Bucket to clear",
+                    description="Bucket to clear (customer-secret mode)",
+                ),
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
+                    default=None,
+                    pattern=_BUCKET_ID_PATTERN,
+                    description=(
+                        "Bucket id (garage_bucket_id, never the local alias) "
+                        "for the credential-less purge clear"
+                    ),
                 ),
                 "s3_endpoint": ParamDef(
                     placeholder="s3_endpoint",
@@ -779,7 +794,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
 
     return {
-        "garage_bucket_clear": make_clear_bucket_handler,
+        "garage_bucket_clear": (
+            lambda params: make_clear_bucket_handler(config, params)
+        ),
         "garage_bucket_set_quota": (
             lambda params: make_set_quota_handler(
                 params, admin_url=config.admin_url, admin_token=config.admin_token,

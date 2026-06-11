@@ -1,13 +1,28 @@
 """Handler for ``garage_bucket_clear``.
 
 Bulk-deletes every object in a bucket via the local Garage S3 endpoint.
-The customer's admin secret rides in dispatch params, lives in process
-memory for the job's lifetime only, and is never persisted or logged.
+Two modes, selected by the param shape:
+
+- Customer-secret mode (the dashboard clear): the customer's admin secret
+  rides in dispatch params, lives in process memory for the job's lifetime
+  only, and is never persisted or logged.
+- Credential-less mode (the ADR BUCKETS-010 purge clear): no secret in the
+  envelope, just the 16-char ``bucket_id``. The agent self-mints a temporary
+  key via the admin API, grants it on the bucket, attaches a throwaway local
+  alias to it, clears via that alias, and destroys the key. The alias step is
+  load-bearing: local aliases are key-scoped and S3 addresses buckets by
+  name, never by id, so the minted key resolves no name for the bucket until
+  it gets an alias of its own. The temporary secret is born, used, and
+  destroyed here; it never leaves the node and never appears in logs or the
+  command result.
+
 HeadBucket validates credentials before any delete; per-object errors
 from DeleteObjects fail the whole job (the bug class the Django path
 got wrong - 200 OK with non-empty Errors silently treated as success).
 
-Failure reasons: ``auth_failed``, ``partial_failure``, ``os_error``.
+Failure reasons: ``auth_failed``, ``partial_failure``, ``os_error``, and in
+credential-less mode ``admin_api_unconfigured``, ``purge_key_mint_failed``,
+``purge_key_grant_failed``, ``purge_alias_failed``.
 """
 
 from __future__ import annotations
@@ -17,6 +32,8 @@ import logging
 import time
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
+from stormpulse.config import GarageConfig
+from stormpulse.garage import admin_api
 from stormpulse.garage.s3 import (
     GarageS3Client,
     S3AuthError,
@@ -30,29 +47,71 @@ _BATCH_SIZE = 1000  # S3 DeleteObjects accepts at most 1000 keys per call.
 _MAX_REPORTED_ERRORS = 10  # Trim the errors array on the wire to keep messages small.
 
 
-def make_clear_bucket_handler(params: dict[str, str]) -> JobHandler | None:
+def make_clear_bucket_handler(
+    garage_config: GarageConfig,
+    params: dict[str, str],
+) -> JobHandler | None:
     """Build a JobHandler for ``garage_bucket_clear`` from runtime params.
 
-    Returns None if a required param is missing - the caller emits a
+    Two valid param shapes select the mode:
+
+    - ``bucket_name`` + ``s3_endpoint`` + ``region`` + ``access_key_id`` +
+      ``secret_access_key``: customer-secret clear.
+    - ``bucket_id`` + ``s3_endpoint`` + ``region``, no credentials:
+      credential-less purge clear.
+
+    Returns None if neither shape is satisfied - the caller emits a
     structured no-handler failure rather than crashing.
     """
-    required = (
-        "bucket_name",
-        "s3_endpoint",
-        "region",
-        "access_key_id",
-        "secret_access_key",
-    )
-    if not all(params.get(k) for k in required):
+    has_key_id = bool(params.get("access_key_id"))
+    has_secret = bool(params.get("secret_access_key"))
+    if has_key_id != has_secret:
+        logger.error(
+            "garage_bucket_clear got half a credential pair; send both "
+            "access_key_id and secret_access_key for a customer-secret "
+            "clear, or neither plus bucket_id for a credential-less "
+            "purge clear",
+        )
+        return None
+
+    if not (params.get("s3_endpoint") and params.get("region")):
         logger.error(
             "garage_bucket_clear missing required params: %s",
-            [k for k in required if not params.get(k)],
+            [k for k in ("s3_endpoint", "region") if not params.get(k)],
+        )
+        return None
+    endpoint = params["s3_endpoint"]
+    region = params["region"]
+
+    if not has_key_id:
+        if not params.get("bucket_id"):
+            logger.error(
+                "garage_bucket_clear without credentials requires bucket_id "
+                "(the 16-char garage_bucket_id, never the local alias)",
+            )
+            return None
+        bucket_id = params["bucket_id"]
+
+        async def credential_less_handler(
+            progress: ProgressCallback,
+        ) -> JobOutcome:
+            return await run_clear_bucket_credential_less(
+                progress=progress,
+                garage_config=garage_config,
+                bucket_id=bucket_id,
+                endpoint=endpoint,
+                region=region,
+            )
+
+        return credential_less_handler
+
+    if not params.get("bucket_name"):
+        logger.error(
+            "garage_bucket_clear missing required param: bucket_name",
         )
         return None
 
     bucket = params["bucket_name"]
-    endpoint = params["s3_endpoint"]
-    region = params["region"]
     access_key = params["access_key_id"]
     secret_key = params["secret_access_key"]
 
@@ -71,6 +130,172 @@ def make_clear_bucket_handler(params: dict[str, str]) -> JobHandler | None:
         return await run_clear_bucket(progress, client, bucket)
 
     return handler
+
+
+async def run_clear_bucket_credential_less(
+    *,
+    progress: ProgressCallback,
+    garage_config: GarageConfig,
+    bucket_id: str,
+    endpoint: str,
+    region: str,
+) -> JobOutcome:
+    """Mint a temporary key, alias it onto the bucket, clear, destroy the key.
+
+    The purge path (ADR BUCKETS-010): at purge time there is no customer
+    session, so no customer secret can ride in the envelope. The key is
+    minted first; everything after runs under a finally that deletes it, so
+    no failure path leaks a live key. Deleting the key drops its local
+    alias with it.
+    """
+    started_at = time.monotonic()
+    admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
+    if not (admin_url and admin_token):
+        # Fail loud: a credential-less clear never silently no-ops.
+        return _credential_less_failure(
+            failure_reason="admin_api_unconfigured",
+            stderr=(
+                "Garage admin API not configured (admin_url + admin_token); set "
+                "[garage] admin_url and admin_token_file."
+            ),
+            started_at=started_at,
+        )
+
+    # Agent-side naming, like provisioning: never the customer's chosen name.
+    purge_name = f"{bucket_id[:8]}-purge"
+
+    await progress("starting", 0, None, "Minting temporary purge key")
+    key_info, err = admin_api.create_key(
+        admin_url=admin_url, admin_token=admin_token, name=purge_name,
+    )
+    access_key_id = (key_info or {}).get("accessKeyId") or ""
+    temp_secret = (key_info or {}).get("secretAccessKey") or ""
+    if not (access_key_id and temp_secret):
+        return _credential_less_failure(
+            failure_reason="purge_key_mint_failed",
+            stderr=(
+                f"CreateKey failed for purge key {purge_name!r}: "
+                f"{err or 'no key material in response'}"
+            ),
+            started_at=started_at,
+        )
+
+    try:
+        outcome = await _clear_with_temp_key(
+            progress=progress,
+            admin_url=admin_url,
+            admin_token=admin_token,
+            bucket_id=bucket_id,
+            endpoint=endpoint,
+            region=region,
+            access_key_id=access_key_id,
+            temp_secret=temp_secret,
+            purge_alias=purge_name,
+            started_at=started_at,
+        )
+    finally:
+        key_deleted, delete_err = admin_api.delete_key(
+            admin_url=admin_url, admin_token=admin_token,
+            access_key_id=access_key_id,
+        )
+
+    outcome.extras["credential_less"] = True
+    outcome.extras["purge_key_id"] = access_key_id
+    if key_deleted:
+        outcome.extras.setdefault("manual_cleanup_required", [])
+    else:
+        # A leaked purge key holds read/write on a customer bucket. Loud,
+        # named, and on the wire so the operator sees it in the result.
+        logger.error(
+            "purge key %s could not be deleted after clear of bucket %s: %s; "
+            "delete it via the admin API (DeleteKey)",
+            access_key_id, bucket_id[:16], delete_err,
+        )
+        outcome.extras["manual_cleanup_required"] = [
+            {"type": "key", "id": access_key_id},
+        ]
+    return outcome
+
+
+async def _clear_with_temp_key(
+    *,
+    progress: ProgressCallback,
+    admin_url: str,
+    admin_token: str,
+    bucket_id: str,
+    endpoint: str,
+    region: str,
+    access_key_id: str,
+    temp_secret: str,
+    purge_alias: str,
+    started_at: float,
+) -> JobOutcome:
+    """Grant + alias the minted key, then run the ordinary clear via the alias."""
+    ok, err = admin_api.allow_bucket_key(
+        admin_url=admin_url, admin_token=admin_token,
+        bucket_ref=bucket_id, access_key_id=access_key_id,
+        read=True, write=True,
+    )
+    if not ok:
+        return _credential_less_failure(
+            failure_reason="purge_key_grant_failed",
+            stderr=f"AllowBucketKey failed for bucket {bucket_id[:16]}: {err}",
+            started_at=started_at,
+        )
+
+    ok, err = admin_api.add_bucket_alias_local(
+        admin_url=admin_url, admin_token=admin_token,
+        bucket_ref=bucket_id, access_key_id=access_key_id,
+        local_alias=purge_alias,
+    )
+    if not ok:
+        return _credential_less_failure(
+            failure_reason="purge_alias_failed",
+            stderr=(
+                f"AddBucketAlias (local) failed for bucket {bucket_id[:16]}: "
+                f"{err}. Without a key-scoped alias the minted key cannot "
+                "address the bucket over S3."
+            ),
+            started_at=started_at,
+        )
+
+    try:
+        client = GarageS3Client(
+            endpoint=endpoint,
+            region=region,
+            access_key=access_key_id,
+            secret_key=temp_secret,
+        )
+    except ValueError as exc:
+        return _credential_less_failure(
+            failure_reason="os_error",
+            stderr=f"Failed to construct S3 client for purge clear: {exc}",
+            started_at=started_at,
+        )
+
+    return await run_clear_bucket(progress, client, purge_alias)
+
+
+def _credential_less_failure(
+    *,
+    failure_reason: str,
+    stderr: str,
+    started_at: float,
+) -> JobOutcome:
+    """A failure outcome shaped like run_clear_bucket's, pre-clear."""
+    return JobOutcome(
+        success=False,
+        exit_code=-1,
+        stderr=stderr,
+        failure_reason=failure_reason,
+        extras={
+            "deleted_count": 0,
+            "failed_count": 0,
+            "errors": [],
+            "duration_seconds": _elapsed(started_at),
+            "error": stderr,
+        },
+    )
 
 
 async def run_clear_bucket(
