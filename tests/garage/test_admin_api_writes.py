@@ -215,6 +215,35 @@ class TestRemoveBucketAliasLocal:
         }
 
 
+class TestDeleteBucket:
+    def test_resolves_then_deletes_by_id(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = _install(monkeypatch)
+        ok, err = admin_api.delete_bucket(bucket_ref=_PREFIX, **_ADMIN)
+        assert (ok, err) == (True, "")
+        assert "GetBucketInfo" in calls[0]["path"]
+        assert calls[-1]["method"] == "POST"
+        assert calls[-1]["path"] == f"/v2/DeleteBucket?id={_FULL_ID}"
+        assert calls[-1]["body"] is None
+
+    def test_full_id_skips_resolve(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = _install(monkeypatch)
+        ok, _ = admin_api.delete_bucket(bucket_ref=_FULL_ID, **_ADMIN)
+        assert ok is True
+        assert all("GetBucketInfo" not in c["path"] for c in calls)
+        assert calls[-1]["path"] == f"/v2/DeleteBucket?id={_FULL_ID}"
+
+    def test_unresolvable_prefix_skips_delete(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = _install(monkeypatch, resolve_id=None)
+        ok, err = admin_api.delete_bucket(bucket_ref=_PREFIX, **_ADMIN)
+        assert ok is False
+        assert err
+        assert all("DeleteBucket" not in c["path"] for c in calls)
+
+
 class TestDeleteKey:
     def test_deletes_by_id_query_param(
         self, monkeypatch: pytest.MonkeyPatch,
