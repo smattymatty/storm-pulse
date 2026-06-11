@@ -76,22 +76,6 @@ The agent talks to Garage over the admin HTTP API. Three standing rules:
   security-sensitive path; the value here is brittleness and structured errors
   over speed.
 
-## Migration status
-
-CLI scraping is removed per operation, not all at once. A module may reach the
-CLI path (`garage.runner` / `garage.parse`) only while its operation is
-unmigrated; once an operation is on the API it never regresses to scraping.
-
-- [x] Quota write
-- [x] State read (per-bucket leg)
-- [ ] Delta fetch: detail only for buckets that showed activity, instead of every
-  bucket every tick. Still a full `ListBuckets` + per-bucket `GetBucketInfo` scan
-  (O(buckets) per tick); already on the API, this is a load optimization, not a
-  scraping removal.
-- [ ] Node telemetry (`status` / `stats` / `key list`)
-- [ ] Provisioning (create / grant / alias / delete): do last, most
-  security-sensitive
-
 ## Operator prerequisites (to activate the admin API)
 
 - Garage admin API enabled in `garage.toml` (`[admin] api_bind_addr` +
