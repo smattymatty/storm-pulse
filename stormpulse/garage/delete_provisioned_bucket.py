@@ -1,36 +1,31 @@
 """Handler for ``garage_delete_provisioned_bucket``.
 
-Garage v2.2.0's CLI has a deadlock: ``bucket delete --yes`` rejects buckets
-with local aliases, and ``bucket unalias`` rejects detaching the last alias
-as an orphan. We break it by attaching a temporary global alias, detaching
-every local, then deleting via the global (which goes with the bucket).
+Deletes an empty provisioned bucket via the admin HTTP API (ADR garage/001):
+read the bucket (``GetBucketInfo``), ``DeleteBucket`` by id (which removes the
+bucket together with ALL its aliases in one call), then best-effort cleanup of
+any access keys the deletion left unmoored.
 
-Idempotent on NoSuchBucket. Step 5 (orphaned key cleanup) is best-effort:
-failures accumulate in ``manual_cleanup_required`` rather than failing the
-orchestrator.
+The CLI's temp-global-alias + detach-locals dance is gone: it only existed to
+work around a Garage v2.2.0 CLI deadlock that the admin API does not have.
+``DeleteBucket`` is the single mutation, so there is no rollback. Idempotent on
+a missing bucket. Step 3 (key cleanup) is best-effort: failures accumulate in
+``manual_cleanup_required`` rather than failing the orchestrator.
 """
 
 from __future__ import annotations
 
 import logging
-import secrets
 import time
-from dataclasses import dataclass, field
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.config import GarageConfig
-from stormpulse.garage.parse import (
-    GarageParseError,
-    parse_bucket_info,
-    parse_key_info,
-)
-from stormpulse.garage.runner import run_garage  # reuse helper
+from stormpulse.garage import admin_api
 
 logger = logging.getLogger(__name__)
 
 
-_TOTAL_STEPS = 5
+_TOTAL_STEPS = 3
 
 
 def make_delete_provisioned_bucket_handler(
@@ -58,280 +53,85 @@ def make_delete_provisioned_bucket_handler(
     return handler
 
 
-@dataclass
-class _DeleteState:
-    """What's been done so far, for rollback."""
-
-    bucket_id: str
-    temp_global: str | None = None
-    temp_global_attached: bool = False
-    locals_detached: list[tuple[str, str]] = field(default_factory=list)
-    globals_detached: list[str] = field(default_factory=list)
-    final_ref: str | None = None
-    # Keys that had permissions on the bucket at step 1. Step 5
-    # iterates this list to clean up any that are now unmoored.
-    candidate_key_ids: list[str] = field(default_factory=list)
-    keys_deleted: list[str] = field(default_factory=list)
-    keys_skipped: list[str] = field(default_factory=list)
-    step_completed: str | None = None
-
-
 async def run_delete_provisioned_bucket(
     progress: ProgressCallback,
     garage_config: GarageConfig,
     bucket_id: str,
 ) -> JobOutcome:
-    """Run the delete flow with atomic rollback."""
+    """Read, delete, and clean up. No rollback - DeleteBucket is atomic."""
     started_at = time.monotonic()
-    state = _DeleteState(bucket_id=bucket_id)
+    admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
+    if not (admin_url and admin_token):
+        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        return _failure(
+            failure_reason="admin_api_unconfigured",
+            step_failed=None,
+            bucket_id=bucket_id,
+            step_completed=None,
+            stderr=(
+                "Garage admin API not configured (admin_url + admin_token); set "
+                "[garage] admin_url and admin_token_file."
+            ),
+            started_at=started_at,
+        )
 
-    # ---- Step 1: bucket info ----
+    # ---- Step 1: GetBucketInfo ----
     await progress("starting", 0, _TOTAL_STEPS, "Reading bucket state")
-    rc, stdout, stderr = await run_garage(
-        garage_config,
-        "bucket",
-        "info",
-        bucket_id,
+    info, err = admin_api.get_bucket_info(
+        admin_url=admin_url, admin_token=admin_token, bucket_ref=bucket_id,
     )
-    if rc != 0:
-        # Idempotent: if the bucket already doesn't exist, success.
-        if "NoSuchBucket" in stderr or "no such bucket" in stderr.lower():
-            return _success_already_gone(state, started_at)
+    if info is None:
+        # Idempotent: a bucket that's already gone is success.
+        if _is_not_found(err):
+            return _already_gone(bucket_id, started_at)
         return _failure(
             failure_reason="bucket_info_failed",
             step_failed="bucket_info",
-            state=state,
-            stderr=stderr,
+            bucket_id=bucket_id,
+            step_completed=None,
+            stderr=err,
             started_at=started_at,
-            rollback_status="not_required",
         )
-    try:
-        info = parse_bucket_info(stdout)
-    except GarageParseError as exc:
-        return _failure(
-            failure_reason="bucket_info_failed",
-            step_failed="bucket_info",
-            state=state,
-            stderr=f"Could not parse bucket info: {exc}",
-            started_at=started_at,
-            rollback_status="not_required",
-        )
-
-    # Early exit: non-empty buckets cannot be deleted. Fail here before
-    # mutating any Garage state (no temp alias attached, no locals
-    # detached), so the only side effect of the call is the bucket-info
-    # read. Without this, the orchestrator would do steps 2-3 of state
-    # changes, then trip ``BucketNotEmpty`` at step 4 and rollback - same
-    # outcome, more work, more chances for the rollback itself to leave
-    # residue.
-    if info.object_count > 0:
+    full_id = info.get("id") or ""
+    if int(info.get("objects") or 0) > 0:
+        # Customer-actionable: surface it before any mutation.
         return _failure(
             failure_reason="bucket_not_empty",
             step_failed="bucket_info",
-            state=state,
+            bucket_id=bucket_id,
+            step_completed=None,
             stderr=(
-                f"Bucket has {info.object_count} object(s). "
-                f"Clear the bucket before deleting."
+                f"Bucket has {int(info.get('objects') or 0)} object(s). "
+                "Clear the bucket before deleting."
             ),
             started_at=started_at,
-            rollback_status="not_required",
         )
-
-    # Enumerate aliases. parse_bucket_info exposes a single global_alias
-    # field (rare to have more than one); locals come from the keys
-    # list with non-empty local_alias.
-    existing_global = info.global_alias.strip() if info.global_alias else ""
-    local_aliases = [
-        (k.access_key_id, k.local_alias) for k in info.keys if k.local_alias
+    candidate_key_ids = [
+        k.get("accessKeyId") for k in info.get("keys") or [] if k.get("accessKeyId")
     ]
-    # Capture every key that had permissions or a local alias on this
-    # bucket - step 5 will check each one with ``key info`` to decide
-    # whether to delete it or leave it alone (shared key on another
-    # bucket).
-    state.candidate_key_ids = [k.access_key_id for k in info.keys]
-    state.step_completed = "bucket_info"
 
-    # ---- Step 2: ensure at least one global alias ----
-    # The bucket must end this step with a global alias we can use as
-    # the final delete reference. If one already exists, use it; else
-    # attach a temporary one. Locals can't be used as the final ref
-    # because ``bucket delete --yes`` doesn't accept local-alias
-    # syntax (locals are key-scoped).
-    await progress(
-        "running",
-        1,
-        _TOTAL_STEPS,
-        "Preparing teardown",
+    # ---- Step 2: DeleteBucket (removes the bucket and all its aliases) ----
+    await progress("running", 1, _TOTAL_STEPS, "Deleting bucket")
+    ok, err = admin_api.delete_bucket(
+        admin_url=admin_url, admin_token=admin_token, bucket_ref=full_id or bucket_id,
     )
-    if existing_global:
-        state.final_ref = existing_global
-    else:
-        state.temp_global = f"pulse-delete-{secrets.token_hex(6)}"
-        rc, _stdout, stderr = await run_garage(
-            garage_config,
-            "bucket",
-            "alias",
-            bucket_id,
-            state.temp_global,
-        )
-        if rc != 0:
-            return _failure(
-                failure_reason="temp_alias_attach_failed",
-                step_failed="temp_alias_attach",
-                state=state,
-                stderr=stderr,
-                started_at=started_at,
-                rollback_status="not_required",
-            )
-        state.temp_global_attached = True
-        state.final_ref = state.temp_global
-    state.step_completed = "temp_alias_attach"
-
-    # ---- Step 3: detach all local aliases ----
-    # Orphan rule allows this because we still have at least one
-    # global alias attached (real or temp).
-    await progress(
-        "running",
-        2,
-        _TOTAL_STEPS,
-        "Detaching local aliases",
-    )
-    for key_id, name in local_aliases:
-        rc, _stdout, stderr = await run_garage(
-            garage_config,
-            "bucket",
-            "unalias",
-            "--local",
-            key_id,
-            name,
-        )
-        if rc != 0:
-            rollback = await _rollback(garage_config, state)
-            return _failure(
-                failure_reason="local_alias_detach_failed",
-                step_failed="local_alias_detach",
-                state=state,
-                stderr=stderr,
-                started_at=started_at,
-                rollback_status=rollback.status,
-                extras_extra={
-                    "manual_cleanup_required": rollback.manual_cleanup,
-                },
-            )
-        state.locals_detached.append((key_id, name))
-    state.step_completed = "local_alias_detach"
-
-    # ---- Step 4: bucket delete --yes <final-ref> ----
-    await progress(
-        "running",
-        3,
-        _TOTAL_STEPS,
-        "Deleting bucket",
-    )
-    rc, _stdout, stderr = await run_garage(
-        garage_config,
-        "bucket",
-        "delete",
-        "--yes",
-        state.final_ref,
-    )
-    if rc != 0:
-        # BucketNotEmpty is a customer-actionable error - surface it
-        # without rolling back partial alias state, since rolling back
-        # would re-attach the locals and the customer needs to clear
-        # the bucket first anyway.
-        if "BucketNotEmpty" in stderr:
-            rollback = await _rollback(garage_config, state)
-            return _failure(
-                failure_reason="bucket_not_empty",
-                step_failed="bucket_delete",
-                state=state,
-                stderr=stderr,
-                started_at=started_at,
-                rollback_status=rollback.status,
-                extras_extra={
-                    "manual_cleanup_required": rollback.manual_cleanup,
-                },
-            )
-        rollback = await _rollback(garage_config, state)
+    if not ok:
+        # A race (objects added after the check) surfaces as not-empty here too.
+        reason = "bucket_not_empty" if "not empty" in err.lower() else "bucket_delete_failed"
         return _failure(
-            failure_reason="bucket_delete_failed",
+            failure_reason=reason,
             step_failed="bucket_delete",
-            state=state,
-            stderr=stderr,
+            bucket_id=bucket_id,
+            step_completed="bucket_info",
+            stderr=err,
             started_at=started_at,
-            rollback_status=rollback.status,
-            extras_extra={
-                "manual_cleanup_required": rollback.manual_cleanup,
-            },
         )
-    state.step_completed = "bucket_delete"
 
-    # ---- Step 5: clean up unmoored keys (best-effort) ----
-    # The bucket is already gone. For each key that had access to it,
-    # check whether it has any other buckets. If not, the key is
-    # orphaned credential material - delete it. If it still has
-    # buckets (shared key, attached to multiple), leave it alone.
-    # Failures here don't fail the orchestrator; they accumulate in
-    # ``manual_cleanup_required``.
-    await progress(
-        "running",
-        4,
-        _TOTAL_STEPS,
-        "Cleaning up unmoored keys",
+    # ---- Step 3: clean up unmoored keys (best-effort) ----
+    await progress("running", 2, _TOTAL_STEPS, "Cleaning up unmoored keys")
+    manual, deleted, skipped = await _cleanup_unmoored_keys(
+        garage_config, candidate_key_ids,
     )
-    manual_key_cleanup: list[dict[str, Any]] = []
-    for key_id in state.candidate_key_ids:
-        try:
-            rc, stdout, _stderr = await run_garage(
-                garage_config,
-                "key",
-                "info",
-                key_id,
-            )
-        except (TimeoutError, OSError) as exc:
-            logger.warning(
-                "Step 5: key info %s failed (%s); leaving key alone",
-                key_id,
-                exc,
-            )
-            manual_key_cleanup.append({"type": "key", "id": key_id})
-            continue
-        if rc != 0:
-            # Key already gone or NoSuchKey - nothing to clean up.
-            state.keys_skipped.append(key_id)
-            continue
-        try:
-            key_info = parse_key_info(stdout)
-        except GarageParseError:
-            manual_key_cleanup.append({"type": "key", "id": key_id})
-            continue
-        if key_info.buckets:
-            # Key still has other buckets - preserve it.
-            state.keys_skipped.append(key_id)
-            continue
-        # Key has zero buckets - safe to delete.
-        try:
-            rc, _stdout, _stderr = await run_garage(
-                garage_config,
-                "key",
-                "delete",
-                "--yes",
-                key_id,
-            )
-        except (TimeoutError, OSError) as exc:
-            logger.warning(
-                "Step 5: key delete %s failed (%s)",
-                key_id,
-                exc,
-            )
-            manual_key_cleanup.append({"type": "key", "id": key_id})
-            continue
-        if rc != 0:
-            manual_key_cleanup.append({"type": "key", "id": key_id})
-            continue
-        state.keys_deleted.append(key_id)
-    state.step_completed = "key_cleanup"
 
     # ---- Success ----
     await progress("finalizing", _TOTAL_STEPS, _TOTAL_STEPS, "Bucket deleted")
@@ -341,117 +141,70 @@ async def run_delete_provisioned_bucket(
         stdout=f"Bucket {bucket_id[:16]} deleted",
         extras={
             "bucket_id": bucket_id[:16],
-            "step_completed": state.step_completed,
+            "step_completed": "key_cleanup",
             "step_failed": None,
             "rollback_status": "not_required",
-            "manual_cleanup_required": manual_key_cleanup,
-            "keys_deleted": state.keys_deleted,
-            "keys_skipped": state.keys_skipped,
+            "manual_cleanup_required": manual,
+            "keys_deleted": deleted,
+            "keys_skipped": skipped,
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
         },
     )
 
 
-@dataclass(frozen=True)
-class _RollbackResult:
-    status: str  # "complete" | "partial"
-    manual_cleanup: list[dict[str, Any]]
-
-
-async def _rollback(
+async def _cleanup_unmoored_keys(
     garage_config: GarageConfig,
-    state: _DeleteState,
-) -> _RollbackResult:
-    """Reverse-order cleanup: re-attach locals, drop temp global.
+    candidate_key_ids: list[str],
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
+    """Delete each candidate key iff the deletion left it with no buckets.
 
-    Re-attaches in REVERSE order of detachment (LIFO). If a re-attach
-    fails, halt and add the rest to ``manual_cleanup_required``.
+    A key still attached to another bucket (shared key) is preserved. A key
+    already gone is skipped. Any read/delete failure is best-effort: it goes to
+    the manual-cleanup list, never raising (admin_api returns errors, not
+    exceptions). Returns ``(manual_cleanup, keys_deleted, keys_skipped)``.
     """
+    admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     manual: list[dict[str, Any]] = []
-
-    # 1. Re-attach local aliases (LIFO)
-    for key_id, name in reversed(state.locals_detached):
-        try:
-            rc, _stdout, _stderr = await run_garage(
-                garage_config,
-                "bucket",
-                "alias",
-                "--local",
-                key_id,
-                state.bucket_id,
-                name,
-            )
-        except (TimeoutError, OSError) as exc:
-            logger.warning(
-                "Rollback: local alias re-attach %s/%s failed: %s",
-                key_id,
-                name,
-                exc,
-            )
-            manual.append(
-                {
-                    "type": "local_alias",
-                    "key_id": key_id,
-                    "alias": name,
-                }
-            )
+    deleted: list[str] = []
+    skipped: list[str] = []
+    for key_id in candidate_key_ids:
+        kinfo, kerr = admin_api.get_key_info(
+            admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
+        )
+        if kinfo is None:
+            if _is_not_found(kerr):
+                skipped.append(key_id)  # already gone, nothing to clean
+            else:
+                manual.append({"type": "key", "id": key_id})
             continue
-        if rc != 0:
-            manual.append(
-                {
-                    "type": "local_alias",
-                    "key_id": key_id,
-                    "alias": name,
-                }
-            )
-
-    # 2. Drop temp global if we attached one
-    if state.temp_global_attached and state.temp_global:
-        try:
-            rc, _stdout, _stderr = await run_garage(
-                garage_config,
-                "bucket",
-                "unalias",
-                state.temp_global,
-            )
-        except (TimeoutError, OSError) as exc:
-            logger.warning(
-                "Rollback: temp global unalias %s failed: %s",
-                state.temp_global,
-                exc,
-            )
-            manual.append(
-                {
-                    "type": "global_alias",
-                    "alias": state.temp_global,
-                }
-            )
+        if kinfo.get("buckets"):
+            skipped.append(key_id)  # shared key, still attached elsewhere
+            continue
+        ok, _err = admin_api.delete_key(
+            admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
+        )
+        if ok:
+            deleted.append(key_id)
         else:
-            if rc != 0:
-                manual.append(
-                    {
-                        "type": "global_alias",
-                        "alias": state.temp_global,
-                    }
-                )
-
-    if manual:
-        return _RollbackResult(status="partial", manual_cleanup=manual)
-    return _RollbackResult(status="complete", manual_cleanup=[])
+            manual.append({"type": "key", "id": key_id})
+    return manual, deleted, skipped
 
 
-def _success_already_gone(
-    state: _DeleteState,
-    started_at: float,
-) -> JobOutcome:
+def _is_not_found(err: str) -> bool:
+    """True if an admin-API error means the resource is already gone."""
+    low = err.lower()
+    return any(s in low for s in ("404", "not found", "nosuchbucket", "nosuchkey"))
+
+
+def _already_gone(bucket_id: str, started_at: float) -> JobOutcome:
     """The bucket already doesn't exist; this is success (idempotent)."""
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=f"Bucket {state.bucket_id[:16]} already absent",
+        stdout=f"Bucket {bucket_id[:16]} already absent",
         extras={
-            "bucket_id": state.bucket_id[:16],
+            "bucket_id": bucket_id[:16],
             "step_completed": "bucket_info",
             "step_failed": None,
             "rollback_status": "not_required",
@@ -466,32 +219,27 @@ def _success_already_gone(
 def _failure(
     *,
     failure_reason: str,
-    step_failed: str,
-    state: _DeleteState,
+    step_failed: str | None,
+    bucket_id: str,
+    step_completed: str | None,
     stderr: str,
     started_at: float,
-    rollback_status: str,
-    extras_extra: dict[str, Any] | None = None,
 ) -> JobOutcome:
-    extras: dict[str, Any] = {
-        "bucket_id": state.bucket_id[:16],
-        "step_completed": state.step_completed,
-        "step_failed": step_failed,
-        "rollback_status": rollback_status,
-        "manual_cleanup_required": [],
-        "garage_stderr": stderr,
-        "duration_seconds": _elapsed(started_at),
-    }
-    if extras_extra:
-        extras.update(extras_extra)
-    final_reason = "rollback_failed" if rollback_status == "partial" else failure_reason
     return JobOutcome(
         success=False,
         exit_code=-1,
         stdout="",
         stderr=stderr,
-        failure_reason=final_reason,
-        extras=extras,
+        failure_reason=failure_reason,
+        extras={
+            "bucket_id": bucket_id[:16],
+            "step_completed": step_completed,
+            "step_failed": step_failed,
+            "rollback_status": "not_required",
+            "manual_cleanup_required": [],
+            "garage_stderr": stderr,
+            "duration_seconds": _elapsed(started_at),
+        },
     )
 
 

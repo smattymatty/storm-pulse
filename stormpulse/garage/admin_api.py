@@ -155,6 +155,24 @@ def list_keys(
     return [k for k in data if isinstance(k, dict)], ""
 
 
+def get_key_info(
+    *, admin_url: str, admin_token: str, access_key_id: str,
+) -> tuple[dict[str, Any] | None, str]:
+    """Fetch one access key's info via ``GET /v2/GetKeyInfo?id=<access_key_id>``.
+
+    Returns the ``GetKeyInfoResponse`` dict (carrying a ``buckets`` array of
+    every bucket this key has permissions on), or ``(None, error)``. The secret
+    is not requested (``showSecretKey`` omitted), so it is never in the response.
+    """
+    path = "/v2/GetKeyInfo?" + urlencode({"id": access_key_id})
+    data, err = _get_json(admin_url, admin_token, path)
+    if data is None:
+        return None, err
+    if not isinstance(data, dict):
+        return None, "GetKeyInfo returned a non-object body"
+    return data, ""
+
+
 def create_key(
     *, admin_url: str, admin_token: str, name: str,
 ) -> tuple[dict[str, Any] | None, str]:
@@ -201,6 +219,24 @@ def create_bucket(
     if not isinstance(data, dict):
         return None, "CreateBucket returned a non-object body"
     return data, ""
+
+
+def delete_bucket(
+    *, admin_url: str, admin_token: str, bucket_ref: str,
+) -> tuple[bool, str]:
+    """Delete a bucket via ``POST /v2/DeleteBucket?id=<full_id>``.
+
+    Resolves ``bucket_ref`` to the full id first (the admin API rejects the
+    16-char prefix). DeleteBucket removes the bucket together with **all** its
+    aliases (global and local) in one call, and Garage rejects it unless the
+    bucket is empty. Returns ``(success, error)``.
+    """
+    auth = {"Authorization": f"Bearer {admin_token}"}
+    full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
+    if not full_id:
+        return False, err
+    path = "/v2/DeleteBucket?" + urlencode({"id": full_id})
+    return _post(admin_url, admin_token, path)
 
 
 def delete_key(

@@ -75,6 +75,17 @@ class TestClusterReads:
         assert data is None
         assert "non-list" in err
 
+    def test_get_key_info_returns_buckets(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        body = json.dumps({"accessKeyId": "GK1", "buckets": [{"id": "b1"}]})
+        req, seen = _fake_request(200, body)
+        monkeypatch.setattr(admin_api, "_request", req)
+        data, err = admin_api.get_key_info(access_key_id="GK1", **_ADMIN)
+        assert err == ""
+        assert data is not None and data["buckets"] == [{"id": "b1"}]
+        assert seen["path"] == "/v2/GetKeyInfo?id=GK1"
+
 
 class TestGetBucketInfo:
     def test_full_id_uses_id_param(self, monkeypatch: pytest.MonkeyPatch) -> None:
