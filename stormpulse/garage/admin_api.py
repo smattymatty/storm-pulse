@@ -193,6 +193,41 @@ def add_bucket_alias_local(
     ``bucket_ref`` is resolved to the full id first. Returns ``(success,
     error)``.
     """
+    return _bucket_alias_local_change(
+        "/v2/AddBucketAlias", admin_url, admin_token, bucket_ref,
+        access_key_id, local_alias,
+    )
+
+
+def remove_bucket_alias_local(
+    *,
+    admin_url: str,
+    admin_token: str,
+    bucket_ref: str,
+    access_key_id: str,
+    local_alias: str,
+) -> tuple[bool, str]:
+    """Detach a local alias from a bucket in a key's namespace, via the local
+    variant of ``POST /v2/RemoveBucketAlias``.
+
+    Same shape as :func:`add_bucket_alias_local`; used by provisioning rollback
+    to undo an attached alias. Returns ``(success, error)``.
+    """
+    return _bucket_alias_local_change(
+        "/v2/RemoveBucketAlias", admin_url, admin_token, bucket_ref,
+        access_key_id, local_alias,
+    )
+
+
+def _bucket_alias_local_change(
+    path: str,
+    admin_url: str,
+    admin_token: str,
+    bucket_ref: str,
+    access_key_id: str,
+    local_alias: str,
+) -> tuple[bool, str]:
+    """Resolve ``bucket_ref`` to the full id and POST an Add/Remove local alias."""
     auth = {"Authorization": f"Bearer {admin_token}"}
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
     if not full_id:
@@ -200,7 +235,7 @@ def add_bucket_alias_local(
     body = json.dumps(
         {"bucketId": full_id, "localAlias": local_alias, "accessKeyId": access_key_id}
     ).encode("utf-8")
-    return _post(admin_url, admin_token, "/v2/AddBucketAlias", body)
+    return _post(admin_url, admin_token, path, body)
 
 
 def _bucket_key_perm_change(
