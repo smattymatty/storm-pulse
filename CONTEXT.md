@@ -31,10 +31,3 @@ agent. The thing on the other end of the agent's wire. In ADRs, name it the
 control plane, not by repo.
 _Avoid_: the website (points at the private repo), the dashboard (that is only its
 UI surface, wrong for server-side control-loop work)
-
-## Flagged ambiguities
-
-- **"root" / "root-equivalent"**: Resolved against the rootless reality. A
-  compromised prod agent is bounded by its operator user's **blast radius**, not
-  host root. Docs that still say "runs as root" or "root-equivalent" (core/000,
-  core/002, wiki Security-Architecture:3) predate CORE-003 and are stale.
