@@ -10,13 +10,19 @@ never an exception.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, TypedDict
 
 import pytest
 
 from stormpulse.garage import admin_api
 
-_ADMIN = {"admin_url": "http://127.0.0.1:3903", "admin_token": "tok"}
+
+class _Admin(TypedDict):
+    admin_url: str
+    admin_token: str
+
+
+_ADMIN: _Admin = {"admin_url": "http://127.0.0.1:3903", "admin_token": "tok"}
 _PREFIX = "8742c023e7e97dc8"  # Storm's 16-char garage_bucket_id
 _FULL_ID = _PREFIX + "0" * 48  # 64 chars
 _KEY_ID = "GK31c2f6a8b9d04e15f7c3a2b1"
@@ -56,7 +62,8 @@ def _install(
 
 def _body_of(call: dict[str, Any]) -> dict[str, Any]:
     assert call["body"] is not None
-    return json.loads(call["body"])
+    data: dict[str, Any] = json.loads(call["body"])
+    return data
 
 
 class TestCreateKey:

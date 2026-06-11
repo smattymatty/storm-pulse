@@ -21,7 +21,6 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.config import GarageConfig
-from stormpulse.garage import provision_additional_key
 from stormpulse.garage.provision_additional_key import (
     make_provision_additional_key_handler,
     run_provision_additional_key,
@@ -135,7 +134,10 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
         "create_key", "allow_bucket_key", "deny_bucket_key",
         "add_bucket_alias_local", "delete_key",
     ):
-        monkeypatch.setattr(provision_additional_key.admin_api, name, getattr(fake, name))
+        monkeypatch.setattr(
+            f"stormpulse.garage.provision_additional_key.admin_api.{name}",
+            getattr(fake, name),
+        )
     return fake
 
 
