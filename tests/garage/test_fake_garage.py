@@ -18,11 +18,6 @@ from pathlib import Path
 import pytest
 
 from stormpulse.config import GarageConfig
-from stormpulse.garage.parse import (
-    GarageBucketInfo,
-    parse_bucket_info,
-    parse_key_create,
-)
 from tests.garage._fake_garage import FakeGarage
 
 
@@ -40,23 +35,6 @@ def _config() -> GarageConfig:
 # ---------------------------------------------------------------------------
 # Rule 1: bucket create - S3-strict name validation
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_bucket_create_accepts_valid_name() -> None:
-    fake = FakeGarage()
-    rc, stdout, stderr = await fake.run_garage(
-        _config(),
-        "bucket",
-        "create",
-        "my-bucket-001",
-    )
-    assert rc == 0
-    assert stderr == ""
-    info = parse_bucket_info(stdout)
-    assert isinstance(info, GarageBucketInfo)
-    assert info.global_alias == "my-bucket-001"
-    assert len(info.bucket_id) == 64
 
 
 @pytest.mark.asyncio
@@ -399,35 +377,6 @@ async def test_bucket_delete_revokes_referencing_permissions() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_key_create_returns_parseable_stdout() -> None:
-    fake = FakeGarage()
-    rc, stdout, _stderr = await fake.run_garage(
-        _config(),
-        "key",
-        "create",
-        "my-key",
-    )
-    assert rc == 0
-    result = parse_key_create(stdout)
-    assert result.name == "my-key"
-    assert result.key_id.startswith("GK")
-    assert len(result.key_id) == 26
-    assert len(result.secret_key) == 64
-
-
-@pytest.mark.asyncio
-async def test_key_create_produces_distinct_ids() -> None:
-    fake = FakeGarage()
-    rc1, stdout1, _ = await fake.run_garage(_config(), "key", "create", "k1")
-    rc2, stdout2, _ = await fake.run_garage(_config(), "key", "create", "k2")
-    assert rc1 == 0 and rc2 == 0
-    r1 = parse_key_create(stdout1)
-    r2 = parse_key_create(stdout2)
-    assert r1.key_id != r2.key_id
-    assert r1.secret_key != r2.secret_key
-
-
 # ---------------------------------------------------------------------------
 # Rule 8: bucket reference resolution
 # ---------------------------------------------------------------------------
@@ -500,55 +449,6 @@ async def test_local_alias_not_globally_resolvable() -> None:
     )
     assert rc == 1
     assert "NoSuchBucket" in stderr
-
-
-# ---------------------------------------------------------------------------
-# Rule 9: bucket info renders only keys with permissions
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_bucket_info_excludes_keys_without_permissions() -> None:
-    """Empirically observed: a key with a local alias attached but no
-    permissions does NOT appear in the keys table of `bucket info`.
-    """
-    fake = FakeGarage()
-    await fake.run_garage(_config(), "bucket", "create", "host")
-    fake.add_key("k-no-perms")
-    key_id = next(iter(fake.keys))
-    bucket = next(iter(fake.buckets.values()))
-    bucket.local_aliases[key_id] = "lonely-alias"
-
-    rc, stdout, _stderr = await fake.run_garage(
-        _config(),
-        "bucket",
-        "info",
-        "host",
-    )
-    assert rc == 0
-    info = parse_bucket_info(stdout)
-    assert info.keys == []
-
-
-@pytest.mark.asyncio
-async def test_bucket_info_includes_keys_with_permissions() -> None:
-    fake = FakeGarage()
-    await fake.run_garage(_config(), "bucket", "create", "host")
-    fake.add_key("k-with-perms")
-    key_id = next(iter(fake.keys))
-    bucket = next(iter(fake.buckets.values()))
-    fake.keys[key_id].permissions[bucket.bucket_id] = {"read"}
-
-    rc, stdout, _stderr = await fake.run_garage(
-        _config(),
-        "bucket",
-        "info",
-        "host",
-    )
-    assert rc == 0
-    info = parse_bucket_info(stdout)
-    assert len(info.keys) == 1
-    assert info.keys[0].access_key_id == key_id
 
 
 # ---------------------------------------------------------------------------

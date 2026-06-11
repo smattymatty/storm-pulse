@@ -14,9 +14,23 @@ from typing import Any
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage import admin_api
-from stormpulse.garage.parse import GaragePeer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class GaragePeer:
+    """A single Garage cluster node, mapped from a ``GetClusterStatus`` row."""
+
+    node_id: str
+    hostname: str
+    address: str
+    zone: str
+    capacity_gb: float
+    data_avail_gb: float
+    data_avail_percent: float
+    version: str
+    healthy: bool
 
 
 @dataclass(frozen=True, slots=True)
