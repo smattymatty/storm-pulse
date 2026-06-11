@@ -69,21 +69,6 @@ Node ID:                7a58a5fa192ad6dd
 Hostname:               garage-one
 """
 
-BUCKET_LIST_OUTPUT = """\
-ID                Created     Global aliases  Local aliases
-f1dc32249aa1d80a  2026-04-07  obsidian-vault  \n\
-"""
-
-BUCKET_LIST_OUTPUT_MULTI = """\
-ID                Created     Global aliases  Local aliases
-f1dc32249aa1d80a  2026-04-07  obsidian-vault
-a2bc34de56f78901  2026-04-07  backups
-"""
-
-BUCKET_LIST_OUTPUT_EMPTY = """\
-ID  Created  Global aliases  Local aliases
-"""
-
 BUCKET_INFO_OUTPUT = """\
 ==== BUCKET INFORMATION ====
 Bucket:          f1dc32249aa1d80af4bf6e887443fefac616e56dfdacc29c4bf6fedf9ec20617

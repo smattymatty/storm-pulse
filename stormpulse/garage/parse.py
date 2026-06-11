@@ -214,53 +214,6 @@ def _parse_int(s: str) -> int:
 
 
 @dataclass(frozen=True, slots=True)
-class GarageBucketListEntry:
-    """A single row from ``garage bucket list``."""
-
-    bucket_id: str
-    global_alias: str
-
-
-def parse_bucket_list(stdout: str) -> list[GarageBucketListEntry]:
-    """Parse ``garage bucket list`` stdout.
-
-    Expected format:
-        ID                Created     Global aliases  Local aliases
-        f1dc32249aa1d80a  2026-04-07  obsidian-vault
-    """
-    buckets: list[GarageBucketListEntry] = []
-    past_header = False
-
-    for line in stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("ID"):
-            past_header = True
-            continue
-        if not past_header:
-            continue
-
-        parts = stripped.split()
-        if len(parts) < 2:
-            continue
-
-        bucket_id = parts[0]
-        global_alias = ""
-        if len(parts) >= 3 and ":" not in parts[2]:
-            global_alias = parts[2]
-
-        buckets.append(
-            GarageBucketListEntry(
-                bucket_id=bucket_id,
-                global_alias=global_alias,
-            )
-        )
-
-    return buckets
-
-
-@dataclass(frozen=True, slots=True)
 class GarageBucketKeyEntry:
     """A key's permissions for a specific bucket."""
 
