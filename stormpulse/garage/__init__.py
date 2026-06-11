@@ -2,10 +2,10 @@
 
 from stormpulse.garage.commands import build_garage_commands, long_running_factories
 from stormpulse.garage.discover import discover_garage
-from stormpulse.garage.parse import GaragePeer
 from stormpulse.garage.state import (
     GarageBucket,
     GarageKeyRef,
+    GaragePeer,
     GarageState,
     collect_garage_state,
 )
