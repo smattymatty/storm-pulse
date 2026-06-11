@@ -25,7 +25,7 @@ The obvious move is to drop them in the pytest suite. The problem with that move
 
 ## Decision
 
-storm-pulse has five fitness functions: two enforce [CORE-000](000-internal-module-architecture.md), two enforce security invariants from the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture), and one enforces the [GARAGE-001](../garage/001-admin-http-api-over-cli-scrape.md) admin-API migration.
+storm-pulse has four fitness functions: two enforce [CORE-000](000-internal-module-architecture.md), two enforce security invariants from the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture).
 
 | # | Function | Enforces | Mechanism |
 |---|----------|----------|-----------|
@@ -33,7 +33,6 @@ storm-pulse has five fitness functions: two enforce [CORE-000](000-internal-modu
 | 2 | No cross-boundary private imports | CORE-000 Rule 2 | `fitness/` runner |
 | 3 | No shell execution | Security Architecture, Layer 4 | `fitness/` runner |
 | 4 | Runtime dependency allowlist | Security Architecture, supply chain | `fitness/` runner |
-| 5 | No Garage CLI scraping | GARAGE-001 | `fitness/` runner |
 
 **Function 1 - Layer topology.** `import-linter` contracts in `.importlinter` express CORE-000's four-layer model as layered contracts: Foundation below Framework below Features below Entry, with Features forbidden from importing sibling Features. Same tool the sibling django repo uses; shared tooling across the two Storm codebases is deliberate.
 
@@ -43,14 +42,12 @@ storm-pulse has five fitness functions: two enforce [CORE-000](000-internal-modu
 
 **Function 4 - Runtime dependency allowlist.** Two assertions. (a) `[project.dependencies]` in `pyproject.toml` is a subset of `{websockets, psutil, cryptography}`. (b) No module in `stormpulse/` imports a third-party top-level package outside that set plus the standard library. Part (a) catches an undeclared dependency in the manifest; part (b) catches the bypass where a package is installed into the environment and imported without ever being declared.
 
-**Function 5 - No Garage CLI scraping.** Mechanizes [GARAGE-001](../garage/001-admin-http-api-over-cli-scrape.md)'s replacement of CLI text-scraping with the admin HTTP API. `stormpulse/garage/parse.py` holds the CLI-stdout parsers; a module scrapes only by importing a `parse_*` function from it (the dataclass and exception exports are types, not scraping). Every such import is a violation, with no allowlist and no per-operation exception: the check is red while any operation still scrapes and goes green the moment the last one moves to the admin API, at which point `parse.py` is deleted and this function with it. The check carries no record of which operations have migrated; that progress lives in the diff, not in an exception list. The guard is per-module, not per-call: it sees the `parse_*` import, not a stray CLI call left inside an otherwise-migrated module.
-
-Another candidate - asserting every command in the registry uses an absolute binary path - was left out. Most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
+A fifth candidate - asserting every command in the registry uses an absolute binary path - was left out. Most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**
 
 - Function 1 runs as `lint-imports`.
-- Functions 2, 3, 4, and 5 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs all four.
+- Functions 2, 3, and 4 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs all three.
 - The `fitness/` runner runs every check and reports every violation before exiting non-zero, never fail-fast. Stopping at the first violation would hide the rest; the cost of decoupling from pytest is hand-rolled reporting, and the reporting has to be honest.
 - `make fitness` runs the whole suite: `lint-imports && python -m fitness`.
 
