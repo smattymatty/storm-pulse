@@ -246,15 +246,15 @@ class TestRunCaddyInit:
         caddyfile.write_text("import conf.d/*.caddy\n")
 
         # Prompts in order: admin URL, drop-in path, enable-caddy,
-        # ship-caddy-logs, restart. Empty strings accept defaults; "n"
-        # declines the log-group offer and the restart. Test runs
-        # unprivileged so detect_mode() returns USER, which is the path
-        # that prompts for restart at all.
+        # ship-caddy-logs, ship-cert-events, restart. Empty strings
+        # accept defaults; "n" declines both log-group offers and the
+        # restart. Test runs unprivileged so detect_mode() returns
+        # USER, which is the path that prompts for restart at all.
         with patch(
             "stormpulse.caddy.init.find_caddy_main",
             return_value=caddyfile,
         ):
-            mock_prompt = self._prompt_mock(["", "", "y", "n", "n"])
+            mock_prompt = self._prompt_mock(["", "", "y", "n", "n", "n"])
             with (
                 patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt),
                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt),
@@ -309,14 +309,14 @@ class TestRunCaddyInit:
         caddyfile = tmp_path / "Caddyfile"
         caddyfile.write_text(":80 { respond \"ok\" }\n")
 
-        # admin URL, drop-in, write-anyway=y, ship-caddy-logs=n.
-        # No restart prompt because the import-missing branch suppresses
-        # restart entirely.
+        # admin URL, drop-in, write-anyway=y, ship-caddy-logs=n,
+        # ship-cert-events=n. No restart prompt because the
+        # import-missing branch suppresses restart entirely.
         with patch(
             "stormpulse.caddy.init.find_caddy_main",
             return_value=caddyfile,
         ):
-            mock_prompt = self._prompt_mock(["", "", "y", "n"])
+            mock_prompt = self._prompt_mock(["", "", "y", "n", "n"])
             with (
                 patch("stormpulse.caddy.init.prompt", side_effect=mock_prompt),
                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt),
