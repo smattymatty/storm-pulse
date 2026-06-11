@@ -70,22 +70,6 @@ class DeleteResult:
     errors: list[S3ErrorEntry]
 
 
-@dataclass(frozen=True, slots=True)
-class CorsRule:
-    """One CORSRule for PutBucketCors.
-
-    The agent currently sets a single rule per bucket. The S3 spec allows
-    a list of rules; if that ever becomes a need, plumb a list through
-    ``put_bucket_cors`` instead of widening this dataclass.
-    """
-
-    allowed_origins: list[str]
-    allowed_methods: list[str]
-    allowed_headers: list[str]
-    expose_headers: list[str]
-    max_age_seconds: int
-
-
 class S3Error(Exception):
     """Raised when Garage returns an HTTP error for an S3 operation."""
 
@@ -266,24 +250,6 @@ class GarageS3Client:
         )
         return _parse_delete_response(body)
 
-    def put_bucket_cors(self, bucket: str, rule: CorsRule) -> None:
-        """PutBucketCors. Apply ``rule`` to ``bucket``.
-
-        Garage accepts this without ``Content-MD5`` (verified 2026-05-10
-        against ``s3.vancouver-1.stormdevelopments.ca``); the S3 spec
-        mandates the header but Garage is lenient on this op.
-
-        Raises ``S3AuthError`` on 401/403, ``S3Error`` on other failures.
-        """
-        xml_body = _build_cors_xml(rule)
-        self._signed_request(
-            "PUT",
-            f"/{bucket}",
-            [("cors", "")],
-            xml_body,
-            content_type="application/xml",
-        )
-
     # -- internals ------------------------------------------------------
 
     def _signed_request(
@@ -371,27 +337,6 @@ def _build_delete_xml(keys: list[str]) -> bytes:
         escaped = ElementTree.tostring(elem, encoding="unicode")
         parts.append(f"<Object>{escaped}</Object>")
     parts.append("<Quiet>false</Quiet></Delete>")
-    return "".join(parts).encode("utf-8")
-
-
-def _build_cors_xml(rule: CorsRule) -> bytes:
-    """Build the PutBucketCors request body for one CORSRule."""
-    parts = [
-        '<?xml version="1.0" encoding="UTF-8"?>',
-        "<CORSConfiguration><CORSRule>",
-    ]
-    for tag, values in (
-        ("AllowedOrigin", rule.allowed_origins),
-        ("AllowedMethod", rule.allowed_methods),
-        ("AllowedHeader", rule.allowed_headers),
-        ("ExposeHeader", rule.expose_headers),
-    ):
-        for v in values:
-            elem = ElementTree.Element(tag)
-            elem.text = v
-            parts.append(ElementTree.tostring(elem, encoding="unicode"))
-    parts.append(f"<MaxAgeSeconds>{int(rule.max_age_seconds)}</MaxAgeSeconds>")
-    parts.append("</CORSRule></CORSConfiguration>")
     return "".join(parts).encode("utf-8")
 
 

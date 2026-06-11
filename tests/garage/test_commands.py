@@ -45,7 +45,6 @@ class TestBuildGarageCommands:
             "garage_bucket_alias_local_remove",
             "garage_refresh",
             "garage_bucket_clear",
-            "garage_bucket_set_cors",
             "garage_provision_customer_bucket",
             "garage_provision_additional_key",
             "garage_delete_provisioned_bucket",
@@ -60,7 +59,6 @@ class TestBuildGarageCommands:
             if name in {
                 "garage_refresh",
                 "garage_bucket_clear",
-                "garage_bucket_set_cors",
                 "garage_bucket_set_quota",
                 "garage_provision_customer_bucket",
                 "garage_provision_additional_key",
@@ -131,7 +129,6 @@ class TestBuildGarageCommands:
         sensitive_allowed = {
             "garage_key_create",
             "garage_bucket_clear",
-            "garage_bucket_set_cors",
             "garage_provision_customer_bucket",
             "garage_provision_additional_key",
             "garage_rotate_customer_key",
