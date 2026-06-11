@@ -659,58 +659,6 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_set_cors": CommandDef(
-            group="garage",
-            command=[
-                "garage_bucket_set_cors"
-            ],  # internal - handled by JobManager, not a subprocess
-            timeout=30,  # single API call; long_running ignores this for total duration
-            description="Apply the platform-default CORS rule to a bucket via the local Garage S3 endpoint",
-            sensitive_output=True,  # the secret arrives in params; never log them
-            long_running=True,
-            params={
-                "bucket_name": ParamDef(
-                    placeholder="bucket_name",
-                    default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="Bucket to apply CORS to",
-                ),
-                "s3_endpoint": ParamDef(
-                    placeholder="s3_endpoint",
-                    default=None,
-                    pattern=r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
-                    description="Garage S3 endpoint URL (no path/query)",
-                ),
-                "region": ParamDef(
-                    placeholder="region",
-                    default=None,
-                    pattern=r"[a-zA-Z0-9_-]+",
-                    description="S3 region for SigV4 signing",
-                ),
-                "access_key_id": ParamDef(
-                    placeholder="access_key_id",
-                    default=None,
-                    pattern=_KEY_ID_PATTERN,
-                    description="Customer S3 access key ID",
-                ),
-                "secret_access_key": ParamDef(
-                    placeholder="secret_access_key",
-                    default=None,
-                    pattern=r".+",
-                    description="Customer S3 secret. Held in agent process memory only for the job's lifetime.",
-                ),
-                "origins": ParamDef(
-                    placeholder="origins",
-                    default=None,
-                    pattern=r"^\[.+\]$",
-                    description=(
-                        "JSON-encoded list of allowed origins, e.g. "
-                        "'[\"https://stormdevelopments.ca\"]'. The handler "
-                        "decodes via json.loads and validates list[str]."
-                    ),
-                ),
-            },
-        ),
         "garage_walk_bucket_stats": CommandDef(
             group="garage",
             command=["garage_walk_bucket_stats"],  # internal - handled by JobManager
@@ -827,13 +775,11 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         make_provision_customer_bucket_handler,
     )
     from stormpulse.garage.rotate_key import make_rotate_customer_key_handler
-    from stormpulse.garage.set_cors import make_set_cors_handler
     from stormpulse.garage.set_quota import make_set_quota_handler
     from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
 
     return {
         "garage_bucket_clear": make_clear_bucket_handler,
-        "garage_bucket_set_cors": make_set_cors_handler,
         "garage_bucket_set_quota": (
             lambda params: make_set_quota_handler(
                 params, admin_url=config.admin_url, admin_token=config.admin_token,
