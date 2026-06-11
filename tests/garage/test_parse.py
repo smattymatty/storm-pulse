@@ -7,7 +7,6 @@ import pytest
 from stormpulse.garage.parse import (
     GarageParseError,
     parse_bucket_info,
-    parse_bucket_list,
     parse_key_create,
     parse_key_list,
     parse_stats,
@@ -20,9 +19,6 @@ from tests.garage.fixtures import (
     BUCKET_INFO_OUTPUT_WEBSITE_CUSTOM_ERROR,
     BUCKET_INFO_OUTPUT_WEBSITE_ENABLED,
     BUCKET_INFO_OUTPUT_WITH_QUOTAS,
-    BUCKET_LIST_OUTPUT,
-    BUCKET_LIST_OUTPUT_EMPTY,
-    BUCKET_LIST_OUTPUT_MULTI,
     KEY_CREATE_OUTPUT,
     KEY_LIST_OUTPUT,
     KEY_LIST_OUTPUT_EMPTY,
@@ -100,30 +96,11 @@ class TestParseStats:
 
 
 # ---------------------------------------------------------------------------
-# garage bucket list
+# garage bucket info
 # ---------------------------------------------------------------------------
 
 
-class TestParseBucketList:
-    def test_single_bucket(self) -> None:
-        buckets = parse_bucket_list(BUCKET_LIST_OUTPUT)
-        assert len(buckets) == 1
-        assert buckets[0].bucket_id == "f1dc32249aa1d80a"
-        assert buckets[0].global_alias == "obsidian-vault"
-
-    def test_multi_bucket(self) -> None:
-        buckets = parse_bucket_list(BUCKET_LIST_OUTPUT_MULTI)
-        assert len(buckets) == 2
-        assert buckets[1].global_alias == "backups"
-
-    def test_empty_list(self) -> None:
-        buckets = parse_bucket_list(BUCKET_LIST_OUTPUT_EMPTY)
-        assert buckets == []
-
-    def test_blank_string(self) -> None:
-        buckets = parse_bucket_list("")
-        assert buckets == []
-
+class TestParseBucketInfo:
     def test_bucket_info_v2_format_with_key_name_column(self) -> None:
         """REGRESSION: Garage v2.2.0's ``bucket info`` keys table has
         4 columns (Permissions | Access key | Key name | Local aliases),
@@ -154,32 +131,6 @@ class TestParseBucketList:
         assert info.keys[0].access_key_id == "GK8559f761a01bf7716d6aa3d8"
         assert info.keys[0].local_alias == "obsidian"
 
-    def test_bucket_with_only_local_alias(self) -> None:
-        """REGRESSION: when the bucket has no global alias but does have
-        a local alias, ``str.split()`` collapses the empty Global-aliases
-        column and the local alias (format ``<key_id>:<name>``) lands
-        in parts[2]. Without colon-detection the parser would
-        misidentify it as a global alias - Storm-side state.py would
-        then run ``bucket info <key>:<name>`` which Garage rejects, the
-        bucket would be silently dropped from the manifest, and the
-        Storm reconciler would nuke the legitimate CustomerBucket row.
-        """
-        output = (
-            "ID                Created     Global aliases  Local aliases\n"
-            "5c8d6c0bb73f0770  2026-05-08                  GK8559f761a01bf7716d6aa3d8:obsidian\n"
-        )
-        buckets = parse_bucket_list(output)
-        assert len(buckets) == 1
-        assert buckets[0].bucket_id == "5c8d6c0bb73f0770"
-        assert buckets[0].global_alias == ""
-
-
-# ---------------------------------------------------------------------------
-# garage bucket info
-# ---------------------------------------------------------------------------
-
-
-class TestParseBucketInfo:
     def test_bucket_with_key(self) -> None:
         info = parse_bucket_info(BUCKET_INFO_OUTPUT)
         assert info.bucket_id.startswith("f1dc3224")
