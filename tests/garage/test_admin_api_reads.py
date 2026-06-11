@@ -41,6 +41,41 @@ def _fake_request(
     return _request, seen
 
 
+class TestClusterReads:
+    def test_get_cluster_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        req, seen = _fake_request(200, json.dumps({"nodes": [{"id": "n1"}]}))
+        monkeypatch.setattr(admin_api, "_request", req)
+        data, err = admin_api.get_cluster_status(**_ADMIN)
+        assert err == ""
+        assert data == {"nodes": [{"id": "n1"}]}
+        assert seen["path"] == "/v2/GetClusterStatus"
+
+    def test_get_cluster_statistics(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        req, seen = _fake_request(200, json.dumps({"totalObjectCount": 7032}))
+        monkeypatch.setattr(admin_api, "_request", req)
+        data, err = admin_api.get_cluster_statistics(**_ADMIN)
+        assert err == ""
+        assert data is not None and data["totalObjectCount"] == 7032
+        assert seen["path"] == "/v2/GetClusterStatistics"
+
+    def test_list_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        req, seen = _fake_request(200, json.dumps([{"id": "GK1", "name": "k"}]))
+        monkeypatch.setattr(admin_api, "_request", req)
+        data, err = admin_api.list_keys(**_ADMIN)
+        assert err == ""
+        assert data == [{"id": "GK1", "name": "k"}]
+        assert seen["path"] == "/v2/ListKeys"
+
+    def test_list_keys_non_list_is_error(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        req, _seen = _fake_request(200, json.dumps({"oops": 1}))
+        monkeypatch.setattr(admin_api, "_request", req)
+        data, err = admin_api.list_keys(**_ADMIN)
+        assert data is None
+        assert "non-list" in err
+
+
 class TestGetBucketInfo:
     def test_full_id_uses_id_param(self, monkeypatch: pytest.MonkeyPatch) -> None:
         req, seen = _fake_request(200, json.dumps({"id": _FULL_ID, "bytes": 5}))

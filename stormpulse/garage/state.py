@@ -1,26 +1,22 @@
-"""Garage state collection - structured dataclasses and subprocess runner."""
+"""Garage state collection over the admin HTTP API (ADR garage/001).
+
+Node telemetry (cluster status, statistics, key list) and per-bucket state
+(sizes, object counts, quotas, keys) are all read via the admin HTTP API, never
+the Garage CLI. ``GaragePeer`` is the one type still imported from ``parse`` (a
+dataclass, not a scraper); it relocates when ``parse.py`` is finally deleted.
+"""
 
 from __future__ import annotations
 
 import logging
-import subprocess
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from stormpulse.config import GarageConfig
 from stormpulse.garage import admin_api
-from stormpulse.garage.parse import (
-    GarageParseError,
-    GaragePeer,
-    parse_key_list,
-    parse_stats,
-    parse_status,
-)
+from stormpulse.garage.parse import GaragePeer
 
 logger = logging.getLogger(__name__)
-
-_GARAGE_TIMEOUT = 15
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,9 +63,7 @@ class GarageState:
     data_avail_gb: float
     version: str
     healthy: bool
-    db_engine: str
     object_count: int
-    block_count: int
     buckets: list[GarageBucket]
     keys: list[GarageKeyRef]
     peers: list[GaragePeer]
@@ -90,9 +84,7 @@ class GarageState:
             data_avail_gb=0.0,
             version="",
             healthy=False,
-            db_engine="",
             object_count=0,
-            block_count=0,
             buckets=[],
             keys=[],
             peers=[],
@@ -100,62 +92,13 @@ class GarageState:
         )
 
 
-def run_garage(config: GarageConfig, *args: str) -> str | None:
-    """Run a garage CLI command via docker exec. Returns stdout or None on failure."""
-    cmd = [
-        config.docker_binary,
-        "exec",
-        config.container_name,
-        config.garage_binary,
-        *args,
-    ]
-    try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=_GARAGE_TIMEOUT,
-            shell=False,
-        )
-    except FileNotFoundError:
-        logger.warning("Docker binary not found: %s", config.docker_binary)
-        return None
-    except subprocess.TimeoutExpired:
-        logger.warning("Garage command timed out: %s", " ".join(args))
-        return None
-
-    if proc.returncode != 0:
-        logger.warning(
-            "Garage command failed (exit %d): %s - %s",
-            proc.returncode,
-            " ".join(args),
-            proc.stderr.strip(),
-        )
-        return None
-
-    return proc.stdout
-
-
-def _try_parse[T](
-    config: GarageConfig, parser: Callable[[str], T], *args: str, what: str
-) -> T | None:
-    out = run_garage(config, *args)
-    if out is None:
-        return None
-    try:
-        return parser(out)
-    except GarageParseError:
-        logger.warning("Failed to parse garage %s output", what)
-        return None
-
-
 def _perm_flags(permissions: dict[str, Any] | None) -> str:
     """Render Garage's structured key permissions as the legacy ``RWO`` string.
 
-    The CLI ``bucket info`` keys table printed read/write/owner as the flags
-    ``R``/``W``/``O``; the admin API returns ``{"read","write","owner"}`` booleans
-    (``ApiBucketKeyPerm``). We keep emitting the same string so nothing
-    downstream of the state push changes shape.
+    The admin API returns ``{"read","write","owner"}`` booleans
+    (``ApiBucketKeyPerm``). We emit the same ``R``/``W``/``O`` string the CLI
+    ``bucket info`` keys table printed, so nothing downstream of the state push
+    changes shape.
     """
     p = permissions or {}
     return (
@@ -165,23 +108,47 @@ def _perm_flags(permissions: dict[str, Any] | None) -> str:
     )
 
 
+def _peer_from_node(node: dict[str, Any]) -> GaragePeer:
+    """Map a ``NodeResp`` (``GetClusterStatus`` v2 JSON) to a GaragePeer.
+
+    Sizes are exact bytes from the API (``role.capacity`` /
+    ``dataPartition.available``/``total``), converted to decimal GB. Every read
+    is defensive: gateway nodes have ``role.capacity`` null, unassigned nodes
+    have ``role`` null, so a missing field degrades to a zero, never a KeyError.
+    """
+    role = node.get("role") or {}
+    data_part = node.get("dataPartition") or {}
+    avail = data_part.get("available")
+    total = data_part.get("total")
+    capacity = role.get("capacity")
+    pct = round(avail / total * 100, 1) if avail is not None and total else 0.0
+    return GaragePeer(
+        node_id=node.get("id", "") or "",
+        hostname=node.get("hostname", "") or "",
+        address=node.get("addr", "") or "",
+        zone=role.get("zone", "") or "",
+        capacity_gb=(capacity or 0) / 1_000_000_000,
+        data_avail_gb=(avail or 0) / 1_000_000_000,
+        data_avail_percent=pct,
+        version=node.get("garageVersion", "") or "unknown",
+        healthy=bool(node.get("isUp")),
+    )
+
+
 def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
     """Map a ``GetBucketInfoResponse`` (admin API v2 JSON) to a GarageBucket.
 
     Field names are the exact v2 schema: ``bytes``/``objects`` are int64,
     ``quotas.maxSize``/``maxObjects`` are int-or-null, ``websiteConfig`` is an
     object-or-null, and each key carries ``accessKeyId``/``name``/``permissions``
-    inline (so the separate ``key list`` lookup is no longer needed for buckets).
-    Every read is defensive: a missing or null field degrades to a zero-value,
-    never a KeyError that would crash the tick.
+    inline. Every read is defensive: a missing or null field degrades to a
+    zero-value, never a KeyError that would crash the tick.
     """
     quotas = info.get("quotas") or {}
     website = info.get("websiteConfig") or {}
     global_aliases = info.get("globalAliases") or []
     keys: list[GarageKeyRef] = []
     for k in info.get("keys") or []:
-        # bucketLocalAliases is per-key in the v2 schema but GarageKeyRef carries
-        # only id/name/permissions, matching the old CLI state push, so it's dropped.
         keys.append(
             GarageKeyRef(
                 key_id=k.get("accessKeyId", "") or "",
@@ -207,24 +174,12 @@ def _collect_buckets_via_admin(config: GarageConfig) -> list[GarageBucket] | Non
     """List buckets and fetch each one's info over the admin HTTP API.
 
     Returns the bucket list, or **None** when the cluster can't be enumerated
-    (admin API unconfigured, or ``ListBuckets`` unreachable). The caller treats
-    None as "skip this tick": pushing an empty set would read downstream as
-    "every bucket vanished" (BUCKETS-006 invariant 4 - no fresh read, no action).
-    A single bucket whose ``GetBucketInfo`` fails is skipped and logged, never
-    crashing the tick - stale-and-missing-one beats acting on a bad read.
-
-    This is the migration of ADR garage/001 follow-up #1: it replaces the
-    per-bucket CLI ``bucket info`` spawn (and its lossy text size/quota parse)
-    with exact-integer JSON, which is what lets the website anchor BUCKETS-006's
-    quota_bytes on this read.
+    (``ListBuckets`` unreachable). The caller treats None as "skip this tick":
+    pushing an empty set would read downstream as "every bucket vanished"
+    (BUCKETS-006 invariant 4 - no fresh read, no action). A single bucket whose
+    ``GetBucketInfo`` fails is skipped and logged, never crashing the tick.
     """
     admin_url, admin_token = config.admin_url, config.admin_token
-    if not (admin_url and admin_token):
-        logger.error(
-            "Garage admin API not configured (admin_url + admin_token); cannot "
-            "collect bucket state. Set [garage] admin_url and admin_token_file."
-        )
-        return None
     items, err = admin_api.list_buckets(admin_url=admin_url, admin_token=admin_token)
     if items is None:
         logger.warning("ListBuckets failed; skipping bucket state this tick: %s", err)
@@ -248,34 +203,51 @@ def _collect_buckets_via_admin(config: GarageConfig) -> list[GarageBucket] | Non
 
 
 def collect_garage_state(config: GarageConfig) -> GarageState | None:
-    """Collect full Garage node state for the state push.
+    """Collect full Garage node state for the state push, all via the admin API.
 
-    Node telemetry (status, stats, key list) is read via the Garage CLI; the
-    per-bucket state (sizes, object counts, quotas, keys) is read via the admin
-    HTTP API (ADR garage/001 follow-up #1) so the website can anchor
-    BUCKETS-006's quota_bytes on exact JSON instead of scraped text.
-
-    Returns None if the node is unreachable, the CLI output can't be parsed, or
-    the bucket set can't be enumerated this tick - the caller skips the push.
+    Returns None when the admin API is unconfigured or unreachable, no node is
+    found, or the bucket set can't be enumerated this tick - the caller skips
+    the push rather than reporting a degraded snapshot. Cluster statistics and
+    the key list are best-effort: their failure degrades a field, not the tick.
     """
-    nodes = _try_parse(config, parse_status, "status", what="status")
-    if not nodes:
-        logger.warning("No nodes found in garage status output")
+    admin_url, admin_token = config.admin_url, config.admin_token
+    if not (admin_url and admin_token):
+        logger.error(
+            "Garage admin API not configured (admin_url + admin_token); cannot "
+            "collect state. Set [garage] admin_url and admin_token_file."
+        )
         return None
-    node = nodes[0]
 
-    stats = _try_parse(config, parse_stats, "stats", what="stats")
-    key_entries = (
-        _try_parse(config, parse_key_list, "key", "list", what="key list") or []
+    status, err = admin_api.get_cluster_status(
+        admin_url=admin_url, admin_token=admin_token,
     )
-    key_name_map = {k.key_id: k.name for k in key_entries}
+    if status is None:
+        logger.warning("GetClusterStatus failed; skipping state push: %s", err)
+        return None
+    peers = [_peer_from_node(n) for n in status.get("nodes") or []]
+    if not peers:
+        logger.warning("No nodes in GetClusterStatus; skipping state push")
+        return None
+    node = peers[0]
+
+    # Best-effort: a stats failure degrades object_count to 0, not the tick.
+    stats, _err = admin_api.get_cluster_statistics(
+        admin_url=admin_url, admin_token=admin_token,
+    )
+    object_count = int((stats or {}).get("totalObjectCount") or 0)
+
+    # Best-effort: a key-list failure empties the top-level inventory only.
+    keys_raw, _err = admin_api.list_keys(admin_url=admin_url, admin_token=admin_token)
+    keys = [
+        GarageKeyRef(k.get("id", "") or "", k.get("name", "") or "", "")
+        for k in (keys_raw or [])
+    ]
 
     buckets = _collect_buckets_via_admin(config)
     if buckets is None:
-        # Admin API unconfigured/unreachable or ListBuckets failed. Skip the whole
-        # tick rather than push an empty bucket set, which reads downstream as
-        # "every bucket vanished". The dashboard sees no fresh push and shows
-        # degraded; the next tick retries (BUCKETS-006 invariant 4).
+        # Admin API unreachable or ListBuckets failed. Skip the whole tick rather
+        # than push an empty bucket set, which reads downstream as "every bucket
+        # vanished". The next tick retries (BUCKETS-006 invariant 4).
         logger.warning("Bucket state unavailable this tick; skipping state push")
         return None
 
@@ -287,10 +259,8 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
         data_avail_gb=node.data_avail_gb,
         version=node.version,
         healthy=node.healthy,
-        db_engine=stats.db_engine if stats else "unknown",
-        object_count=stats.object_count if stats else 0,
-        block_count=stats.block_count if stats else 0,
+        object_count=object_count,
         buckets=buckets,
-        keys=[GarageKeyRef(kid, kname, "") for kid, kname in key_name_map.items()],
-        peers=nodes,
+        keys=keys,
+        peers=peers,
     )
