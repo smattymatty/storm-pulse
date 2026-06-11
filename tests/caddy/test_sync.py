@@ -386,6 +386,38 @@ class TestReadAndAbsolutizeImports:
         result = _read_and_absolutize_imports(path)
         assert result == content
 
+    def test_snippet_import_not_absolutized(self, tmp_path: Path) -> None:
+        # Regression, 2026-06-11: `import security-headers` references
+        # the `(security-headers)` snippet, not a file. Absolutising it
+        # made Caddy 400 every /load against the hardened prod
+        # Caddyfile ("File to import not found"), so fragments landed
+        # on disk but never served until an operator restart.
+        path = tmp_path / "Caddyfile"
+        path.write_text(
+            "(security-headers) {\n"
+            '    header X-Frame-Options "DENY"\n'
+            "}\n"
+            "import conf.d/*.caddy\n"
+            ":80 {\n"
+            "    import security-headers\n"
+            "}\n"
+        )
+        result = _read_and_absolutize_imports(path)
+        assert "import security-headers\n" in result
+        assert "/security-headers" not in result
+        # The genuine file import is still absolutised.
+        assert f"import {tmp_path.as_posix()}/conf.d/*.caddy\n" in result
+
+    def test_relative_file_matching_no_snippet_still_absolutized(
+        self, tmp_path: Path,
+    ) -> None:
+        # A bare relative name with no matching snippet definition is a
+        # file path and still gets absolutised.
+        path = tmp_path / "Caddyfile"
+        path.write_text("import extra-conf\n")
+        result = _read_and_absolutize_imports(path)
+        assert result == f"import {tmp_path.as_posix()}/extra-conf\n"
+
     def test_mixed_absolute_and_relative(self, tmp_path: Path) -> None:
         path = tmp_path / "Caddyfile"
         path.write_text(

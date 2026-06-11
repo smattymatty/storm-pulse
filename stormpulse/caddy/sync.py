@@ -279,6 +279,23 @@ def _atomic_write_or_remove(drop_in_path: Path, fragment: str) -> None:
     os.replace(tmp_path, drop_in_path)
 
 
+def _snippet_names(content: str) -> set[str]:
+    """Collect Caddyfile snippet names: top-level ``(name) { ... }`` blocks.
+
+    ``import`` resolves a snippet name before it is ever treated as a
+    file path, so any import target matching one of these names must be
+    left untouched by absolutisation.
+    """
+    names: set[str] = set()
+    for raw_line in content.splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if line.startswith("(") and ")" in line:
+            name = line[1 : line.index(")")].strip()
+            if name:
+                names.add(name)
+    return names
+
+
 def _read_and_absolutize_imports(main_caddyfile: Path) -> str:
     """Read the main Caddyfile and absolutise any relative ``import`` paths.
 
@@ -289,9 +306,18 @@ def _read_and_absolutize_imports(main_caddyfile: Path) -> str:
     may resolve to the wrong place. Absolutising them in place
     sidesteps this - the running Caddy sees the same import targets
     it would resolve on a disk-based load.
+
+    Snippet imports are exempt: ``import security-headers`` referencing
+    a ``(security-headers)`` block is a name, not a path. Rewriting it
+    to ``/etc/caddy/security-headers`` makes Caddy reject the whole
+    /load with "File to import not found" - which silently broke every
+    sync against a hardened Caddyfile until 2026-06-11. Targets are
+    checked against the file's own snippet definitions, mirroring
+    Caddy's snippet-before-file resolution order.
     """
     content = main_caddyfile.read_text(encoding="utf-8")
     base_dir = main_caddyfile.parent
+    snippets = _snippet_names(content)
     out: list[str] = []
     for line in content.splitlines(keepends=True):
         stripped = line.strip()
@@ -303,7 +329,11 @@ def _read_and_absolutize_imports(main_caddyfile: Path) -> str:
             out.append(line)
             continue
         target = code_part[len("import ") :].strip()
-        if not target or Path(target).is_absolute():
+        if (
+            not target
+            or target in snippets
+            or Path(target).is_absolute()
+        ):
             out.append(line)
             continue
         abs_target = (base_dir / target).as_posix()
