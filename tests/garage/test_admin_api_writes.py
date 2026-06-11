@@ -92,6 +92,34 @@ class TestCreateKey:
         assert "HTTP 500" in err
 
 
+class TestCreateBucket:
+    def test_alias_less_returns_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = _install(monkeypatch, op_body=json.dumps({"id": _FULL_ID}))
+        info, err = admin_api.create_bucket(**_ADMIN)
+        assert err == ""
+        assert info is not None and info["id"] == _FULL_ID
+        assert calls[-1]["method"] == "POST"
+        assert calls[-1]["path"] == "/v2/CreateBucket"
+        assert _body_of(calls[-1]) == {}
+
+    def test_atomic_local_alias(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls = _install(monkeypatch, op_body=json.dumps({"id": _FULL_ID}))
+        la = {
+            "accessKeyId": _KEY_ID,
+            "alias": "media",
+            "allow": {"read": True, "write": True, "owner": True},
+        }
+        info, _ = admin_api.create_bucket(local_alias=la, **_ADMIN)
+        assert info is not None and info["id"] == _FULL_ID
+        assert _body_of(calls[-1]) == {"localAlias": la}
+
+    def test_http_error_maps_to_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install(monkeypatch, op_status=409, op_body="already exists")
+        info, err = admin_api.create_bucket(global_alias="x", **_ADMIN)
+        assert info is None
+        assert "HTTP 409" in err
+
+
 class TestAllowBucketKey:
     def test_rw_resolves_then_grants_read_write(
         self, monkeypatch: pytest.MonkeyPatch,

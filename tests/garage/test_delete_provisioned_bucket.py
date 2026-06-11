@@ -22,7 +22,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.config import GarageConfig
-from stormpulse.garage import delete_provisioned_bucket, provision_bucket
+from stormpulse.garage import delete_provisioned_bucket
 from stormpulse.garage.delete_provisioned_bucket import (
     make_delete_provisioned_bucket_handler,
     run_delete_provisioned_bucket,
@@ -122,9 +122,6 @@ async def _run(
         "run_garage",
         fake.run_garage,
     )
-    # The orchestrator imports run_garage from provision_bucket; patch
-    # both call sites so the fake intercepts everything.
-    monkeypatch.setattr(provision_bucket, "run_garage", fake.run_garage)
     return await run_delete_provisioned_bucket(
         progress=_ProgressRecorder(),
         garage_config=_make_config(),
