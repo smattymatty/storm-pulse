@@ -1,37 +1,26 @@
 """Tests for stormpulse.garage.state.
 
-Node telemetry (status, stats, key list, peers) is collected via the Garage CLI
-(``run_garage``, mocked here). Per-bucket state (sizes, objects, quotas, keys) is
-collected via the admin HTTP API (ADR garage/001 follow-up #1), so the bucket
-tests mock ``admin_api.list_buckets`` / ``admin_api.get_bucket_info`` and assert
-against exact-integer JSON rather than scraped CLI text.
+All telemetry (cluster status, statistics, key list) and per-bucket state are
+read via the admin HTTP API (ADR garage/001), so every test mocks the
+``admin_api`` functions and asserts against exact-integer JSON. No CLI.
 """
 
 from __future__ import annotations
 
-import subprocess
-from contextlib import contextmanager
 from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 from stormpulse.config import GarageConfig
-from stormpulse.garage.parse import GarageParseError
-from stormpulse.garage.state import collect_garage_state, run_garage
-from tests.garage.fixtures import (
-    KEY_LIST_OUTPUT,
-    KEY_LIST_OUTPUT_MULTI,
-    STATS_OUTPUT,
-    STATUS_OUTPUT,
-    STATUS_OUTPUT_EMPTY,
-    STATUS_OUTPUT_MULTI_NODE,
-)
+from stormpulse.garage.state import collect_garage_state
 
 ADMIN_URL = "http://127.0.0.1:3903"
 # A full 64-char Garage bucket id; Storm stores its first 16 chars.
 FULL_ID = "f1dc32249aa1d80a" + "0" * 48
 FULL_ID_2 = "abcdef9876543210" + "1" * 48
+NODE_ID = "a8bfb94f8a2786f74c227c75a690846b915560c08dc8a0c8681b980082d0a4b9"
 
 
 def _make_config(tmp_path: Path, *, admin_url: str = ADMIN_URL) -> GarageConfig:
@@ -47,13 +36,27 @@ def _make_config(tmp_path: Path, *, admin_url: str = ADMIN_URL) -> GarageConfig:
     )
 
 
-def _mock_run_garage(outputs: Mapping[tuple[str, ...], str | None]) -> object:
-    """side_effect for run_garage that maps CLI args to canned stdout."""
-
-    def side_effect(config: GarageConfig, *args: str) -> str | None:
-        return outputs.get(args)
-
-    return side_effect
+def _node(
+    *,
+    node_id: str = NODE_ID,
+    hostname: str = "garage-one",
+    zone: str = "canada-1",
+    version: str = "v2.3.0",
+    up: bool = True,
+    capacity: int | None = 3_000_000_000_000,
+    avail: int = 2_800_000_000_000,
+    total: int = 3_000_000_000_000,
+) -> dict[str, Any]:
+    """Build a NodeResp-shaped dict (GetClusterStatus v2)."""
+    return {
+        "id": node_id,
+        "hostname": hostname,
+        "addr": "10.0.0.1:3901",
+        "garageVersion": version,
+        "isUp": up,
+        "role": {"zone": zone, "capacity": capacity, "tags": []},
+        "dataPartition": {"available": avail, "total": total},
+    }
 
 
 def _admin_key(
@@ -97,13 +100,26 @@ def _admin_info(
     }
 
 
+_StatusResult = tuple[dict[str, Any] | None, str]
+_StatsResult = tuple[dict[str, Any] | None, str]
+_KeysResult = tuple[list[dict[str, Any]] | None, str]
+_ListResult = tuple[list[dict[str, Any]] | None, str]
+
+_STATUS_OK: _StatusResult = ({"nodes": [_node()]}, "")
+_STATS_OK: _StatsResult = ({"totalObjectCount": 5, "bucketCount": 1}, "")
+_KEYS_OK: _KeysResult = ([{"id": "GK5e6fb0b4fa406ace8126a7db", "name": "obsidian-key"}], "")
+
+
 @contextmanager
 def _patched(
-    cli_outputs: Mapping[tuple[str, ...], str | None],
-    list_result: tuple[list[dict[str, Any]] | None, str],
+    *,
+    status: _StatusResult = _STATUS_OK,
+    stats: _StatsResult = _STATS_OK,
+    keys: _KeysResult = _KEYS_OK,
+    list_result: _ListResult,
     info_by_id: Mapping[str, tuple[dict[str, Any] | None, str]],
 ) -> Iterator[None]:
-    """Patch CLI (run_garage) + admin reads (list_buckets/get_bucket_info)."""
+    """Patch the five admin reads the state collector uses."""
 
     def info_side_effect(
         *, admin_url: str, admin_token: str, bucket_ref: str,
@@ -111,27 +127,13 @@ def _patched(
         return info_by_id.get(bucket_ref, (None, f"not found: {bucket_ref}"))
 
     with (
-        patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(cli_outputs),
-        ),
-        patch(
-            "stormpulse.garage.state.admin_api.list_buckets",
-            return_value=list_result,
-        ),
-        patch(
-            "stormpulse.garage.state.admin_api.get_bucket_info",
-            side_effect=info_side_effect,
-        ),
+        patch("stormpulse.garage.state.admin_api.get_cluster_status", return_value=status),
+        patch("stormpulse.garage.state.admin_api.get_cluster_statistics", return_value=stats),
+        patch("stormpulse.garage.state.admin_api.list_keys", return_value=keys),
+        patch("stormpulse.garage.state.admin_api.list_buckets", return_value=list_result),
+        patch("stormpulse.garage.state.admin_api.get_bucket_info", side_effect=info_side_effect),
     ):
         yield
-
-
-_CLI_OK = {
-    ("status",): STATUS_OUTPUT,
-    ("stats",): STATS_OUTPUT,
-    ("key", "list"): KEY_LIST_OUTPUT,
-}
 
 
 class TestCollectGarageState:
@@ -144,51 +146,48 @@ class TestCollectGarageState:
             global_aliases=("obsidian-vault",),
             keys=(_admin_key("GK5e6fb0b4fa406ace8126a7db", "obsidian-key"),),
         )
-        with _patched(_CLI_OK, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}):
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
 
         assert state is not None
-        # Node telemetry still from the CLI.
-        assert state.node_id == "7a58a5fa192ad6dd"
+        # Node telemetry from GetClusterStatus.
+        assert state.node_id == NODE_ID
         assert state.hostname == "garage-one"
         assert state.zone == "canada-1"
+        assert state.version == "v2.3.0"
         assert state.healthy is True
-        assert state.db_engine == "sqlite3 v3.50.2 (using rusqlite crate)"
+        # object_count from GetClusterStatistics.totalObjectCount.
         assert state.object_count == 5
-        assert state.block_count == 1
-        # Bucket from the admin API, exact integers.
-        assert len(state.buckets) == 1
+        # Bucket from GetBucketInfo, exact integers.
         bucket = state.buckets[0]
         assert bucket.id == FULL_ID
         assert bucket.alias == "obsidian-vault"
         assert bucket.size_bytes == 5800
         assert bucket.object_count == 2
-        assert len(bucket.keys) == 1
         assert bucket.keys[0].key_id == "GK5e6fb0b4fa406ace8126a7db"
-        # key_name now comes inline from GetBucketInfo, not the key-list map.
         assert bucket.keys[0].key_name == "obsidian-key"
         assert bucket.keys[0].permissions == "RWO"
-        assert bucket.website_access is False
-        assert bucket.website_index_document == "index.html"
-        assert bucket.website_error_document is None
-        assert bucket.quota_max_size_bytes is None
-        assert bucket.quota_max_objects is None
-        # Top-level key inventory still from `key list`.
+        # Top-level key inventory from ListKeys.
         assert len(state.keys) == 1
         assert state.keys[0].key_id == "GK5e6fb0b4fa406ace8126a7db"
         assert state.keys[0].key_name == "obsidian-key"
         assert state.keys[0].permissions == ""
-        # Peers from garage status.
+        # Peers from GetClusterStatus, with exact byte->GB conversion.
         assert len(state.peers) == 1
-        assert state.peers[0].node_id == "7a58a5fa192ad6dd"
-        assert state.peers[0].hostname == "garage-one"
+        peer = state.peers[0]
+        assert peer.node_id == NODE_ID
+        assert peer.hostname == "garage-one"
+        assert peer.version == "v2.3.0"
+        assert peer.capacity_gb == 3000.0
+        assert peer.data_avail_gb == 2800.0
+        assert peer.data_avail_percent == 93.3
 
     def test_bucket_with_quotas(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         info = _admin_info(
             FULL_ID, bytes_=10, objects=1, max_size=1_000_000_000, max_objects=1000,
         )
-        with _patched(_CLI_OK, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}):
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -208,7 +207,7 @@ class TestCollectGarageState:
                 _admin_key("GKrw", "rw-key", read=True, write=True, owner=False),
             ),
         )
-        with _patched(_CLI_OK, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}):
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -223,7 +222,7 @@ class TestCollectGarageState:
             objects=0,
             website={"indexDocument": "home.html", "errorDocument": "404.html"},
         )
-        with _patched(_CLI_OK, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}):
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -235,12 +234,11 @@ class TestCollectGarageState:
     def test_alias_less_bucket_collected(self, tmp_path: Path) -> None:
         """Buckets with no global alias still collect; alias is empty, id is full."""
         cfg = _make_config(tmp_path)
-        info = _admin_info(FULL_ID, bytes_=5800, objects=2)  # no global aliases
-        with _patched(_CLI_OK, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}):
+        info = _admin_info(FULL_ID, bytes_=5800, objects=2)
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
 
         assert state is not None
-        assert len(state.buckets) == 1
         assert state.buckets[0].id == FULL_ID
         assert state.buckets[0].alias == ""
 
@@ -250,7 +248,9 @@ class TestCollectGarageState:
             FULL_ID: (_admin_info(FULL_ID, bytes_=1, objects=1, global_aliases=("a",)), ""),
             FULL_ID_2: (_admin_info(FULL_ID_2, bytes_=2, objects=2, global_aliases=("b",)), ""),
         }
-        with _patched(_CLI_OK, ([{"id": FULL_ID}, {"id": FULL_ID_2}], ""), infos):
+        with _patched(
+            list_result=([{"id": FULL_ID}, {"id": FULL_ID_2}], ""), info_by_id=infos,
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -263,7 +263,9 @@ class TestCollectGarageState:
             FULL_ID: (_admin_info(FULL_ID, bytes_=1, objects=1, global_aliases=("ok",)), ""),
             FULL_ID_2: (None, "HTTP 500"),
         }
-        with _patched(_CLI_OK, ([{"id": FULL_ID}, {"id": FULL_ID_2}], ""), infos):
+        with _patched(
+            list_result=([{"id": FULL_ID}, {"id": FULL_ID_2}], ""), info_by_id=infos,
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -272,76 +274,45 @@ class TestCollectGarageState:
     def test_list_buckets_failure_skips_tick(self, tmp_path: Path) -> None:
         """ListBuckets unreachable -> None (skip the whole push, don't report empty)."""
         cfg = _make_config(tmp_path)
-        with _patched(_CLI_OK, (None, "Could not reach admin API"), {}):
+        with _patched(list_result=(None, "Could not reach admin API"), info_by_id={}):
             assert collect_garage_state(cfg) is None
 
     def test_admin_unconfigured_skips_tick(self, tmp_path: Path) -> None:
-        """No admin_url/admin_token -> can't read buckets -> skip the tick."""
+        """No admin_url/admin_token -> skip the tick before any admin call."""
         cfg = _make_config(tmp_path, admin_url="")
-        # admin_api is never reached; only the CLI telemetry is mocked.
-        with patch(
-            "stormpulse.garage.state.run_garage",
-            side_effect=_mock_run_garage(_CLI_OK),
-        ):
-            assert collect_garage_state(cfg) is None
+        assert collect_garage_state(cfg) is None
 
     def test_empty_cluster_no_buckets(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        with _patched(_CLI_OK, ([], ""), {}):
+        with _patched(list_result=([], ""), info_by_id={}):
             state = collect_garage_state(cfg)
         assert state is not None
         assert state.buckets == []
 
     def test_status_failure_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        with _patched({}, ([], ""), {}):
+        with _patched(status=(None, "unreachable"), list_result=([], ""), info_by_id={}):
             assert collect_garage_state(cfg) is None
 
-    def test_status_parse_error_returns_none(self, tmp_path: Path) -> None:
+    def test_no_nodes_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        with (
-            _patched({("status",): STATUS_OUTPUT}, ([], ""), {}),
-            patch(
-                "stormpulse.garage.state.parse_status",
-                side_effect=GarageParseError("bad"),
-            ),
-        ):
-            assert collect_garage_state(cfg) is None
-
-    def test_empty_status_returns_none(self, tmp_path: Path) -> None:
-        cfg = _make_config(tmp_path)
-        with _patched({("status",): STATUS_OUTPUT_EMPTY}, ([], ""), {}):
+        with _patched(status=({"nodes": []}, ""), list_result=([], ""), info_by_id={}):
             assert collect_garage_state(cfg) is None
 
     def test_stats_failure_still_returns_state(self, tmp_path: Path) -> None:
+        """A GetClusterStatistics failure degrades object_count to 0, not the tick."""
         cfg = _make_config(tmp_path)
-        cli = {("status",): STATUS_OUTPUT, ("stats",): None, ("key", "list"): None}
-        with _patched(cli, ([], ""), {}):
+        with _patched(stats=(None, "HTTP 500"), list_result=([], ""), info_by_id={}):
             state = collect_garage_state(cfg)
         assert state is not None
-        assert state.db_engine == "unknown"
+        assert state.object_count == 0
         assert state.buckets == []
 
-    def test_stats_parse_error_falls_back_to_defaults(self, tmp_path: Path) -> None:
-        cfg = _make_config(tmp_path)
-        with (
-            _patched(_CLI_OK, ([], ""), {}),
-            patch(
-                "stormpulse.garage.state.parse_stats",
-                side_effect=GarageParseError("bad"),
-            ),
-        ):
-            state = collect_garage_state(cfg)
-        assert state is not None
-        assert state.db_engine == "unknown"
-        assert state.object_count == 0
-        assert state.block_count == 0
-
-    def test_key_list_parse_error_empties_top_level_not_bucket_keys(
+    def test_key_list_failure_empties_top_level_not_bucket_keys(
         self, tmp_path: Path,
     ) -> None:
-        """A key-list parse error empties the top-level inventory, but bucket keys
-        survive because GetBucketInfo carries their names inline now."""
+        """A ListKeys failure empties the top-level inventory, but bucket keys
+        survive because GetBucketInfo carries their names inline."""
         cfg = _make_config(tmp_path)
         info = _admin_info(
             FULL_ID,
@@ -350,12 +321,10 @@ class TestCollectGarageState:
             global_aliases=("vault",),
             keys=(_admin_key("GK5e6fb0b4fa406ace8126a7db", "obsidian-key"),),
         )
-        with (
-            _patched(_CLI_OK, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}),
-            patch(
-                "stormpulse.garage.state.parse_key_list",
-                side_effect=GarageParseError("bad"),
-            ),
+        with _patched(
+            keys=(None, "HTTP 500"),
+            list_result=([{"id": FULL_ID}], ""),
+            info_by_id={FULL_ID: (info, "")},
         ):
             state = collect_garage_state(cfg)
         assert state is not None
@@ -364,24 +333,35 @@ class TestCollectGarageState:
 
     def test_multi_node_all_peers_collected(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        cli = {
-            ("status",): STATUS_OUTPUT_MULTI_NODE,
-            ("stats",): STATS_OUTPUT,
-            ("key", "list"): KEY_LIST_OUTPUT,
-        }
-        with _patched(cli, ([], ""), {}):
+        status = (
+            {
+                "nodes": [
+                    _node(node_id=NODE_ID, hostname="garage-one"),
+                    _node(node_id="b" * 64, hostname="garage-two"),
+                    _node(node_id="c" * 64, hostname="garage-pi"),
+                ]
+            },
+            "",
+        )
+        with _patched(status=status, list_result=([], ""), info_by_id={}):
             state = collect_garage_state(cfg)
         assert state is not None
         assert len(state.peers) == 3
         assert {p.hostname for p in state.peers} == {
             "garage-one", "garage-two", "garage-pi",
         }
-        assert state.node_id == "7a58a5fa192ad6dd"
+        assert state.node_id == NODE_ID
 
     def test_unlinked_keys_appear_in_top_level(self, tmp_path: Path) -> None:
-        """Keys in `key list` but not on any bucket still surface at top level."""
+        """Keys in ListKeys but not on any bucket still surface at top level."""
         cfg = _make_config(tmp_path)
-        cli = {**_CLI_OK, ("key", "list"): KEY_LIST_OUTPUT_MULTI}
+        keys = (
+            [
+                {"id": "GK5e6fb0b4fa406ace8126a7db", "name": "obsidian-key"},
+                {"id": "GKbackup0000000000000000", "name": "backup-key"},
+            ],
+            "",
+        )
         info = _admin_info(
             FULL_ID,
             bytes_=1,
@@ -389,7 +369,9 @@ class TestCollectGarageState:
             global_aliases=("vault",),
             keys=(_admin_key("GK5e6fb0b4fa406ace8126a7db", "obsidian-key"),),
         )
-        with _patched(cli, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}):
+        with _patched(
+            keys=keys, list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")},
+        ):
             state = collect_garage_state(cfg)
         assert state is not None
         assert len(state.buckets[0].keys) == 1
@@ -400,51 +382,16 @@ class TestCollectGarageState:
         info = _admin_info(
             FULL_ID, bytes_=5800, objects=2, global_aliases=("obsidian-vault",),
         )
-        with _patched(_CLI_OK, ([{"id": FULL_ID}], ""), {FULL_ID: (info, "")}):
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
 
         assert state is not None
         d = state.to_dict()
-        assert d["node_id"] == "7a58a5fa192ad6dd"
-        assert isinstance(d["buckets"], list)
+        assert d["node_id"] == NODE_ID
+        assert d["version"] == "v2.3.0"
+        assert "db_engine" not in d
+        assert "block_count" not in d
         assert d["buckets"][0]["alias"] == "obsidian-vault"
         assert d["buckets"][0]["size_bytes"] == 5800
-        assert isinstance(d["peers"], list)
         assert len(d["peers"]) == 1
-        assert d["peers"][0]["node_id"] == "7a58a5fa192ad6dd"
-
-
-class TestRunGarage:
-    """Direct tests for run_garage subprocess failure modes."""
-
-    def test_returns_stdout_on_success(self, tmp_path: Path) -> None:
-        cfg = _make_config(tmp_path)
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=0, stdout="hello\n", stderr="",
-        )
-        with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
-            assert run_garage(cfg, "status") == "hello\n"
-
-    def test_file_not_found_returns_none(self, tmp_path: Path) -> None:
-        cfg = _make_config(tmp_path)
-        with patch(
-            "stormpulse.garage.state.subprocess.run",
-            side_effect=FileNotFoundError(),
-        ):
-            assert run_garage(cfg, "status") is None
-
-    def test_timeout_returns_none(self, tmp_path: Path) -> None:
-        cfg = _make_config(tmp_path)
-        with patch(
-            "stormpulse.garage.state.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="garage", timeout=15),
-        ):
-            assert run_garage(cfg, "status") is None
-
-    def test_nonzero_exit_returns_none(self, tmp_path: Path) -> None:
-        cfg = _make_config(tmp_path)
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="boom\n",
-        )
-        with patch("stormpulse.garage.state.subprocess.run", return_value=completed):
-            assert run_garage(cfg, "status") is None
+        assert d["peers"][0]["node_id"] == NODE_ID

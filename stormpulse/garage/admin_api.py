@@ -105,6 +105,56 @@ def get_bucket_info(
     return data, ""
 
 
+def get_cluster_status(
+    *, admin_url: str, admin_token: str,
+) -> tuple[dict[str, Any] | None, str]:
+    """Cluster node list via ``GET /v2/GetClusterStatus``.
+
+    Returns the response dict (``nodes`` array of ``NodeResp``: ``id``,
+    ``hostname``, ``addr``, ``garageVersion``, ``isUp``, ``role.zone`` /
+    ``role.capacity``, ``dataPartition``), or ``(None, error)``.
+    """
+    data, err = _get_json(admin_url, admin_token, "/v2/GetClusterStatus")
+    if data is None:
+        return None, err
+    if not isinstance(data, dict):
+        return None, "GetClusterStatus returned a non-object body"
+    return data, ""
+
+
+def get_cluster_statistics(
+    *, admin_url: str, admin_token: str,
+) -> tuple[dict[str, Any] | None, str]:
+    """Cluster statistics via ``GET /v2/GetClusterStatistics``.
+
+    Returns the response dict (structured ``bucketCount`` / ``totalObjectCount`` /
+    ``totalObjectBytes`` / ``dataAvail`` plus a ``freeform`` text blob), or
+    ``(None, error)``. The agent reads the structured ``totalObjectCount``.
+    """
+    data, err = _get_json(admin_url, admin_token, "/v2/GetClusterStatistics")
+    if data is None:
+        return None, err
+    if not isinstance(data, dict):
+        return None, "GetClusterStatistics returned a non-object body"
+    return data, ""
+
+
+def list_keys(
+    *, admin_url: str, admin_token: str,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """List access keys via ``GET /v2/ListKeys``.
+
+    Returns ``(items, "")`` where each item carries ``id`` and ``name``, or
+    ``(None, error)``. Secrets are never in this response.
+    """
+    data, err = _get_json(admin_url, admin_token, "/v2/ListKeys")
+    if data is None:
+        return None, err
+    if not isinstance(data, list):
+        return None, "ListKeys returned a non-list body"
+    return [k for k in data if isinstance(k, dict)], ""
+
+
 def create_key(
     *, admin_url: str, admin_token: str, name: str,
 ) -> tuple[dict[str, Any] | None, str]:
