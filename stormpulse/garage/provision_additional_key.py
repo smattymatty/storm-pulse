@@ -4,9 +4,10 @@ Adds a new tiered (rw or ro) key to an existing bucket: create key, allow
 permissions, attach local alias. Atomic rollback runs in reverse order; the
 bucket is never touched by rollback (this handler owns the new key only).
 
+All Garage interaction is the admin HTTP API (ADR garage/001), never the CLI.
 The bucket reference is the 16-char UUID prefix stored in
-``CustomerBucket.garage_bucket_id``; the full 64-char form is rejected by
-the Garage CLI.
+``CustomerBucket.garage_bucket_id``; the admin client resolves it to Garage's
+full 64-char id before each bucket-scoped call.
 """
 
 from __future__ import annotations
@@ -18,8 +19,7 @@ from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.config import GarageConfig
-from stormpulse.garage.parse import GarageParseError, parse_key_create
-from stormpulse.garage.runner import run_garage  # reuse helper
+from stormpulse.garage import admin_api
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +28,10 @@ _TOTAL_STEPS = 3
 
 _VALID_TIERS = ("rw", "ro")
 
-_TIER_FLAGS: dict[str, tuple[str, ...]] = {
-    "rw": ("--read", "--write"),
-    "ro": ("--read",),
+# (read, write) for each tier; owner is never granted by this handler.
+_TIER_PERMS: dict[str, tuple[bool, bool]] = {
+    "rw": (True, True),
+    "ro": (True, False),
 }
 
 
@@ -100,56 +101,68 @@ async def run_provision_additional_key(
     attach a local alias. Three steps with atomic rollback.
     """
     started_at = time.monotonic()
+    state = _AdditionalKeyState(
+        bucket_id=bucket_id,
+        local_alias=local_alias,
+        key_tier=key_tier,
+    )
+
     if key_tier not in _VALID_TIERS:
         # Defensive: handler factory rejects this, but enforce here too.
         return _failure(
             failure_reason="invalid_key_tier",
             step_failed=None,
-            state=_AdditionalKeyState(
-                bucket_id=bucket_id,
-                local_alias=local_alias,
-                key_tier=key_tier,
-            ),
+            state=state,
             stderr=f"key_tier must be one of {_VALID_TIERS}, got {key_tier!r}",
             started_at=started_at,
             rollback_status="not_required",
             extras_extra={},
         )
 
-    flags = _TIER_FLAGS[key_tier]
-    state = _AdditionalKeyState(
-        bucket_id=bucket_id,
-        local_alias=local_alias,
-        key_tier=key_tier,
-    )
-    new_secret: str | None = None
-
-    # ---- Step 1: key create <new_key_name> ----
-    await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
-    rc, stdout, stderr = await run_garage(
-        garage_config,
-        "key",
-        "create",
-        new_key_name,
-    )
-    if rc != 0:
+    admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
+    if not (admin_url and admin_token):
+        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
         return _failure(
-            failure_reason="new_key_create_failed",
-            step_failed="new_key_create",
+            failure_reason="admin_api_unconfigured",
+            step_failed=None,
             state=state,
-            stderr=stderr,
+            stderr=(
+                "Garage admin API not configured (admin_url + admin_token); set "
+                "[garage] admin_url and admin_token_file."
+            ),
             started_at=started_at,
             rollback_status="not_required",
             extras_extra={},
         )
-    try:
-        key_result = parse_key_create(stdout)
-    except GarageParseError as exc:
+
+    read, write = _TIER_PERMS[key_tier]
+    new_secret: str | None = None
+
+    # ---- Step 1: CreateKey ----
+    await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
+    info, err = admin_api.create_key(
+        admin_url=admin_url, admin_token=admin_token, name=new_key_name,
+    )
+    if info is None:
         return _failure(
             failure_reason="new_key_create_failed",
             step_failed="new_key_create",
             state=state,
-            stderr=f"Could not parse key ID: {exc}",
+            stderr=err,
+            started_at=started_at,
+            rollback_status="not_required",
+            extras_extra={},
+        )
+    new_key_id = info.get("accessKeyId") or ""
+    new_secret = info.get("secretAccessKey") or ""
+    if not new_key_id:
+        # The key was created but the response didn't identify it; we can't
+        # roll it back without its id, so flag it for manual cleanup.
+        return _failure(
+            failure_reason="new_key_create_failed",
+            step_failed="new_key_create",
+            state=state,
+            stderr="CreateKey response missing accessKeyId",
             started_at=started_at,
             rollback_status="partial",
             extras_extra={
@@ -158,70 +171,52 @@ async def run_provision_additional_key(
                 ],
             },
         )
-    state.new_key_id = key_result.key_id
-    new_secret = key_result.secret_key
+    state.new_key_id = new_key_id
     state.step_completed = "new_key_create"
 
-    # ---- Step 2: bucket allow <flags> <bucket_id> --key <new_key_id> ----
-    await progress(
-        "running",
-        1,
-        _TOTAL_STEPS,
-        f"Granting {key_tier} permissions",
+    # ---- Step 2: AllowBucketKey ----
+    await progress("running", 1, _TOTAL_STEPS, f"Granting {key_tier} permissions")
+    ok, err = admin_api.allow_bucket_key(
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=new_key_id,
+        read=read,
+        write=write,
     )
-    rc, _stdout, stderr = await run_garage(
-        garage_config,
-        "bucket",
-        "allow",
-        *flags,
-        bucket_id,
-        "--key",
-        state.new_key_id,
-    )
-    if rc != 0:
+    if not ok:
         rollback = await _rollback(garage_config, state)
         return _failure(
             failure_reason="new_key_permission_grant_failed",
             step_failed="new_key_permission_grant",
             state=state,
-            stderr=stderr,
+            stderr=err,
             started_at=started_at,
             rollback_status=rollback.status,
-            extras_extra={
-                "manual_cleanup_required": rollback.manual_cleanup,
-            },
+            extras_extra={"manual_cleanup_required": rollback.manual_cleanup},
         )
     state.perms_granted = True
     state.step_completed = "new_key_permission_grant"
 
-    # ---- Step 3: bucket alias --local <new_key> <bucket_id> <local_alias> ----
-    await progress(
-        "running",
-        2,
-        _TOTAL_STEPS,
-        "Attaching local alias",
+    # ---- Step 3: AddBucketAlias (local variant) ----
+    await progress("running", 2, _TOTAL_STEPS, "Attaching local alias")
+    ok, err = admin_api.add_bucket_alias_local(
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=new_key_id,
+        local_alias=local_alias,
     )
-    rc, _stdout, stderr = await run_garage(
-        garage_config,
-        "bucket",
-        "alias",
-        "--local",
-        state.new_key_id,
-        bucket_id,
-        local_alias,
-    )
-    if rc != 0:
+    if not ok:
         rollback = await _rollback(garage_config, state)
         return _failure(
             failure_reason="new_key_alias_attach_failed",
             step_failed="new_key_alias_attach",
             state=state,
-            stderr=stderr,
+            stderr=err,
             started_at=started_at,
             rollback_status=rollback.status,
-            extras_extra={
-                "manual_cleanup_required": rollback.manual_cleanup,
-            },
+            extras_extra={"manual_cleanup_required": rollback.manual_cleanup},
         )
     state.step_completed = "new_key_alias_attach"
 
@@ -230,9 +225,9 @@ async def run_provision_additional_key(
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=f"New {key_tier} key: {state.new_key_id}",
+        stdout=f"New {key_tier} key: {new_key_id}",
         extras={
-            "new_key_id": state.new_key_id,
+            "new_key_id": new_key_id,
             "new_secret": new_secret,
             "new_key_name": new_key_name,
             "key_tier": key_tier,
@@ -268,51 +263,31 @@ async def _rollback(
     and if it succeeds there's nothing to roll back from.
     """
     manual: list[dict[str, Any]] = []
-    flags = _TIER_FLAGS[state.key_tier]
+    admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
+    read, write = _TIER_PERMS[state.key_tier]
 
     # 1. Revoke permissions
     if state.perms_granted and state.new_key_id is not None:
-        try:
-            rc, _stdout, _stderr = await run_garage(
-                garage_config,
-                "bucket",
-                "deny",
-                *flags,
-                state.bucket_id,
-                "--key",
-                state.new_key_id,
-            )
-        except (TimeoutError, OSError) as exc:
-            logger.warning(
-                "Rollback: bucket deny %s failed: %s",
-                state.new_key_id,
-                exc,
-            )
-            manual.extend(_remaining_after_perm_halt(state, flags))
-            return _RollbackResult(status="partial", manual_cleanup=manual)
-        if rc != 0:
-            manual.extend(_remaining_after_perm_halt(state, flags))
+        ok, _err = admin_api.deny_bucket_key(
+            admin_url=admin_url,
+            admin_token=admin_token,
+            bucket_ref=state.bucket_id,
+            access_key_id=state.new_key_id,
+            read=read,
+            write=write,
+        )
+        if not ok:
+            manual.extend(_remaining_after_perm_halt(state, read, write))
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
-    # 3. Delete new key
+    # 2. Delete new key
     if state.new_key_id is not None:
-        try:
-            rc, _stdout, _stderr = await run_garage(
-                garage_config,
-                "key",
-                "delete",
-                "--yes",
-                state.new_key_id,
-            )
-        except (TimeoutError, OSError) as exc:
-            logger.warning(
-                "Rollback: key delete %s failed: %s",
-                state.new_key_id,
-                exc,
-            )
-            manual.append({"type": "key", "id": state.new_key_id})
-            return _RollbackResult(status="partial", manual_cleanup=manual)
-        if rc != 0:
+        ok, _err = admin_api.delete_key(
+            admin_url=admin_url,
+            admin_token=admin_token,
+            access_key_id=state.new_key_id,
+        )
+        if not ok:
             manual.append({"type": "key", "id": state.new_key_id})
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
@@ -321,7 +296,8 @@ async def _rollback(
 
 def _remaining_after_perm_halt(
     state: _AdditionalKeyState,
-    flags: tuple[str, ...],
+    read: bool,
+    write: bool,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if state.new_key_id is not None:
@@ -330,7 +306,7 @@ def _remaining_after_perm_halt(
                 {
                     "type": "permission_grant",
                     "key_id": state.new_key_id,
-                    "flags": list(flags),
+                    "permissions": {"read": read, "write": write, "owner": False},
                 }
             )
         items.append({"type": "key", "id": state.new_key_id})
