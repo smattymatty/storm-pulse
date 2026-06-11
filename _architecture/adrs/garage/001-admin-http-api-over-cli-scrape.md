@@ -1,14 +1,21 @@
-# ADR garage/001: Garage admin HTTP API over CLI scraping
+---
+adr:
+  id: "GARAGE-001"
+  title: "Garage admin HTTP API over CLI scraping"
+  status: "Accepted, migrating one operation at a time"
+  date: "2026-06-06"
+  tags: ["garage", "admin-api", "migration", "quota"]
+---
 
-## Status
+# ADR: Garage admin HTTP API over CLI scraping
 
-Accepted, partially implemented (2026-06-06). Quota write done. The per-bucket
-state read (follow-up #1) is done: `collect_garage_state` now reads bucket sizes,
-object counts, quotas, and keys via `ListBuckets` + `GetBucketInfo`, and the
-website anchors BUCKETS-006's `quota_bytes` on that exact JSON (see the
-control-loop amendment in website ADR buckets/006). Node telemetry
-(`status`/`stats`/`key list`), activity-scoped fetching, and provisioning remain
-follow-ups.
+**Status:** Accepted. The agent migrates from Garage CLI scraping to the admin
+HTTP API one operation at a time. Shipped: the quota write, and the per-bucket
+state read (`collect_garage_state` reads sizes, object counts, quotas, and keys
+via `ListBuckets` + `GetBucketInfo`, and the control plane anchors each bucket's
+quota on that exact JSON instead of a scraped string). Node telemetry
+(`status`/`stats`/`key list`), activity-scoped fetching, and provisioning are
+tracked follow-ups, scoped below.
 
 ## Context
 
@@ -37,8 +44,8 @@ Migrate the agent's Garage interaction from CLI scraping to the admin HTTP API,
 **one operation at a time**, starting with the quota write because it was being
 built fresh.
 
-- **Token is a node secret.** Per ADR (website) buckets/000, Storm's DB holds no
-  Garage admin credentials. The token lives only in the agent's environment on
+- **Token is a node secret.** Storm's control-plane database holds no Garage admin
+  credentials by design. The token lives only in the agent's environment on
   the node: read inline from the agent's `[garage]` config or, preferred, from a
   file (`admin_token_file`) so it is never duplicated into the agent TOML and
   never travels over the WebSocket.
@@ -57,21 +64,20 @@ built fresh.
 `{"quotas":{"maxSize":<bytes>,"maxObjects":null}}` via `garage/admin_api.py`. The
 bucket is addressed by `garage_bucket_id` (never the local alias). `GarageConfig`
 gains optional `admin_url` + `admin_token` (resolved from inline or
-`admin_token_file`). The website is unchanged: it already dispatches
+`admin_token_file`). The control plane is unchanged: it already dispatches
 `garage_bucket_set_quota` with `bucket_id` + `max_size`.
 
-## Follow-ups (not done, for whoever picks this up)
+## Follow-ups
 
-Do these in order; each is its own change.
+Tracked, each its own change. Do them in order.
 
-1. **State read loop (highest value). DONE (2026-06-06).** The per-bucket leg of
+1. **State read loop (highest value). Shipped.** The per-bucket leg of
    `collect_garage_state` now reads `ListBuckets` + `GetBucketInfo` over the admin
    API (`admin_api.list_buckets` / `admin_api.get_bucket_info`), mapping exact
    `bytes`/`objects`/`quotas.maxSize`/`maxObjects` and the inline `keys[]` JSON
    into `GarageBucket`. This removed the per-bucket `bucket info` spawn and the
-   lossy `_parse_size_bytes` quota scrape, which is what lets the website anchor
-   BUCKETS-006's `quota_bytes` on exact JSON (see that ADR's control-loop
-   amendment). Graceful degrade: a single bucket whose `GetBucketInfo` fails is
+   lossy `_parse_size_bytes` quota scrape, which is what lets the control plane
+   anchor each bucket's quota on exact JSON instead of a scraped string. Graceful degrade: a single bucket whose `GetBucketInfo` fails is
    skipped; if `ListBuckets` is unreachable or the admin API is unconfigured the
    whole tick is skipped (no empty-set push). Scoped deliberately: node telemetry
    (`status` + `stats` + `key list`) stayed on the CLI in this pass because the v2
