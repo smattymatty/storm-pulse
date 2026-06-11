@@ -170,6 +170,23 @@ class TestAddBucketAliasLocal:
         }
 
 
+class TestRemoveBucketAliasLocal:
+    def test_posts_local_alias_triple(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = _install(monkeypatch)
+        ok, err = admin_api.remove_bucket_alias_local(
+            bucket_ref=_PREFIX, access_key_id=_KEY_ID, local_alias="data", **_ADMIN
+        )
+        assert (ok, err) == (True, "")
+        assert calls[-1]["path"] == "/v2/RemoveBucketAlias"
+        assert _body_of(calls[-1]) == {
+            "bucketId": _FULL_ID,
+            "localAlias": "data",
+            "accessKeyId": _KEY_ID,
+        }
+
+
 class TestDeleteKey:
     def test_deletes_by_id_query_param(
         self, monkeypatch: pytest.MonkeyPatch,

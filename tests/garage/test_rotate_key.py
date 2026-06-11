@@ -1,28 +1,24 @@
 """Tests for stormpulse.garage.rotate_key.
 
-Covers the four-step orchestrated key rotation:
+Covers the four-step orchestrated key rotation (CreateKey, AllowBucketKey,
+AddBucketAlias on the new key, DeleteKey on the old):
 
 - happy path: 4 steps, full success payload with new secret
 - one test per failure point asserting the correct rollback ran
-- tests for permission flags per tier (all / rw / ro)
-- one test where rollback itself fails partway and ``manual_cleanup_required``
-  is correctly populated
+- permission flags per tier (all / rw / ro)
+- rollback-itself-fails cases populating ``manual_cleanup_required``
 
-Backed by ``FakeGarage`` (see ``tests/garage/_fake_garage.py``). Tests
-that surface real orchestrator bugs are marked
-``pytest.mark.skip`` with reasons pointing at the follow-up PR. The
-fake is **not** weakened to make them pass.
-
-Important: ``rotate_key.py:43`` does
-``from stormpulse.garage.provision_bucket import run_garage``, which
-creates a local binding ``rotate_key.run_garage`` distinct from
-``provision_bucket.run_garage``. This file patches ``rotate_key``
-directly. ``test_provision_bucket.py`` patches ``provision_bucket``.
+All Garage interaction is the admin HTTP API (ADR garage/001). As in
+``test_state`` / ``test_provision_additional_key``, we patch the ``admin_api``
+functions and assert on the recorded calls. ``delete_key`` fires twice in a
+full rotation (old key forward, new key in rollback), so the fake uses
+one-shot ``fail_next`` rather than fail-all.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,11 +29,9 @@ from stormpulse.garage.rotate_key import (
     make_rotate_customer_key_handler,
     run_rotate_customer_key,
 )
-from tests.garage._fake_garage import FakeGarage
 
-# ---------------------------------------------------------------------------
-# Fixtures and helpers
-# ---------------------------------------------------------------------------
+_BUCKET_ID = "f1dc32249aa1d80a"
+_OLD_KEY_ID = "GK00000000000000000000old"
 
 
 def _make_config() -> GarageConfig:
@@ -48,6 +42,8 @@ def _make_config() -> GarageConfig:
         docker_binary="/usr/bin/docker",
         config_path=Path("/opt/garage/garage.toml"),
         state_push_interval_seconds=300,
+        admin_url="http://127.0.0.1:3903",
+        admin_token="tok",
     )
 
 
@@ -56,44 +52,125 @@ class _ProgressRecorder:
         self.events: list[tuple[str, int, int | None, str]] = []
 
     async def __call__(
-        self,
-        stage: str,
-        current: int,
-        total: int | None,
-        message: str,
+        self, stage: str, current: int, total: int | None, message: str,
     ) -> None:
         self.events.append((stage, current, total, message))
 
 
-def _setup_fake() -> tuple[FakeGarage, str, str]:
-    """Create a fake with the bucket and old key already provisioned.
+class _FakeAdmin:
+    """Records admin_api calls; ``fail_next(op, err)`` fails the next call to
+    ``op`` exactly once. Created keys get a deterministic ``GK`` id."""
 
-    Returns (fake, bucket_alias, old_key_id) - both are the references
-    to pass into run_rotate_customer_key. The bucket alias is the
-    real-world reference shape (we rely on rule 8: alias is a valid
-    bucket reference).
-    """
-    fake = FakeGarage()
-    fake.add_bucket("media")
-    old_key = fake.add_key("usr-1-media-rw-old")
-    return fake, "media", old_key.key_id
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self._fail: dict[str, list[str]] = {}
+        self._n = 0
+
+    def fail_next(self, op: str, err: str) -> None:
+        self._fail.setdefault(op, []).append(err)
+
+    def _maybe_fail(self, op: str) -> str | None:
+        q = self._fail.get(op)
+        return q.pop(0) if q else None
+
+    def create_key(
+        self, *, admin_url: str, admin_token: str, name: str,
+    ) -> tuple[dict[str, Any] | None, str]:
+        self.calls.append(("create_key", {"name": name}))
+        err = self._maybe_fail("create_key")
+        if err is not None:
+            return None, err
+        self._n += 1
+        kid = f"GK{self._n:024d}"
+        return {"accessKeyId": kid, "secretAccessKey": "s" * 40, "name": name}, ""
+
+    def allow_bucket_key(
+        self, *, admin_url: str, admin_token: str, bucket_ref: str,
+        access_key_id: str, read: bool, write: bool, owner: bool = False,
+    ) -> tuple[bool, str]:
+        self.calls.append(
+            ("allow_bucket_key", {
+                "bucket_ref": bucket_ref, "access_key_id": access_key_id,
+                "read": read, "write": write, "owner": owner,
+            })
+        )
+        err = self._maybe_fail("allow_bucket_key")
+        return (False, err) if err is not None else (True, "")
+
+    def deny_bucket_key(
+        self, *, admin_url: str, admin_token: str, bucket_ref: str,
+        access_key_id: str, read: bool, write: bool, owner: bool = False,
+    ) -> tuple[bool, str]:
+        self.calls.append(
+            ("deny_bucket_key", {
+                "bucket_ref": bucket_ref, "access_key_id": access_key_id,
+                "read": read, "write": write, "owner": owner,
+            })
+        )
+        err = self._maybe_fail("deny_bucket_key")
+        return (False, err) if err is not None else (True, "")
+
+    def add_bucket_alias_local(
+        self, *, admin_url: str, admin_token: str, bucket_ref: str,
+        access_key_id: str, local_alias: str,
+    ) -> tuple[bool, str]:
+        self.calls.append(
+            ("add_bucket_alias_local", {
+                "bucket_ref": bucket_ref, "access_key_id": access_key_id,
+                "local_alias": local_alias,
+            })
+        )
+        err = self._maybe_fail("add_bucket_alias_local")
+        return (False, err) if err is not None else (True, "")
+
+    def remove_bucket_alias_local(
+        self, *, admin_url: str, admin_token: str, bucket_ref: str,
+        access_key_id: str, local_alias: str,
+    ) -> tuple[bool, str]:
+        self.calls.append(
+            ("remove_bucket_alias_local", {
+                "bucket_ref": bucket_ref, "access_key_id": access_key_id,
+                "local_alias": local_alias,
+            })
+        )
+        err = self._maybe_fail("remove_bucket_alias_local")
+        return (False, err) if err is not None else (True, "")
+
+    def delete_key(
+        self, *, admin_url: str, admin_token: str, access_key_id: str,
+    ) -> tuple[bool, str]:
+        self.calls.append(("delete_key", {"access_key_id": access_key_id}))
+        err = self._maybe_fail("delete_key")
+        return (False, err) if err is not None else (True, "")
+
+    def ops(self) -> list[str]:
+        return [op for op, _ in self.calls]
+
+
+def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
+    fake = _FakeAdmin()
+    for name in (
+        "create_key", "allow_bucket_key", "deny_bucket_key",
+        "add_bucket_alias_local", "remove_bucket_alias_local", "delete_key",
+    ):
+        monkeypatch.setattr(
+            f"stormpulse.garage.rotate_key.admin_api.{name}", getattr(fake, name)
+        )
+    return fake
 
 
 async def _run(
-    monkeypatch: pytest.MonkeyPatch,
-    fake: FakeGarage,
-    bucket_ref: str,
-    old_key_id: str,
+    fake: _FakeAdmin,
     *,
     key_tier: str = "all",
+    config: GarageConfig | None = None,
 ) -> JobOutcome:
-    monkeypatch.setattr(rotate_key, "run_garage", fake.run_garage)
     return await run_rotate_customer_key(
         progress=_ProgressRecorder(),
-        garage_config=_make_config(),
-        old_key_id=old_key_id,
+        garage_config=config or _make_config(),
+        old_key_id=_OLD_KEY_ID,
         new_key_name="usr-1-media-rw",
-        bucket_id=bucket_ref,
+        bucket_id=_BUCKET_ID,
         local_alias="media-rotated",
         key_tier=key_tier,
     )
@@ -108,15 +185,14 @@ async def _run(
 async def test_happy_path_returns_new_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake, bucket_ref, old_key_id = _setup_fake()
+    fake = _install(monkeypatch)
 
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
 
     assert outcome.success is True
     assert outcome.failure_reason is None
     new_key_id = outcome.extras["new_key_id"]
-    assert new_key_id is not None
-    assert new_key_id.startswith("GK")
+    assert new_key_id is not None and new_key_id.startswith("GK")
     assert outcome.extras["new_secret"]
     assert outcome.extras["new_key_name"] == "usr-1-media-rw"
     assert outcome.extras["step_completed"] == "old_key_delete"
@@ -124,92 +200,38 @@ async def test_happy_path_returns_new_secret(
     assert outcome.extras["rollback_status"] == "not_required"
     assert outcome.extras["manual_cleanup_required"] == []
 
-    assert len(fake.calls) == 4
-    assert fake.calls[0] == ("key", "create", "usr-1-media-rw")
-    assert fake.calls[1] == (
-        "bucket",
-        "allow",
-        "--read",
-        "--write",
-        "--owner",
-        bucket_ref,
-        "--key",
-        new_key_id,
-    )
-    assert fake.calls[2] == (
-        "bucket",
-        "alias",
-        "--local",
-        new_key_id,
-        bucket_ref,
-        "media-rotated",
-    )
-    assert fake.calls[3] == ("key", "delete", "--yes", old_key_id)
-    # Old key actually got removed from fake state
-    assert old_key_id not in fake.keys
-    # New key now has the granted perms
-    bucket = next(iter(fake.buckets.values()))
-    assert fake.keys[new_key_id].permissions[bucket.bucket_id] == {
-        "read",
-        "write",
-        "owner",
+    assert fake.ops() == [
+        "create_key", "allow_bucket_key", "add_bucket_alias_local", "delete_key",
+    ]
+    # all tier grants read+write+owner
+    assert fake.calls[1][1] == {
+        "bucket_ref": _BUCKET_ID, "access_key_id": new_key_id,
+        "read": True, "write": True, "owner": True,
     }
+    assert fake.calls[2][1] == {
+        "bucket_ref": _BUCKET_ID, "access_key_id": new_key_id,
+        "local_alias": "media-rotated",
+    }
+    # step 4 deletes the OLD key
+    assert fake.calls[3][1] == {"access_key_id": _OLD_KEY_ID}
 
 
 @pytest.mark.asyncio
-async def test_happy_path_tier_rw_uses_read_write_flags(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake, bucket_ref, old_key_id = _setup_fake()
-
-    outcome = await _run(
-        monkeypatch,
-        fake,
-        bucket_ref,
-        old_key_id,
-        key_tier="rw",
-    )
-
+async def test_happy_path_tier_rw(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _install(monkeypatch)
+    outcome = await _run(fake, key_tier="rw")
     assert outcome.success is True
-    new_key_id = outcome.extras["new_key_id"]
-    assert fake.calls[1] == (
-        "bucket",
-        "allow",
-        "--read",
-        "--write",
-        bucket_ref,
-        "--key",
-        new_key_id,
-    )
-    assert "--owner" not in fake.calls[1]
+    perms = fake.calls[1][1]
+    assert (perms["read"], perms["write"], perms["owner"]) == (True, True, False)
 
 
 @pytest.mark.asyncio
-async def test_happy_path_tier_ro_uses_read_only_flag(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake, bucket_ref, old_key_id = _setup_fake()
-
-    outcome = await _run(
-        monkeypatch,
-        fake,
-        bucket_ref,
-        old_key_id,
-        key_tier="ro",
-    )
-
+async def test_happy_path_tier_ro(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _install(monkeypatch)
+    outcome = await _run(fake, key_tier="ro")
     assert outcome.success is True
-    new_key_id = outcome.extras["new_key_id"]
-    assert fake.calls[1] == (
-        "bucket",
-        "allow",
-        "--read",
-        bucket_ref,
-        "--key",
-        new_key_id,
-    )
-    assert "--write" not in fake.calls[1]
-    assert "--owner" not in fake.calls[1]
+    perms = fake.calls[1][1]
+    assert (perms["read"], perms["write"], perms["owner"]) == (True, False, False)
 
 
 # ---------------------------------------------------------------------------
@@ -221,10 +243,10 @@ async def test_happy_path_tier_ro_uses_read_only_flag(
 async def test_step1_new_key_create_failure_no_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake, bucket_ref, old_key_id = _setup_fake()
-    fake.fail_next("key_create", stderr="key create error")
+    fake = _install(monkeypatch)
+    fake.fail_next("create_key", "key create error")
 
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
 
     assert outcome.success is False
     assert outcome.failure_reason == "new_key_create_failed"
@@ -232,66 +254,48 @@ async def test_step1_new_key_create_failure_no_rollback(
     assert outcome.extras["new_key_id"] is None
     assert outcome.extras["rollback_status"] == "not_required"
     assert outcome.extras["manual_cleanup_required"] == []
-    assert len(fake.calls) == 1
+    assert fake.ops() == ["create_key"]
 
 
 @pytest.mark.asyncio
 async def test_step2_permission_grant_failure_deletes_new_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake, bucket_ref, old_key_id = _setup_fake()
-    fake.fail_next("bucket_allow", stderr="permission grant error")
+    fake = _install(monkeypatch)
+    fake.fail_next("allow_bucket_key", "permission grant error")
 
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
     new_key_id = outcome.extras["new_key_id"]
 
     assert outcome.failure_reason == "new_key_permission_grant_failed"
     assert outcome.extras["step_failed"] == "new_key_permission_grant"
-    assert new_key_id is not None
     assert outcome.extras["rollback_status"] == "complete"
-    assert len(fake.calls) == 3
-    rollback_calls = fake.calls[2:]
-    assert rollback_calls == [("key", "delete", "--yes", new_key_id)]
-    # Old key never touched
-    delete_calls = [c for c in fake.calls if c[:2] == ("key", "delete")]
-    assert ("key", "delete", "--yes", old_key_id) not in delete_calls
-    # New key was actually deleted from fake state
-    assert new_key_id not in fake.keys
-    # Old key still alive
-    assert old_key_id in fake.keys
+    # create + failed allow + delete new key. No deny (perms not granted),
+    # no unalias (alias not attached), no touch of the old key.
+    assert fake.ops() == ["create_key", "allow_bucket_key", "delete_key"]
+    assert fake.calls[-1][1] == {"access_key_id": new_key_id}
 
 
 @pytest.mark.asyncio
 async def test_step3_alias_attach_failure_revokes_perms_and_deletes_new_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake, bucket_ref, old_key_id = _setup_fake()
-    fake.fail_next("bucket_alias_local", stderr="alias attach error")
+    fake = _install(monkeypatch)
+    fake.fail_next("add_bucket_alias_local", "alias attach error")
 
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
     new_key_id = outcome.extras["new_key_id"]
 
     assert outcome.failure_reason == "new_key_alias_attach_failed"
     assert outcome.extras["step_failed"] == "new_key_alias_attach"
-    assert new_key_id is not None
     assert outcome.extras["rollback_status"] == "complete"
-    rollback_calls = fake.calls[3:]
-    assert rollback_calls[0] == (
-        "bucket",
-        "deny",
-        "--read",
-        "--write",
-        "--owner",
-        bucket_ref,
-        "--key",
-        new_key_id,
-    )
-    assert rollback_calls[1] == ("key", "delete", "--yes", new_key_id)
-    delete_calls = [c for c in fake.calls if c[:2] == ("key", "delete")]
-    assert ("key", "delete", "--yes", old_key_id) not in delete_calls
-    # New key gone, old key alive
-    assert new_key_id not in fake.keys
-    assert old_key_id in fake.keys
+    assert fake.ops() == [
+        "create_key", "allow_bucket_key", "add_bucket_alias_local",
+        "deny_bucket_key", "delete_key",
+    ]
+    deny = fake.calls[3][1]
+    assert (deny["read"], deny["write"], deny["owner"]) == (True, True, True)
+    assert fake.calls[-1][1] == {"access_key_id": new_key_id}
 
 
 @pytest.mark.asyncio
@@ -299,37 +303,27 @@ async def test_step4_old_key_delete_failure_full_rollback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Step 4 (old key delete) is the last forward step. Full rollback."""
-    fake, bucket_ref, old_key_id = _setup_fake()
-    fake.fail_next("key_delete", stderr="old key delete error")
+    fake = _install(monkeypatch)
+    fake.fail_next("delete_key", "old key delete error")  # fails the step-4 old delete
 
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
     new_key_id = outcome.extras["new_key_id"]
 
     assert outcome.failure_reason == "old_key_delete_failed"
     assert outcome.extras["step_failed"] == "old_key_delete"
     assert outcome.extras["rollback_status"] == "complete"
-    rollback_calls = fake.calls[4:]
-    assert len(rollback_calls) == 3
-    assert rollback_calls[0] == (
-        "bucket",
-        "unalias",
-        "--local",
-        new_key_id,
-        "media-rotated",
-    )
-    assert rollback_calls[1] == (
-        "bucket",
-        "deny",
-        "--read",
-        "--write",
-        "--owner",
-        bucket_ref,
-        "--key",
-        new_key_id,
-    )
-    assert rollback_calls[2] == ("key", "delete", "--yes", new_key_id)
-    for call in rollback_calls:
-        assert old_key_id not in call
+    assert fake.ops() == [
+        "create_key", "allow_bucket_key", "add_bucket_alias_local",
+        "delete_key", "remove_bucket_alias_local", "deny_bucket_key", "delete_key",
+    ]
+    # rollback detaches + denies + deletes the NEW key
+    assert fake.calls[4][1] == {
+        "bucket_ref": _BUCKET_ID, "access_key_id": new_key_id,
+        "local_alias": "media-rotated",
+    }
+    assert fake.calls[6][1] == {"access_key_id": new_key_id}
+    # the only old-key delete was the forward step 4, never in rollback
+    assert fake.calls[3][1] == {"access_key_id": _OLD_KEY_ID}
 
 
 # ---------------------------------------------------------------------------
@@ -341,26 +335,18 @@ async def test_step4_old_key_delete_failure_full_rollback(
 async def test_rollback_partial_when_unalias_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Step 4 fails, then rollback's first step (unalias) is also injected
-    to fail. ``fail_next`` short-circuits the fake's dispatcher, so the
-    underlying Change D 3-positional bug is masked here - this test
-    verifies the orchestrator's rollback-failure handling, not the
-    unalias signature.
-    """
-    fake, bucket_ref, old_key_id = _setup_fake()
-    fake.fail_next("key_delete", stderr="old delete error")
-    fake.fail_next("bucket_unalias_local", stderr="unalias error during rollback")
+    """Step 4 fails, then rollback's first step (detach alias) also fails."""
+    fake = _install(monkeypatch)
+    fake.fail_next("delete_key", "old delete error")
+    fake.fail_next("remove_bucket_alias_local", "unalias error during rollback")
 
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
     new_key_id = outcome.extras["new_key_id"]
 
     assert outcome.failure_reason == "rollback_failed"
     assert outcome.extras["step_failed"] == "old_key_delete"
     assert outcome.extras["rollback_status"] == "partial"
-    cleanup = outcome.extras["manual_cleanup_required"]
-    types_ids = {
-        (item["type"], item.get("key_id") or item.get("id")) for item in cleanup
-    }
+    types_ids = _cleanup_pairs(outcome)
     assert ("local_alias", new_key_id) in types_ids
     assert ("permission_grant", new_key_id) in types_ids
     assert ("key", new_key_id) in types_ids
@@ -371,19 +357,16 @@ async def test_rollback_partial_when_perm_revoke_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Step 4 fails, alias detach succeeds, permission revoke fails."""
-    fake, bucket_ref, old_key_id = _setup_fake()
-    fake.fail_next("key_delete", stderr="old delete error")
-    fake.fail_next("bucket_deny", stderr="deny error during rollback")
+    fake = _install(monkeypatch)
+    fake.fail_next("delete_key", "old delete error")
+    fake.fail_next("deny_bucket_key", "deny error during rollback")
 
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
     new_key_id = outcome.extras["new_key_id"]
 
     assert outcome.failure_reason == "rollback_failed"
     assert outcome.extras["rollback_status"] == "partial"
-    cleanup = outcome.extras["manual_cleanup_required"]
-    types_ids = {
-        (item["type"], item.get("key_id") or item.get("id")) for item in cleanup
-    }
+    types_ids = _cleanup_pairs(outcome)
     assert ("local_alias", new_key_id) not in types_ids
     assert ("permission_grant", new_key_id) in types_ids
     assert ("key", new_key_id) in types_ids
@@ -393,26 +376,48 @@ async def test_rollback_partial_when_perm_revoke_fails(
 async def test_rollback_partial_when_new_key_delete_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Step 2 fails (perm grant), and rollback's new-key delete also fails.
+    """Step 2 fails (perm grant), and rollback's new-key delete also fails."""
+    fake = _install(monkeypatch)
+    fake.fail_next("allow_bucket_key", "perm grant error")
+    fake.fail_next("delete_key", "key delete error during rollback")
 
-    No unalias path involved (step 3 didn't run), so Change D doesn't
-    surface here.
-    """
-    fake, bucket_ref, old_key_id = _setup_fake()
-    fake.fail_next("bucket_allow", stderr="perm grant error")
-    fake.fail_next("key_delete", stderr="key delete error during rollback")
-
-    outcome = await _run(monkeypatch, fake, bucket_ref, old_key_id)
+    outcome = await _run(fake)
     new_key_id = outcome.extras["new_key_id"]
 
     assert outcome.failure_reason == "rollback_failed"
     assert outcome.extras["step_failed"] == "new_key_permission_grant"
     assert outcome.extras["rollback_status"] == "partial"
-    cleanup = outcome.extras["manual_cleanup_required"]
-    types_ids = {
-        (item["type"], item.get("key_id") or item.get("id")) for item in cleanup
-    }
+    types_ids = _cleanup_pairs(outcome)
     assert ("key", new_key_id) in types_ids
+
+
+# ---------------------------------------------------------------------------
+# Admin API not configured: fail loud (ADR garage/001)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_admin_api_unconfigured_fails_loud(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _install(monkeypatch)
+    config = _make_config()
+    object.__setattr__(config, "admin_url", "")
+    object.__setattr__(config, "admin_token", "")
+
+    outcome = await _run(fake, config=config)
+
+    assert outcome.success is False
+    assert outcome.failure_reason == "admin_api_unconfigured"
+    assert outcome.extras["rollback_status"] == "not_required"
+    assert fake.ops() == []
+
+
+def _cleanup_pairs(outcome: JobOutcome) -> set[tuple[str, str | None]]:
+    return {
+        (item["type"], item.get("key_id") or item.get("id"))
+        for item in outcome.extras["manual_cleanup_required"]
+    }
 
 
 # ---------------------------------------------------------------------------
