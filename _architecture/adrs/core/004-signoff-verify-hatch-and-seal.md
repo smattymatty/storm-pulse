@@ -15,9 +15,7 @@ adr:
 
 Storm Pulse's command registry is a whitelist of baked argv templates with regex-validated parameters; the HMAC envelope authenticates the dashboard and the whitelist is defense-in-depth even against a compromised one.
 
-The website's sign-off checklist needs the dashboard to dispatch operator-authored verify shell, edited per checklist row. 0.1.8 added `run_verify_block`: argv `["/bin/bash", "-c", "{verify_command}"]`, `verify_command` accepted as a 4 KiB-capped opaque string with no regex. The whitelist's defense-in-depth is gone for this one entry — real RCE for any party that can produce a signed envelope. That is what the feature needs to be, but only during a brief verification window. Once a server is signed off, no further dispatches are expected for the install's life.
-
-An earlier draft shipped unsealed and asked the operator to seal afterwards. That left the bootstrap window (between `enroll` and the first `seal`) fully exposed: a compromised dashboard in that window can install persistence that survives a later seal. Reseal is a kill switch for *new* shell, not recovery from anything that already ran.
+The website's sign-off checklist needs the dashboard to dispatch operator-authored verify shell, edited per checklist row. 0.1.8 added `run_verify_block`: argv `["/bin/bash", "-c", "{verify_command}"]`, `verify_command` accepted as a 4 KiB-capped opaque string with no regex. The whitelist's defense-in-depth is gone for this one entry - real RCE for any party that can produce a signed envelope. That is what the feature needs to be, but only during a brief verification window. Once a server is signed off, no further dispatches are expected for the install's life.
 
 ## Decision
 
