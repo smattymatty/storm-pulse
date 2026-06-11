@@ -2,15 +2,17 @@
 adr:
   id: "GARAGE-001"
   title: "Garage admin HTTP API over CLI scraping"
-  status: "Accepted, migrating one operation at a time"
+  status: "Accepted, migration complete"
   date: "2026-06-06"
   tags: ["garage", "admin-api", "migration", "quota"]
 ---
 
 # ADR: Garage admin HTTP API over CLI scraping
 
-**Status:** Accepted. The admin HTTP API is the agent's interface to Garage. CLI
-scraping is removed one operation at a time, and no operation carries both paths.
+**Status:** Accepted. The admin HTTP API is the agent's interface to Garage.
+Every operation, provision, additional-key, rotate, delete, and the node/state
+reads, runs on the admin API. CLI scraping is fully removed: the parser module
+(`garage/parse.py`) is deleted and no operation carries a CLI path.
 
 ## Context
 
