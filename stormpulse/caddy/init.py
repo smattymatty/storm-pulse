@@ -16,7 +16,10 @@ from pathlib import Path
 from stormpulse.caddy.sync import verify_drop_in_imported
 from stormpulse.init import InitError, prompt
 from stormpulse.init.files import default_config_path
-from stormpulse.init.host_native_logs import offer_caddy_log_group
+from stormpulse.init.host_native_logs import (
+    offer_caddy_events_log_group,
+    offer_caddy_log_group,
+)
 from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.system import restart_or_hint
@@ -268,6 +271,7 @@ def run_caddy_init(
     print(f"\n  [caddy] section written to {config_path}", file=sys.stderr)
 
     offer_caddy_log_group(config_path)
+    offer_caddy_events_log_group(config_path)
 
     mode = detect_mode()
     restart_cmd = (

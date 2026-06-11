@@ -9,7 +9,10 @@ from pathlib import Path
 
 from stormpulse.init import InitError, prompt
 from stormpulse.init.files import default_config_path
-from stormpulse.init.host_native_logs import offer_caddy_log_group
+from stormpulse.init.host_native_logs import (
+    offer_caddy_events_log_group,
+    offer_caddy_log_group,
+)
 from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
@@ -236,6 +239,8 @@ def run_logging_init(config_path: Path) -> None:
     # Always offer the host-native Caddy log group: a box may have zero
     # Docker containers and still want Caddy access logs shipped.
     if offer_caddy_log_group(config_path):
+        wrote_anything = True
+    if offer_caddy_events_log_group(config_path):
         wrote_anything = True
 
     if not wrote_anything:
