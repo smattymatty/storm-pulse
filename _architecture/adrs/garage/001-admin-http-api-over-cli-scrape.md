@@ -9,93 +9,93 @@ adr:
 
 # ADR: Garage admin HTTP API over CLI scraping
 
-**Status:** Accepted. The agent migrates from Garage CLI scraping to the admin
-HTTP API one operation at a time. Shipped: the quota write, and the per-bucket
-state read (`collect_garage_state` reads sizes, object counts, quotas, and keys
-via `ListBuckets` + `GetBucketInfo`, and the control plane anchors each bucket's
-quota on that exact JSON instead of a scraped string). Node telemetry
-(`status`/`stats`/`key list`), activity-scoped fetching, and provisioning are
-tracked follow-ups, scoped below.
+**Status:** Accepted. The admin HTTP API is the agent's interface to Garage. CLI
+scraping is removed one operation at a time, and no operation carries both paths.
 
 ## Context
 
-The agent's Garage operations go through `docker exec <container> garage <cmd>`
-and parse the CLI's text output. Two problems:
+The agent manages Garage on each node: bucket and key lifecycle, quota writes,
+and a periodic per-bucket state read. Two properties decide the interface:
 
-1. **Brittleness.** The parser is an implicit contract with Garage's CLI output
-   format. A patch release that reflows a line or renames a field breaks state
-   collection silently, the same failure class as the `s3_api.root_domain` trap.
-   It surfaces as wrong dashboard data, not as an upgrade error.
-2. **Cost at scale.** State collection runs one `bucket info` per bucket per
-   tick, each a `docker exec` + fresh `garage` process spawn (~50-150ms of
-   overhead, serial). At a few alpha buckets it is negligible; at hundreds of
-   customer buckets against a short `state_push_interval_seconds` it is real load.
+1. **A typed contract, not a scraped one.** CLI text output is an implicit
+   contract with Garage's output format. A patch release that reflows a line or
+   renames a field breaks the agent silently, the same failure class as the
+   `s3_api.root_domain` trap: it surfaces as wrong dashboard data, not an upgrade
+   error. The admin API returns typed JSON, so a breaking change surfaces as a
+   schema or HTTP error at the call site instead.
+2. **HTTP cost, not process-spawn cost.** The state read fetches one bucket-info
+   per bucket per tick. Over the admin API that is an HTTP GET on loopback; over
+   the CLI it is a `docker exec` + fresh `garage` process spawn (~50-150ms,
+   serial). At hundreds of customer buckets against a short
+   `state_push_interval_seconds`, the difference is real load.
 
-Garage 2.3.0 exposes a typed admin HTTP API (default `:3903`, `/v2/`) that covers
-every operation in the agent's CLI loop: `ListBuckets`, `GetBucketInfo` (returns
-`bytes` / `objects` / `quotas.maxSize`), `UpdateBucket` (sets quotas), and
-`AddBucketAlias`/`RemoveBucketAlias` with the **local-alias** variant
-(`localAlias` + `accessKeyId`). The local-alias gap in older versions is why the
-agent went CLI-first; that gap is closed.
+Garage 2.3.0 exposes the typed admin HTTP API (default `:3903`, `/v2/`) covering
+every operation the agent needs: `CreateBucket`, `CreateKey`, `AllowBucketKey` /
+`DenyBucketKey`, `AddBucketAlias` / `RemoveBucketAlias` (including the
+**local-alias** variant: `localAlias` + `accessKeyId`), `DeleteBucket`,
+`DeleteKey`, `ListBuckets`, `GetBucketInfo` (returns `bytes` / `objects` /
+`quotas.maxSize`), `UpdateBucket` (quotas), and the cluster reads
+`GetClusterStatus` / `GetClusterStatistics` / `ListKeys`.
 
 ## Decision
 
-Migrate the agent's Garage interaction from CLI scraping to the admin HTTP API,
-**one operation at a time**, starting with the quota write because it was being
-built fresh.
+The agent talks to Garage over the admin HTTP API. Three standing rules:
 
 - **Token is a node secret.** Storm's control-plane database holds no Garage admin
-  credentials by design. The token lives only in the agent's environment on
-  the node: read inline from the agent's `[garage]` config or, preferred, from a
-  file (`admin_token_file`) so it is never duplicated into the agent TOML and
-  never travels over the WebSocket.
-- **Clean replace, fail loud.** Each migrated operation drops its CLI path; no
-  dual-path fallback. If the admin API is unconfigured when a migrated command
-  arrives, the handler fails with a named error, never a silent no-op.
+  credentials by design. The token lives only in the agent's environment on the
+  node: read inline from the agent's `[garage]` config or, preferred, from a file
+  (`admin_token_file`) so it is never duplicated into the agent TOML and never
+  travels over the WebSocket.
+- **Clean replace, fail loud.** No operation carries both a CLI and an API path.
+  An operation on the API has no CLI fallback; if the admin API is unconfigured
+  when its command arrives, the handler fails with a named error, never a silent
+  no-op or a quiet reversion to scraping.
 - **Observability is free.** Garage logs `UpdateBucket` (and the other mutating
   ops) as admin-API requests, and the agent's log parser's
-  `_GARAGE_ADMIN_MUTATIONS` set already tracks them, so admin-API writes show up
-  in the operator audit without new wiring.
+  `_GARAGE_ADMIN_MUTATIONS` set tracks them, so admin-API writes show up in the
+  operator audit without new wiring.
 
-## Implemented now: the quota write
+## How each operation maps to the API
 
-`garage_bucket_set_quota` flips from a CLI `CommandDef` to a long-running handler
-(`garage/set_quota.py`) that POSTs `UpdateBucket?id=<bucket_id>` with
-`{"quotas":{"maxSize":<bytes>,"maxObjects":null}}` via `garage/admin_api.py`. The
-bucket is addressed by `garage_bucket_id` (never the local alias). `GarageConfig`
-gains optional `admin_url` + `admin_token` (resolved from inline or
-`admin_token_file`). The control plane is unchanged: it already dispatches
-`garage_bucket_set_quota` with `bucket_id` + `max_size`.
+- **Quota write** (`garage_bucket_set_quota`): a long-running handler
+  (`garage/set_quota.py`) POSTs `UpdateBucket?id=<bucket_id>` with
+  `{"quotas":{"maxSize":<bytes>,"maxObjects":null}}` via `garage/admin_api.py`.
+  Addressed by `garage_bucket_id`, never the local alias.
+- **State read** (`collect_garage_state`): `ListBuckets` + per-bucket
+  `GetBucketInfo`, mapping exact `bytes` / `objects` / `quotas.maxSize` /
+  `maxObjects` and the inline `keys[]` JSON into `GarageBucket`. The control plane
+  anchors each bucket's quota on that JSON, not a scraped string. Graceful
+  degrade: a bucket whose `GetBucketInfo` fails is skipped; if `ListBuckets` is
+  unreachable or the API is unconfigured, the whole tick is skipped (no empty-set
+  push).
+- **Node telemetry** (`status` / `stats` / `key list`): `GetClusterStatus`,
+  `GetClusterStatistics`, `ListKeys`.
+- **Provisioning** (bucket/key create, permission grant, local-alias bind,
+  delete): `CreateBucket`, `CreateKey`, `AllowBucketKey`, `AddBucketAlias` (local
+  variant), `RemoveBucketAlias`, `DeleteBucket`, `DeleteKey`. The most
+  security-sensitive path; the value here is brittleness and structured errors
+  over speed.
 
-## Follow-ups
+## Migration status
 
-Tracked, each its own change. Do them in order.
+CLI scraping is removed per operation, not all at once. A module may reach the
+CLI path (`garage.runner` / `garage.parse`) only while its operation is
+unmigrated; once an operation is on the API it never regresses to scraping.
 
-1. **State read loop (highest value). Shipped.** The per-bucket leg of
-   `collect_garage_state` now reads `ListBuckets` + `GetBucketInfo` over the admin
-   API (`admin_api.list_buckets` / `admin_api.get_bucket_info`), mapping exact
-   `bytes`/`objects`/`quotas.maxSize`/`maxObjects` and the inline `keys[]` JSON
-   into `GarageBucket`. This removed the per-bucket `bucket info` spawn and the
-   lossy `_parse_size_bytes` quota scrape, which is what lets the control plane
-   anchor each bucket's quota on exact JSON instead of a scraped string. Graceful degrade: a single bucket whose `GetBucketInfo` fails is
-   skipped; if `ListBuckets` is unreachable or the admin API is unconfigured the
-   whole tick is skipped (no empty-set push). Scoped deliberately: node telemetry
-   (`status` + `stats` + `key list`) stayed on the CLI in this pass because the v2
-   `NodeResp`/`GetClusterStatistics` mapping is a separate, telemetry-only change,
-   and the bucket leg is where the spawn cost and the quota-anchor value are.
-2. **Delta, not full scan.** Once on the API, fetch detail only for buckets that
-   showed activity rather than every bucket every tick. (Still a full `ListBuckets`
-   + per-bucket `GetBucketInfo` scan; the constant factor dropped from a process
-   spawn to an HTTP GET, but the loop is still O(buckets) per tick.)
-3. **Provisioning.** Move bucket/key create + the local-alias binding
-   (`AddBucketAlias` local variant) off the CLI. Lower frequency, so the value
-   here is brittleness and structured errors, not speed. Do this last; it is the
-   most security-sensitive path.
+- [x] Quota write
+- [x] State read (per-bucket leg)
+- [ ] Delta fetch: detail only for buckets that showed activity, instead of every
+  bucket every tick. Still a full `ListBuckets` + per-bucket `GetBucketInfo` scan
+  (O(buckets) per tick); already on the API, this is a load optimization, not a
+  scraping removal.
+- [ ] Node telemetry (`status` / `stats` / `key list`)
+- [ ] Provisioning (create / grant / alias / delete): do last, most
+  security-sensitive
 
 ## Operator prerequisites (to activate the admin API)
 
 - Garage admin API enabled in `garage.toml` (`[admin] api_bind_addr` +
-  `admin_token`/`admin_token_file`), reachable from the agent on loopback.
+  `admin_token` / `admin_token_file`), reachable from the agent on loopback.
 - Agent `[garage]` config: `admin_url = "http://127.0.0.1:3903"` plus either
   `admin_token_file = "<path the agent user can read>"` or an inline
   `admin_token`.
