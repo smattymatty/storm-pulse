@@ -720,10 +720,9 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "prefix": ParamDef(
                     placeholder="prefix",
                     default="",
-                    # S3 prefix - empty (root) or any path-safe sequence
-                    # ending in /. Validated stricter by the Storm-side
-                    # _validate_listing_prefix before dispatch reaches here.
-                    pattern=r"|[A-Za-z0-9_\-./]+/",
+                    # Empty (= root) or a non-control S3 key-prefix ending in '/'.
+                    # This agent is the only charset gate; the website checks structure.
+                    pattern=r"|[^/\x00-\x1f\x7f-\x9f][^\x00-\x1f\x7f-\x9f]*/",
                     description="Prefix to walk under; '' = bucket root",
                 ),
                 "max_objects": ParamDef(

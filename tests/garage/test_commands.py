@@ -259,6 +259,48 @@ class TestBuildGarageCommands:
         for good in ("usr-1-media-all", "key_admin"):
             assert re.fullmatch(pattern, good) is not None
 
+    def test_walk_bucket_stats_prefix_accepts_real_s3_keys(self) -> None:
+        """The stats-walk ``prefix`` is the customer's real S3 prefix, not
+        an identifier. It reaches Garage as a URL-encoded ListObjectsV2
+        query param (no shell), so the old ``[A-Za-z0-9_\\-./]`` charset
+        wrongly rejected legal folder names (spaces, ``+``, parens,
+        unicode) and left per-folder stats stuck on "Calculating...".
+
+        This pattern is the *only* charset gate (the website validates
+        structure, not charset), so it must own the structural invariants
+        itself: empty = root, ends with '/', never starts with '/', and
+        no control bytes (C0 ``\\x00-\\x1f``, DEL, and C1 ``\\x7f-\\x9f``).
+        """
+        import re
+
+        cmds = build_garage_commands(_make_config())
+        pattern = cmds["garage_walk_bucket_stats"].params["prefix"].pattern
+        assert pattern is not None
+        # Real S3 prefixes the old pattern wrongly rejected.
+        for good in (
+            "",  # bucket root
+            "Software Architecture/",  # space
+            "Comptia Security+/",  # plus
+            "Réseau (prod)/",  # parens + unicode
+            "日本語/",  # non-ASCII
+            "photos/2026/q2/",  # nested
+        ):
+            assert re.fullmatch(pattern, good) is not None, (
+                f"prefix pattern should accept {good!r}"
+            )
+        # Structural invariants the agent enforces on its own.
+        for bad in (
+            "/leading",  # starts with '/'
+            "no-trailing-slash",  # missing trailing '/'
+            "/",  # bare slash (no first char before it)
+            "bad\nname/",  # C0 control (newline)
+            "\x00/",  # NUL
+            "bad\x7fname/",  # DEL (pattern B excludes \x7f-\x9f)
+        ):
+            assert re.fullmatch(pattern, bad) is None, (
+                f"prefix pattern should reject {bad!r}"
+            )
+
     def test_bucket_allow_has_all_permission_flags(self) -> None:
         cmds = build_garage_commands(_make_config())
         cmd = cmds["garage_bucket_allow"].command
