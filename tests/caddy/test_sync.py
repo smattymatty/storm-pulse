@@ -116,6 +116,21 @@ def _make_mock_connection(status: int = 200, body: str = "") -> Any:
     return mock_conn
 
 
+def _make_mock_connection_sequence(*responses: tuple[int, str]) -> Any:
+    """Mock HTTPConnection whose successive requests get successive
+    (status, body) responses - lets a test give /adapt and /load
+    different answers."""
+    mocks = []
+    for status, body in responses:
+        r = MagicMock()
+        r.status = status
+        r.read.return_value = body.encode("utf-8")
+        mocks.append(r)
+    mock_conn = MagicMock()
+    mock_conn.getresponse.side_effect = mocks
+    return mock_conn
+
+
 class TestPostCaddyLoad:
     def test_2xx_returns_success(self) -> None:
         mock_conn = _make_mock_connection(status=200)
@@ -243,15 +258,53 @@ class TestCaddySyncHandler:
         assert not cfg.drop_in_path.exists()
         assert outcome.extras["removed"] is True
 
-    def test_reload_failure_leaves_disk_updated(self, tmp_path: Path) -> None:
-        """Persist happens first; reload failure leaves disk newer than live."""
+    def test_invalid_config_named_at_preflight(self, tmp_path: Path) -> None:
+        """Adapter errors are caught by /adapt and come back as a named,
+        self-diagnosing config_invalid failure; /load is never attempted.
+
+        Regression, 2026-06-11: a missing import target and a duplicate
+        site definition each failed /load with a 400 that surfaced
+        nowhere useful. The preflight names the failure in the command
+        result and guarantees the running Caddy was never touched.
+        """
         cfg = _make_config(tmp_path)
         cfg.drop_in_path.parent.mkdir()
         cfg.drop_in_path.write_text("previous content")
 
         mock_conn = _make_mock_connection(
             status=400,
-            body="syntax error",
+            body="ambiguous site definition: mathew.stormsites.ca",
+        )
+        with patch(
+            "stormpulse.caddy.sync.http.client.HTTPConnection",
+            return_value=mock_conn,
+        ):
+            handler = make_caddy_sync_handler(
+                cfg,
+                {"region": "vancouver-1", "fragment": "new content"},
+            )
+            outcome = asyncio.run(_run_handler(handler))
+
+        assert outcome.success is False
+        assert outcome.failure_reason == "config_invalid"
+        assert "ambiguous site definition" in outcome.stderr
+        assert "running Caddy is untouched" in outcome.stderr
+        # Only the /adapt preflight was attempted, never /load.
+        endpoints = [c.args[1] for c in mock_conn.request.call_args_list]
+        assert endpoints == ["/adapt"]
+        # Drop-in WAS updated - disk-truth even when live didn't accept.
+        assert cfg.drop_in_path.read_text() == "new content"
+
+    def test_reload_failure_leaves_disk_updated(self, tmp_path: Path) -> None:
+        """Persist happens first; a true reload failure (preflight passed,
+        /load rejected) leaves disk newer than live."""
+        cfg = _make_config(tmp_path)
+        cfg.drop_in_path.parent.mkdir()
+        cfg.drop_in_path.write_text("previous content")
+
+        mock_conn = _make_mock_connection_sequence(
+            (200, "{}"),              # /adapt accepts
+            (500, "loader exploded"),  # /load rejects
         )
         with patch(
             "stormpulse.caddy.sync.http.client.HTTPConnection",
@@ -265,6 +318,8 @@ class TestCaddySyncHandler:
 
         assert outcome.success is False
         assert outcome.failure_reason == "reload_failed"
+        endpoints = [c.args[1] for c in mock_conn.request.call_args_list]
+        assert endpoints == ["/adapt", "/load"]
         # Drop-in WAS updated - disk-truth even when live didn't accept.
         # Next successful sync (or operator-initiated restart) restores
         # consistency.
