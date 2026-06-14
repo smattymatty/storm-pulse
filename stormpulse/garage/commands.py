@@ -173,6 +173,27 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_set_account_key_create_bucket": CommandDef(
+            group="garage",
+            command=["garage_set_account_key_create_bucket"],  # internal - handled by JobManager
+            timeout=30,  # single admin API call; long_running ignores this for duration
+            description="Set or clear an account key's allow_create_bucket capability via the Garage admin API (BUCKETS-012 count backstop).",
+            long_running=True,
+            params={
+                "access_key_id": ParamDef(
+                    placeholder="access_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Account key id (GK...) to toggle",
+                ),
+                "enable": ParamDef(
+                    placeholder="enable",
+                    default=None,
+                    pattern=r"(?:true|false)",
+                    description="'true' to allow bucket creation, 'false' to deny",
+                ),
+            },
+        ),
         "garage_key_create": CommandDef(
             group="garage",
             command=[docker, "exec", container, garage, "key", "create", "{key_name}"],
@@ -810,6 +831,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         make_provision_customer_bucket_handler,
     )
     from stormpulse.garage.rotate_key import make_rotate_customer_key_handler
+    from stormpulse.garage.set_account_key_capability import (
+        make_set_account_key_capability_handler,
+    )
     from stormpulse.garage.set_quota import make_set_quota_handler
     from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
 
@@ -819,6 +843,11 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_bucket_set_quota": (
             lambda params: make_set_quota_handler(
+                params, admin_url=config.admin_url, admin_token=config.admin_token,
+            )
+        ),
+        "garage_set_account_key_create_bucket": (
+            lambda params: make_set_account_key_capability_handler(
                 params, admin_url=config.admin_url, admin_token=config.admin_token,
             )
         ),
