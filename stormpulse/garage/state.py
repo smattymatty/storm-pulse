@@ -35,11 +35,20 @@ class GaragePeer:
 
 @dataclass(frozen=True, slots=True)
 class GarageKeyRef:
-    """Key reference within a bucket - ID and permissions only, never the secret."""
+    """Key reference within a bucket - ID, permissions, and the key's local
+    aliases for this bucket, never the secret.
+
+    ``bucket_local_aliases`` is the bucket-name namespace private to this key.
+    An S3-created (BUCKETS-012) bucket has no global alias, so its name lives
+    here under the owning key; the website's adopt branch reads it to name the
+    bucket. Empty for the top-level key inventory and for dashboard-provisioned
+    buckets that carry a global alias.
+    """
 
     key_id: str
     key_name: str
     permissions: str
+    bucket_local_aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,20 +163,22 @@ def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
 
     Field names are the exact v2 schema: ``bytes``/``objects`` are int64,
     ``quotas.maxSize``/``maxObjects`` are int-or-null, ``websiteConfig`` is an
-    object-or-null, and each key carries ``accessKeyId``/``name``/``permissions``
-    inline. Every read is defensive: a missing or null field degrades to a
-    zero-value, never a KeyError that would crash the tick.
+    object-or-null, and each key carries ``accessKeyId``/``name``/``permissions``/
+    ``bucketLocalAliases`` inline. Every read is defensive: a missing or null
+    field degrades to a zero-value, never a KeyError that would crash the tick.
     """
     quotas = info.get("quotas") or {}
     website = info.get("websiteConfig") or {}
     global_aliases = info.get("globalAliases") or []
     keys: list[GarageKeyRef] = []
     for k in info.get("keys") or []:
+        local_aliases = k.get("bucketLocalAliases") or []
         keys.append(
             GarageKeyRef(
                 key_id=k.get("accessKeyId", "") or "",
                 key_name=k.get("name", "") or "",
                 permissions=_perm_flags(k.get("permissions")),
+                bucket_local_aliases=tuple(a for a in local_aliases if a),
             )
         )
     return GarageBucket(

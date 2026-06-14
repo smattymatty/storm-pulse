@@ -91,6 +91,60 @@ class TestCreateKey:
         assert info is None
         assert "HTTP 500" in err
 
+    def test_allow_create_bucket_adds_allow_block(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # BUCKETS-012: an account key is minted with the key-level
+        # createBucket capability set; the per-bucket keys leave it off.
+        calls = _install(
+            monkeypatch,
+            op_body=json.dumps({"accessKeyId": _KEY_ID, "secretAccessKey": "s3cr3t"}),
+        )
+        info, err = admin_api.create_key(
+            name="acct-1", allow_create_bucket=True, **_ADMIN
+        )
+        assert err == ""
+        assert info is not None and info["accessKeyId"] == _KEY_ID
+        assert calls[-1]["path"] == "/v2/CreateKey"
+        assert _body_of(calls[-1]) == {
+            "name": "acct-1",
+            "allow": {"createBucket": True},
+        }
+
+
+class TestUpdateKey:
+    def test_allow_toggles_create_bucket_on(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        calls = _install(monkeypatch)
+        ok, err = admin_api.update_key(
+            access_key_id=_KEY_ID, allow_create_bucket=True, **_ADMIN
+        )
+        assert (ok, err) == (True, "")
+        assert calls[-1]["method"] == "POST"
+        assert calls[-1]["path"] == f"/v2/UpdateKey?id={_KEY_ID}"
+        assert _body_of(calls[-1]) == {"allow": {"createBucket": True}}
+
+    def test_deny_toggles_create_bucket_off(
+        self, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The count-backstop lever: past the bucket-count rail the flag is
+        # cleared via the deny block, restored via allow when room opens.
+        calls = _install(monkeypatch)
+        ok, _ = admin_api.update_key(
+            access_key_id=_KEY_ID, allow_create_bucket=False, **_ADMIN
+        )
+        assert ok is True
+        assert _body_of(calls[-1]) == {"deny": {"createBucket": True}}
+
+    def test_http_error_maps_to_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _install(monkeypatch, op_status=404, op_body="no such key")
+        ok, err = admin_api.update_key(
+            access_key_id=_KEY_ID, allow_create_bucket=True, **_ADMIN
+        )
+        assert ok is False
+        assert "HTTP 404" in err
+
 
 class TestCreateBucket:
     def test_alias_less_returns_id(self, monkeypatch: pytest.MonkeyPatch) -> None:

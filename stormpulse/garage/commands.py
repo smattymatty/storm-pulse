@@ -576,6 +576,24 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_provision_account_key": CommandDef(
+            group="garage",
+            command=[
+                "garage_provision_account_key"
+            ],  # internal - handled by JobManager
+            timeout=60,
+            description="Orchestrated provisioning of an account key (key-level allow_create_bucket set) for customer aws cli / terraform bucket lifecycle. One step, no rollback - owns no bucket until the customer creates one over S3.",
+            sensitive_output=True,  # the one-time secret rides in stdout/extras
+            long_running=True,
+            params={
+                "new_key_name": ParamDef(
+                    placeholder="new_key_name",
+                    default=None,
+                    pattern=_KEY_NAME_PATTERN,
+                    description="Garage key name for the account key",
+                ),
+            },
+        ),
         "garage_rotate_customer_key": CommandDef(
             group="garage",
             command=["garage_rotate_customer_key"],  # internal - handled by JobManager
@@ -785,6 +803,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.provision_additional_key import (
         make_provision_additional_key_handler,
     )
+    from stormpulse.garage.provision_account_key import (
+        make_provision_account_key_handler,
+    )
     from stormpulse.garage.provision_bucket import (
         make_provision_customer_bucket_handler,
     )
@@ -810,6 +831,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_provision_additional_key": (
             lambda params: make_provision_additional_key_handler(config, params)
+        ),
+        "garage_provision_account_key": (
+            lambda params: make_provision_account_key_handler(config, params)
         ),
         "garage_delete_provisioned_bucket": (
             lambda params: make_delete_provisioned_bucket_handler(config, params)

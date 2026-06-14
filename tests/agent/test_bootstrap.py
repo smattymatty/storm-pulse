@@ -127,7 +127,7 @@ def test_no_features_yields_empty_long_running_factories(tmp_path: Path) -> None
     assert deps.long_running_factories == {}
 
 
-def test_garage_enabled_publishes_seven_long_running_factories(tmp_path: Path) -> None:
+def test_garage_enabled_publishes_eight_long_running_factories(tmp_path: Path) -> None:
     cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
     deps = build_agent_dependencies(
         cfg,
@@ -141,6 +141,7 @@ def test_garage_enabled_publishes_seven_long_running_factories(tmp_path: Path) -
         "garage_provision_customer_bucket",
         "garage_rotate_customer_key",
         "garage_provision_additional_key",
+        "garage_provision_account_key",
         "garage_delete_provisioned_bucket",
     }
 
