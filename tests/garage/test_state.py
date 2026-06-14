@@ -214,6 +214,46 @@ class TestCollectGarageState:
         perms = {k.key_id: k.permissions for k in state.buckets[0].keys}
         assert perms == {"GKread": "R", "GKrw": "RW"}
 
+    def test_s3_created_bucket_surfaces_owner_local_alias(
+        self, tmp_path: Path,
+    ) -> None:
+        """A BUCKETS-012 bucket created over S3 has no global alias; its name
+        lives in the owning account key's local aliases, which the manifest
+        must carry so the website's adopt branch can name it."""
+        cfg = _make_config(tmp_path)
+        info = _admin_info(
+            FULL_ID,
+            bytes_=0,
+            objects=0,
+            global_aliases=(),  # S3-created: no global alias
+            keys=(
+                _admin_key(
+                    "GKacct", "acct-key", owner=True, local_aliases=("media",),
+                ),
+            ),
+        )
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+            state = collect_garage_state(cfg)
+
+        assert state is not None
+        bucket = state.buckets[0]
+        assert bucket.alias == ""
+        assert bucket.keys[0].bucket_local_aliases == ("media",)
+
+    def test_key_without_local_aliases_defaults_empty(self, tmp_path: Path) -> None:
+        cfg = _make_config(tmp_path)
+        info = _admin_info(
+            FULL_ID,
+            bytes_=0,
+            objects=0,
+            keys=(_admin_key("GKplain", "plain-key"),),
+        )
+        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+            state = collect_garage_state(cfg)
+
+        assert state is not None
+        assert state.buckets[0].keys[0].bucket_local_aliases == ()
+
     def test_website_config_mapped(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         info = _admin_info(

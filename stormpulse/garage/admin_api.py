@@ -175,21 +175,45 @@ def get_key_info(
 
 def create_key(
     *, admin_url: str, admin_token: str, name: str,
+    allow_create_bucket: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
     """Create an access key via ``POST /v2/CreateKey``.
 
     Returns the ``GetKeyInfoResponse`` dict, carrying ``accessKeyId`` and the
     one-time ``secretAccessKey`` (returned only at creation), or ``(None,
     error)``. The secret is never logged here; the caller hands it to the
-    operator via the JobOutcome.
+    operator via the JobOutcome. ``allow_create_bucket`` sets the key-level
+    S3 CreateBucket capability at mint (the BUCKETS-012 account key); the
+    default of off matches Garage.
     """
-    body = json.dumps({"name": name}).encode("utf-8")
+    payload: dict[str, Any] = {"name": name}
+    if allow_create_bucket:
+        payload["allow"] = {"createBucket": True}
+    body = json.dumps(payload).encode("utf-8")
     data, err = _post_json(admin_url, admin_token, "/v2/CreateKey", body)
     if data is None:
         return None, err
     if not isinstance(data, dict):
         return None, "CreateKey returned a non-object body"
     return data, ""
+
+
+def update_key(
+    *, admin_url: str, admin_token: str, access_key_id: str,
+    allow_create_bucket: bool,
+) -> tuple[bool, str]:
+    """Toggle a key's S3 CreateBucket capability via ``POST /v2/UpdateKey``.
+
+    Sends ``allow.createBucket`` when ``allow_create_bucket`` is True, else
+    ``deny.createBucket`` (Garage's allow/deny block sets the key-level
+    ``allow_create_bucket`` flag). This is the BUCKETS-012 count-backstop
+    lever: flipped off past the bucket-count rail, back on when room opens.
+    Returns ``(success, error)``.
+    """
+    block = "allow" if allow_create_bucket else "deny"
+    body = json.dumps({block: {"createBucket": True}}).encode("utf-8")
+    path = "/v2/UpdateKey?" + urlencode({"id": access_key_id})
+    return _post(admin_url, admin_token, path, body)
 
 
 def create_bucket(
