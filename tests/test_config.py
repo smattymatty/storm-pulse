@@ -457,6 +457,21 @@ command = ["/bin/true"]
         load_config(write_config(toml))
 
 
+def test_command_bool_timeout_raises(write_config: Callable[[str], Path]) -> None:
+    """A boolean timeout must be rejected; bool is an int subclass in Python."""
+    toml = (
+        MINIMAL_VALID
+        + """
+[commands.bad]
+group = "test"
+command = ["/bin/true"]
+timeout = true
+"""
+    )
+    with pytest.raises(ConfigError, match="timeout"):
+        load_config(write_config(toml))
+
+
 def test_command_non_absolute_path_raises(write_config: Callable[[str], Path]) -> None:
     toml = (
         MINIMAL_VALID

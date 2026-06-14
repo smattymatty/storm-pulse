@@ -233,6 +233,24 @@ def _require_section(raw: dict[str, Any], name: str) -> dict[str, Any]:
     return section
 
 
+_TYPE_NAMES: dict[type, str] = {
+    str: "string", int: "int", float: "float", bool: "bool", list: "list", dict: "table",
+}
+
+
+def _check_type(
+    value: Any, key: str, expected_type: type | tuple[type, ...], section_name: str,
+) -> Any:
+    """Type-check a present value; reject bool for numeric keys (bool is an int subclass)."""
+    types = expected_type if isinstance(expected_type, tuple) else (expected_type,)
+    if not isinstance(value, expected_type) or (isinstance(value, bool) and bool not in types):
+        names = "/".join(_TYPE_NAMES.get(t, t.__name__) for t in types)
+        raise ConfigError(
+            f"Key '{key}' in [{section_name}] must be {names}, got {type(value).__name__}"
+        )
+    return value
+
+
 def _require_key(
     section: dict[str, Any],
     key: str,
@@ -242,16 +260,20 @@ def _require_key(
     """Extract a required key with type checking."""
     if key not in section:
         raise ConfigError(f"Missing required key '{key}' in [{section_name}]")
-    value = section[key]
-    if not isinstance(value, expected_type):
-        if isinstance(expected_type, tuple):
-            names = "/".join(t.__name__ for t in expected_type)
-        else:
-            names = expected_type.__name__
-        raise ConfigError(
-            f"Key '{key}' in [{section_name}] must be {names}, got {type(value).__name__}"
-        )
-    return value
+    return _check_type(section[key], key, expected_type, section_name)
+
+
+def _optional_key(
+    section: dict[str, Any],
+    key: str,
+    expected_type: type | tuple[type, ...],
+    default: Any,
+    section_name: str,
+) -> Any:
+    """Extract an optional key with type checking; return default if absent."""
+    if key not in section:
+        return default
+    return _check_type(section[key], key, expected_type, section_name)
 
 
 def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
@@ -327,9 +349,7 @@ def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
 
 def _parse_project(raw: dict[str, Any]) -> ProjectConfig:
     s = _require_section(raw, "project")
-    env_file_raw = s.get("env_file")
-    if env_file_raw is not None and not isinstance(env_file_raw, str):
-        raise ConfigError("Key 'env_file' in [project] must be a string")
+    env_file_raw = _optional_key(s, "env_file", str, None, "project")
     return ProjectConfig(
         project_dir=Path(_require_key(s, "project_dir", str, "project")),
         compose_file=Path(_require_key(s, "compose_file", str, "project")),
@@ -385,33 +405,10 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
         if timeout <= 0:
             raise ConfigError(f"'timeout' in [{label}] must be positive, got {timeout}")
 
-        requires_confirmation = entry.get("requires_confirmation", False)
-        if not isinstance(requires_confirmation, bool):
-            raise ConfigError(
-                f"'requires_confirmation' in [{label}] must be bool, "
-                f"got {type(requires_confirmation).__name__}"
-            )
-
-        sensitive_output = entry.get("sensitive_output", False)
-        if not isinstance(sensitive_output, bool):
-            raise ConfigError(
-                f"'sensitive_output' in [{label}] must be bool, "
-                f"got {type(sensitive_output).__name__}"
-            )
-
-        long_running = entry.get("long_running", False)
-        if not isinstance(long_running, bool):
-            raise ConfigError(
-                f"'long_running' in [{label}] must be bool, "
-                f"got {type(long_running).__name__}"
-            )
-
-        description = entry.get("description", "")
-        if not isinstance(description, str):
-            raise ConfigError(
-                f"'description' in [{label}] must be a string, "
-                f"got {type(description).__name__}"
-            )
+        requires_confirmation = _optional_key(entry, "requires_confirmation", bool, False, label)
+        sensitive_output = _optional_key(entry, "sensitive_output", bool, False, label)
+        long_running = _optional_key(entry, "long_running", bool, False, label)
+        description = _optional_key(entry, "description", str, "", label)
 
         params_raw = entry.get("params", {})
         if not isinstance(params_raw, dict):
@@ -432,12 +429,7 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                     f"'placeholder' in [{plabel}] must not override a protected "
                     f"placeholder: {placeholder!r}"
                 )
-            default_raw = pentry.get("default")
-            if default_raw is not None and not isinstance(default_raw, str):
-                raise ConfigError(
-                    f"'default' in [{plabel}] must be a string, "
-                    f"got {type(default_raw).__name__}"
-                )
+            default_raw = _optional_key(pentry, "default", str, None, plabel)
             pattern = _require_key(pentry, "pattern", str, plabel)
             try:
                 re.compile(pattern)
@@ -445,12 +437,7 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                 raise ConfigError(
                     f"'pattern' in [{plabel}] is not valid regex: {exc}"
                 ) from exc
-            pdescription = pentry.get("description", "")
-            if not isinstance(pdescription, str):
-                raise ConfigError(
-                    f"'description' in [{plabel}] must be a string, "
-                    f"got {type(pdescription).__name__}"
-                )
+            pdescription = _optional_key(pentry, "description", str, "", plabel)
             param_defs[placeholder] = ParamDef(
                 placeholder=placeholder,
                 default=default_raw,
@@ -502,13 +489,13 @@ def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
     # Optional admin HTTP API wiring. admin_token may be given inline or, like
     # Garage's own garage.toml, via a file path; the file wins is read once at
     # startup. Both absent means the admin API is simply not configured.
-    admin_url = section.get("admin_url", "")
+    admin_url = _optional_key(section, "admin_url", str, "", "garage")
     if admin_url and not admin_url.startswith(("http://", "https://")):
         raise ConfigError(
             f"'admin_url' in [garage] must start with http:// or https://, got {admin_url!r}"
         )
-    admin_token = section.get("admin_token", "")
-    admin_token_file = section.get("admin_token_file", "")
+    admin_token = _optional_key(section, "admin_token", str, "", "garage")
+    admin_token_file = _optional_key(section, "admin_token_file", str, "", "garage")
     if admin_token_file and not admin_token:
         try:
             admin_token = Path(admin_token_file).read_text(encoding="utf-8").strip()
@@ -645,12 +632,9 @@ def _parse_one_log_group(
             raise ConfigError(
                 f"'container_name' in {ctx} must be non-empty for docker sources"
             )
-        docker_binary_raw = entry.get("docker_binary", "/usr/bin/docker")
-        if not isinstance(
-            docker_binary_raw, str
-        ) or not docker_binary_raw.startswith("/"):
+        docker_binary = _optional_key(entry, "docker_binary", str, "/usr/bin/docker", ctx)
+        if not docker_binary.startswith("/"):
             raise ConfigError(f"'docker_binary' in {ctx} must be an absolute path")
-        docker_binary = docker_binary_raw
 
     parser = _require_key(entry, "parser", str, ctx)
     if parser not in _LOG_PARSERS:
@@ -684,9 +668,7 @@ def _parse_one_log_group(
             f"'retention_days' in {ctx} must be 1-365, got {retention}"
         )
 
-    filter_contains = entry.get("filter_contains", "")
-    if not isinstance(filter_contains, str):
-        raise ConfigError(f"'filter_contains' in {ctx} must be a string")
+    filter_contains = _optional_key(entry, "filter_contains", str, "", ctx)
 
     return LogGroupConfig(
         name=name,
