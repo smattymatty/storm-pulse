@@ -153,17 +153,19 @@ def make_caddy_sync_handler(
                 failure_reason="persist_failed",
             )
 
-        # ----- Step 2: reload Caddy via admin /load -----
-        # POST the main Caddyfile so Caddy re-adapts the composed
-        # config from disk. Posting just the fragment would replace
-        # the entire running config (Caddy /load is a full-config
-        # endpoint), wiping every other site the main Caddyfile
-        # declares until the next operator-initiated restart.
+        # ----- Step 2: preflight via admin /adapt -----
+        # /adapt runs the Caddyfile adapter WITHOUT loading, so a
+        # broken composed config (missing import target, two files
+        # declaring the same site) surfaces as a named failure here
+        # while the running Caddy keeps serving untouched. Both bugs
+        # of the 2026-06-11 incident were adapter errors that a /load
+        # 400 reported into a log nobody read; this step is what turns
+        # that into a self-diagnosing command result.
         await progress(
             "running",
             2,
-            3,
-            "reloading Caddy via admin /load",
+            4,
+            "preflighting composed config via admin /adapt",
         )
         try:
             load_body = await asyncio.to_thread(
@@ -184,6 +186,43 @@ def make_caddy_sync_handler(
                 failure_reason="reload_failed",
             )
         ok, err = await asyncio.to_thread(
+            _post_caddy_adapt,
+            caddy.admin_url,
+            load_body,
+        )
+        if not ok:
+            logger.warning(
+                "caddy_sync: composed config failed /adapt preflight "
+                "for region=%s: %s",
+                region,
+                err,
+            )
+            return JobOutcome(
+                success=False,
+                exit_code=-1,
+                stderr=(
+                    f"Composed Caddy config failed preflight (/adapt): {err}. "
+                    "The running Caddy is untouched and still serves the old "
+                    "config. Common causes: an import target missing on disk, "
+                    "or two drop-ins declaring the same site address - check "
+                    f"the files next to {caddy.drop_in_path}."
+                ),
+                failure_reason="config_invalid",
+            )
+
+        # ----- Step 3: reload Caddy via admin /load -----
+        # POST the main Caddyfile so Caddy re-adapts the composed
+        # config from disk. Posting just the fragment would replace
+        # the entire running config (Caddy /load is a full-config
+        # endpoint), wiping every other site the main Caddyfile
+        # declares until the next operator-initiated restart.
+        await progress(
+            "running",
+            3,
+            4,
+            "reloading Caddy via admin /load",
+        )
+        ok, err = await asyncio.to_thread(
             _post_caddy_load,
             caddy.admin_url,
             load_body,
@@ -202,7 +241,7 @@ def make_caddy_sync_handler(
                 failure_reason="reload_failed",
             )
 
-        await progress("finalizing", 3, 3, "sync complete")
+        await progress("finalizing", 4, 4, "sync complete")
         return JobOutcome(
             success=True,
             stdout=f"Synced {len(fragment)} bytes for region {region}",
@@ -216,6 +255,18 @@ def make_caddy_sync_handler(
     return handler
 
 
+def _post_caddy_adapt(admin_url: str, fragment: str) -> tuple[bool, str]:
+    """POST the composed Caddyfile to admin /adapt as a dry run.
+
+    /adapt runs the caddyfile adapter and returns the JSON config
+    without applying it, so adapter-level errors (missing import
+    targets, ambiguous site definitions) are caught while the running
+    Caddy stays untouched. Same transport contract as
+    ``_post_caddy_load``.
+    """
+    return _post_caddyfile(admin_url, "/adapt", fragment)
+
+
 def _post_caddy_load(admin_url: str, fragment: str) -> tuple[bool, str]:
     """POST a Caddyfile fragment to Caddy's admin /load endpoint.
 
@@ -223,6 +274,13 @@ def _post_caddy_load(admin_url: str, fragment: str) -> tuple[bool, str]:
     rides through to the operator via the JobOutcome.stderr field;
     it is not customer-facing.
     """
+    return _post_caddyfile(admin_url, "/load", fragment)
+
+
+def _post_caddyfile(
+    admin_url: str, endpoint: str, fragment: str,
+) -> tuple[bool, str]:
+    """Shared transport: POST text/caddyfile to a Caddy admin endpoint."""
     parsed = urlparse(admin_url)
     if parsed.scheme not in ("http", "https"):
         return False, f"Invalid admin URL scheme: {parsed.scheme!r}"
@@ -248,7 +306,7 @@ def _post_caddy_load(admin_url: str, fragment: str) -> tuple[bool, str]:
             port,
             timeout=_LOAD_TIMEOUT_SECONDS,
         )
-        conn.request("POST", "/load", body=body, headers=headers)
+        conn.request("POST", endpoint, body=body, headers=headers)
         resp = conn.getresponse()
         status = resp.status
         resp_body = resp.read().decode("utf-8", errors="replace")
