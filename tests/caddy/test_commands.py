@@ -46,46 +46,68 @@ class TestBuildCaddyCommands:
         assert region.pattern is not None
         assert region.max_bytes is None
 
-    def test_fragment_param_uses_byte_cap(self) -> None:
+    def test_tenants_param_uses_byte_cap(self) -> None:
         cmd = build_caddy_commands(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
-        fragment = cmd.params["fragment"]
-        assert fragment.pattern is None
-        assert fragment.max_bytes is not None
-        assert fragment.max_bytes >= 100_000
+        tenants = cmd.params["tenants"]
+        # The manifest is opaque JSON content: capped by bytes, not regex.
+        assert tenants.pattern is None
+        assert tenants.max_bytes is not None
+        assert tenants.max_bytes >= 100_000
+        # Empty object default means "no buckets serve in this region."
+        assert tenants.default == "{}"
+
+    def test_authorize_bulk_param_uses_regex(self) -> None:
+        cmd = build_caddy_commands(_make_caddy_config())[
+            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
+        ]
+        authorize_bulk = cmd.params["authorize_bulk"]
+        assert authorize_bulk.pattern is not None
+        assert authorize_bulk.default == "false"
 
 
 class TestValidateParams:
-    """Verifies the opaque-content param type works end-to-end."""
+    """Verifies the manifest + flag params validate end-to-end.
 
-    def test_valid_region_and_fragment(self) -> None:
+    The manifest is a JSON string (opaque content, byte-capped); the agent
+    handler decodes and per-tenant-validates it. authorize_bulk is a
+    'true'/'false' string. The wire is string-valued end to end, which is
+    what keeps these on the existing ParamDef machinery.
+    """
+
+    def test_valid_region_tenants_and_flag(self) -> None:
         cmd = build_caddy_commands(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
-        # Multi-line content with braces (would break a regex) is fine
-        # because the fragment param has no pattern, only a byte cap.
-        fragment = (
-            "example.com {\n"
-            "    reverse_proxy localhost:3902 {\n"
-            "        header_up Host bucket.web.buckets.example\n"
-            "    }\n"
-            "}\n"
+        # Multi-line fragments with braces (would break a regex) are fine
+        # inside the JSON because the tenants param has no pattern, only a
+        # byte cap.
+        tenants = (
+            '{"abcdef0123456789": "mathew.stormsites.ca {\\n'
+            "    reverse_proxy localhost:3902\\n"
+            '}\\n"}'
         )
         validated = validate_params(
             cmd,
-            {"region": "vancouver-1", "fragment": fragment},
+            {
+                "region": "vancouver-1",
+                "tenants": tenants,
+                "authorize_bulk": "false",
+            },
         )
         assert validated["region"] == "vancouver-1"
-        assert validated["fragment"] == fragment
+        assert validated["tenants"] == tenants
+        assert validated["authorize_bulk"] == "false"
 
-    def test_empty_fragment_uses_default(self) -> None:
+    def test_omitted_params_use_defaults(self) -> None:
         cmd = build_caddy_commands(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         validated = validate_params(cmd, {"region": "vancouver-1"})
-        # Default is empty string - meaning "remove the drop-in file."
-        assert validated["fragment"] == ""
+        # Empty object = "remove the managed files"; flag defaults off.
+        assert validated["tenants"] == "{}"
+        assert validated["authorize_bulk"] == "false"
 
     def test_bad_region_rejected(self) -> None:
         cmd = build_caddy_commands(_make_caddy_config())[
@@ -94,17 +116,29 @@ class TestValidateParams:
         with pytest.raises(ParamValidationError):
             validate_params(
                 cmd,
-                {"region": "../etc/passwd", "fragment": ""},
+                {"region": "../etc/passwd", "tenants": "{}"},
             )
 
-    def test_oversize_fragment_rejected(self) -> None:
+    def test_bad_authorize_bulk_rejected(self) -> None:
         cmd = build_caddy_commands(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
-        oversize = "a" * 200_000  # over the 150_000 cap
+        # Only the literals 'true'/'false' cross the wire; anything else is
+        # a malformed flag and must be refused.
+        with pytest.raises(ParamValidationError):
+            validate_params(
+                cmd,
+                {"region": "vancouver-1", "authorize_bulk": "yes"},
+            )
+
+    def test_oversize_manifest_rejected(self) -> None:
+        cmd = build_caddy_commands(_make_caddy_config())[
+            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
+        ]
+        oversize = '{"x": "' + "a" * 1_100_000 + '"}'  # over the 1MB cap
         with pytest.raises(ParamValidationError) as exc_info:
             validate_params(
                 cmd,
-                {"region": "vancouver-1", "fragment": oversize},
+                {"region": "vancouver-1", "tenants": oversize},
             )
         assert "exceeds max_bytes" in str(exc_info.value)

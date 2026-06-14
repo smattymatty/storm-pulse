@@ -14,8 +14,11 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import http.client
+import json
 import logging
 import os
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -26,6 +29,32 @@ logger = logging.getLogger(__name__)
 
 
 _LOAD_TIMEOUT_SECONDS = 20
+
+# Managed per-bucket drop-in files are named site-<id>.caddy and globbed
+# as a set. The prefix/suffix are the agent's contract: only files matching
+# this shape are reconciled, so an operator's hand-written drop-in in the
+# same directory is never touched.
+_MANAGED_PREFIX = "site-"
+_MANAGED_SUFFIX = ".caddy"
+_MANAGED_GLOB = f"{_MANAGED_PREFIX}*{_MANAGED_SUFFIX}"
+
+# A tenant id keys a filename, so it must not carry a path separator or a
+# dot run. Garage ids are hex hashes; this charset (hex plus the safe id
+# punctuation) blocks traversal while staying forgiving of the exact slice
+# Storm sends.
+_TENANT_KEY_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+# A single bucket's fragment: its assigned-subdomain block plus any
+# custom-domain blocks. 16KB is far above a real bucket (a few hundred
+# bytes per block) and exists to catch a pathological Storm-side render
+# before it lands on disk.
+_PER_TENANT_MAX_BYTES = 16_384
+
+# Inline delete cadence. A normal state change disables at most one site,
+# so at most one managed file (plus, once, the legacy single-file drop-in)
+# should disappear per sync. A delete count above this without
+# authorize_bulk is the suspicious-mass-delete signal the rail guards.
+_INLINE_DELETE_CADENCE = 1
 
 
 def verify_drop_in_imported(
@@ -92,6 +121,106 @@ def verify_drop_in_imported(
     )
 
 
+@dataclass(frozen=True)
+class ReconcilePlan:
+    """The disk mutations a manifest implies, with the delete direction
+    already rail-checked.
+
+    ``writes`` maps managed filename -> fragment and is always applied: an
+    add or update that briefly proxies to nothing self-heals on the next
+    sync, never an outage. ``deletes`` are the managed filenames to remove;
+    it is empty when the rail tripped. ``skipped_deletes`` records what the
+    rail refused so the failure can name them. ``rail_tripped`` is true when
+    a delete-beyond-cadence was refused for lack of ``authorize_bulk``.
+    """
+
+    writes: dict[str, str] = field(default_factory=dict)
+    deletes: list[str] = field(default_factory=list)
+    skipped_deletes: list[str] = field(default_factory=list)
+    rail_tripped: bool = False
+
+
+def _decode_manifest(raw: str) -> tuple[dict[str, str] | None, str | None]:
+    """Parse and validate the tenants manifest JSON.
+
+    Returns ``(manifest, None)`` on success or ``(None, error)`` on any
+    problem: malformed JSON, a non-object, a non-string key or value, a key
+    that could escape the drop-in directory (a filename is built from it),
+    or a fragment over the per-bucket cap. A bad manifest is a Storm-side
+    render bug, so the whole sync is rejected rather than a partial set
+    written.
+    """
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, f"tenants manifest is not valid JSON: {exc}"
+    if not isinstance(parsed, dict):
+        return None, (
+            f"tenants manifest must be a JSON object, got {type(parsed).__name__}"
+        )
+    for key, frag in parsed.items():
+        if not isinstance(key, str) or not isinstance(frag, str):
+            return None, "tenants manifest keys and values must be strings"
+        if not _TENANT_KEY_RE.fullmatch(key):
+            return None, (
+                f"tenant key {key!r} is not a safe filename component "
+                "(allowed: letters, digits, '_', '-'; 1-64 chars)"
+            )
+        frag_bytes = len(frag.encode("utf-8"))
+        if frag_bytes > _PER_TENANT_MAX_BYTES:
+            return None, (
+                f"tenant {key!r} fragment is {frag_bytes} bytes, exceeds "
+                f"per-bucket cap {_PER_TENANT_MAX_BYTES}"
+            )
+    return parsed, None
+
+
+def _plan_reconcile(
+    *,
+    tenants: dict[str, str],
+    on_disk: set[str],
+    legacy_name: str | None,
+    legacy_exists: bool,
+    authorize_bulk: bool,
+    cadence: int = _INLINE_DELETE_CADENCE,
+) -> ReconcilePlan:
+    """Turn a manifest plus the on-disk managed file set into the writes and
+    deletes to apply, guarding the delete direction. Pure: no I/O.
+
+    The reference is the agent's OWN on-disk set, never a count Storm sends.
+    Storm's query cannot audit Storm's query, so only the agent, blind to
+    what the query returned, is an independent witness to an under-return.
+
+    Writes always flow. Deletes are the managed files no longer named in the
+    manifest, plus, on first cutover, the legacy single-file drop-in: it
+    does not match the managed glob, so it would otherwise linger and
+    collide on /adapt with the new per-bucket files declaring the same
+    sites. If the delete count exceeds ``cadence`` and ``authorize_bulk`` is
+    false, ALL deletes are skipped, not an arbitrary subset: picking which
+    of a suspicious batch to delete would still risk darkening a live site,
+    which is the exact failure the rail exists to prevent. The old files
+    keep serving and the plan is marked tripped.
+    """
+    writes = {
+        f"{_MANAGED_PREFIX}{tid}{_MANAGED_SUFFIX}": frag
+        for tid, frag in tenants.items()
+    }
+    desired = set(writes)
+    delete_set = on_disk - desired
+    if legacy_name and legacy_exists and legacy_name not in desired:
+        delete_set.add(legacy_name)
+    delete_names = sorted(delete_set)
+
+    if len(delete_names) > cadence and not authorize_bulk:
+        return ReconcilePlan(
+            writes=writes,
+            deletes=[],
+            skipped_deletes=delete_names,
+            rail_tripped=True,
+        )
+    return ReconcilePlan(writes=writes, deletes=delete_names)
+
+
 def make_caddy_sync_handler(
     caddy: CaddyConfig,
     params: dict[str, str],
@@ -100,60 +229,130 @@ def make_caddy_sync_handler(
 
     Workflow:
 
-    1. Atomically write the fragment to the drop-in path
-       (write-to-tmp then ``os.replace``). Empty fragment removes the
-       file instead. Disk is now authoritative.
-    2. POST the main Caddyfile (with relative ``import`` paths
-       absolutised) to ``{admin_url}/load`` as text/caddyfile. Caddy
-       re-adapts the composed config from source - picking up the
-       drop-in we just wrote alongside everything else the operator
-       declared in the main Caddyfile.
+    1. Decode + validate the tenants manifest (a Storm-side render guard:
+       bad JSON, an unsafe key, or an oversized fragment rejects the sync
+       before anything touches disk).
+    2. Plan the reconcile against the agent's own on-disk ``site-*.caddy``
+       set, rail-guarding the delete direction.
+    3. Apply all disk mutations (writes then deletes, write-to-tmp +
+       ``os.replace``) BEFORE the preflight, so the config Caddy adapts is
+       the final composed state, never a transient superset. Disk is now
+       authoritative.
+    4. POST the main Caddyfile (relative ``import`` paths absolutised) to
+       ``{admin_url}/adapt`` as a dry run, then ``/load`` to apply. Caddy
+       re-adapts the composed config from source, picking up the per-bucket
+       files alongside everything else the operator declared.
 
-    A reload-after-persist failure surfaces as a failed sync with the
-    disk in the new state and the running Caddy in the old state.
-    The next successful sync (or operator-initiated reload) restores
-    consistency.
+    A reload-after-persist failure surfaces as a failed sync with the disk
+    in the new state and the running Caddy in the old state. The next
+    successful sync (or operator-initiated reload) restores consistency.
     """
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         region = params.get("region", "")
-        fragment = params.get("fragment", "")
+        tenants_raw = params.get("tenants", "{}")
+        authorize_bulk = params.get("authorize_bulk", "false") == "true"
 
         await progress(
             "starting",
             0,
-            3,
+            4,
             f"syncing Caddy for region {region}",
         )
 
-        # ----- Step 1: atomic write to drop-in path (disk-truth) -----
+        # ----- Step 1: decode + validate the manifest -----
+        tenants, manifest_err = _decode_manifest(tenants_raw)
+        if tenants is None:
+            logger.warning(
+                "caddy_sync: rejected manifest for region=%s: %s",
+                region,
+                manifest_err,
+            )
+            return JobOutcome(
+                success=False,
+                exit_code=-1,
+                stderr=(
+                    f"Rejected Caddy sync for region {region}: {manifest_err}. "
+                    "The running Caddy is untouched."
+                ),
+                failure_reason="config_invalid",
+            )
+
+        drop_in_dir = caddy.drop_in_path.parent
+        legacy_name = caddy.drop_in_path.name
+
+        # ----- Step 2: plan the reconcile against our own on-disk set -----
         await progress(
             "running",
             1,
-            3,
-            "persisting drop-in fragment to disk",
+            4,
+            "reconciling drop-in file set",
         )
         try:
-            await asyncio.to_thread(
-                _atomic_write_or_remove,
-                caddy.drop_in_path,
-                fragment,
-            )
+            on_disk = {p.name for p in drop_in_dir.glob(_MANAGED_GLOB)}
+            legacy_exists = caddy.drop_in_path.exists()
         except OSError as exc:
             logger.error(
-                "caddy_sync: persist failed for region=%s path=%s: %s",
+                "caddy_sync: could not scan drop-in dir %s for region=%s: %s",
+                drop_in_dir,
                 region,
-                caddy.drop_in_path,
                 exc,
             )
             return JobOutcome(
                 success=False,
                 exit_code=-1,
-                stderr=(f"Failed to persist fragment to {caddy.drop_in_path}: {exc}"),
+                stderr=f"Failed to scan drop-in directory {drop_in_dir}: {exc}",
                 failure_reason="persist_failed",
             )
 
-        # ----- Step 2: preflight via admin /adapt -----
+        plan = _plan_reconcile(
+            tenants=tenants,
+            on_disk=on_disk,
+            legacy_name=legacy_name,
+            legacy_exists=legacy_exists,
+            authorize_bulk=authorize_bulk,
+        )
+
+        # ----- Step 3: apply disk mutations (writes then deletes) -----
+        # All mutations happen before the /adapt preflight so the composed
+        # state Caddy adapts is the final set, never a transient superset.
+        # A leftover legacy file colliding with a new per-bucket file
+        # declaring the same site would otherwise fail /adapt on a duplicate
+        # site address.
+        await progress(
+            "running",
+            2,
+            4,
+            "persisting drop-in files to disk",
+        )
+        try:
+            for name, frag in plan.writes.items():
+                await asyncio.to_thread(
+                    _atomic_write_or_remove,
+                    drop_in_dir / name,
+                    frag,
+                )
+            for name in plan.deletes:
+                await asyncio.to_thread(
+                    _atomic_write_or_remove,
+                    drop_in_dir / name,
+                    "",
+                )
+        except OSError as exc:
+            logger.error(
+                "caddy_sync: persist failed for region=%s dir=%s: %s",
+                region,
+                drop_in_dir,
+                exc,
+            )
+            return JobOutcome(
+                success=False,
+                exit_code=-1,
+                stderr=f"Failed to persist drop-in files to {drop_in_dir}: {exc}",
+                failure_reason="persist_failed",
+            )
+
+        # ----- Step 4: preflight via admin /adapt -----
         # /adapt runs the Caddyfile adapter WITHOUT loading, so a
         # broken composed config (missing import target, two files
         # declaring the same site) surfaces as a named failure here
@@ -163,8 +362,8 @@ def make_caddy_sync_handler(
         # that into a self-diagnosing command result.
         await progress(
             "running",
-            2,
-            4,
+            3,
+            5,
             "preflighting composed config via admin /adapt",
         )
         try:
@@ -210,16 +409,16 @@ def make_caddy_sync_handler(
                 failure_reason="config_invalid",
             )
 
-        # ----- Step 3: reload Caddy via admin /load -----
+        # ----- Step 5: reload Caddy via admin /load -----
         # POST the main Caddyfile so Caddy re-adapts the composed
-        # config from disk. Posting just the fragment would replace
+        # config from disk. Posting just a fragment would replace
         # the entire running config (Caddy /load is a full-config
         # endpoint), wiping every other site the main Caddyfile
         # declares until the next operator-initiated restart.
         await progress(
             "running",
-            3,
             4,
+            5,
             "reloading Caddy via admin /load",
         )
         ok, err = await asyncio.to_thread(
@@ -229,7 +428,7 @@ def make_caddy_sync_handler(
         )
         if not ok:
             logger.warning(
-                "caddy_sync: drop-in persisted but Caddy reload "
+                "caddy_sync: drop-ins persisted but Caddy reload "
                 "failed for region=%s: %s",
                 region,
                 err,
@@ -241,15 +440,46 @@ def make_caddy_sync_handler(
                 failure_reason="reload_failed",
             )
 
-        await progress("finalizing", 4, 4, "sync complete")
+        # ----- Terminal outcome -----
+        # The writes are live. If the rail tripped, the writes still
+        # applied (adds/updates are safe) but the suspicious deletes were
+        # refused and those files keep serving; return a named failure so
+        # the operator sees it, rather than a silent partial apply.
+        extras = {
+            "region": region,
+            "tenants": len(plan.writes),
+            "deleted": len(plan.deletes),
+            "rail_tripped": plan.rail_tripped,
+        }
+        if plan.rail_tripped:
+            skipped = ", ".join(plan.skipped_deletes)
+            await progress("finalizing", 5, 5, "sync applied, delete rail tripped")
+            return JobOutcome(
+                success=False,
+                exit_code=-1,
+                stderr=(
+                    f"Delete rail tripped for region {region}: the manifest "
+                    f"would remove {len(plan.skipped_deletes)} drop-in files "
+                    f"({skipped}), above the inline cadence of "
+                    f"{_INLINE_DELETE_CADENCE}. Writes were applied and those "
+                    "files keep serving; no delete was performed. If this is a "
+                    "deliberate bulk op (e.g. region decommission), re-dispatch "
+                    "with authorize_bulk set. Otherwise Storm's manifest is "
+                    "under-returning and should be investigated before the "
+                    "files are removed."
+                ),
+                failure_reason="delete_rail_tripped",
+                extras=extras,
+            )
+
+        await progress("finalizing", 5, 5, "sync complete")
         return JobOutcome(
             success=True,
-            stdout=f"Synced {len(fragment)} bytes for region {region}",
-            extras={
-                "region": region,
-                "fragment_bytes": len(fragment),
-                "removed": not fragment,
-            },
+            stdout=(
+                f"Synced {len(plan.writes)} drop-in file(s), removed "
+                f"{len(plan.deletes)} for region {region}"
+            ),
+            extras=extras,
         )
 
     return handler
@@ -320,10 +550,12 @@ def _post_caddyfile(
 
 
 def _atomic_write_or_remove(drop_in_path: Path, fragment: str) -> None:
-    """Write fragment atomically, or remove file if fragment is empty.
+    """Write fragment atomically, or remove the file if fragment is empty.
 
-    Empty fragment is the "no domains active in this region" case -
-    the drop-in file should not linger as a stale empty import target.
+    The reconcile uses both directions: a non-empty fragment writes (or
+    updates) a per-bucket file; an empty fragment is how a delete is
+    expressed, so a removed bucket's file does not linger as a stale
+    import target.
     """
     if not fragment:
         try:

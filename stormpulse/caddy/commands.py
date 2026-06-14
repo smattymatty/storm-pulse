@@ -12,12 +12,19 @@ BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC = "buckets_custom_domain_caddy_sync"
 # toronto-1, montreal-1).
 _REGION_PATTERN = r"[a-z0-9][a-z0-9-]{0,40}[a-z0-9]"
 
-# Fragment size cap. At ~150 bytes per server block (one domain), 150KB
-# headroom covers ~1000 active custom domains in a single region - well
-# beyond solo-founder-scale ops, with margin to spare. Hard cap exists
-# to prevent runaway memory / wire frame blowups from a misbehaving
-# Storm-side renderer.
-_FRAGMENT_MAX_BYTES = 150_000
+# authorize_bulk rides the wire as a string ('true'/'false') because the
+# command param contract is string-valued end to end. Only a deliberate
+# operator bulk op sets it true; the automated full-state path leaves it
+# false so a suspicious mass-delete trips the agent's delete rail.
+_BOOL_PATTERN = r"true|false"
+
+# Manifest-total size cap. The manifest is a JSON object mapping each
+# serving bucket's id to its Caddy fragment. This cap bounds the whole
+# wire frame (the runaway-memory / oversized-frame guard the single
+# fragment cap used to carry). At a few hundred bytes per bucket plus
+# JSON overhead, 1MB covers thousands of serving buckets in one region,
+# well beyond solo-founder-scale ops.
+_MANIFEST_MAX_BYTES = 1_000_000
 
 
 def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
@@ -39,8 +46,9 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
             command=[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC],  # internal - JobManager
             timeout=30,
             description=(
-                "Write the per-region Caddyfile fragment for "
-                "custom-domain serving and reload Caddy via the admin API."
+                "Reconcile the per-serving-bucket Caddy drop-in files for "
+                "a region against the supplied manifest and reload Caddy "
+                "via the admin API."
             ),
             long_running=True,
             params={
@@ -50,15 +58,29 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
                     pattern=_REGION_PATTERN,
                     description="Region identifier (e.g. vancouver-1)",
                 ),
-                "fragment": ParamDef(
-                    placeholder="fragment",
-                    default="",
+                "tenants": ParamDef(
+                    placeholder="tenants",
+                    default="{}",
                     pattern=None,
-                    max_bytes=_FRAGMENT_MAX_BYTES,
+                    max_bytes=_MANIFEST_MAX_BYTES,
                     description=(
-                        "Full Caddyfile fragment for serving-eligible "
-                        "custom domains in this region. Empty fragment "
-                        "removes the drop-in file (no domains active)."
+                        "JSON object mapping each serving bucket's id to its "
+                        "Caddy fragment. The agent writes one site-<id>.caddy "
+                        "file per entry and reconciles the set against disk. "
+                        "An empty object ({}) means no buckets serve in this "
+                        "region; the agent removes the managed files, subject "
+                        "to the delete rail."
+                    ),
+                ),
+                "authorize_bulk": ParamDef(
+                    placeholder="authorize_bulk",
+                    default="false",
+                    pattern=_BOOL_PATTERN,
+                    description=(
+                        "'true' authorizes a bulk delete (more than the inline "
+                        "cadence of one file) for a deliberate operator bulk op. "
+                        "The automated path leaves it 'false' so a partial "
+                        "manifest cannot mass-delete live sites."
                     ),
                 ),
             },
