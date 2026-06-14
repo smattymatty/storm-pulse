@@ -10,6 +10,7 @@ against a real socket.
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -19,12 +20,25 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from stormpulse.caddy.sync import (
+    _PER_TENANT_MAX_BYTES,
     _atomic_write_or_remove,
+    _decode_manifest,
+    _plan_reconcile,
     _post_caddy_load,
     _read_and_absolutize_imports,
     make_caddy_sync_handler,
 )
 from stormpulse.config import CaddyConfig
+
+
+def _params(tenants: dict[str, str], *, region: str = "vancouver-1",
+            authorize_bulk: bool = False) -> dict[str, str]:
+    """Build the string-valued param dict the handler receives off the wire."""
+    return {
+        "region": region,
+        "tenants": json.dumps(tenants),
+        "authorize_bulk": "true" if authorize_bulk else "false",
+    }
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -218,9 +232,10 @@ class TestPostCaddyLoad:
 
 
 class TestCaddySyncHandler:
-    def test_happy_path_writes_fragment(self, tmp_path: Path) -> None:
+    def test_happy_path_writes_tenant_file(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        cfg.drop_in_path.parent.mkdir()
+        drop_in_dir = cfg.drop_in_path.parent
+        drop_in_dir.mkdir()
 
         mock_conn = _make_mock_connection(status=200)
         with patch(
@@ -229,34 +244,42 @@ class TestCaddySyncHandler:
         ):
             handler = make_caddy_sync_handler(
                 cfg,
-                {"region": "vancouver-1", "fragment": "example.com { }\n"},
+                _params({"abcdef0123456789": "example.com { }\n"}),
             )
             outcome = asyncio.run(_run_handler(handler))
 
         assert outcome.success is True
-        assert cfg.drop_in_path.read_text() == "example.com { }\n"
+        # One file per serving bucket, keyed by id.
+        assert (drop_in_dir / "site-abcdef0123456789.caddy").read_text() == (
+            "example.com { }\n"
+        )
         assert outcome.extras["region"] == "vancouver-1"
-        assert outcome.extras["removed"] is False
+        assert outcome.extras["tenants"] == 1
+        assert outcome.extras["deleted"] == 0
+        assert outcome.extras["rail_tripped"] is False
 
-    def test_empty_fragment_removes_drop_in(self, tmp_path: Path) -> None:
+    def test_empty_manifest_removes_single_managed_file(
+        self, tmp_path: Path,
+    ) -> None:
+        """An empty manifest with one managed file on disk removes it: a
+        single delete is within the inline cadence, so the rail allows it."""
         cfg = _make_config(tmp_path)
-        cfg.drop_in_path.parent.mkdir()
-        cfg.drop_in_path.write_text("stale content")
+        drop_in_dir = cfg.drop_in_path.parent
+        drop_in_dir.mkdir()
+        stale = drop_in_dir / "site-deadbeefdeadbeef.caddy"
+        stale.write_text("stale content")
 
         mock_conn = _make_mock_connection(status=200)
         with patch(
             "stormpulse.caddy.sync.http.client.HTTPConnection",
             return_value=mock_conn,
         ):
-            handler = make_caddy_sync_handler(
-                cfg,
-                {"region": "vancouver-1", "fragment": ""},
-            )
+            handler = make_caddy_sync_handler(cfg, _params({}))
             outcome = asyncio.run(_run_handler(handler))
 
         assert outcome.success is True
-        assert not cfg.drop_in_path.exists()
-        assert outcome.extras["removed"] is True
+        assert not stale.exists()
+        assert outcome.extras["deleted"] == 1
 
     def test_invalid_config_named_at_preflight(self, tmp_path: Path) -> None:
         """Adapter errors are caught by /adapt and come back as a named,
@@ -268,8 +291,8 @@ class TestCaddySyncHandler:
         result and guarantees the running Caddy was never touched.
         """
         cfg = _make_config(tmp_path)
-        cfg.drop_in_path.parent.mkdir()
-        cfg.drop_in_path.write_text("previous content")
+        drop_in_dir = cfg.drop_in_path.parent
+        drop_in_dir.mkdir()
 
         mock_conn = _make_mock_connection(
             status=400,
@@ -281,7 +304,7 @@ class TestCaddySyncHandler:
         ):
             handler = make_caddy_sync_handler(
                 cfg,
-                {"region": "vancouver-1", "fragment": "new content"},
+                _params({"abcdef0123456789": "new content\n"}),
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -292,15 +315,17 @@ class TestCaddySyncHandler:
         # Only the /adapt preflight was attempted, never /load.
         endpoints = [c.args[1] for c in mock_conn.request.call_args_list]
         assert endpoints == ["/adapt"]
-        # Drop-in WAS updated - disk-truth even when live didn't accept.
-        assert cfg.drop_in_path.read_text() == "new content"
+        # File WAS written - disk-truth even when live didn't accept.
+        assert (drop_in_dir / "site-abcdef0123456789.caddy").read_text() == (
+            "new content\n"
+        )
 
     def test_reload_failure_leaves_disk_updated(self, tmp_path: Path) -> None:
         """Persist happens first; a true reload failure (preflight passed,
         /load rejected) leaves disk newer than live."""
         cfg = _make_config(tmp_path)
-        cfg.drop_in_path.parent.mkdir()
-        cfg.drop_in_path.write_text("previous content")
+        drop_in_dir = cfg.drop_in_path.parent
+        drop_in_dir.mkdir()
 
         mock_conn = _make_mock_connection_sequence(
             (200, "{}"),              # /adapt accepts
@@ -312,7 +337,7 @@ class TestCaddySyncHandler:
         ):
             handler = make_caddy_sync_handler(
                 cfg,
-                {"region": "vancouver-1", "fragment": "new content"},
+                _params({"abcdef0123456789": "new content\n"}),
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -320,10 +345,12 @@ class TestCaddySyncHandler:
         assert outcome.failure_reason == "reload_failed"
         endpoints = [c.args[1] for c in mock_conn.request.call_args_list]
         assert endpoints == ["/adapt", "/load"]
-        # Drop-in WAS updated - disk-truth even when live didn't accept.
+        # File WAS written - disk-truth even when live didn't accept.
         # Next successful sync (or operator-initiated restart) restores
         # consistency.
-        assert cfg.drop_in_path.read_text() == "new content"
+        assert (drop_in_dir / "site-abcdef0123456789.caddy").read_text() == (
+            "new content\n"
+        )
 
     def test_persist_failure_skips_reload(self, tmp_path: Path) -> None:
         """If persist fails, reload is never attempted."""
@@ -335,7 +362,7 @@ class TestCaddySyncHandler:
         ) as mock_conn_cls:
             handler = make_caddy_sync_handler(
                 cfg,
-                {"region": "vancouver-1", "fragment": "x"},
+                _params({"abcdef0123456789": "x"}),
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -344,13 +371,35 @@ class TestCaddySyncHandler:
         # Reload was never attempted - no HTTPConnection construction.
         mock_conn_cls.assert_not_called()
 
+    def test_bad_manifest_rejected_before_disk(self, tmp_path: Path) -> None:
+        """A malformed manifest is refused before any disk mutation or
+        reload: a Storm-side render bug must not write a partial set."""
+        cfg = _make_config(tmp_path)
+        cfg.drop_in_path.parent.mkdir()
+
+        with patch(
+            "stormpulse.caddy.sync.http.client.HTTPConnection",
+        ) as mock_conn_cls:
+            handler = make_caddy_sync_handler(
+                cfg,
+                {"region": "vancouver-1", "tenants": "not json"},
+            )
+            outcome = asyncio.run(_run_handler(handler))
+
+        assert outcome.success is False
+        assert outcome.failure_reason == "config_invalid"
+        assert "not valid JSON" in outcome.stderr
+        mock_conn_cls.assert_not_called()
+        # Nothing was written.
+        assert list(cfg.drop_in_path.parent.glob("site-*.caddy")) == []
+
     def test_post_body_is_main_caddyfile_not_fragment(
         self,
         tmp_path: Path,
     ) -> None:
-        """The /load body is the composed main Caddyfile, not the fragment.
+        """The /load body is the composed main Caddyfile, not a fragment.
 
-        Posting just the fragment would replace the whole running config
+        Posting just a fragment would replace the whole running config
         (Caddy /load is full-config). The agent must POST the main
         Caddyfile so Caddy re-adapts the composed config from disk.
         """
@@ -367,7 +416,7 @@ class TestCaddySyncHandler:
         ):
             handler = make_caddy_sync_handler(
                 cfg,
-                {"region": "vancouver-1", "fragment": "example.com { }\n"},
+                _params({"abcdef0123456789": "example.com { }\n"}),
             )
             outcome = asyncio.run(_run_handler(handler))
 
@@ -375,7 +424,7 @@ class TestCaddySyncHandler:
         posted_body = mock_conn.request.call_args.kwargs["body"]
         # Main Caddyfile content is in the body…
         assert b"admin localhost:2019" in posted_body
-        # …and the per-region fragment is NOT (it lives on disk).
+        # …and the per-bucket fragment is NOT (it lives on disk).
         assert b"example.com" not in posted_body
 
     def test_main_caddyfile_read_failure_returns_reload_failed(
@@ -384,27 +433,278 @@ class TestCaddySyncHandler:
     ) -> None:
         """If main Caddyfile is missing at reload time, surfaces reload_failed.
 
-        Drop-in is still written (disk-truth) - the next sync or
+        Files are still written (disk-truth) - the next sync or
         operator-fixed Caddyfile recovers cleanly.
         """
         cfg = CaddyConfig(
             enabled=True,
             admin_url="http://localhost:2019",
             main_caddyfile=tmp_path / "missing-Caddyfile",
-            drop_in_path=tmp_path / "conf.d" / "drop-in.caddy",
+            drop_in_path=tmp_path / "conf.d" / "buckets-custom-domains.caddy",
         )
-        cfg.drop_in_path.parent.mkdir()
+        drop_in_dir = cfg.drop_in_path.parent
+        drop_in_dir.mkdir()
 
         handler = make_caddy_sync_handler(
             cfg,
-            {"region": "vancouver-1", "fragment": "x"},
+            _params({"abcdef0123456789": "x"}),
         )
         outcome = asyncio.run(_run_handler(handler))
 
         assert outcome.success is False
         assert outcome.failure_reason == "reload_failed"
-        # Drop-in was still written - disk-truth.
-        assert cfg.drop_in_path.read_text() == "x"
+        # File was still written - disk-truth.
+        assert (drop_in_dir / "site-abcdef0123456789.caddy").read_text() == "x"
+
+
+# ---------------------------------------------------------------------------
+# _decode_manifest - pure JSON + safety validation, no mocks
+# ---------------------------------------------------------------------------
+
+
+class TestDecodeManifest:
+    def test_valid_manifest(self) -> None:
+        raw = json.dumps({"abcdef0123456789": "example.com { }\n"})
+        manifest, err = _decode_manifest(raw)
+        assert err is None
+        assert manifest == {"abcdef0123456789": "example.com { }\n"}
+
+    def test_bad_json_rejected(self) -> None:
+        manifest, err = _decode_manifest("not json")
+        assert manifest is None
+        assert err is not None and "not valid JSON" in err
+
+    def test_non_object_rejected(self) -> None:
+        manifest, err = _decode_manifest("[1, 2, 3]")
+        assert manifest is None
+        assert err is not None and "must be a JSON object" in err
+
+    def test_non_string_value_rejected(self) -> None:
+        manifest, err = _decode_manifest('{"abc": 123}')
+        assert manifest is None
+        assert err is not None and "must be strings" in err
+
+    def test_unsafe_key_rejected(self) -> None:
+        # A key feeds a filename; a path separator must never pass.
+        manifest, err = _decode_manifest('{"../../etc/passwd": "x"}')
+        assert manifest is None
+        assert err is not None and "safe filename" in err
+
+    def test_dotted_key_rejected(self) -> None:
+        # Dots are barred too, so a key can never form a `..` traversal.
+        manifest, err = _decode_manifest('{"a.b": "x"}')
+        assert manifest is None
+        assert err is not None and "safe filename" in err
+
+    def test_oversize_fragment_rejected(self) -> None:
+        oversize = "a" * (_PER_TENANT_MAX_BYTES + 1)
+        manifest, err = _decode_manifest(json.dumps({"abc": oversize}))
+        assert manifest is None
+        assert err is not None and "exceeds per-bucket cap" in err
+
+
+# ---------------------------------------------------------------------------
+# _plan_reconcile - the delete rail's heart, pure, no I/O
+# ---------------------------------------------------------------------------
+
+
+class TestPlanReconcile:
+    def test_writes_are_keyed_by_id(self) -> None:
+        plan = _plan_reconcile(
+            tenants={"aaaa": "x\n", "bbbb": "y\n"},
+            on_disk=set(),
+            legacy_name=None,
+            legacy_exists=False,
+            authorize_bulk=False,
+        )
+        assert plan.writes == {"site-aaaa.caddy": "x\n", "site-bbbb.caddy": "y\n"}
+        assert plan.deletes == []
+        assert plan.rail_tripped is False
+
+    def test_single_delete_within_cadence_allowed(self) -> None:
+        plan = _plan_reconcile(
+            tenants={"aaaa": "x\n"},
+            on_disk={"site-aaaa.caddy", "site-bbbb.caddy"},
+            legacy_name=None,
+            legacy_exists=False,
+            authorize_bulk=False,
+        )
+        # bbbb left the manifest; one delete is within cadence.
+        assert plan.deletes == ["site-bbbb.caddy"]
+        assert plan.rail_tripped is False
+
+    def test_mass_delete_trips_rail(self) -> None:
+        # Reference is the on-disk set, NOT a count Storm sends: three files
+        # on disk, a manifest naming one, means two would be deleted.
+        plan = _plan_reconcile(
+            tenants={"aaaa": "x\n"},
+            on_disk={"site-aaaa.caddy", "site-bbbb.caddy", "site-cccc.caddy"},
+            legacy_name=None,
+            legacy_exists=False,
+            authorize_bulk=False,
+        )
+        assert plan.rail_tripped is True
+        assert plan.deletes == []  # ALL deletes skipped, not a subset.
+        assert plan.skipped_deletes == ["site-bbbb.caddy", "site-cccc.caddy"]
+        # Writes still flow - the safe direction.
+        assert plan.writes == {"site-aaaa.caddy": "x\n"}
+
+    def test_authorize_bulk_permits_mass_delete(self) -> None:
+        plan = _plan_reconcile(
+            tenants={"aaaa": "x\n"},
+            on_disk={"site-aaaa.caddy", "site-bbbb.caddy", "site-cccc.caddy"},
+            legacy_name=None,
+            legacy_exists=False,
+            authorize_bulk=True,
+        )
+        assert plan.rail_tripped is False
+        assert plan.deletes == ["site-bbbb.caddy", "site-cccc.caddy"]
+
+    def test_legacy_cutover_is_a_single_allowed_delete(self) -> None:
+        # First cutover: no managed files yet, the legacy single-file
+        # monolith present. Removing it is one delete, within cadence, so it
+        # rides through the same sync that writes the per-bucket files.
+        plan = _plan_reconcile(
+            tenants={"aaaa": "x\n", "bbbb": "y\n"},
+            on_disk=set(),
+            legacy_name="buckets-custom-domains.caddy",
+            legacy_exists=True,
+            authorize_bulk=False,
+        )
+        assert plan.deletes == ["buckets-custom-domains.caddy"]
+        assert plan.rail_tripped is False
+        assert set(plan.writes) == {"site-aaaa.caddy", "site-bbbb.caddy"}
+
+    def test_legacy_plus_orphan_over_cadence_trips(self) -> None:
+        # Legacy delete plus a managed orphan is two deletes; the rail trips
+        # and keeps BOTH (including the legacy) rather than guessing.
+        plan = _plan_reconcile(
+            tenants={"aaaa": "x\n"},
+            on_disk={"site-aaaa.caddy", "site-bbbb.caddy"},
+            legacy_name="buckets-custom-domains.caddy",
+            legacy_exists=True,
+            authorize_bulk=False,
+        )
+        assert plan.rail_tripped is True
+        assert plan.deletes == []
+        assert "buckets-custom-domains.caddy" in plan.skipped_deletes
+        assert "site-bbbb.caddy" in plan.skipped_deletes
+
+
+# ---------------------------------------------------------------------------
+# The delete rail end to end - the required regression. A suspicious
+# mass-delete trips a named failure and leaves the files serving.
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteRailHandler:
+    def _seed(self, drop_in_dir: Path, ids: list[str]) -> None:
+        drop_in_dir.mkdir()
+        for tid in ids:
+            (drop_in_dir / f"site-{tid}.caddy").write_text(f"{tid} block\n")
+
+    def test_mass_delete_trips_named_failure_files_keep_serving(
+        self, tmp_path: Path,
+    ) -> None:
+        cfg = _make_config(tmp_path)
+        drop_in_dir = cfg.drop_in_path.parent
+        # Four sites live on disk.
+        self._seed(drop_in_dir, ["aaaa", "bbbb", "cccc", "dddd"])
+
+        mock_conn = _make_mock_connection_sequence(
+            (200, "{}"),  # /adapt
+            (200, "{}"),  # /load
+        )
+        with patch(
+            "stormpulse.caddy.sync.http.client.HTTPConnection",
+            return_value=mock_conn,
+        ):
+            # Manifest names only one bucket: an under-returning query that
+            # would delete the other three.
+            handler = make_caddy_sync_handler(
+                cfg,
+                _params({"aaaa": "aaaa updated\n"}),
+            )
+            outcome = asyncio.run(_run_handler(handler))
+
+        assert outcome.success is False
+        assert outcome.failure_reason == "delete_rail_tripped"
+        # The failure names the offending files, the cadence, and the escape
+        # hatch so the operator can act on it.
+        assert "site-bbbb.caddy" in outcome.stderr
+        assert "authorize_bulk" in outcome.stderr
+        # The three NOT in the manifest keep serving on disk.
+        for tid in ("bbbb", "cccc", "dddd"):
+            assert (drop_in_dir / f"site-{tid}.caddy").exists()
+        # The write still applied (the safe direction).
+        assert (drop_in_dir / "site-aaaa.caddy").read_text() == "aaaa updated\n"
+        # Writes were made live: the reload still ran.
+        endpoints = [c.args[1] for c in mock_conn.request.call_args_list]
+        assert endpoints == ["/adapt", "/load"]
+
+    def test_authorize_bulk_performs_the_mass_delete(
+        self, tmp_path: Path,
+    ) -> None:
+        cfg = _make_config(tmp_path)
+        drop_in_dir = cfg.drop_in_path.parent
+        self._seed(drop_in_dir, ["aaaa", "bbbb", "cccc", "dddd"])
+
+        mock_conn = _make_mock_connection_sequence((200, "{}"), (200, "{}"))
+        with patch(
+            "stormpulse.caddy.sync.http.client.HTTPConnection",
+            return_value=mock_conn,
+        ):
+            handler = make_caddy_sync_handler(
+                cfg,
+                _params({"aaaa": "aaaa\n"}, authorize_bulk=True),
+            )
+            outcome = asyncio.run(_run_handler(handler))
+
+        assert outcome.success is True
+        assert outcome.extras["deleted"] == 3
+        for tid in ("bbbb", "cccc", "dddd"):
+            assert not (drop_in_dir / f"site-{tid}.caddy").exists()
+        assert (drop_in_dir / "site-aaaa.caddy").exists()
+
+
+# ---------------------------------------------------------------------------
+# Cutover from the legacy single-file drop-in to per-bucket files.
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyCutover:
+    def test_legacy_monolith_removed_in_same_sync(self, tmp_path: Path) -> None:
+        """The first new-shape sync writes per-bucket files AND removes the
+        legacy single-file drop-in in the same reconcile, before /adapt, so
+        Caddy never adapts a superset where the monolith and a new per-bucket
+        file declare the same site (a duplicate-site-address failure)."""
+        cfg = _make_config(tmp_path)
+        drop_in_dir = cfg.drop_in_path.parent
+        drop_in_dir.mkdir()
+        # The legacy monolith lives at the configured drop_in_path.
+        cfg.drop_in_path.write_text("mathew.stormsites.ca { }\n")
+        assert cfg.drop_in_path.name == "buckets-custom-domains.caddy"
+
+        mock_conn = _make_mock_connection_sequence((200, "{}"), (200, "{}"))
+        with patch(
+            "stormpulse.caddy.sync.http.client.HTTPConnection",
+            return_value=mock_conn,
+        ):
+            handler = make_caddy_sync_handler(
+                cfg,
+                _params({"aaaa": "site-a\n", "bbbb": "site-b\n"}),
+            )
+            outcome = asyncio.run(_run_handler(handler))
+
+        assert outcome.success is True
+        # Legacy monolith gone; per-bucket files present.
+        assert not cfg.drop_in_path.exists()
+        assert (drop_in_dir / "site-aaaa.caddy").exists()
+        assert (drop_in_dir / "site-bbbb.caddy").exists()
+        assert outcome.extras["deleted"] == 1
+        # Disk was fully reconciled before the reload.
+        endpoints = [c.args[1] for c in mock_conn.request.call_args_list]
+        assert endpoints == ["/adapt", "/load"]
 
 
 # ---------------------------------------------------------------------------
