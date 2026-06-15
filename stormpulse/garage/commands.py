@@ -677,6 +677,40 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_detach_account_key": CommandDef(
+            group="garage",
+            command=["garage_detach_account_key"],  # internal - handled by JobManager
+            timeout=30,
+            requires_confirmation=True,
+            description=(
+                "Detach one account key's grant from a single bucket "
+                "(BUCKETS-013): deny read/write/owner, drop the key's local "
+                "alias, then read the key back and confirm the bucket is gone "
+                "from its grant list. Grant-removal, not key-destruction: the "
+                "key survives. Confirmed by the deny op's own result, never a 404."
+            ),
+            long_running=True,
+            params={
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
+                    default=None,
+                    pattern=_BUCKET_ID_PATTERN,
+                    description="Bucket UUID (16 or 64-char Garage ID)",
+                ),
+                "account_key_id": ParamDef(
+                    placeholder="account_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Account key Garage ID whose grant is removed",
+                ),
+                "local_alias": ParamDef(
+                    placeholder="local_alias",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="The account key's local alias for the bucket to drop",
+                ),
+            },
+        ),
         "garage_bucket_clear": CommandDef(
             group="garage",
             command=[
@@ -841,6 +875,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     """
     from stormpulse.garage.clear_bucket import make_clear_bucket_handler
     from stormpulse.garage.delete_key import make_delete_key_handler
+    from stormpulse.garage.detach_account_key import (
+        make_detach_account_key_handler,
+    )
     from stormpulse.garage.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
     )
@@ -892,5 +929,8 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_delete_key": (
             lambda params: make_delete_key_handler(config, params)
+        ),
+        "garage_detach_account_key": (
+            lambda params: make_detach_account_key_handler(config, params)
         ),
     }
