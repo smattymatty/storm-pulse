@@ -82,7 +82,7 @@ async def run_delete_provisioned_bucket(
     )
     if info is None:
         # Idempotent: a bucket that's already gone is success.
-        if _is_not_found(err):
+        if admin_api.is_not_found(err):
             return _already_gone(bucket_id, started_at)
         return _failure(
             failure_reason="bucket_info_failed",
@@ -173,7 +173,7 @@ async def _cleanup_unmoored_keys(
             admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
         )
         if kinfo is None:
-            if _is_not_found(kerr):
+            if admin_api.is_not_found(kerr):
                 skipped.append(key_id)  # already gone, nothing to clean
             else:
                 manual.append({"type": "key", "id": key_id})
@@ -189,12 +189,6 @@ async def _cleanup_unmoored_keys(
         else:
             manual.append({"type": "key", "id": key_id})
     return manual, deleted, skipped
-
-
-def _is_not_found(err: str) -> bool:
-    """True if an admin-API error means the resource is already gone."""
-    low = err.lower()
-    return any(s in low for s in ("404", "not found", "nosuchbucket", "nosuchkey"))
 
 
 def _already_gone(bucket_id: str, started_at: float) -> JobOutcome:

@@ -275,6 +275,19 @@ def delete_key(
     return _post(admin_url, admin_token, path)
 
 
+def is_not_found(err: str) -> bool:
+    """True if an admin-API error string means the resource is already gone.
+
+    A 404 surfaces from :func:`_post` as ``"HTTP 404: ..."``; Garage's own
+    bodies use ``NoSuchBucket`` / ``NoSuchKey``. Callers that treat
+    already-absent as success (idempotent deletes, the credential-kill
+    tombstone sweep) use this to tell "confirmed gone" from a transient
+    error.
+    """
+    low = err.lower()
+    return any(s in low for s in ("404", "not found", "nosuchbucket", "nosuchkey"))
+
+
 def allow_bucket_key(
     *,
     admin_url: str,

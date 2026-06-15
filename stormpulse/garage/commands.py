@@ -655,6 +655,28 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_delete_key": CommandDef(
+            group="garage",
+            command=["garage_delete_key"],  # internal - handled by JobManager
+            timeout=30,
+            requires_confirmation=True,
+            description=(
+                "Admin-API key delete reporting a structured confirmed-gone "
+                "outcome (deleted / already_absent), distinct from the legacy "
+                "CLI garage_key_delete. Backs the credential-kill tombstone "
+                "sweep (BUCKETS-013): a positive 404 is success, a transient "
+                "error is not, so a still-live key is never certified dead."
+            ),
+            long_running=True,
+            params={
+                "key_id": ParamDef(
+                    placeholder="key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Garage key ID to delete",
+                ),
+            },
+        ),
         "garage_bucket_clear": CommandDef(
             group="garage",
             command=[
@@ -818,6 +840,7 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     installed on a given host.
     """
     from stormpulse.garage.clear_bucket import make_clear_bucket_handler
+    from stormpulse.garage.delete_key import make_delete_key_handler
     from stormpulse.garage.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
     )
@@ -866,5 +889,8 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_delete_provisioned_bucket": (
             lambda params: make_delete_provisioned_bucket_handler(config, params)
+        ),
+        "garage_delete_key": (
+            lambda params: make_delete_key_handler(config, params)
         ),
     }

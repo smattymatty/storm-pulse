@@ -50,6 +50,7 @@ class TestBuildGarageCommands:
             "garage_provision_additional_key",
             "garage_provision_account_key",
             "garage_delete_provisioned_bucket",
+            "garage_delete_key",
             "garage_rotate_customer_key",
             "garage_walk_bucket_stats",
         }
@@ -67,6 +68,7 @@ class TestBuildGarageCommands:
                 "garage_provision_additional_key",
                 "garage_provision_account_key",
                 "garage_delete_provisioned_bucket",
+                "garage_delete_key",
                 "garage_rotate_customer_key",
                 "garage_walk_bucket_stats",
             }:
@@ -85,6 +87,7 @@ class TestBuildGarageCommands:
         for name in (
             "garage_bucket_delete",
             "garage_key_delete",
+            "garage_delete_key",
             "garage_bucket_deny",
             "garage_bucket_website_deny",
             "garage_bucket_alias_global_remove",
