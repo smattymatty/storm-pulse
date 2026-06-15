@@ -592,8 +592,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "key_tier": ParamDef(
                     placeholder="key_tier",
                     default=None,
-                    pattern=r"(?:rw|ro)",
-                    description="Permission tier for the new key: 'rw' or 'ro'. Admin is created at provision time.",
+                    pattern=r"(?:all|rw|ro)",
+                    description="Permission tier: 'rw'/'ro' add a tiered key to a bucket that already has an owner; 'all' mints the owner key onto an adopted bucket whose owner slot is free (claim-admin, BUCKETS-013).",
                 ),
             },
         ),

@@ -193,6 +193,25 @@ async def test_happy_path_rw_tier(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_happy_path_all_tier_grants_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Claim-admin (BUCKETS-013): the 'all' tier mints the owner key onto an
+    # adopted bucket whose owner slot is free. This is the only tier that
+    # grants owner through this handler.
+    fake = _install(monkeypatch)
+
+    outcome = await _run(fake, new_key_name="new-admin-key", key_tier="all")
+
+    assert outcome.success is True
+    assert outcome.extras["key_tier"] == "all"
+    assert fake.calls[1][0] == "allow_bucket_key"
+    assert fake.calls[1][1]["read"] is True
+    assert fake.calls[1][1]["write"] is True
+    assert fake.calls[1][1]["owner"] is True
+
+
+@pytest.mark.asyncio
 async def test_happy_path_ro_tier(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _install(monkeypatch)
 

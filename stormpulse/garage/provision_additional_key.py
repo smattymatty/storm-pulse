@@ -26,12 +26,16 @@ logger = logging.getLogger(__name__)
 
 _TOTAL_STEPS = 3
 
-_VALID_TIERS = ("rw", "ro")
+_VALID_TIERS = ("all", "rw", "ro")
 
-# (read, write) for each tier; owner is never granted by this handler.
-_TIER_PERMS: dict[str, tuple[bool, bool]] = {
-    "rw": (True, True),
-    "ro": (True, False),
+# (read, write, owner) for each tier. The ``all`` tier mints an owner key onto
+# a bucket whose owner slot is free - the claim-admin path for an adopted
+# bucket (BUCKETS-013), the first owner-grant-on-existing-bucket in the system.
+# rw/ro remain non-owner tiered keys added to a bucket that already has one.
+_TIER_PERMS: dict[str, tuple[bool, bool, bool]] = {
+    "all": (True, True, True),
+    "rw": (True, True, False),
+    "ro": (True, False, False),
 }
 
 
@@ -135,7 +139,7 @@ async def run_provision_additional_key(
             extras_extra={},
         )
 
-    read, write = _TIER_PERMS[key_tier]
+    read, write, owner = _TIER_PERMS[key_tier]
     new_secret: str | None = None
 
     # ---- Step 1: CreateKey ----
@@ -183,6 +187,7 @@ async def run_provision_additional_key(
         access_key_id=new_key_id,
         read=read,
         write=write,
+        owner=owner,
     )
     if not ok:
         rollback = await _rollback(garage_config, state)
@@ -264,7 +269,7 @@ async def _rollback(
     """
     manual: list[dict[str, Any]] = []
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
-    read, write = _TIER_PERMS[state.key_tier]
+    read, write, owner = _TIER_PERMS[state.key_tier]
 
     # 1. Revoke permissions
     if state.perms_granted and state.new_key_id is not None:
@@ -275,9 +280,10 @@ async def _rollback(
             access_key_id=state.new_key_id,
             read=read,
             write=write,
+            owner=owner,
         )
         if not ok:
-            manual.extend(_remaining_after_perm_halt(state, read, write))
+            manual.extend(_remaining_after_perm_halt(state, read, write, owner))
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
     # 2. Delete new key
@@ -298,6 +304,7 @@ def _remaining_after_perm_halt(
     state: _AdditionalKeyState,
     read: bool,
     write: bool,
+    owner: bool,
 ) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     if state.new_key_id is not None:
@@ -306,7 +313,7 @@ def _remaining_after_perm_halt(
                 {
                     "type": "permission_grant",
                     "key_id": state.new_key_id,
-                    "permissions": {"read": read, "write": write, "owner": False},
+                    "permissions": {"read": read, "write": write, "owner": owner},
                 }
             )
         items.append({"type": "key", "id": state.new_key_id})
