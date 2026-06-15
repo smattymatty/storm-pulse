@@ -52,6 +52,7 @@ class TestBuildGarageCommands:
             "garage_delete_provisioned_bucket",
             "garage_delete_key",
             "garage_detach_account_key",
+            "garage_converge_account_key_rotation",
             "garage_rotate_customer_key",
             "garage_walk_bucket_stats",
         }
@@ -71,6 +72,7 @@ class TestBuildGarageCommands:
                 "garage_delete_provisioned_bucket",
                 "garage_delete_key",
                 "garage_detach_account_key",
+                "garage_converge_account_key_rotation",
                 "garage_rotate_customer_key",
                 "garage_walk_bucket_stats",
             }:

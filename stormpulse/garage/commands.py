@@ -711,6 +711,33 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_converge_account_key_rotation": CommandDef(
+            group="garage",
+            command=["garage_converge_account_key_rotation"],  # internal - JobManager
+            timeout=120,
+            description=(
+                "One idempotent convergence pass of an account-key rotation "
+                "(BUCKETS-013): grant the new key owner + alias on every bucket "
+                "the old key owns that the new key does not, via the admin "
+                "token. Re-dispatched each tick until it reports converged. "
+                "Additive only (4a); the old key keeps its access until 4b."
+            ),
+            long_running=True,
+            params={
+                "old_key_id": ParamDef(
+                    placeholder="old_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Account key Garage ID being rotated out",
+                ),
+                "new_key_id": ParamDef(
+                    placeholder="new_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Replacement account key Garage ID receiving ownership",
+                ),
+            },
+        ),
         "garage_bucket_clear": CommandDef(
             group="garage",
             command=[
@@ -878,6 +905,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.detach_account_key import (
         make_detach_account_key_handler,
     )
+    from stormpulse.garage.converge_account_key_rotation import (
+        make_converge_account_key_rotation_handler,
+    )
     from stormpulse.garage.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
     )
@@ -932,5 +962,8 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_detach_account_key": (
             lambda params: make_detach_account_key_handler(config, params)
+        ),
+        "garage_converge_account_key_rotation": (
+            lambda params: make_converge_account_key_rotation_handler(config, params)
         ),
     }
