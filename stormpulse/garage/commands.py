@@ -791,6 +791,26 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_get_bucket_owners": CommandDef(
+            group="garage",
+            command=["garage_get_bucket_owners"],  # internal - JobManager
+            timeout=30,
+            description=(
+                "Read-only (BUCKETS-013): return the access keys that own a "
+                "bucket via GetBucketInfo. Inverse of garage_get_key_buckets; "
+                "Storm matches the ids to AccountKey rows for the bucket-detail "
+                "provenance line."
+            ),
+            long_running=True,
+            params={
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
+                    default=None,
+                    pattern=_BUCKET_ID_PATTERN,
+                    description="Bucket UUID (16 or 64-char Garage ID)",
+                ),
+            },
+        ),
         "garage_bucket_clear": CommandDef(
             group="garage",
             command=[
@@ -964,6 +984,7 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.snapshot_and_reap_account_key import (
         make_snapshot_and_reap_account_key_handler,
     )
+    from stormpulse.garage.get_bucket_owners import make_get_bucket_owners_handler
     from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
     from stormpulse.garage.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
@@ -1025,6 +1046,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_snapshot_and_reap_account_key": (
             lambda params: make_snapshot_and_reap_account_key_handler(config, params)
+        ),
+        "garage_get_bucket_owners": (
+            lambda params: make_get_bucket_owners_handler(config, params)
         ),
         "garage_get_key_buckets": (
             lambda params: make_get_key_buckets_handler(config, params)
