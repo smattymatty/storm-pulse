@@ -94,7 +94,10 @@ async def test_snapshots_owned_then_reaps(monkeypatch):
     outcome = await _run(fake)
     assert outcome.success is True
     assert outcome.extras["reaped"] is True
-    assert outcome.extras["snapshot"] == [{"id": _B1, "alias": "vault"}]
+    # Per-tier (BUCKETS-014): the snapshot carries each grant's tier.
+    assert outcome.extras["snapshot"] == [
+        {"id": _B1, "alias": "vault", "perms": [True, True, True]},
+    ]
     # Snapshot read happens BEFORE the delete.
     assert fake.calls == ["get_key_info", "delete_key"]
 

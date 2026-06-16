@@ -50,16 +50,30 @@ def make_snapshot_and_reap_account_key_handler(
     return handler
 
 
-def _owned_snapshot(kinfo: dict[str, Any]) -> list[dict[str, str]]:
-    """``[{"id", "alias"}]`` for every bucket the key owns (first local alias)."""
-    snapshot: list[dict[str, str]] = []
+def _owned_snapshot(kinfo: dict[str, Any]) -> list[dict[str, Any]]:
+    """``[{"id", "alias", "perms": [read, write, owner]}]`` for every bucket the
+    key has any grant on.
+
+    Per-tier (BUCKETS-014): a leak-rotate must carry the compromised key's
+    rw/ro attaches to the replacement, not only the buckets it owns, so the
+    snapshot captures every grant and its tier (the convergence pass grants at
+    that tier).
+    """
+    snapshot: list[dict[str, Any]] = []
     for entry in kinfo.get("buckets") or []:
         full_id = entry.get("id") or ""
         perms = entry.get("permissions") or {}
-        if not (full_id and perms.get("owner")):
+        read = bool(perms.get("read"))
+        write = bool(perms.get("write"))
+        owner = bool(perms.get("owner"))
+        if not (full_id and (read or write or owner)):
             continue
         aliases = entry.get("localAliases") or []
-        snapshot.append({"id": full_id, "alias": aliases[0] if aliases else ""})
+        snapshot.append({
+            "id": full_id,
+            "alias": aliases[0] if aliases else "",
+            "perms": [read, write, owner],
+        })
     return snapshot
 
 

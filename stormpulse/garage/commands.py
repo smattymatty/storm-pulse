@@ -711,6 +711,46 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_attach_account_key": CommandDef(
+            group="garage",
+            command=["garage_attach_account_key"],  # internal - handled by JobManager
+            timeout=30,
+            requires_confirmation=True,
+            description=(
+                "Attach an account key to an existing bucket (BUCKETS-014): "
+                "the inverse of detach. Grant the key the chosen tier "
+                "(ro/rw/owner), add its local alias, then read the key back and "
+                "confirm the grant landed. A deliberate, password-gated "
+                "widening of a root credential, least-privilege by tier."
+            ),
+            long_running=True,
+            params={
+                "bucket_id": ParamDef(
+                    placeholder="bucket_id",
+                    default=None,
+                    pattern=_BUCKET_ID_PATTERN,
+                    description="Bucket UUID (16 or 64-char Garage ID)",
+                ),
+                "account_key_id": ParamDef(
+                    placeholder="account_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Account key Garage ID receiving the grant",
+                ),
+                "local_alias": ParamDef(
+                    placeholder="local_alias",
+                    default=None,
+                    pattern=_BUCKET_NAME_PATTERN,
+                    description="Local alias to attach on the key (the bucket's display_name)",
+                ),
+                "tier": ParamDef(
+                    placeholder="tier",
+                    default=None,
+                    pattern=r"(?:ro|rw|owner)",
+                    description="Grant tier: 'ro', 'rw', or 'owner' (least-privilege)",
+                ),
+            },
+        ),
         "garage_converge_account_key_rotation": CommandDef(
             group="garage",
             command=["garage_converge_account_key_rotation"],  # internal - JobManager
@@ -978,6 +1018,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.detach_account_key import (
         make_detach_account_key_handler,
     )
+    from stormpulse.garage.attach_account_key import (
+        make_attach_account_key_handler,
+    )
     from stormpulse.garage.converge_account_key_rotation import (
         make_converge_account_key_rotation_handler,
     )
@@ -1040,6 +1083,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_detach_account_key": (
             lambda params: make_detach_account_key_handler(config, params)
+        ),
+        "garage_attach_account_key": (
+            lambda params: make_attach_account_key_handler(config, params)
         ),
         "garage_converge_account_key_rotation": (
             lambda params: make_converge_account_key_rotation_handler(config, params)

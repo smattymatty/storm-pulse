@@ -68,7 +68,7 @@ class _FakeAdmin:
     def allow_bucket_key(self, *, admin_url, admin_token, bucket_ref,
                          access_key_id, read, write, owner):
         self.calls.append(("allow_bucket_key", {
-            "bucket_ref": bucket_ref, "owner": owner,
+            "bucket_ref": bucket_ref, "read": read, "write": write, "owner": owner,
         }))
         return self.allow_result
 
@@ -116,6 +116,44 @@ async def test_converge_from_snapshot_skips_old_read(monkeypatch) -> None:
     # The dead old key is never read.
     assert all(c[1]["id"] != _OLD for c in fake.calls if c[0] == "get_key_info")
     assert ("add_bucket_alias_local", {"bucket_ref": _B1, "local_alias": "vault"}) in fake.calls
+
+
+def _graded(full_id, *, read, write, owner, aliases=()):
+    return {
+        "id": full_id,
+        "permissions": {"read": read, "write": write, "owner": owner},
+        "localAliases": list(aliases),
+    }
+
+
+@pytest.mark.asyncio
+async def test_transfers_non_owner_grant_at_its_tier(monkeypatch) -> None:
+    # BUCKETS-014: an rw attach (not owner) must transfer AS rw, not silently
+    # die under the old owner-only filter, and not get upgraded to owner.
+    fake = _install(monkeypatch)
+    fake.key_info = {
+        _OLD: ({"buckets": [_graded(_B1, read=True, write=True, owner=False)]}, ""),
+        _NEW: ({"buckets": []}, ""),
+    }
+    outcome = await _run(fake)
+    assert outcome.success is True
+    assert outcome.extras["transferred"] == [_B1[:16]]
+    grant = next(c[1] for c in fake.calls if c[0] == "allow_bucket_key")
+    assert grant["read"] is True and grant["write"] is True and grant["owner"] is False
+
+
+@pytest.mark.asyncio
+async def test_new_lower_tier_is_not_covered(monkeypatch) -> None:
+    # old owns (owner); new only has rw -> not covered, must transfer owner.
+    fake = _install(monkeypatch)
+    fake.key_info = {
+        _OLD: ({"buckets": [_bucket(_B1, owner=True)]}, ""),
+        _NEW: ({"buckets": [_graded(_B1, read=True, write=True, owner=False)]}, ""),
+    }
+    outcome = await _run(fake)
+    assert outcome.extras["converged"] is False
+    grant = next(c[1] for c in fake.calls if c[0] == "allow_bucket_key")
+    assert grant["owner"] is True
 
 
 @pytest.mark.asyncio
