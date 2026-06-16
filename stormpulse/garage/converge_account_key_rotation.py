@@ -81,15 +81,40 @@ def make_converge_account_key_rotation_handler(
     return handler
 
 
-def _owned(kinfo: dict[str, Any]) -> dict[str, list[str]]:
-    """Map ``full bucket id -> localAliases`` for every bucket this key owns."""
-    owned: dict[str, list[str]] = {}
+def _owned(kinfo: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Map ``full bucket id -> {"perms": (read, write, owner), "aliases": [...]}``
+    for every bucket this key has any grant on.
+
+    Per-tier, not owner-only (BUCKETS-014): a rotation must carry each grant at
+    its actual tier so an rw/ro attach survives instead of silently dying. This
+    also makes rotate strictly more correct, the new key inherits exactly what
+    the old key could do, no more, no less.
+    """
+    owned: dict[str, dict[str, Any]] = {}
     for entry in kinfo.get("buckets") or []:
         full_id = entry.get("id") or ""
         perms = entry.get("permissions") or {}
-        if full_id and perms.get("owner"):
-            owned[full_id] = list(entry.get("localAliases") or [])
+        read = bool(perms.get("read"))
+        write = bool(perms.get("write"))
+        owner = bool(perms.get("owner"))
+        if full_id and (read or write or owner):
+            owned[full_id] = {
+                "perms": (read, write, owner),
+                "aliases": list(entry.get("localAliases") or []),
+            }
     return owned
+
+
+def _covers(
+    new_entry: dict[str, Any] | None, old_perms: tuple[bool, bool, bool],
+) -> bool:
+    """True if the new key already holds every tier the old key had on a bucket
+    (so nothing needs transferring for it)."""
+    if new_entry is None:
+        return False
+    nr, nw, no = new_entry["perms"]
+    o_r, o_w, o_o = old_perms
+    return (nr or not o_r) and (nw or not o_w) and (no or not o_o)
 
 
 async def run_converge_account_key_rotation(
@@ -121,11 +146,21 @@ async def run_converge_account_key_rotation(
     # ---- Step 1: determine the old key's owned buckets ----
     await progress("starting", 0, _TOTAL_STEPS, "Reading rotation state")
     if bucket_snapshot is not None:
-        # Leak path: old key already reaped; use the captured snapshot.
-        old_owned = {
-            e["id"]: ([e["alias"]] if e.get("alias") else [])
-            for e in bucket_snapshot
-        }
+        # Leak path: old key already reaped; use the captured snapshot. Each
+        # entry may carry its tier (BUCKETS-014); default owner for snapshots
+        # that predate per-tier capture.
+        old_owned: dict[str, dict[str, Any]] = {}
+        for e in bucket_snapshot:
+            raw = e.get("perms")
+            perms = (
+                (bool(raw[0]), bool(raw[1]), bool(raw[2]))
+                if isinstance(raw, (list, tuple)) and len(raw) == 3
+                else (True, True, True)
+            )
+            old_owned[e["id"]] = {
+                "perms": perms,
+                "aliases": [e["alias"]] if e.get("alias") else [],
+            }
     else:
         old_info, old_err = admin_api.get_key_info(
             admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
@@ -151,27 +186,34 @@ async def run_converge_account_key_rotation(
             stderr=new_err, started_at=started_at,
         )
 
-    new_owned = set(_owned(new_info))
-    to_transfer = [bid for bid in old_owned if bid not in new_owned]
+    new_owned = _owned(new_info)
+    # A bucket needs a transfer until the new key covers every tier the old key
+    # held on it (tier-aware, BUCKETS-014). Re-granting an existing grant is a
+    # no-op, so passes stay idempotent.
+    to_transfer = [
+        bid for bid, v in old_owned.items()
+        if not _covers(new_owned.get(bid), v["perms"])
+    ]
 
     if not to_transfer:
         # A pass that finds nothing left to transfer is the converged signal.
         return _converged(old_key_id, new_key_id, transferred=[], started_at=started_at)
 
-    # ---- Step 2: grant the new key owner + alias on each pending bucket ----
+    # ---- Step 2: grant the new key the old key's tier + alias per bucket ----
     await progress("running", 1, _TOTAL_STEPS, f"Transferring {len(to_transfer)} bucket(s)")
     transferred: list[str] = []
     manual: list[dict[str, Any]] = []
     for full_id in to_transfer:
+        read, write, owner = old_owned[full_id]["perms"]
         ok, err = admin_api.allow_bucket_key(
             admin_url=admin_url, admin_token=admin_token,
             bucket_ref=full_id, access_key_id=new_key_id,
-            read=True, write=True, owner=True,
+            read=read, write=write, owner=owner,
         )
         if not ok:
-            manual.append({"type": "owner_grant", "bucket_id": full_id[:16], "error": err})
+            manual.append({"type": "grant", "bucket_id": full_id[:16], "error": err})
             continue
-        aliases = old_owned[full_id]
+        aliases = old_owned[full_id]["aliases"]
         if aliases:
             # Cosmetic: replicate the old key's name for the bucket on the new key.
             admin_api.add_bucket_alias_local(
