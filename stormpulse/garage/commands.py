@@ -736,6 +736,39 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     pattern=_KEY_ID_PATTERN,
                     description="Replacement account key Garage ID receiving ownership",
                 ),
+                "bucket_snapshot": ParamDef(
+                    placeholder="bucket_snapshot",
+                    default=None,
+                    pattern=None,
+                    max_bytes=65536,
+                    description=(
+                        "Leak path only: JSON [{id, alias}] of the old key's "
+                        "owned buckets captured before reap. When present, "
+                        "converge from it instead of reading the dead old key."
+                    ),
+                ),
+            },
+        ),
+        "garage_snapshot_and_reap_account_key": CommandDef(
+            group="garage",
+            command=["garage_snapshot_and_reap_account_key"],  # internal - JobManager
+            timeout=60,
+            requires_confirmation=True,
+            description=(
+                "Leak-rotate kill (BUCKETS-013): snapshot the old key's owned "
+                "buckets via GetKeyInfo, THEN delete the key object outright. "
+                "Snapshot-before-kill so the list survives; deletes the object "
+                "(not per-bucket deny) so a live key can't keep spawning "
+                "buckets. The new key converges from the returned snapshot."
+            ),
+            long_running=True,
+            params={
+                "old_key_id": ParamDef(
+                    placeholder="old_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Compromised account key Garage ID to snapshot then delete",
+                ),
             },
         ),
         "garage_bucket_clear": CommandDef(
@@ -908,6 +941,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.converge_account_key_rotation import (
         make_converge_account_key_rotation_handler,
     )
+    from stormpulse.garage.snapshot_and_reap_account_key import (
+        make_snapshot_and_reap_account_key_handler,
+    )
     from stormpulse.garage.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
     )
@@ -965,5 +1001,8 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_converge_account_key_rotation": (
             lambda params: make_converge_account_key_rotation_handler(config, params)
+        ),
+        "garage_snapshot_and_reap_account_key": (
+            lambda params: make_snapshot_and_reap_account_key_handler(config, params)
         ),
     }

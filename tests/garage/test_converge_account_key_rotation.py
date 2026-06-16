@@ -101,6 +101,24 @@ async def _run(fake, *, config=None) -> JobOutcome:
 
 
 @pytest.mark.asyncio
+async def test_converge_from_snapshot_skips_old_read(monkeypatch) -> None:
+    # Leak path: the old key is dead, so converge from the captured snapshot
+    # and never read the old key (it would 404).
+    fake = _install(monkeypatch)
+    fake.key_info = {_NEW: ({"buckets": []}, "")}  # only new is read
+    outcome = await run_converge_account_key_rotation(
+        progress=_Progress(), garage_config=_make_config(),
+        old_key_id=_OLD, new_key_id=_NEW,
+        bucket_snapshot=[{"id": _B1, "alias": "vault"}],
+    )
+    assert outcome.success is True
+    assert outcome.extras["transferred"] == [_B1[:16]]
+    # The dead old key is never read.
+    assert all(c[1]["id"] != _OLD for c in fake.calls if c[0] == "get_key_info")
+    assert ("add_bucket_alias_local", {"bucket_ref": _B1, "local_alias": "vault"}) in fake.calls
+
+
+@pytest.mark.asyncio
 async def test_already_converged(monkeypatch) -> None:
     fake = _install(monkeypatch)
     # Old owns B1; new already owns B1 too -> nothing to transfer.

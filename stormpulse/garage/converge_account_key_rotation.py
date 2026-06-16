@@ -18,6 +18,7 @@ transient failure, retried next tick.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -50,12 +51,31 @@ def make_converge_account_key_rotation_handler(
     old_key_id = params["old_key_id"]
     new_key_id = params["new_key_id"]
 
+    # Leak path (BUCKETS-013): an explicit owned-bucket snapshot, captured
+    # before the old key was reaped, fed in as JSON. When present, converge
+    # from it instead of reading the (now-dead) old key.
+    bucket_snapshot = None
+    raw = params.get("bucket_snapshot")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+        except (ValueError, TypeError):
+            logger.error(
+                "garage_converge_account_key_rotation: bad bucket_snapshot JSON",
+            )
+            return None
+        if isinstance(parsed, list):
+            bucket_snapshot = [
+                e for e in parsed if isinstance(e, dict) and e.get("id")
+            ]
+
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_converge_account_key_rotation(
             progress=progress,
             garage_config=garage_config,
             old_key_id=old_key_id,
             new_key_id=new_key_id,
+            bucket_snapshot=bucket_snapshot,
         )
 
     return handler
@@ -77,8 +97,14 @@ async def run_converge_account_key_rotation(
     garage_config: GarageConfig,
     old_key_id: str,
     new_key_id: str,
+    bucket_snapshot: list[dict[str, str]] | None = None,
 ) -> JobOutcome:
-    """Transfer ownership of the old key's buckets to the new key, once."""
+    """Transfer ownership of the old key's buckets to the new key, once.
+
+    ``bucket_snapshot`` (leak path) is the old key's owned buckets captured
+    before it was reaped; when given, converge from it instead of reading the
+    dead old key.
+    """
     started_at = time.monotonic()
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
@@ -92,20 +118,29 @@ async def run_converge_account_key_rotation(
             started_at=started_at,
         )
 
-    # ---- Step 1: read both keys' current ownership ----
+    # ---- Step 1: determine the old key's owned buckets ----
     await progress("starting", 0, _TOTAL_STEPS, "Reading rotation state")
-    old_info, old_err = admin_api.get_key_info(
-        admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
-    )
-    if old_info is None:
-        if admin_api.is_not_found(old_err):
-            # Old key already gone: nothing left to transfer, converged.
-            return _converged(old_key_id, new_key_id, transferred=[], started_at=started_at)
-        return _failure(
-            failure_reason="old_key_read_failed",
-            old_key_id=old_key_id, new_key_id=new_key_id,
-            stderr=old_err, started_at=started_at,
+    if bucket_snapshot is not None:
+        # Leak path: old key already reaped; use the captured snapshot.
+        old_owned = {
+            e["id"]: ([e["alias"]] if e.get("alias") else [])
+            for e in bucket_snapshot
+        }
+    else:
+        old_info, old_err = admin_api.get_key_info(
+            admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
         )
+        if old_info is None:
+            if admin_api.is_not_found(old_err):
+                # Old key already gone: nothing left to transfer, converged.
+                return _converged(old_key_id, new_key_id, transferred=[], started_at=started_at)
+            return _failure(
+                failure_reason="old_key_read_failed",
+                old_key_id=old_key_id, new_key_id=new_key_id,
+                stderr=old_err, started_at=started_at,
+            )
+        old_owned = _owned(old_info)
+
     new_info, new_err = admin_api.get_key_info(
         admin_url=admin_url, admin_token=admin_token, access_key_id=new_key_id,
     )
@@ -116,7 +151,6 @@ async def run_converge_account_key_rotation(
             stderr=new_err, started_at=started_at,
         )
 
-    old_owned = _owned(old_info)
     new_owned = set(_owned(new_info))
     to_transfer = [bid for bid in old_owned if bid not in new_owned]
 
