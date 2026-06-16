@@ -53,6 +53,7 @@ class TestBuildGarageCommands:
             "garage_delete_key",
             "garage_detach_account_key",
             "garage_converge_account_key_rotation",
+            "garage_snapshot_and_reap_account_key",
             "garage_rotate_customer_key",
             "garage_walk_bucket_stats",
         }
@@ -73,6 +74,7 @@ class TestBuildGarageCommands:
                 "garage_delete_key",
                 "garage_detach_account_key",
                 "garage_converge_account_key_rotation",
+                "garage_snapshot_and_reap_account_key",
                 "garage_rotate_customer_key",
                 "garage_walk_bucket_stats",
             }:
@@ -93,6 +95,7 @@ class TestBuildGarageCommands:
             "garage_key_delete",
             "garage_delete_key",
             "garage_detach_account_key",
+            "garage_snapshot_and_reap_account_key",
             "garage_bucket_deny",
             "garage_bucket_website_deny",
             "garage_bucket_alias_global_remove",
