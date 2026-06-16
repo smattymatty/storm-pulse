@@ -771,6 +771,26 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_get_key_buckets": CommandDef(
+            group="garage",
+            command=["garage_get_key_buckets"],  # internal - JobManager
+            timeout=30,
+            description=(
+                "Read-only (BUCKETS-013): return the buckets an account key "
+                "owns via GetKeyInfo. Storm does not store the key->bucket "
+                "link, so the dashboard's per-key bucket list and revoke "
+                "at-risk split come from this live read."
+            ),
+            long_running=True,
+            params={
+                "key_id": ParamDef(
+                    placeholder="key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="Account key Garage ID to list owned buckets for",
+                ),
+            },
+        ),
         "garage_bucket_clear": CommandDef(
             group="garage",
             command=[
@@ -944,6 +964,7 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.snapshot_and_reap_account_key import (
         make_snapshot_and_reap_account_key_handler,
     )
+    from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
     from stormpulse.garage.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
     )
@@ -1004,5 +1025,8 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_snapshot_and_reap_account_key": (
             lambda params: make_snapshot_and_reap_account_key_handler(config, params)
+        ),
+        "garage_get_key_buckets": (
+            lambda params: make_get_key_buckets_handler(config, params)
         ),
     }

@@ -54,6 +54,7 @@ class TestBuildGarageCommands:
             "garage_detach_account_key",
             "garage_converge_account_key_rotation",
             "garage_snapshot_and_reap_account_key",
+            "garage_get_key_buckets",
             "garage_rotate_customer_key",
             "garage_walk_bucket_stats",
         }
@@ -75,6 +76,7 @@ class TestBuildGarageCommands:
                 "garage_detach_account_key",
                 "garage_converge_account_key_rotation",
                 "garage_snapshot_and_reap_account_key",
+                "garage_get_key_buckets",
                 "garage_rotate_customer_key",
                 "garage_walk_bucket_stats",
             }:
