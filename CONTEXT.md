@@ -31,6 +31,21 @@ agent. The thing on the other end of the agent's wire. In ADRs, name it the
 control plane, not by repo.
 _Avoid_: the website (points at the private repo), the dashboard (that is only its
 UI surface, wrong for server-side control-loop work)
+
+**Feature**:
+A capability surface in the CORE-000 import model: a module or subpackage in the
+Features layer that imports down only and never a sibling Feature. Size-agnostic
+(`metrics.py` and `garage/` are both Features). Defined by the import rule, not by
+what it talks to.
+
+**Integration**:
+A Feature that drives an external system and implements the Integration contract
+(garage, caddy; later Nextcloud, Forgejo). A sub-type of Feature: every Integration
+is a Feature, not every Feature is an Integration (`metrics.py`, `status.py`,
+`enroll.py` are Features but not Integrations). Use "Feature" for import/layer talk,
+"Integration" for the contract that registers config, commands, and runtime surfaces.
+_Avoid_: plugin (implies a third-party runtime loader, a separate unsealed decision)
+
 ## Privacy by design
 
 Pulse is built so the agent has almost nothing to hold and therefore
