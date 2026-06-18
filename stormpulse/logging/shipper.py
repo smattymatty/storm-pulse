@@ -13,6 +13,16 @@ from stormpulse.logging.tailer import DockerTailer, LogTailer, StreamingDockerTa
 
 logger = logging.getLogger(__name__)
 
+# A ``(key_id, bucket-name) -> bucket_id`` lookup. Typed as a bare callable so
+# the logging layer stays free of any garage-layer dependency (the four-layer
+# topology forbids logging from importing garage); the agent layer builds the
+# concrete resolver and passes it in (ADR BUCKETS-015).
+BucketIdResolver = Callable[[str, str], str]
+
+# Only this parser's lines carry the (key_id, bucket-name) pair the resolver
+# needs; other parsers leave the field off the wire entirely (BUCKETS-015).
+_BUCKET_ID_PARSER = "garage_s3"
+
 
 @dataclass(frozen=True, slots=True)
 class Batch:
@@ -55,7 +65,9 @@ class LogShipper:
     def ship_interval_seconds(self) -> float:
         return self._group.ship_interval_seconds
 
-    def collect_batch(self) -> Batch | None:
+    def collect_batch(
+        self, bucket_id_resolver: BucketIdResolver | None = None,
+    ) -> Batch | None:
         """Read new lines, filter, parse, and return a batch ready to ship.
 
         Returns ``None`` when nothing ship-worthy was produced:
@@ -66,6 +78,12 @@ class LogShipper:
         were read but all failed to parse - the dashboard needs this signal
         to detect a source producing unparseable output.
 
+        ``bucket_id_resolver`` is the tick-fresh ``(key_id, name) -> bucket_id``
+        map (BUCKETS-015). When supplied for a ``garage_s3`` group, every parsed
+        line gets a ``bucket_id`` field (``''`` when the bucket is not in the
+        last Garage-state snapshot). Other groups ignore it: their lines carry
+        no bucket name and the website never reads the field for them.
+
         Caller is responsible for invoking this from a thread.
         """
         max_batch = self._group.max_lines_per_batch
@@ -74,6 +92,10 @@ class LogShipper:
             return None
 
         filter_substr = self._group.filter_contains
+        stamp_bucket_id = (
+            bucket_id_resolver is not None
+            and self._group.parser == _BUCKET_ID_PARSER
+        )
         parsed: list[dict[str, Any]] = []
         dropped = 0
         any_matched_filter = False
@@ -87,6 +109,11 @@ class LogShipper:
             if entry is None:
                 dropped += 1
                 continue
+            if stamp_bucket_id:
+                assert bucket_id_resolver is not None  # narrowed by stamp_bucket_id
+                entry["bucket_id"] = bucket_id_resolver(
+                    entry.get("key_id", ""), entry.get("bucket", ""),
+                )
             parsed.append(entry)
 
         # Nothing matched the filter - not our business, nothing to ship.

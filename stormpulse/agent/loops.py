@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
+from stormpulse.garage.bucket_resolver import BucketIdResolver
 from stormpulse.garage.state import collect_garage_state
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
@@ -95,7 +96,12 @@ async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
             agent.pending_batches.prune_stale()
 
             started = time.monotonic()
-            batch = await asyncio.to_thread(shipper.collect_batch)
+            # Build the (key_id, name) -> bucket_id map from the latest
+            # garage-state snapshot the garage_loop published (BUCKETS-015).
+            # garage_state is reassigned atomically, so the captured snapshot
+            # is a consistent, immutable view for this tick.
+            resolver = BucketIdResolver.from_state(agent.garage_state)
+            batch = await asyncio.to_thread(shipper.collect_batch, resolver)
             if batch is not None:
                 batch_id = str(uuid.uuid4())
                 envelope = make_log_batch(
