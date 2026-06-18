@@ -21,7 +21,12 @@ from stormpulse.agent.garage_actions import (
 from stormpulse.commands.jobs import JobManager
 from stormpulse.config import CommandDef
 from stormpulse.protocol import Envelope
-from tests.helpers import FAKE_METRICS, make_fake_garage_state
+from tests.helpers import (
+    FAKE_METRICS,
+    get_garage_state,
+    make_fake_garage_state,
+    set_garage_state,
+)
 
 # ---------------------------------------------------------------------------
 # build_metrics_envelope
@@ -30,14 +35,14 @@ from tests.helpers import FAKE_METRICS, make_fake_garage_state
 
 @pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_metrics")
-async def test_build_metrics_envelope_without_garage_state(
+async def test_build_metrics_envelope_without_integrations(
     mock_collect: MagicMock,
     agent: Agent,
 ) -> None:
-    """When no garage state is set, the envelope has ``garage=None``."""
+    """With no configured integrations the envelope omits the integrations key."""
     mock_collect.return_value = FAKE_METRICS
     envelope = await build_metrics_envelope(agent)
-    assert envelope.payload["garage"] is None
+    assert envelope.payload["integrations"] is None
     assert envelope.payload["cpu_percent"] == FAKE_METRICS.cpu_percent
 
 
@@ -45,14 +50,16 @@ async def test_build_metrics_envelope_without_garage_state(
 @patch("stormpulse.agent.garage_actions.collect_metrics")
 async def test_build_metrics_envelope_includes_garage_snapshot(
     mock_collect: MagicMock,
-    agent: Agent,
+    agent_with_garage: Callable[..., Agent],
 ) -> None:
-    """When garage state is present it rides as a dict on the envelope."""
+    """A live garage runtime's state rides under integrations.garage.state."""
     mock_collect.return_value = FAKE_METRICS
-    agent.garage_state = make_fake_garage_state()
-    envelope = await build_metrics_envelope(agent)
-    assert envelope.payload["garage"] is not None
-    assert envelope.payload["garage"]["node_id"] == "n1"
+    ag = agent_with_garage()
+    set_garage_state(ag, make_fake_garage_state())
+    envelope = await build_metrics_envelope(ag)
+    garage_report = envelope.payload["integrations"]["garage"]
+    assert garage_report["status"] == "live"
+    assert garage_report["state"]["node_id"] == "n1"
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +77,7 @@ async def test_refresh_garage_state_writes_to_agent(
     mock_collect.return_value = fake
     ag = agent_with_garage()
     await refresh_garage_state(ag)
-    assert ag.garage_state is fake
+    assert get_garage_state(ag) is fake
 
 
 @pytest.mark.asyncio
@@ -82,9 +89,9 @@ async def test_refresh_garage_state_leaves_state_untouched_on_collect_failure(
     """A None result from the collector must not overwrite an existing snapshot."""
     ag = agent_with_garage()
     prior = make_fake_garage_state()
-    ag.garage_state = prior
+    set_garage_state(ag, prior)
     await refresh_garage_state(ag)
-    assert ag.garage_state is prior
+    assert get_garage_state(ag) is prior
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +158,8 @@ async def test_post_success_hook_refreshes_and_pushes(
     assert hook is not None
     await hook()
 
-    assert ag.garage_state is fake_state
+    assert get_garage_state(ag) is fake_state
     assert len(sent) == 1
-    assert sent[0].payload["garage"] is not None
+    assert sent[0].payload["integrations"]["garage"]["state"]["node_id"] == "n1"
 
     await ag.job_manager.shutdown_all()

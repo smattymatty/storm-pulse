@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.state import collect_garage_state
 
 ADMIN_URL = "http://127.0.0.1:3903"

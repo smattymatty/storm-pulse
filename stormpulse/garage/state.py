@@ -12,8 +12,8 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Any
 
-from stormpulse.config import GarageConfig
 from stormpulse.garage import admin_api
+from stormpulse.garage.config import GarageConfig
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +69,12 @@ class GarageBucket:
 
 @dataclass(frozen=True, slots=True)
 class GarageState:
-    """Full Garage node state, included in metrics.push and register payloads.
+    """Full Garage node state, the ``state`` blob of garage's Integration report.
 
-    ``disabled_reason`` is set only when the agent's Garage feature has
-    self-disabled at start because of a precondition failure (see
-    GARAGE-000). When non-None, every other field is a zero-value
-    sentinel and ``healthy`` is False; the dashboard reads
-    ``disabled_reason`` and renders a named cause rather than the
-    healthy/unhealthy distinction.
+    CORE-005 relocated the self-disabled cause to the Integration envelope
+    (``status: disabled_error`` + ``disabled_reason``), so this state object is
+    built only when Garage is live and never carries a disabled sentinel. The
+    blob is byte-identical to the pre-CORE-005 ``to_dict()`` minus that field.
     """
 
     node_id: str
@@ -90,29 +88,10 @@ class GarageState:
     buckets: list[GarageBucket]
     keys: list[GarageKeyRef]
     peers: list[GaragePeer]
-    disabled_reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to plain dict for inclusion in protocol payloads."""
         return asdict(self)
-
-    @classmethod
-    def disabled(cls, reason: str) -> GarageState:
-        """Build the sentinel state for a self-disabled Garage feature."""
-        return cls(
-            node_id="",
-            hostname="",
-            zone="",
-            capacity_gb=0.0,
-            data_avail_gb=0.0,
-            version="",
-            healthy=False,
-            object_count=0,
-            buckets=[],
-            keys=[],
-            peers=[],
-            disabled_reason=reason,
-        )
 
 
 def _perm_flags(permissions: dict[str, Any] | None) -> str:

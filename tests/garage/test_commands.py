@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from stormpulse.config import GarageConfig
 from stormpulse.garage.commands import build_garage_commands
+from stormpulse.garage.config import GarageConfig
 
 
 def _make_config() -> GarageConfig:

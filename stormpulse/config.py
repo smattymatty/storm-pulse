@@ -135,43 +135,23 @@ class LogGroupConfig:
     docker_binary: str = "/usr/bin/docker"
 
 
-@dataclass(frozen=True, slots=True)
-class GarageConfig:
-    """Optional [garage] section - Garage S3 node management."""
-
-    enabled: bool
-    container_name: str
-    garage_binary: str
-    docker_binary: str
-    config_path: Path
-    state_push_interval_seconds: float
-    # Garage admin HTTP API (port 3903). Optional: empty when not configured,
-    # in which case admin-API-backed commands (set-quota) fail loudly rather
-    # than silently. admin_token is the resolved Bearer token (a node secret,
-    # never sent over the wire), read inline or from admin_token_file.
-    admin_url: str = ""
-    admin_token: str = ""
-
-
-@dataclass(frozen=True, slots=True)
-class CaddyConfig:
-    """Optional [caddy] section - Caddy admin API + drop-in management.
-
-    Present only on regional-VPS agents that host customer custom-domain
-    serving. The agent uses ``admin_url`` to POST Caddyfile fragments,
-    ``main_caddyfile`` for the boot-time import check, and ``drop_in_path``
-    as the persisted location of the per-region fragment.
-    """
-
-    enabled: bool
-    admin_url: str
-    main_caddyfile: Path
-    drop_in_path: Path
+# Top-level TOML tables Foundation knows by name. Everything else that is a
+# table is an Integration's raw config section, keyed by id and parsed by that
+# Integration's own module (CORE-005 decision 4: Foundation stops naming
+# Integrations). ``log_groups`` is an array, not a table, so it is excluded.
+_CORE_SECTIONS: frozenset[str] = frozenset(
+    {"agent", "dashboard", "tls", "auth", "metrics", "project", "storage", "commands"}
+)
 
 
 @dataclass(frozen=True, slots=True)
 class Config:
-    """Top-level configuration, mirrors stormpulse.toml structure."""
+    """Top-level configuration, mirrors stormpulse.toml structure.
+
+    ``integrations`` holds the raw TOML tables for any non-core section, keyed
+    by id. Foundation does not type them: each Integration parses its own
+    section at bootstrap via the registry (CORE-005 decision 4).
+    """
 
     agent: AgentConfig
     dashboard: DashboardConfig
@@ -181,15 +161,17 @@ class Config:
     project: ProjectConfig
     storage: StorageConfig
     commands: dict[str, CommandDef] = dataclasses.field(default_factory=dict)
-    garage: GarageConfig | None = None
-    caddy: CaddyConfig | None = None
+    integrations: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
     log_groups: list[LogGroupConfig] = dataclasses.field(default_factory=list)
 
     def validate_paths(self) -> None:
-        """Check that all referenced file paths exist and are readable.
+        """Check that all referenced core file paths exist and are readable.
 
-        Call after load_config() in production. Tests may skip this.
-        Raises ConfigError listing all missing paths.
+        Call after load_config() in production. Tests may skip this. Raises
+        ConfigError listing all missing paths. Integration paths are NOT
+        checked here: a missing Integration path soft-disables that one
+        Integration at bootstrap, it does not abort the core agent (CORE-005
+        decision 5). The fatal/soft line is core-fatal, integration-soft.
         """
         missing: list[str] = []
         for p in (
@@ -207,23 +189,11 @@ class Config:
             missing.append(f"{self.project.project_dir} (directory)")
         if not self.storage.db_path.parent.is_dir():
             missing.append(f"{self.storage.db_path.parent} (directory for db)")
-        if self.garage and self.garage.enabled:
-            if not Path(self.garage.config_path).is_file():
-                missing.append(str(self.garage.config_path))
-        if self.caddy and self.caddy.enabled:
-            if not self.caddy.main_caddyfile.is_file():
-                missing.append(str(self.caddy.main_caddyfile))
-            # The drop-in file itself doesn't need to exist yet - we
-            # create it on first sync. Its parent directory must.
-            if not self.caddy.drop_in_path.parent.is_dir():
-                missing.append(
-                    f"{self.caddy.drop_in_path.parent} (directory for caddy drop-in)"
-                )
         if missing:
             raise ConfigError(f"Missing files/directories: {', '.join(missing)}")
 
 
-def _require_section(raw: dict[str, Any], name: str) -> dict[str, Any]:
+def require_section(raw: dict[str, Any], name: str) -> dict[str, Any]:
     """Extract a required TOML section, raising ConfigError if missing."""
     if name not in raw:
         raise ConfigError(f"Missing required config section: [{name}]")
@@ -251,7 +221,7 @@ def _check_type(
     return value
 
 
-def _require_key(
+def require_key(
     section: dict[str, Any],
     key: str,
     expected_type: type | tuple[type, ...],
@@ -263,7 +233,7 @@ def _require_key(
     return _check_type(section[key], key, expected_type, section_name)
 
 
-def _optional_key(
+def optional_key(
     section: dict[str, Any],
     key: str,
     expected_type: type | tuple[type, ...],
@@ -277,7 +247,7 @@ def _optional_key(
 
 
 def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
-    s = _require_section(raw, "agent")
+    s = require_section(raw, "agent")
     disabled = s.get("disabled_commands", [])
     if not isinstance(disabled, list):
         raise ConfigError("'disabled_commands' in [agent] must be a list")
@@ -288,19 +258,19 @@ def _parse_agent(raw: dict[str, Any]) -> AgentConfig:
                 f"got {type(item).__name__}"
             )
     return AgentConfig(
-        id=_require_key(s, "id", str, "agent"),
-        pulse_token=_require_key(s, "pulse_token", str, "agent"),
+        id=require_key(s, "id", str, "agent"),
+        pulse_token=require_key(s, "pulse_token", str, "agent"),
         disabled_commands=frozenset(disabled),
     )
 
 
 def _parse_dashboard(raw: dict[str, Any]) -> DashboardConfig:
-    s = _require_section(raw, "dashboard")
-    url = _require_key(s, "url", str, "dashboard")
-    rmin = float(_require_key(s, "reconnect_min_seconds", (int, float), "dashboard"))
-    rmax = float(_require_key(s, "reconnect_max_seconds", (int, float), "dashboard"))
+    s = require_section(raw, "dashboard")
+    url = require_key(s, "url", str, "dashboard")
+    rmin = float(require_key(s, "reconnect_min_seconds", (int, float), "dashboard"))
+    rmax = float(require_key(s, "reconnect_max_seconds", (int, float), "dashboard"))
     heartbeat = float(
-        _require_key(s, "heartbeat_interval_seconds", (int, float), "dashboard")
+        require_key(s, "heartbeat_interval_seconds", (int, float), "dashboard")
     )
     if rmin <= 0 or rmax <= 0:
         raise ConfigError("Reconnect intervals must be positive")
@@ -317,51 +287,51 @@ def _parse_dashboard(raw: dict[str, Any]) -> DashboardConfig:
 
 
 def _parse_tls(raw: dict[str, Any]) -> TlsConfig:
-    s = _require_section(raw, "tls")
+    s = require_section(raw, "tls")
     return TlsConfig(
-        ca_cert=Path(_require_key(s, "ca_cert", str, "tls")),
-        client_cert=Path(_require_key(s, "client_cert", str, "tls")),
-        client_key=Path(_require_key(s, "client_key", str, "tls")),
+        ca_cert=Path(require_key(s, "ca_cert", str, "tls")),
+        client_cert=Path(require_key(s, "client_cert", str, "tls")),
+        client_key=Path(require_key(s, "client_key", str, "tls")),
     )
 
 
 def _parse_auth(raw: dict[str, Any]) -> AuthConfig:
-    s = _require_section(raw, "auth")
-    max_age = _require_key(s, "command_max_age_seconds", (int, float), "auth")
+    s = require_section(raw, "auth")
+    max_age = require_key(s, "command_max_age_seconds", (int, float), "auth")
     if max_age <= 0:
         raise ConfigError("command_max_age_seconds must be positive")
     return AuthConfig(
-        hmac_secret=Path(_require_key(s, "hmac_secret", str, "auth")),
+        hmac_secret=Path(require_key(s, "hmac_secret", str, "auth")),
         command_max_age_seconds=int(max_age),
     )
 
 
 def _parse_metrics(raw: dict[str, Any]) -> MetricsConfig:
-    s = _require_section(raw, "metrics")
-    interval = float(_require_key(s, "push_interval_seconds", (int, float), "metrics"))
+    s = require_section(raw, "metrics")
+    interval = float(require_key(s, "push_interval_seconds", (int, float), "metrics"))
     if interval <= 0:
         raise ConfigError("push_interval_seconds must be positive")
     return MetricsConfig(
         push_interval_seconds=interval,
-        collect_containers=_require_key(s, "collect_containers", bool, "metrics"),
+        collect_containers=require_key(s, "collect_containers", bool, "metrics"),
     )
 
 
 def _parse_project(raw: dict[str, Any]) -> ProjectConfig:
-    s = _require_section(raw, "project")
-    env_file_raw = _optional_key(s, "env_file", str, None, "project")
+    s = require_section(raw, "project")
+    env_file_raw = optional_key(s, "env_file", str, None, "project")
     return ProjectConfig(
-        project_dir=Path(_require_key(s, "project_dir", str, "project")),
-        compose_file=Path(_require_key(s, "compose_file", str, "project")),
-        docker_service_name=_require_key(s, "docker_service_name", str, "project"),
+        project_dir=Path(require_key(s, "project_dir", str, "project")),
+        compose_file=Path(require_key(s, "compose_file", str, "project")),
+        docker_service_name=require_key(s, "docker_service_name", str, "project"),
         env_file=Path(env_file_raw) if env_file_raw is not None else None,
     )
 
 
 def _parse_storage(raw: dict[str, Any]) -> StorageConfig:
-    s = _require_section(raw, "storage")
+    s = require_section(raw, "storage")
     return StorageConfig(
-        db_path=Path(_require_key(s, "db_path", str, "storage")),
+        db_path=Path(require_key(s, "db_path", str, "storage")),
     )
 
 
@@ -383,11 +353,11 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
         if not isinstance(entry, dict):
             raise ConfigError(f"[{label}] must be a table")
 
-        group = _require_key(entry, "group", str, label)
+        group = require_key(entry, "group", str, label)
         if not group:
             raise ConfigError(f"'group' in [{label}] must not be empty")
 
-        command = _require_key(entry, "command", list, label)
+        command = require_key(entry, "command", list, label)
         if not command:
             raise ConfigError(f"'command' in [{label}] must be a non-empty list")
         for i, arg in enumerate(command):
@@ -401,14 +371,14 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                 f"got {command[0]!r}"
             )
 
-        timeout = _require_key(entry, "timeout", int, label)
+        timeout = require_key(entry, "timeout", int, label)
         if timeout <= 0:
             raise ConfigError(f"'timeout' in [{label}] must be positive, got {timeout}")
 
-        requires_confirmation = _optional_key(entry, "requires_confirmation", bool, False, label)
-        sensitive_output = _optional_key(entry, "sensitive_output", bool, False, label)
-        long_running = _optional_key(entry, "long_running", bool, False, label)
-        description = _optional_key(entry, "description", str, "", label)
+        requires_confirmation = optional_key(entry, "requires_confirmation", bool, False, label)
+        sensitive_output = optional_key(entry, "sensitive_output", bool, False, label)
+        long_running = optional_key(entry, "long_running", bool, False, label)
+        description = optional_key(entry, "description", str, "", label)
 
         params_raw = entry.get("params", {})
         if not isinstance(params_raw, dict):
@@ -418,7 +388,7 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
             plabel = f"{label}.params.{pname}"
             if not isinstance(pentry, dict):
                 raise ConfigError(f"[{plabel}] must be a table")
-            placeholder = _require_key(pentry, "placeholder", str, plabel)
+            placeholder = require_key(pentry, "placeholder", str, plabel)
             if placeholder != pname:
                 raise ConfigError(
                     f"'placeholder' in [{plabel}] must match the table key "
@@ -429,15 +399,15 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                     f"'placeholder' in [{plabel}] must not override a protected "
                     f"placeholder: {placeholder!r}"
                 )
-            default_raw = _optional_key(pentry, "default", str, None, plabel)
-            pattern = _require_key(pentry, "pattern", str, plabel)
+            default_raw = optional_key(pentry, "default", str, None, plabel)
+            pattern = require_key(pentry, "pattern", str, plabel)
             try:
                 re.compile(pattern)
             except re.error as exc:
                 raise ConfigError(
                     f"'pattern' in [{plabel}] is not valid regex: {exc}"
                 ) from exc
-            pdescription = _optional_key(pentry, "description", str, "", plabel)
+            pdescription = optional_key(pentry, "description", str, "", plabel)
             param_defs[placeholder] = ParamDef(
                 placeholder=placeholder,
                 default=default_raw,
@@ -459,102 +429,21 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
     return result
 
 
-def _parse_garage(raw: dict[str, Any]) -> GarageConfig | None:
-    """Parse optional [garage] section. Returns None if absent."""
-    section = raw.get("garage")
-    if section is None:
-        return None
-    if not isinstance(section, dict):
-        raise ConfigError("[garage] must be a table")
+def _parse_integrations(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Capture every non-core top-level table as a raw Integration section.
 
-    enabled = _require_key(section, "enabled", bool, "garage")
-    container_name = _require_key(section, "container_name", str, "garage")
-    if not container_name:
-        raise ConfigError("'container_name' in [garage] must not be empty")
-    garage_binary = _require_key(section, "garage_binary", str, "garage")
-    if not garage_binary:
-        raise ConfigError("'garage_binary' in [garage] must not be empty")
-    docker_binary = _require_key(section, "docker_binary", str, "garage")
-    if not docker_binary.startswith("/"):
-        raise ConfigError(
-            f"'docker_binary' in [garage] must be an absolute path, got {docker_binary!r}"
-        )
-    config_path = Path(_require_key(section, "config_path", str, "garage"))
-    interval = float(
-        _require_key(section, "state_push_interval_seconds", (int, float), "garage")
-    )
-    if interval <= 0:
-        raise ConfigError("'state_push_interval_seconds' in [garage] must be positive")
-
-    # Optional admin HTTP API wiring. admin_token may be given inline or, like
-    # Garage's own garage.toml, via a file path; the file wins is read once at
-    # startup. Both absent means the admin API is simply not configured.
-    admin_url = _optional_key(section, "admin_url", str, "", "garage")
-    if admin_url and not admin_url.startswith(("http://", "https://")):
-        raise ConfigError(
-            f"'admin_url' in [garage] must start with http:// or https://, got {admin_url!r}"
-        )
-    admin_token = _optional_key(section, "admin_token", str, "", "garage")
-    admin_token_file = _optional_key(section, "admin_token_file", str, "", "garage")
-    if admin_token_file and not admin_token:
-        try:
-            admin_token = Path(admin_token_file).read_text(encoding="utf-8").strip()
-        except OSError as exc:
-            # The admin API is optional; a bad token path must NOT crash the whole
-            # agent into a restart loop. Degrade: disable the admin API (quota
-            # writes then fail loudly per-command) and keep everything else running.
-            logger.warning(
-                "[garage] admin_token_file %r could not be read (%s); disabling the "
-                "Garage admin API. Quota writes will fail until this is fixed; the "
-                "rest of the agent runs normally.",
-                admin_token_file, exc,
-            )
-            admin_token = ""
-
-    return GarageConfig(
-        enabled=enabled,
-        container_name=container_name,
-        garage_binary=garage_binary,
-        docker_binary=docker_binary,
-        config_path=config_path,
-        state_push_interval_seconds=interval,
-        admin_url=admin_url,
-        admin_token=admin_token,
-    )
-
-
-def _parse_caddy(raw: dict[str, Any]) -> CaddyConfig | None:
-    """Parse optional [caddy] section. Returns None if absent."""
-    section = raw.get("caddy")
-    if section is None:
-        return None
-    if not isinstance(section, dict):
-        raise ConfigError("[caddy] must be a table")
-
-    enabled = _require_key(section, "enabled", bool, "caddy")
-    admin_url = _require_key(section, "admin_url", str, "caddy")
-    if not admin_url.startswith(("http://", "https://")):
-        raise ConfigError(
-            f"'admin_url' in [caddy] must start with http:// or https://, "
-            f"got {admin_url!r}"
-        )
-    main_raw = _require_key(section, "main_caddyfile", str, "caddy")
-    if not main_raw.startswith("/"):
-        raise ConfigError(
-            f"'main_caddyfile' in [caddy] must be an absolute path, got {main_raw!r}"
-        )
-    drop_in_raw = _require_key(section, "drop_in_path", str, "caddy")
-    if not drop_in_raw.startswith("/"):
-        raise ConfigError(
-            f"'drop_in_path' in [caddy] must be an absolute path, got {drop_in_raw!r}"
-        )
-
-    return CaddyConfig(
-        enabled=enabled,
-        admin_url=admin_url,
-        main_caddyfile=Path(main_raw),
-        drop_in_path=Path(drop_in_raw),
-    )
+    Foundation does not know which ids are Integrations and does not parse them
+    (CORE-005 decision 4): it returns the raw tables keyed by id, and each
+    Integration's own module parses its section at bootstrap via the registry.
+    A section no registered Integration claims is simply never read.
+    """
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in raw.items():
+        if key in _CORE_SECTIONS or key == "log_groups":
+            continue
+        if isinstance(value, dict):
+            out[key] = value
+    return out
 
 
 def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
@@ -602,7 +491,7 @@ def _parse_one_log_group(
         raise ConfigError(f"log_groups[{i}] must be a table")
 
     ctx = f"log_groups[{i}]"
-    name = _require_key(entry, "name", str, ctx)
+    name = require_key(entry, "name", str, ctx)
     if not _LOG_NAME_PATTERN.fullmatch(name):
         raise ConfigError(
             f"'name' in {ctx} must be alphanumeric/underscore/hyphen, 1-50 chars, got {name!r}"
@@ -610,7 +499,7 @@ def _parse_one_log_group(
     if name in seen_names:
         raise ConfigError(f"Duplicate log group name: {name!r}")
 
-    source_type = _require_key(entry, "source_type", str, ctx)
+    source_type = require_key(entry, "source_type", str, ctx)
     if source_type not in _LOG_SOURCE_TYPES:
         raise ConfigError(
             f"'source_type' in {ctx} must be one of {sorted(_LOG_SOURCE_TYPES)}, "
@@ -621,29 +510,29 @@ def _parse_one_log_group(
     docker_binary = "/usr/bin/docker"
     source_path = ""
     if source_type == "file":
-        source_path = _require_key(entry, "source_path", str, ctx)
+        source_path = require_key(entry, "source_path", str, ctx)
         if not source_path.startswith("/"):
             raise ConfigError(
                 f"'source_path' in {ctx} must be an absolute path, got {source_path!r}"
             )
     else:  # docker, docker_stream
-        container_name = _require_key(entry, "container_name", str, ctx)
+        container_name = require_key(entry, "container_name", str, ctx)
         if not container_name.strip():
             raise ConfigError(
                 f"'container_name' in {ctx} must be non-empty for docker sources"
             )
-        docker_binary = _optional_key(entry, "docker_binary", str, "/usr/bin/docker", ctx)
+        docker_binary = optional_key(entry, "docker_binary", str, "/usr/bin/docker", ctx)
         if not docker_binary.startswith("/"):
             raise ConfigError(f"'docker_binary' in {ctx} must be an absolute path")
 
-    parser = _require_key(entry, "parser", str, ctx)
+    parser = require_key(entry, "parser", str, ctx)
     if parser not in _LOG_PARSERS:
         raise ConfigError(
             f"'parser' in {ctx} must be one of {sorted(_LOG_PARSERS)}, got {parser!r}"
         )
 
     interval = float(
-        _require_key(entry, "ship_interval_seconds", (int, float), ctx)
+        require_key(entry, "ship_interval_seconds", (int, float), ctx)
     )
     # Floor is 2s so the activity feed can keep pace with the 2s metrics/state
     # push and feel real-time alongside the storage bars. Logs are a heavier
@@ -656,23 +545,23 @@ def _parse_one_log_group(
             f"'ship_interval_seconds' in {ctx} must be >= 2.0, got {interval}"
         )
 
-    batch_max = _require_key(entry, "max_lines_per_batch", int, ctx)
+    batch_max = require_key(entry, "max_lines_per_batch", int, ctx)
     if not 1 <= batch_max <= 200:
         raise ConfigError(
             f"'max_lines_per_batch' in {ctx} must be 1-200, got {batch_max}"
         )
 
-    retention = _require_key(entry, "retention_days", int, ctx)
+    retention = require_key(entry, "retention_days", int, ctx)
     if not 1 <= retention <= 365:
         raise ConfigError(
             f"'retention_days' in {ctx} must be 1-365, got {retention}"
         )
 
-    filter_contains = _optional_key(entry, "filter_contains", str, "", ctx)
+    filter_contains = optional_key(entry, "filter_contains", str, "", ctx)
 
     return LogGroupConfig(
         name=name,
-        enabled=_require_key(entry, "enabled", bool, ctx),
+        enabled=require_key(entry, "enabled", bool, ctx),
         source_type=source_type,
         source_path=Path(source_path) if source_path else Path(""),
         filter_contains=filter_contains,
@@ -710,7 +599,6 @@ def load_config(path: Path) -> Config:
         project=_parse_project(raw),
         storage=_parse_storage(raw),
         commands=_parse_commands(raw),
-        garage=_parse_garage(raw),
-        caddy=_parse_caddy(raw),
+        integrations=_parse_integrations(raw),
         log_groups=_parse_log_groups(raw),
     )

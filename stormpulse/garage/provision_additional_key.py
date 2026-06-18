@@ -18,8 +18,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
-from stormpulse.config import GarageConfig
 from stormpulse.garage import admin_api
+from stormpulse.garage.config import GarageConfig
 
 logger = logging.getLogger(__name__)
 

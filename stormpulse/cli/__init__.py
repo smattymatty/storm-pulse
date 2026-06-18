@@ -190,6 +190,23 @@ def main() -> None:
         help=f"path to config file (default: {_DEFAULT_CONFIG})",
     )
 
+    # --- config subcommand group ---
+    config_parser = subparsers.add_parser(
+        "config",
+        help="validate configuration without booting",
+    )
+    config_sub = config_parser.add_subparsers(dest="config_command")
+    config_check_parser = config_sub.add_parser(
+        "check",
+        help="validate the TOML and report each integration's status",
+    )
+    config_check_parser.add_argument(
+        "config",
+        nargs="?",
+        default=_DEFAULT_CONFIG,
+        help=f"path to config file (default: {_DEFAULT_CONFIG})",
+    )
+
     # --- garage subcommand group ---
     from stormpulse.cli.garage import add_garage_subparser
 
@@ -239,6 +256,19 @@ def main() -> None:
         from stormpulse.cli.status import cmd_status
 
         cmd_status(args)
+    elif args.command == "config":
+        if getattr(args, "config_command", None) == "check":
+            from stormpulse.cli.config_check import cmd_config_check
+
+            cmd_config_check(args)
+        else:
+            print("Usage: stormpulse config <subcommand>\n", file=sys.stderr)
+            print("Subcommands:", file=sys.stderr)
+            print(
+                "  check    Validate the TOML and report integration status",
+                file=sys.stderr,
+            )
+            sys.exit(1)
     elif args.command == "update":
         from stormpulse.cli.update import cmd_update
 
@@ -339,6 +369,10 @@ def main() -> None:
                 file=sys.stderr,
             )
             print("  status               Show agent status", file=sys.stderr)
+            print(
+                "  config               Validate configuration without booting",
+                file=sys.stderr,
+            )
             print(
                 "  update               Reinstall via pipx and restart", file=sys.stderr
             )

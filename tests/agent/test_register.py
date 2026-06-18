@@ -15,7 +15,7 @@ from stormpulse.agent.register import send_register
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.signoff import SignoffState
-from tests.helpers import SECRET, make_fake_garage_state
+from tests.helpers import SECRET, get_garage_state, make_fake_garage_state
 
 
 @pytest.mark.asyncio
@@ -40,7 +40,7 @@ async def test_send_register_sends_register_envelope(agent: Agent) -> None:
     payload = data["payload"]
     assert payload["pulse_token"] == agent.config.agent.pulse_token
     assert payload["version"]
-    assert payload["garage"] is None
+    assert payload["integrations"] is None
     assert "git_pull" in payload["commands"]
 
 
@@ -54,15 +54,18 @@ async def test_send_register_includes_garage_snapshot_when_enabled(
     ws = AsyncMock()
 
     with (
-        patch("stormpulse.agent.register.discover_garage", return_value=fake_state),
+        patch(
+            "stormpulse.garage.discover.discover_garage", return_value=fake_state
+        ),
         patch("stormpulse.agent.register.collect_system_inventory", return_value=None),
     ):
         await send_register(ag, ws, "wss://example.com/ws/")
 
     data = json.loads(ws.send.call_args[0][0])
-    assert data["payload"]["garage"] is not None
-    assert data["payload"]["garage"]["node_id"] == fake_state.node_id
-    assert ag.garage_state is fake_state
+    garage_report = data["payload"]["integrations"]["garage"]
+    assert garage_report["status"] == "live"
+    assert garage_report["state"]["node_id"] == fake_state.node_id
+    assert get_garage_state(ag) is fake_state
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Tests for garage-related agent behavior."""
+"""Tests for garage-related agent behavior (CORE-005 generic integration runtime)."""
 
 from __future__ import annotations
 
@@ -11,46 +11,27 @@ import pytest
 
 from stormpulse.agent import Agent, garage_actions, loops
 from stormpulse.auth import NonceStore
-from stormpulse.config import (
-    AgentConfig,
-    AuthConfig,
-    Config,
-    DashboardConfig,
-    GarageConfig,
-    MetricsConfig,
-    ProjectConfig,
-    StorageConfig,
-    TlsConfig,
-)
+from stormpulse.config import Config
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.state import GarageState
 from stormpulse.signoff import SignoffState
+from tests.helpers import build_config
 
 SECRET = b"test-secret-key-256-bits-long!!!"
 
 
 def _make_config(tmp_path: Path, garage: GarageConfig | None = None) -> Config:
-    return Config(
-        agent=AgentConfig(id="test-01", pulse_token="tok-test-123"),
-        dashboard=DashboardConfig(
-            url="wss://example.com/ws/",
-            reconnect_min_seconds=0.05,
-            reconnect_max_seconds=0.2,
-            heartbeat_interval_seconds=0.05,
-        ),
-        tls=TlsConfig(
-            ca_cert=tmp_path / "ca.pem",
-            client_cert=tmp_path / "agent.pem",
-            client_key=tmp_path / "key.pem",
-        ),
-        auth=AuthConfig(hmac_secret=tmp_path / "hmac.key", command_max_age_seconds=60),
-        metrics=MetricsConfig(push_interval_seconds=0.05, collect_containers=False),
-        project=ProjectConfig(
-            project_dir=Path("/opt/myapp"),
-            compose_file=Path("/opt/myapp/docker-compose.yml"),
-            docker_service_name="web",
-        ),
-        storage=StorageConfig(db_path=tmp_path / "test.db"),
-        garage=garage,
+    return build_config(tmp_path, garage=garage)
+
+
+def _garage_cfg(tmp_path: Path, *, enabled: bool = True, interval: float = 0.05) -> GarageConfig:
+    return GarageConfig(
+        enabled=enabled,
+        container_name="garaged",
+        garage_binary="/garage",
+        docker_binary="/usr/bin/docker",
+        config_path=tmp_path / "garage.toml",
+        state_push_interval_seconds=interval,
     )
 
 
@@ -69,59 +50,40 @@ def _make_agent(config: Config, tmp_path: Path) -> tuple[Agent, asyncio.Event]:
     return agent, shutdown
 
 
-class TestGarageLiveGate:
-    """Bootstrap publishes ``garage_live`` so runtime gates have one bool to read."""
+def _garage_state(agent: Agent) -> GarageState | None:
+    rt = agent.integrations.get("garage")
+    return rt.state if rt is not None else None
 
-    def test_garage_live_false_without_config(self, tmp_path: Path) -> None:
+
+class TestGarageLiveGate:
+    """Bootstrap resolves a per-Integration runtime with a status the wire reports."""
+
+    def test_garage_absent_without_config(self, tmp_path: Path) -> None:
         config = _make_config(tmp_path, garage=None)
         agent, _ = _make_agent(config, tmp_path)
-        assert agent.garage_live is False
+        assert "garage" not in agent.integrations
 
-    def test_garage_live_false_when_disabled(self, tmp_path: Path) -> None:
-        garage_cfg = GarageConfig(
-            enabled=False,
-            container_name="garaged",
-            garage_binary="/garage",
-            docker_binary="/usr/bin/docker",
-            config_path=tmp_path / "garage.toml",
-            state_push_interval_seconds=0.05,
-        )
-        config = _make_config(tmp_path, garage=garage_cfg)
+    def test_garage_disabled_choice_when_disabled(self, tmp_path: Path) -> None:
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, enabled=False))
         agent, _ = _make_agent(config, tmp_path)
-        assert agent.garage_live is False
+        assert agent.integrations["garage"].status == "disabled_choice"
 
-    def test_garage_live_true_when_enabled_and_preconditions_pass(
+    def test_garage_live_when_enabled_and_preconditions_pass(
         self, tmp_path: Path
     ) -> None:
         # Preconditions are stubbed to pass by the autouse fixture in
         # tests/conftest.py.
-        garage_cfg = GarageConfig(
-            enabled=True,
-            container_name="garaged",
-            garage_binary="/garage",
-            docker_binary="/usr/bin/docker",
-            config_path=tmp_path / "garage.toml",
-            state_push_interval_seconds=0.05,
-        )
-        config = _make_config(tmp_path, garage=garage_cfg)
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path))
         agent, _ = _make_agent(config, tmp_path)
-        assert agent.garage_live is True
+        assert agent.integrations["garage"].status == "live"
 
 
 class TestGarageLoopEnabled:
-    """Garage loop updates shared state when enabled."""
+    """The generic state loop updates the garage runtime when enabled."""
 
     @pytest.mark.asyncio
     async def test_updates_garage_state(self, tmp_path: Path) -> None:
-        garage_cfg = GarageConfig(
-            enabled=True,
-            container_name="garaged",
-            garage_binary="/garage",
-            docker_binary="/usr/bin/docker",
-            config_path=tmp_path / "garage.toml",
-            state_push_interval_seconds=0.05,
-        )
-        config = _make_config(tmp_path, garage=garage_cfg)
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path))
         agent, shutdown = _make_agent(config, tmp_path)
         ws = AsyncMock()
 
@@ -141,31 +103,25 @@ class TestGarageLoopEnabled:
 
         async def run_loop() -> None:
             with patch(
-                "stormpulse.agent.loops.collect_garage_state",
+                "stormpulse.garage.state.collect_garage_state",
                 return_value=fake_state,
             ):
-                task = asyncio.create_task(loops.garage_loop(agent, ws))
+                task = asyncio.create_task(
+                    loops.integration_state_loop(agent, ws, "garage")
+                )
                 await asyncio.sleep(0.15)
                 shutdown.set()
                 await task
 
         await run_loop()
-        assert agent.garage_state is not None
-        assert agent.garage_state.node_id == "abc123"
+        state = _garage_state(agent)
+        assert state is not None
+        assert state.node_id == "abc123"
 
     @pytest.mark.asyncio
     async def test_collects_before_first_wait(self, tmp_path: Path) -> None:
-        """First action in _garage_loop must be collect, not sleep."""
-        garage_cfg = GarageConfig(
-            enabled=True,
-            container_name="garaged",
-            garage_binary="/garage",
-            docker_binary="/usr/bin/docker",
-            config_path=tmp_path / "garage.toml",
-            # Long interval - if loop waits first, we'd time out
-            state_push_interval_seconds=600,
-        )
-        config = _make_config(tmp_path, garage=garage_cfg)
+        """First action in the loop must be collect, not sleep."""
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=600))
         agent, shutdown = _make_agent(config, tmp_path)
         ws = AsyncMock()
 
@@ -185,10 +141,12 @@ class TestGarageLoopEnabled:
 
         async def run_loop() -> None:
             with patch(
-                "stormpulse.agent.loops.collect_garage_state",
+                "stormpulse.garage.state.collect_garage_state",
                 return_value=fake_state,
             ) as mock_collect:
-                task = asyncio.create_task(loops.garage_loop(agent, ws))
+                task = asyncio.create_task(
+                    loops.integration_state_loop(agent, ws, "garage")
+                )
                 # Give just enough time for the collect to run, but nowhere
                 # near 600s - proves collect happens before the wait
                 await asyncio.sleep(0.1)
@@ -199,23 +157,16 @@ class TestGarageLoopEnabled:
                 await task
 
         await run_loop()
-        assert agent.garage_state is not None
-        assert agent.garage_state.node_id == "immediate"
+        state = _garage_state(agent)
+        assert state is not None
+        assert state.node_id == "immediate"
 
 
 class TestGarageCommandsInRegistry:
     """Garage commands are merged into the registry when enabled."""
 
     def test_garage_commands_registered(self, tmp_path: Path) -> None:
-        garage_cfg = GarageConfig(
-            enabled=True,
-            container_name="garaged",
-            garage_binary="/garage",
-            docker_binary="/usr/bin/docker",
-            config_path=tmp_path / "garage.toml",
-            state_push_interval_seconds=300,
-        )
-        config = _make_config(tmp_path, garage=garage_cfg)
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
         agent, _ = _make_agent(config, tmp_path)
         assert "garage_status" in agent.registry
         assert "garage_bucket_list" in agent.registry
@@ -232,19 +183,9 @@ class TestGarageCommandsInRegistry:
 class TestGarageRefresh:
     """garage_refresh collects state and returns result."""
 
-    def _garage_cfg(self, tmp_path: Path) -> GarageConfig:
-        return GarageConfig(
-            enabled=True,
-            container_name="garaged",
-            garage_binary="/garage",
-            docker_binary="/usr/bin/docker",
-            config_path=tmp_path / "garage.toml",
-            state_push_interval_seconds=300,
-        )
-
     @pytest.mark.asyncio
     async def test_refresh_updates_state(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=self._garage_cfg(tmp_path))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
         agent, _ = _make_agent(config, tmp_path)
 
         fake_state = GarageState(
@@ -269,8 +210,9 @@ class TestGarageRefresh:
         assert result.success is True
         assert result.command == "garage_refresh"
         assert "0 buckets" in result.stdout
-        assert agent.garage_state is not None
-        assert agent.garage_state.node_id == "abc123"
+        state = _garage_state(agent)
+        assert state is not None
+        assert state.node_id == "abc123"
 
     @pytest.mark.asyncio
     async def test_refresh_not_configured(self, tmp_path: Path) -> None:
@@ -284,7 +226,7 @@ class TestGarageRefresh:
 
     @pytest.mark.asyncio
     async def test_refresh_collection_fails(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=self._garage_cfg(tmp_path))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
         agent, _ = _make_agent(config, tmp_path)
 
         with patch(
@@ -295,10 +237,10 @@ class TestGarageRefresh:
 
         assert result.success is False
         assert result.failure_reason == "collection_failed"
-        assert agent.garage_state is None
+        assert _garage_state(agent) is None
 
     def test_garage_refresh_in_registry(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=self._garage_cfg(tmp_path))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
         agent, _ = _make_agent(config, tmp_path)
         assert "garage_refresh" in agent.registry
 
@@ -307,15 +249,7 @@ class TestSensitiveOutputLogging:
     """Verify sensitive_output flag prevents logging."""
 
     def test_sensitive_command_no_debug_log(self, tmp_path: Path) -> None:
-        garage_cfg = GarageConfig(
-            enabled=True,
-            container_name="garaged",
-            garage_binary="/garage",
-            docker_binary="/usr/bin/docker",
-            config_path=tmp_path / "garage.toml",
-            state_push_interval_seconds=300,
-        )
-        config = _make_config(tmp_path, garage=garage_cfg)
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
         agent, _ = _make_agent(config, tmp_path)
         cmd_def = agent.registry["garage_key_create"]
         assert cmd_def.sensitive_output is True

@@ -12,11 +12,11 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
 from stormpulse.garage.attach_account_key import (
     make_attach_account_key_handler,
     run_attach_account_key,
 )
+from stormpulse.garage.config import GarageConfig
 
 _BUCKET = "f1dc32249aa1d80a"
 _FULL = _BUCKET + "0" * 48

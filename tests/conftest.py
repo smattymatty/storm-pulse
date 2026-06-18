@@ -12,9 +12,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from stormpulse.agent import Agent
-from stormpulse.agent import bootstrap as agent_bootstrap
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
+from stormpulse.garage import integration as garage_integration
 from stormpulse.signoff import SignoffState
 from tests.helpers import SECRET, build_config
 
@@ -30,12 +30,15 @@ def _garage_preconditions_pass_in_tests() -> Generator[None, None, None]:
     from every Agent constructed in a test.
 
     Tests that explicitly want to exercise the precondition-failed
-    path patch ``run_garage_preconditions`` themselves with a non-None
-    return value.
+    path patch ``stormpulse.garage.integration.run_preconditions``
+    themselves with a non-None return value. The garage Integration's
+    precondition wrapper resolves this name at call time (CORE-005), so
+    patching it here reaches the bootstrap path without touching the real
+    orchestrator that ``preconditions``' own tests call.
     """
     with patch.object(
-        agent_bootstrap,
-        "run_garage_preconditions",
+        garage_integration,
+        "run_preconditions",
         return_value=None,
     ):
         yield

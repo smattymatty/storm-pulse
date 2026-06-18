@@ -14,9 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from stormpulse.config import GarageConfig
 from stormpulse.garage import preconditions
-from stormpulse.garage.state import GarageState
+from stormpulse.garage.config import GarageConfig
 
 
 def _make_config(tmp_path: Path) -> GarageConfig:
@@ -197,41 +196,25 @@ class TestRunPreconditions:
             assert preconditions.run_preconditions(cfg) == "rpc_secret_unauthenticated"
 
 
-# ---- GarageState.disabled() factory ---------------------------------
-
-
-class TestGarageStateDisabled:
-    def test_disabled_sentinel_carries_reason(self) -> None:
-        state = GarageState.disabled("garage_unreachable")
-        assert state.disabled_reason == "garage_unreachable"
-        assert state.healthy is False
-        assert state.node_id == ""
-        assert state.buckets == []
-        assert state.keys == []
-        assert state.peers == []
-
-    def test_disabled_round_trips_to_dict(self) -> None:
-        state = GarageState.disabled("garage_unreachable")
-        as_dict = state.to_dict()
-        assert as_dict["disabled_reason"] == "garage_unreachable"
-        assert as_dict["healthy"] is False
-
-
-# ---- Bootstrap integration: AgentDependencies carries the reason ----
+# ---- Bootstrap integration: the garage runtime carries the soft-disable -----
+# CORE-005 relocated the disabled cause from a GarageState sentinel to the
+# Integration runtime/envelope (status + disabled_reason). The garage precondition
+# seam is stormpulse.garage.integration.run_preconditions.
 
 
 class TestBootstrapWiring:
-    def test_disabled_reason_propagates_to_agent_dependencies(
+    def test_disabled_reason_propagates_to_runtime(
         self,
         tmp_path: Path,
     ) -> None:
         from stormpulse.agent import bootstrap
+        from stormpulse.garage import integration as garage_integration
         from tests.helpers import build_config, build_garage_config
 
         cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
         with patch.object(
-            bootstrap,
-            "run_garage_preconditions",
+            garage_integration,
+            "run_preconditions",
             return_value="garage_unreachable",
         ):
             deps = bootstrap.build_agent_dependencies(
@@ -239,7 +222,9 @@ class TestBootstrapWiring:
                 signoff_sealed=False,
                 log_position_store=None,
             )
-        assert deps.garage_disabled_reason == "garage_unreachable"
+        rt = deps.integrations["garage"]
+        assert rt.status == "disabled_error"
+        assert rt.disabled_reason == "garage_unreachable"
         # Garage command set is absent when preconditions fail.
         assert not any(k.startswith("garage_") for k in deps.registry)
 
@@ -248,12 +233,13 @@ class TestBootstrapWiring:
         tmp_path: Path,
     ) -> None:
         from stormpulse.agent import bootstrap
+        from stormpulse.garage import integration as garage_integration
         from tests.helpers import build_config, build_garage_config
 
         cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
         with patch.object(
-            bootstrap,
-            "run_garage_preconditions",
+            garage_integration,
+            "run_preconditions",
             return_value=None,
         ):
             deps = bootstrap.build_agent_dependencies(
@@ -261,7 +247,9 @@ class TestBootstrapWiring:
                 signoff_sealed=False,
                 log_position_store=None,
             )
-        assert deps.garage_disabled_reason is None
+        rt = deps.integrations["garage"]
+        assert rt.status == "live"
+        assert rt.disabled_reason is None
         assert any(k.startswith("garage_") for k in deps.registry)
 
 

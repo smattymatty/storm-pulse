@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.provision_bucket import (
     make_provision_customer_bucket_handler,
     run_provision_customer_bucket,

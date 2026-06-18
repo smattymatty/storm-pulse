@@ -15,7 +15,8 @@ from __future__ import annotations
 import logging
 
 from stormpulse.commands.jobs import LongRunningFactory
-from stormpulse.config import CommandDef, GarageConfig, ParamDef
+from stormpulse.config import CommandDef, ParamDef
+from stormpulse.garage.config import GarageConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1013,30 +1014,27 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     agent process doesn't load handler code for features that aren't
     installed on a given host.
     """
-    from stormpulse.garage.clear_bucket import make_clear_bucket_handler
-    from stormpulse.garage.delete_key import make_delete_key_handler
-    from stormpulse.garage.detach_account_key import (
-        make_detach_account_key_handler,
-    )
     from stormpulse.garage.attach_account_key import (
         make_attach_account_key_handler,
     )
+    from stormpulse.garage.clear_bucket import make_clear_bucket_handler
     from stormpulse.garage.converge_account_key_rotation import (
         make_converge_account_key_rotation_handler,
     )
-    from stormpulse.garage.snapshot_and_reap_account_key import (
-        make_snapshot_and_reap_account_key_handler,
-    )
-    from stormpulse.garage.get_bucket_owners import make_get_bucket_owners_handler
-    from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
+    from stormpulse.garage.delete_key import make_delete_key_handler
     from stormpulse.garage.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
     )
-    from stormpulse.garage.provision_additional_key import (
-        make_provision_additional_key_handler,
+    from stormpulse.garage.detach_account_key import (
+        make_detach_account_key_handler,
     )
+    from stormpulse.garage.get_bucket_owners import make_get_bucket_owners_handler
+    from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
     from stormpulse.garage.provision_account_key import (
         make_provision_account_key_handler,
+    )
+    from stormpulse.garage.provision_additional_key import (
+        make_provision_additional_key_handler,
     )
     from stormpulse.garage.provision_bucket import (
         make_provision_customer_bucket_handler,
@@ -1046,6 +1044,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         make_set_account_key_capability_handler,
     )
     from stormpulse.garage.set_quota import make_set_quota_handler
+    from stormpulse.garage.snapshot_and_reap_account_key import (
+        make_snapshot_and_reap_account_key_handler,
+    )
     from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
 
     return {

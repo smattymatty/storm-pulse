@@ -1,4 +1,4 @@
-"""Initial ``register`` envelope sent on every fresh connection; carries identity, command surface, garage snapshot, and seal state."""
+"""Initial ``register`` envelope sent on every fresh connection; carries identity, command surface, integration snapshots, and seal state."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING
 from websockets.asyncio.client import ClientConnection
 
 from stormpulse import __version__
+from stormpulse.agent.integrations_runtime import build_integrations_payload
 from stormpulse.agent.metadata import build_commands_metadata
-from stormpulse.garage.discover import discover_garage
 from stormpulse.protocol import make_register
 from stormpulse.system_inventory import collect_system_inventory
 
@@ -24,13 +24,16 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
     """Build and send the register envelope after a fresh connection."""
     logger.info("Connected to dashboard at %s", url)
 
-    # ADR GARAGE-000: discover on first live register; disabled sentinel rides as-is.
-    if agent.garage_live and agent.garage_state is None:
-        agent.garage_state = await asyncio.to_thread(
-            discover_garage,
-            agent.config.garage,
-        )
-    garage_dict = agent.garage_state.to_dict() if agent.garage_state else None
+    # CORE-005: discover initial state for each live Integration that declares a
+    # discover capability and has no state yet (GARAGE-000: garage discovers here).
+    for rt in agent.integrations.values():
+        if (
+            rt.status == "live"
+            and rt.descriptor.discover is not None
+            and rt.state is None
+        ):
+            rt.state = await asyncio.to_thread(rt.descriptor.discover, rt.config)
+    integrations = build_integrations_payload(agent.integrations) or None
 
     log_group_names = sorted(agent.shippers.keys()) or None
     system_inventory = (
@@ -51,7 +54,7 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
             agent.registry,
             agent.config.project,
         ),
-        garage=garage_dict,
+        integrations=integrations,
         log_groups=log_group_names,
         system_inventory=system_inventory,
         signoff_sealed=sealed_now,

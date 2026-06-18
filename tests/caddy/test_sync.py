@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from stormpulse.caddy.config import CaddyConfig
 from stormpulse.caddy.sync import (
     _PER_TENANT_MAX_BYTES,
     _atomic_write_or_remove,
@@ -28,7 +29,6 @@ from stormpulse.caddy.sync import (
     _read_and_absolutize_imports,
     make_caddy_sync_handler,
 )
-from stormpulse.config import CaddyConfig
 
 
 def _params(tenants: dict[str, str], *, region: str = "vancouver-1",

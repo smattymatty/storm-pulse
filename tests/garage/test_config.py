@@ -1,4 +1,4 @@
-"""Tests for GarageConfig parsing in config.py."""
+"""Tests for GarageConfig parsing (CORE-005: parser lives in garage/config.py)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from stormpulse.config import ConfigError, load_config
+from stormpulse.garage.config import parse_garage_config
 
 
 def _write_toml(tmp_path: Path, garage_section: str = "") -> Path:
@@ -49,11 +50,16 @@ db_path = "/var/lib/stormpulse/nonces.db"
     return config
 
 
+def _garage_section(path: Path) -> dict[str, object]:
+    """Load config and return the raw [garage] table the bootstrap loop parses."""
+    return load_config(path).integrations["garage"]
+
+
 class TestGarageConfigParsing:
-    def test_absent_section_returns_none(self, tmp_path: Path) -> None:
+    def test_absent_section_not_in_integrations(self, tmp_path: Path) -> None:
         path = _write_toml(tmp_path)
         cfg = load_config(path)
-        assert cfg.garage is None
+        assert "garage" not in cfg.integrations
 
     def test_valid_section(self, tmp_path: Path) -> None:
         path = _write_toml(
@@ -68,14 +74,13 @@ config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = 300
 """,
         )
-        cfg = load_config(path)
-        assert cfg.garage is not None
-        assert cfg.garage.enabled is True
-        assert cfg.garage.container_name == "garaged"
-        assert cfg.garage.garage_binary == "/garage"
-        assert cfg.garage.docker_binary == "/usr/bin/docker"
-        assert str(cfg.garage.config_path) == "/opt/garage/garage.toml"
-        assert cfg.garage.state_push_interval_seconds == 300.0
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.enabled is True
+        assert gc.container_name == "garaged"
+        assert gc.garage_binary == "/garage"
+        assert gc.docker_binary == "/usr/bin/docker"
+        assert str(gc.config_path) == "/opt/garage/garage.toml"
+        assert gc.state_push_interval_seconds == 300.0
 
     def test_disabled(self, tmp_path: Path) -> None:
         path = _write_toml(
@@ -90,9 +95,8 @@ config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = 300
 """,
         )
-        cfg = load_config(path)
-        assert cfg.garage is not None
-        assert cfg.garage.enabled is False
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.enabled is False
 
     def test_missing_required_key(self, tmp_path: Path) -> None:
         path = _write_toml(
@@ -104,7 +108,7 @@ container_name = "garaged"
 """,
         )
         with pytest.raises(ConfigError, match="garage_binary"):
-            load_config(path)
+            parse_garage_config(_garage_section(path))
 
     def test_non_absolute_docker_binary(self, tmp_path: Path) -> None:
         path = _write_toml(
@@ -120,7 +124,7 @@ state_push_interval_seconds = 300
 """,
         )
         with pytest.raises(ConfigError, match="absolute path"):
-            load_config(path)
+            parse_garage_config(_garage_section(path))
 
     def test_negative_interval(self, tmp_path: Path) -> None:
         path = _write_toml(
@@ -136,7 +140,7 @@ state_push_interval_seconds = -1
 """,
         )
         with pytest.raises(ConfigError, match="positive"):
-            load_config(path)
+            parse_garage_config(_garage_section(path))
 
     def test_empty_container_name(self, tmp_path: Path) -> None:
         path = _write_toml(
@@ -152,7 +156,7 @@ state_push_interval_seconds = 300
 """,
         )
         with pytest.raises(ConfigError, match="container_name"):
-            load_config(path)
+            parse_garage_config(_garage_section(path))
 
 
 class TestSensitiveOutputParsing:

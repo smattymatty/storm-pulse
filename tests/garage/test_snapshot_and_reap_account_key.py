@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.snapshot_and_reap_account_key import (
     make_snapshot_and_reap_account_key_handler,
     run_snapshot_and_reap_account_key,

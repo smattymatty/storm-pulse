@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from fitness.dependency_allowlist import check_dependencies
+from fitness.integration_contract import check_integration_contract
 from fitness.no_shell import check_no_shell
 from fitness.private_imports import check_private_imports
 
@@ -43,6 +44,7 @@ def main() -> int:
         ("Function 2 - no cross-boundary private imports", check_private_imports),
         ("Function 3 - no shell=True", check_no_shell),
         ("Function 4 - runtime dependency allowlist", check_dependencies),
+        ("Function 5 - integration contract", check_integration_contract),
     ]:
         violations = [v for v in check() if v not in baseline]
         findings.append((label, violations))
