@@ -220,3 +220,100 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
     shipper.tailer.confirm_shipped(batch.to_position)  # type: ignore[arg-type]
     assert store.get_docker_ts("web") == batch.to_position
     store.close()
+
+
+# ---------------------------------------------------------------------------
+# bucket_id stamping (ADR BUCKETS-015)
+# ---------------------------------------------------------------------------
+
+from stormpulse.garage.state import GarageBucket, GarageKeyRef, GarageState  # noqa: E402
+from stormpulse.garage.bucket_resolver import BucketIdResolver  # noqa: E402
+
+_GARAGE_LINE = (
+    "2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: "
+    "71.19.243.102 (via [::1]:37780) (key {key}) HEAD /{bucket}\n"
+)
+
+
+def _garage_group(source_path: Path) -> LogGroupConfig:
+    return _make_group(source_path, parser="garage_s3")
+
+
+def _resolver_for(key_id: str, bucket_name: str, bucket_id: str) -> BucketIdResolver:
+    state = GarageState(
+        node_id="n1", hostname="h", zone="z", capacity_gb=1.0, data_avail_gb=1.0,
+        version="v", healthy=True, object_count=0, keys=[], peers=[],
+        buckets=[
+            GarageBucket(
+                id=bucket_id, alias="", size_bytes=0, object_count=0,
+                keys=[GarageKeyRef(
+                    key_id=key_id, key_name="k", permissions="RWO",
+                    bucket_local_aliases=(bucket_name,),
+                )],
+                website_access=False, website_index_document="index.html",
+                website_error_document=None, quota_max_size_bytes=None,
+                quota_max_objects=None,
+            ),
+        ],
+    )
+    return BucketIdResolver.from_state(state)
+
+
+def test_garage_s3_line_stamped_with_resolved_bucket_id(tmp_path: Path) -> None:
+    store = LogPositionStore(tmp_path / "pos.db")
+    log = tmp_path / "garage.log"
+    log.write_text(_GARAGE_LINE.format(key="GKaccount01", bucket="media"))
+    group = _garage_group(log)
+    shipper = LogShipper(group, LogTailer(group, store))
+    resolver = _resolver_for("GKaccount01", "media", "bid-media-000001")
+
+    batch = shipper.collect_batch(resolver)
+    assert batch is not None
+    assert len(batch.lines) == 1
+    assert batch.lines[0]["bucket_id"] == "bid-media-000001"
+    store.close()
+
+
+def test_garage_s3_line_unresolved_gets_empty_bucket_id(tmp_path: Path) -> None:
+    # Brand-new bucket not in the last state snapshot -> '' (website falls
+    # back to key-anchoring).
+    store = LogPositionStore(tmp_path / "pos.db")
+    log = tmp_path / "garage.log"
+    log.write_text(_GARAGE_LINE.format(key="GKaccount01", bucket="brand-new"))
+    group = _garage_group(log)
+    shipper = LogShipper(group, LogTailer(group, store))
+    resolver = _resolver_for("GKaccount01", "media", "bid-media-000001")
+
+    batch = shipper.collect_batch(resolver)
+    assert batch is not None
+    assert batch.lines[0]["bucket_id"] == ""
+    store.close()
+
+
+def test_garage_s3_no_resolver_leaves_field_off(tmp_path: Path) -> None:
+    # Backward-compatible: collect_batch() with no resolver ships no bucket_id.
+    store = LogPositionStore(tmp_path / "pos.db")
+    log = tmp_path / "garage.log"
+    log.write_text(_GARAGE_LINE.format(key="GKaccount01", bucket="media"))
+    group = _garage_group(log)
+    shipper = LogShipper(group, LogTailer(group, store))
+
+    batch = shipper.collect_batch()
+    assert batch is not None
+    assert "bucket_id" not in batch.lines[0]
+    store.close()
+
+
+def test_non_garage_group_ignores_resolver(tmp_path: Path) -> None:
+    # A resolver passed to a non-garage_s3 group never stamps bucket_id.
+    store = LogPositionStore(tmp_path / "pos.db")
+    log = tmp_path / "t.log"
+    log.write_text(_stormpulse_line("a") + "\n")
+    group = _make_group(log)  # parser="stormpulse"
+    shipper = LogShipper(group, LogTailer(group, store))
+    resolver = _resolver_for("GKaccount01", "media", "bid-media-000001")
+
+    batch = shipper.collect_batch(resolver)
+    assert batch is not None
+    assert "bucket_id" not in batch.lines[0]
+    store.close()

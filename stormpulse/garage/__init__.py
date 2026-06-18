@@ -1,5 +1,6 @@
 """Garage S3 node integration - discovery, state collection, and commands."""
 
+from stormpulse.garage.bucket_resolver import BucketIdResolver
 from stormpulse.garage.commands import build_garage_commands, long_running_factories
 from stormpulse.garage.discover import discover_garage
 from stormpulse.garage.state import (
@@ -11,6 +12,7 @@ from stormpulse.garage.state import (
 )
 
 __all__ = [
+    "BucketIdResolver",
     "GarageBucket",
     "GarageKeyRef",
     "GaragePeer",
