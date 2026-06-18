@@ -70,6 +70,6 @@ The agent already supports `file`-typed log sources (`stormpulse/config.py:_LOG_
 
 **Related ADRs:**
 
-- [CORE-000 Internal module architecture](000-internal-module-architecture.md) — the layer topology the new `stormpulse.init.mode` module slots into.
-- [CORE-001 Fitness functions](001-fitness-functions.md) — `make fitness` keeps the layer topology kept after the additions.
-- [CORE-002 Release pipeline](002-release-and-ci-cd-pipeline.md) — the 0.1.7 entry in `CHANGELOG.md` ships this work.
+- [CORE-000 Internal module architecture](000-internal-module-architecture.md) - the layer topology the new `stormpulse.init.mode` module slots into.
+- [CORE-001 Fitness functions](001-fitness-functions.md) - `make fitness` verifies the layer topology holds after the additions.
+- [CORE-002 Release pipeline](002-release-and-ci-cd-pipeline.md) - the 0.1.7 entry in `CHANGELOG.md` ships this work.

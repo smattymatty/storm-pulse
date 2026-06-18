@@ -5,7 +5,7 @@ before the handler factory runs) and the factory plumbing (validated
 params reach the factory with defaults merged in).
 
 Tests inject fake factories into ``agent.long_running_factories``
-directly — the same seam production uses — rather than monkey-patching
+directly - the same seam production uses - rather than monkey-patching
 ``_make_long_running_handler``. That keeps test setup symmetrical with
 how a real Feature publishes its handlers.
 """

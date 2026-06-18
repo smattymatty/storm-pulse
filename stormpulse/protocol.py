@@ -204,7 +204,7 @@ class RegisterPayload:
     # unsealed. None when sealed, when the agent predates the marker,
     # or when an operator removed the seal file by hand without going
     # through the CLI. Dashboard uses this for "unsealed for X" displays
-    # and for the "unsealed > N hours" pager trigger — the agent owns
+    # and for the "unsealed > N hours" pager trigger - the agent owns
     # the authoritative wall-clock so the dashboard doesn't have to
     # guess from its own register history.
     unsealed_since: str | None = None

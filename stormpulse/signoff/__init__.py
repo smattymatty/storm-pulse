@@ -7,7 +7,7 @@ trades the whitelist's defense-in-depth for a single shell-anything
 entry the dashboard owns end-to-end.
 
 The seal closes that hatch. Per ADR CORE-004 the agent **ships
-sealed by default** — the seal file is created at ``stormpulse init``
+sealed by default** - the seal file is created at ``stormpulse init``
 time so a freshly-installed agent advertises the pre-0.1.8 capability
 set. The operator runs ``stormpulse signoff unseal`` (with an
 interactive hostname-typing confirmation) to open the hatch for
@@ -21,8 +21,8 @@ visible everywhere the operator looks.
 
 State is two files in the agent state directory:
 
-- ``signoff.sealed`` — present iff the agent is sealed.
-- ``signoff.unsealed_at`` — present iff the agent is unsealed, contains the
+- ``signoff.sealed`` - present iff the agent is sealed.
+- ``signoff.unsealed_at`` - present iff the agent is unsealed, contains the
   ISO-8601 UTC timestamp at which it became unsealed. Used for "unsealed
   for X" displays and audit. Absent during the sealed state, and absent
   in the rare hand-edited case where an operator removed the seal file
@@ -134,7 +134,7 @@ def state_dir_from_db_path(db_path: Path) -> Path:
 def format_unsealed_duration(unsealed_since: datetime | None) -> str:
     """Render an unsealed-since timestamp as ``"3h 12m"`` / ``"4d 7h"``.
 
-    Returns ``"unknown"`` when ``unsealed_since`` is None — the caller
+    Returns ``"unknown"`` when ``unsealed_since`` is None - the caller
     is unsealed but the marker file is missing.
     """
     if unsealed_since is None:

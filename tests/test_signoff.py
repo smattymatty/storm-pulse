@@ -1,4 +1,4 @@
-"""Tests for the sign-off seal — file-presence state, registry gating, CLI."""
+"""Tests for the sign-off seal - file-presence state, registry gating, CLI."""
 
 from __future__ import annotations
 
@@ -415,7 +415,7 @@ def test_init_step_seals_a_freshly_installed_agent(tmp_path: Path) -> None:
 
 def test_init_step_is_registered_with_the_orchestrator() -> None:
     """Importing the module wires its step into the init registry."""
-    import stormpulse.signoff.init  # noqa: F401 — side-effect import
+    import stormpulse.signoff.init  # noqa: F401 - side-effect import
     from stormpulse.init.registry import registered_init_steps
     from stormpulse.signoff.init import signoff_init_step
 

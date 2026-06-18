@@ -114,7 +114,7 @@ async def test_metrics_loop_survives_collection_error(
 
 
 # ---------------------------------------------------------------------------
-# Garage loop (disabled case gated at reconnect — see TestGarageLiveGate)
+# Garage loop (disabled case gated at reconnect - see TestGarageLiveGate)
 # ---------------------------------------------------------------------------
 
 

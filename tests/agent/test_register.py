@@ -112,7 +112,7 @@ async def test_send_register_advertises_unsealed_since(
 
     The dashboard uses this to render "unsealed for X" and to fire its
     "unsealed > N hours" pager without having to guess from its own
-    register-history table — the agent owns the authoritative timestamp.
+    register-history table - the agent owns the authoritative timestamp.
     """
     from datetime import datetime
 

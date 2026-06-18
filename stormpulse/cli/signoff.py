@@ -64,7 +64,7 @@ def cmd_signoff_status(args: argparse.Namespace) -> None:
         "shell to this agent until you re-seal.",
     )
     print(
-        "  Persistence implanted during the unsealed window survives reseal — "
+        "  Persistence implanted during the unsealed window survives reseal - "
         "treat this window as elevated risk.",
     )
     print("  Reseal with: stormpulse signoff seal")
@@ -86,7 +86,7 @@ def cmd_signoff_unseal(args: argparse.Namespace) -> None:
     """Unseal the agent after explicit operator confirmation.
 
     Requires the operator to type this host's hostname back at the
-    prompt — pasting a one-liner from a doc shouldn't unseal anything.
+    prompt - pasting a one-liner from a doc shouldn't unseal anything.
     For automation use ``--confirm-hostname HOSTNAME`` to skip the
     interactive prompt; tests and CI pipelines should use that path
     explicitly so the friction is visible in the script.

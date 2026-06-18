@@ -7,11 +7,11 @@ clear cause rather than a missing-feature mystery.
 
 Reasons (closed set):
 
-- ``garage_version_unsupported`` — the configured garage CLI does not
+- ``garage_version_unsupported`` - the configured garage CLI does not
   report v2.x.
-- ``rpc_secret_unauthenticated`` — ``garage status`` exited non-zero
+- ``rpc_secret_unauthenticated`` - ``garage status`` exited non-zero
   with an auth-shaped stderr.
-- ``garage_unreachable`` — docker, the Garage container, or the CLI
+- ``garage_unreachable`` - docker, the Garage container, or the CLI
   is not callable. Covers the FileNotFoundError, TimeoutExpired, and
   non-auth non-zero exit cases.
 

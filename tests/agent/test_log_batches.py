@@ -28,7 +28,7 @@ def test_prune_stale_drops_entries_past_timeout() -> None:
     tracker.add("old", "g", 1)
     tracker.add("fresh", "g", 2)
 
-    # Pretend we're checking 20 s in the future — the entries were added at
+    # Pretend we're checking 20 s in the future - the entries were added at
     # current monotonic, so both are 20 s old then. The fresh entry is
     # within the second prune window we set up below.
     now = time.monotonic() + 20
