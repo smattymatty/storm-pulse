@@ -99,6 +99,7 @@ class CommandDef:
     description: str = ""
     sensitive_output: bool = False
     long_running: bool = False
+    read_only: bool = False  # no state mutation; skips the garage post-success refresh hook
     params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
 
 

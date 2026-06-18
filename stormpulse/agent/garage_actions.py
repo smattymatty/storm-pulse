@@ -130,6 +130,11 @@ def post_success_hook(
     if cmd_def.group != "garage":
         return None
 
+    # Read-only garage commands (long-running provenance/stats reads) mutate
+    # nothing, so a refresh+push after them is pure waste and floods state pushes.
+    if cmd_def.read_only:
+        return None
+
     # set-quota is the recompute's OWN action (BUCKETS-006). Refreshing + pushing
     # metrics after it re-enters the website recompute, which dispatches more
     # set-quotas, a runaway feedback loop (each set_quota fans out into more).
