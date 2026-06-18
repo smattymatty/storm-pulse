@@ -815,6 +815,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         "garage_get_key_buckets": CommandDef(
             group="garage",
             command=["garage_get_key_buckets"],  # internal - JobManager
+            read_only=True,
             timeout=30,
             description=(
                 "Read-only (BUCKETS-013): return the buckets an account key "
@@ -835,6 +836,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         "garage_get_bucket_owners": CommandDef(
             group="garage",
             command=["garage_get_bucket_owners"],  # internal - JobManager
+            read_only=True,
             timeout=30,
             description=(
                 "Read-only (BUCKETS-013): return the access keys that own a "
@@ -913,6 +915,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         "garage_walk_bucket_stats": CommandDef(
             group="garage",
             command=["garage_walk_bucket_stats"],  # internal - handled by JobManager
+            read_only=True,
             timeout=120,  # 100k objects ÷ 1000/page = 100 pages; ~1s/page p95
             description=(
                 "Walk a bucket on the local Garage S3 endpoint to compute "

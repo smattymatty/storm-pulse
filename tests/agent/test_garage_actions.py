@@ -130,6 +130,27 @@ def test_post_success_hook_none_for_set_quota(
     assert post_success_hook(ag, cmd_def, "garage_bucket_set_quota") is None
 
 
+def test_post_success_hook_none_for_read_only(
+    agent_with_garage: Callable[..., Agent],
+) -> None:
+    # Read-only garage long-runners (get_bucket_owners, get_key_buckets,
+    # walk_bucket_stats) mutate nothing; the refresh+push hook must skip them or a
+    # polling dashboard floods state pushes. A mutating garage long-runner still gets one.
+    read_cmd = CommandDef(
+        group="garage",
+        command=["garage_get_bucket_owners"],
+        timeout=30,
+        long_running=True,
+        read_only=True,
+    )
+    mutate_cmd = CommandDef(
+        group="garage", command=["/garage"], timeout=60, long_running=True
+    )
+    ag = agent_with_garage()
+    assert post_success_hook(ag, read_cmd, "garage_get_bucket_owners") is None
+    assert post_success_hook(ag, mutate_cmd, "garage_bucket_clear") is not None
+
+
 @pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_metrics")
 @patch("stormpulse.agent.garage_actions.collect_garage_state")
