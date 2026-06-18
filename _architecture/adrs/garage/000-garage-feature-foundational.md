@@ -9,7 +9,7 @@ adr:
 
 # ADR: Garage Feature foundational decisions
 
-**Status:** Accepted. The original ZFS substrate precondition was removed once durability moved one layer up into `garage.toml` via `metadata_fsync = true` and `metadata_auto_snapshot_interval` (the alpha provider's LVM-ext4 topology makes ZFS-on-clean-disk unworkable). That responsibility is now the 002-garage playbook's sign-off concern, not the agent's startup gate.
+**Status:** Accepted. The original ZFS substrate precondition was removed once durability moved one layer up into `garage.toml` via `metadata_fsync = true` and `metadata_auto_snapshot_interval` (the alpha provider's LVM-ext4 topology makes ZFS-on-clean-disk unworkable). That responsibility is now the 002-garage playbook's sign-off concern, not the agent's startup gate. 2026-06-18: CORE-005 relocated the `disabled_reason` wire field from `GarageState` into the `integrations` envelope; the self-disable semantics here are unchanged.
 
 `stormpulse/garage/` is the Feature module the agent uses to operate Garage on a Storm box. Per [CORE-000](../core/000-internal-module-architecture.md), Features layer.
 
