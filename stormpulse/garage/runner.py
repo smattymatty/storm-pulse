@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 
 # Per-step subprocess timeout. Garage CLI calls are typically <1s; the
 # generous bound covers cluster-load spikes without letting a hung call

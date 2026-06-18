@@ -16,7 +16,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from stormpulse.agent import Agent, dispatch, garage_actions
-from tests.helpers import FAKE_METRICS, make_fake_garage_state, sign_command_request
+from tests.helpers import (
+    FAKE_METRICS,
+    get_garage_state,
+    make_fake_garage_state,
+    sign_command_request,
+)
 
 
 @pytest.mark.asyncio
@@ -44,7 +49,7 @@ async def test_garage_refresh_command_success(
     assert result_env["type"] == "command.result"
     assert result_env["payload"]["success"] is True
     assert metrics_env["type"] == "metrics.push"
-    assert ag.garage_state is fake_state
+    assert get_garage_state(ag) is fake_state
 
 
 @pytest.mark.asyncio

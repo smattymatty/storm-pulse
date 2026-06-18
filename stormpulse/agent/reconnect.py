@@ -119,8 +119,11 @@ async def _run_session(
             tg.create_task(loops.heartbeat_loop(agent, ws))
             tg.create_task(loops.metrics_loop(agent, ws))
             tg.create_task(dispatch.receive_loop(agent, ws))
-            if agent.garage_live:
-                tg.create_task(loops.garage_loop(agent, ws))
+            # One refresh loop per live Integration that collects periodic state
+            # (CORE-005). caddy declares no collect_state, so no loop spins up.
+            for integ_id, rt in agent.integrations.items():
+                if rt.status == "live" and rt.descriptor.collect_state is not None:
+                    tg.create_task(loops.integration_state_loop(agent, ws, integ_id))
             tg.create_task(signoff_nag_loop(agent, ws))
             tg.create_task(signoff_state_push_loop(agent, ws))
             for group_name in agent.shippers:

@@ -31,13 +31,13 @@ import ssl
 
 from stormpulse.agent import reconnect
 from stormpulse.agent.bootstrap import build_agent_dependencies
+from stormpulse.agent.integrations_runtime import IntegrationRuntime
 from stormpulse.agent.log_batches import PendingBatches
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
 from stormpulse.agent.ssl_context import create_ssl_context
 from stormpulse.auth import NonceStore
 from stormpulse.commands.jobs import JobManager, LongRunningFactory
 from stormpulse.config import Config
-from stormpulse.garage.state import GarageState
 from stormpulse.logging import (
     LogPositionStore,
     LogShipper,
@@ -87,13 +87,9 @@ class Agent:
         )
         self.shippers: dict[str, LogShipper] = deps.shippers
         self.streaming_tailers: list[StreamingDockerTailer] = deps.streaming_tailers
-        # ADR GARAGE-000: bootstrap publishes garage_live; runtime reads it.
-        self.garage_live: bool = deps.garage_live
-        self.garage_state: GarageState | None = (
-            GarageState.disabled(deps.garage_disabled_reason)
-            if deps.garage_disabled_reason is not None
-            else None
-        )
+        # CORE-005: one runtime per configured Integration, keyed by id. The
+        # generic heir of the old garage_live/garage_state pair.
+        self.integrations: dict[str, IntegrationRuntime] = deps.integrations
         self.pending_batches = PendingBatches()
         # One JobManager per active connection. Recreated on reconnect;
         # jobs do not survive across connections.

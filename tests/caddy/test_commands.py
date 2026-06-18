@@ -10,11 +10,11 @@ from stormpulse.caddy.commands import (
     BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC,
     build_caddy_commands,
 )
+from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.registry import (
     ParamValidationError,
     validate_params,
 )
-from stormpulse.config import CaddyConfig
 
 
 def _make_caddy_config() -> CaddyConfig:

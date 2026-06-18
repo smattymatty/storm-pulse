@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.delete_key import (
     make_delete_key_handler,
     run_delete_key,

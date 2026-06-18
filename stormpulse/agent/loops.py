@@ -1,4 +1,4 @@
-"""Periodic per-connection task bodies (heartbeat, metrics, garage, log shipping) plus shared ``sleep_or_shutdown``."""
+"""Periodic per-connection task bodies (heartbeat, metrics, integration state, log shipping) plus shared ``sleep_or_shutdown``."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
+from stormpulse.agent.integrations_runtime import build_integrations_payload
 from stormpulse.garage.bucket_resolver import BucketIdResolver
-from stormpulse.garage.state import collect_garage_state
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
     make_heartbeat,
@@ -57,8 +57,8 @@ async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
     while not agent.shutdown.is_set():
         try:
             metrics = await asyncio.to_thread(collect_metrics, agent.config)
-            garage_dict = agent.garage_state.to_dict() if agent.garage_state else None
-            envelope = make_metrics_push(agent_id, metrics, garage=garage_dict)
+            integrations = build_integrations_payload(agent.integrations) or None
+            envelope = make_metrics_push(agent_id, metrics, integrations=integrations)
             await ws.send(envelope.to_json())
             logger.debug("Sent metrics push %s", envelope.id)
         except ConnectionClosed:
@@ -69,19 +69,32 @@ async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
             return
 
 
-async def garage_loop(agent: Agent, ws: ClientConnection) -> None:
-    """Refresh Garage state at the configured interval. Gated by ``garage_live``."""
-    gc = agent.config.garage
-    assert gc is not None
-    interval = gc.state_push_interval_seconds
+async def integration_state_loop(
+    agent: Agent, ws: ClientConnection, integ_id: str
+) -> None:
+    """Refresh one live Integration's state at its configured interval (CORE-005).
+
+    Generic heir of ``garage_loop``: it calls the Integration's own
+    ``collect_state`` and stores the result on its runtime, where ``metrics_loop``
+    bundles it into the wire. Spun up only for Integrations that declare
+    ``collect_state`` (see reconnect), so caddy never enters here.
+    """
+    rt = agent.integrations[integ_id]
+    desc = rt.descriptor
+    assert desc.collect_state is not None
+    interval = (
+        desc.state_push_interval(rt.config)
+        if desc.state_push_interval is not None
+        else agent.config.metrics.push_interval_seconds
+    )
     while not agent.shutdown.is_set():
         try:
-            state = await asyncio.to_thread(collect_garage_state, gc)
+            state = await asyncio.to_thread(desc.collect_state, rt.config)
             if state is not None:
-                agent.garage_state = state
-                logger.debug("Refreshed garage state")
+                rt.state = state
+                logger.debug("Refreshed %s state", integ_id)
         except Exception:
-            logger.warning("Failed to collect garage state", exc_info=True)
+            logger.warning("Failed to collect %s state", integ_id, exc_info=True)
         if await sleep_or_shutdown(agent.shutdown, interval):
             return
 
@@ -97,10 +110,13 @@ async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
 
             started = time.monotonic()
             # Build the (key_id, name) -> bucket_id map from the latest
-            # garage-state snapshot the garage_loop published (BUCKETS-015).
-            # garage_state is reassigned atomically, so the captured snapshot
-            # is a consistent, immutable view for this tick.
-            resolver = BucketIdResolver.from_state(agent.garage_state)
+            # garage-state snapshot the refresh loop published (BUCKETS-015).
+            # Log enrichment is inherently garage-specific, so this names the
+            # garage runtime directly; rt.state is reassigned atomically, so the
+            # captured snapshot is a consistent, immutable view for this tick.
+            garage_rt = agent.integrations.get("garage")
+            garage_state = garage_rt.state if garage_rt is not None else None
+            resolver = BucketIdResolver.from_state(garage_state)
             batch = await asyncio.to_thread(shipper.collect_batch, resolver)
             if batch is not None:
                 batch_id = str(uuid.uuid4())

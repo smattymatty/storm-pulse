@@ -12,17 +12,18 @@ from stormpulse.auth import (
     generate_nonce,
     sign,
 )
+from stormpulse.caddy.config import CaddyConfig
 from stormpulse.config import (
     AgentConfig,
     AuthConfig,
     Config,
     DashboardConfig,
-    GarageConfig,
     MetricsConfig,
     ProjectConfig,
     StorageConfig,
     TlsConfig,
 )
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.state import GarageState
 from stormpulse.protocol import (
     CommandResultPayload,
@@ -78,21 +79,70 @@ def make_fake_garage_state() -> GarageState:
     )
 
 
+def set_garage_state(agent: object, state: object) -> None:
+    """Set the live garage Integration runtime's state (CORE-005 generic runtime)."""
+    agent.integrations["garage"].state = state  # type: ignore[attr-defined]
+
+
+def get_garage_state(agent: object) -> object:
+    """Return the garage Integration runtime's state, or None if garage is absent."""
+    rt = agent.integrations.get("garage")  # type: ignore[attr-defined]
+    return rt.state if rt is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def garage_raw_table(garage: GarageConfig) -> dict[str, object]:
+    """Serialize a GarageConfig back into the raw [garage] table bootstrap parses.
+
+    CORE-005: Config holds raw integration tables keyed by id, and each
+    Integration parses its own. Tests still build a typed GarageConfig for
+    ergonomics; this round-trips it into the table the bootstrap loop expects.
+    """
+    table: dict[str, object] = {
+        "enabled": garage.enabled,
+        "container_name": garage.container_name,
+        "garage_binary": garage.garage_binary,
+        "docker_binary": garage.docker_binary,
+        "config_path": str(garage.config_path),
+        "state_push_interval_seconds": garage.state_push_interval_seconds,
+    }
+    if garage.admin_url:
+        table["admin_url"] = garage.admin_url
+    if garage.admin_token:
+        table["admin_token"] = garage.admin_token
+    return table
+
+
+def caddy_raw_table(caddy: CaddyConfig) -> dict[str, object]:
+    """Serialize a CaddyConfig back into the raw [caddy] table bootstrap parses."""
+    return {
+        "enabled": caddy.enabled,
+        "admin_url": caddy.admin_url,
+        "main_caddyfile": str(caddy.main_caddyfile),
+        "drop_in_path": str(caddy.drop_in_path),
+    }
 
 
 def build_config(
     tmp_path: Path,
     port: int = 0,
     garage: GarageConfig | None = None,
+    integrations: dict[str, dict[str, object]] | None = None,
 ) -> Config:
     """Build a Config pointing at ws://localhost:{port}/ws/ with fast intervals.
 
     ``port=0`` is fine for unit tests that don't actually connect - the URL
-    is only consulted by the websocket client, which the tests mock.
+    is only consulted by the websocket client, which the tests mock. A typed
+    ``garage`` is round-tripped into the raw integrations table; extra raw
+    sections (e.g. caddy) can be passed via ``integrations``.
     """
+    integ: dict[str, dict[str, object]] = dict(integrations or {})
+    if garage is not None:
+        integ["garage"] = garage_raw_table(garage)
     return Config(
         agent=AgentConfig(id=AGENT_ID, pulse_token=PULSE_TOKEN),
         dashboard=DashboardConfig(
@@ -114,7 +164,7 @@ def build_config(
             docker_service_name="web",
         ),
         storage=StorageConfig(db_path=tmp_path / "test.db"),
-        garage=garage,
+        integrations=integ,
     )
 
 

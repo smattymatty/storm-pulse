@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from tests.garage._fake_garage import FakeGarage
 
 

@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
-from stormpulse.config import CaddyConfig
 
 logger = logging.getLogger(__name__)
 

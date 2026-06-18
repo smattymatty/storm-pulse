@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
-from stormpulse.caddy import (
-    build_caddy_commands,
-    verify_drop_in_imported,
+import stormpulse.agent.integrations_manifest  # noqa: F401  (registers in-tree Integrations)
+from stormpulse.agent.integrations_runtime import (
+    STATUS_DISABLED_CHOICE,
+    STATUS_DISABLED_ERROR,
+    STATUS_LIVE,
+    IntegrationRuntime,
 )
-from stormpulse.caddy import long_running_factories as caddy_long_running_factories
 from stormpulse.commands import build_registry
 from stormpulse.commands.jobs import LongRunningFactory
 from stormpulse.config import CommandDef, Config, ConfigError
-from stormpulse.garage import build_garage_commands
-from stormpulse.garage import long_running_factories as garage_long_running_factories
-from stormpulse.garage.preconditions import (
-    run_preconditions as run_garage_preconditions,
-)
+from stormpulse.integrations import Integration, registered_integrations
 from stormpulse.logging import (
     DockerTailer,
     LogPositionStore,
@@ -25,17 +24,46 @@ from stormpulse.logging import (
     StreamingDockerTailer,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass(frozen=True, slots=True)
 class AgentDependencies:
-    """Per-process runtime built once at startup. ``garage_live`` gates runtime; ``garage_disabled_reason`` seeds the disabled sentinel (ADR GARAGE-000)."""
+    """Per-process runtime built once at startup. ``integrations`` carries one IntegrationRuntime per configured Integration (CORE-005)."""
 
     registry: dict[str, CommandDef]
     long_running_factories: dict[str, LongRunningFactory]
     shippers: dict[str, LogShipper]
     streaming_tailers: list[StreamingDockerTailer]
-    garage_live: bool = False
-    garage_disabled_reason: str | None = None
+    integrations: dict[str, IntegrationRuntime]
+
+
+def _resolve_integration(
+    integ: Integration,
+    raw: dict[str, object],
+    commands: dict[str, CommandDef],
+    long_running: dict[str, LongRunningFactory],
+) -> IntegrationRuntime:
+    """Parse, gate, and (if live) register one Integration's commands.
+
+    The fatal/soft line lives here (CORE-005 decision 5): a config error, a
+    disabled flag, or a failed precondition disables this one Integration with a
+    status the wire reports; the core agent and every sibling stay up.
+    """
+    try:
+        ic = integ.parse_config(raw)
+    except ConfigError as exc:
+        return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, str(exc), None, integ)
+    if not integ.enabled(ic):
+        return IntegrationRuntime(integ.id, STATUS_DISABLED_CHOICE, None, ic, integ)
+    reason = integ.preconditions(ic) if integ.preconditions is not None else None
+    if reason is not None:
+        return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, ic, integ)
+    if integ.commands is not None:
+        commands.update(integ.commands(ic))
+    if integ.long_running is not None:
+        long_running.update(integ.long_running(ic))
+    return IntegrationRuntime(integ.id, STATUS_LIVE, None, ic, integ)
 
 
 def build_agent_dependencies(
@@ -44,27 +72,33 @@ def build_agent_dependencies(
     signoff_sealed: bool,
     log_position_store: LogPositionStore | None,
 ) -> AgentDependencies:
-    """Assemble the registry, factories, and log shippers an Agent will use. Raises ``ConfigError`` on Caddy drop-in misconfig."""
+    """Assemble the registry, factories, log shippers, and Integration runtimes an Agent will use.
+
+    Loops the registered Integrations instead of hand-wiring each by name. An
+    Integration absent from config does not appear; a present one resolves to a
+    live / disabled_error / disabled_choice runtime. No Integration failure
+    aborts boot (CORE-005 decision 5).
+    """
     commands = dict(config.commands)
     long_running: dict[str, LongRunningFactory] = {}
-    garage_live = False
-    garage_disabled_reason: str | None = None
-    if config.garage and config.garage.enabled:
-        # ADR GARAGE-000: preconditions gate registration; failure rides to dashboard.
-        garage_disabled_reason = run_garage_preconditions(config.garage)
-        if garage_disabled_reason is None:
-            garage_live = True
-            commands.update(build_garage_commands(config.garage))
-            long_running.update(garage_long_running_factories(config.garage))
-    if config.caddy and config.caddy.enabled:
-        import_err = verify_drop_in_imported(
-            config.caddy.main_caddyfile,
-            config.caddy.drop_in_path,
-        )
-        if import_err:
-            raise ConfigError(f"Caddy configuration invalid: {import_err}")
-        commands.update(build_caddy_commands(config.caddy))
-        long_running.update(caddy_long_running_factories(config.caddy))
+    integrations: dict[str, IntegrationRuntime] = {}
+    for integ in registered_integrations():
+        raw = config.integrations.get(integ.id)
+        if raw is None:
+            continue
+        rt = _resolve_integration(integ, raw, commands, long_running)
+        integrations[integ.id] = rt
+        if rt.status == STATUS_DISABLED_ERROR:
+            logger.warning(
+                "Integration %r disabled (error): %s. The agent and other "
+                "integrations stay up; fix and restart to re-enable.",
+                rt.id, rt.disabled_reason,
+            )
+        elif rt.status == STATUS_DISABLED_CHOICE:
+            logger.info("Integration %r present but disabled by config.", rt.id)
+        else:
+            logger.info("Integration %r live.", rt.id)
+
     registry = build_registry(
         commands,
         config.agent.disabled_commands,
@@ -93,6 +127,5 @@ def build_agent_dependencies(
         long_running_factories=long_running,
         shippers=shippers,
         streaming_tailers=streaming_tailers,
-        garage_live=garage_live,
-        garage_disabled_reason=garage_disabled_reason,
+        integrations=integrations,
     )

@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.get_bucket_owners import (
     make_get_bucket_owners_handler,
     run_get_bucket_owners,

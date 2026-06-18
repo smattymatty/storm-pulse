@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.provision_account_key import (
     make_provision_account_key_handler,
     run_provision_account_key,

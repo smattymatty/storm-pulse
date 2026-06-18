@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from stormpulse.config import CommandDef, ConfigError, load_config
+from stormpulse.garage.config import GarageConfig, parse_garage_config
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -1130,12 +1131,17 @@ state_push_interval_seconds = 300
 """
 
 
+# CORE-005: Foundation only captures the raw [garage] table into
+# config.integrations; the typed parse/validation lives in garage/config.py.
+def _parse_garage(write_config: Callable[[str], Path], toml: str) -> GarageConfig:
+    return parse_garage_config(load_config(write_config(toml)).integrations["garage"])
+
+
 def test_garage_section_parses(write_config: Callable[[str], Path]) -> None:
-    cfg = load_config(write_config(MINIMAL_VALID + _VALID_GARAGE))
-    assert cfg.garage is not None
-    assert cfg.garage.enabled is True
-    assert cfg.garage.container_name == "garaged"
-    assert cfg.garage.state_push_interval_seconds == 300.0
+    gc = _parse_garage(write_config, MINIMAL_VALID + _VALID_GARAGE)
+    assert gc.enabled is True
+    assert gc.container_name == "garaged"
+    assert gc.state_push_interval_seconds == 300.0
 
 
 def test_garage_admin_token_file_is_read_and_stripped(
@@ -1147,10 +1153,9 @@ def test_garage_admin_token_file_is_read_and_stripped(
         'admin_url = "http://127.0.0.1:3903"\n'
         f'admin_token_file = "{tok}"\n'
     )
-    cfg = load_config(write_config(toml))
-    assert cfg.garage is not None
-    assert cfg.garage.admin_url == "http://127.0.0.1:3903"
-    assert cfg.garage.admin_token == "s3cr3t"
+    gc = _parse_garage(write_config, toml)
+    assert gc.admin_url == "http://127.0.0.1:3903"
+    assert gc.admin_token == "s3cr3t"
 
 
 def test_garage_admin_inline_token(write_config: Callable[[str], Path]) -> None:
@@ -1158,9 +1163,8 @@ def test_garage_admin_inline_token(write_config: Callable[[str], Path]) -> None:
         'admin_url = "http://127.0.0.1:3903"\n'
         'admin_token = "inline-tok"\n'
     )
-    cfg = load_config(write_config(toml))
-    assert cfg.garage is not None
-    assert cfg.garage.admin_token == "inline-tok"
+    gc = _parse_garage(write_config, toml)
+    assert gc.admin_token == "inline-tok"
 
 
 def test_garage_unreadable_admin_token_file_degrades_not_crashes(
@@ -1174,21 +1178,25 @@ def test_garage_unreadable_admin_token_file_degrades_not_crashes(
         'admin_url = "http://127.0.0.1:3903"\n'
         f'admin_token_file = "{missing}"\n'
     )
-    cfg = load_config(write_config(toml))  # must NOT raise
-    assert cfg.garage is not None
-    assert cfg.garage.admin_url == "http://127.0.0.1:3903"
-    assert cfg.garage.admin_token == ""
+    gc = _parse_garage(write_config, toml)  # must NOT raise
+    assert gc.admin_url == "http://127.0.0.1:3903"
+    assert gc.admin_token == ""
 
 
-def test_garage_section_absent_is_none(write_config: Callable[[str], Path]) -> None:
+def test_garage_section_absent_not_in_integrations(
+    write_config: Callable[[str], Path],
+) -> None:
     cfg = load_config(write_config(MINIMAL_VALID))
-    assert cfg.garage is None
+    assert "garage" not in cfg.integrations
 
 
-def test_garage_must_be_table(write_config: Callable[[str], Path]) -> None:
+def test_garage_non_table_is_ignored(write_config: Callable[[str], Path]) -> None:
+    # CORE-005: Foundation no longer validates integration sections. A non-table
+    # ``garage`` value is simply not captured as an integration (no registered
+    # integration claims it), rather than raising at load time.
     toml = 'garage = "oops"\n' + MINIMAL_VALID
-    with pytest.raises(ConfigError, match=r"\[garage\] must be a table"):
-        load_config(write_config(toml))
+    cfg = load_config(write_config(toml))
+    assert "garage" not in cfg.integrations
 
 
 def test_garage_empty_container_name(write_config: Callable[[str], Path]) -> None:
@@ -1197,7 +1205,7 @@ def test_garage_empty_container_name(write_config: Callable[[str], Path]) -> Non
         'container_name = ""',
     )
     with pytest.raises(ConfigError, match="container_name.*must not be empty"):
-        load_config(write_config(toml))
+        _parse_garage(write_config, toml)
 
 
 def test_garage_empty_binary(write_config: Callable[[str], Path]) -> None:
@@ -1206,7 +1214,7 @@ def test_garage_empty_binary(write_config: Callable[[str], Path]) -> None:
         'garage_binary = ""',
     )
     with pytest.raises(ConfigError, match="garage_binary.*must not be empty"):
-        load_config(write_config(toml))
+        _parse_garage(write_config, toml)
 
 
 def test_garage_docker_binary_must_be_absolute(
@@ -1217,7 +1225,7 @@ def test_garage_docker_binary_must_be_absolute(
         'docker_binary = "docker"',
     )
     with pytest.raises(ConfigError, match="docker_binary.*absolute path"):
-        load_config(write_config(toml))
+        _parse_garage(write_config, toml)
 
 
 def test_garage_interval_must_be_positive(write_config: Callable[[str], Path]) -> None:
@@ -1226,7 +1234,7 @@ def test_garage_interval_must_be_positive(write_config: Callable[[str], Path]) -
         "state_push_interval_seconds = 0",
     )
     with pytest.raises(ConfigError, match="state_push_interval_seconds.*positive"):
-        load_config(write_config(toml))
+        _parse_garage(write_config, toml)
 
 
 # ---------------------------------------------------------------------------

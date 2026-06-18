@@ -11,7 +11,7 @@ import pytest
 
 from stormpulse.agent import Agent, loops
 from stormpulse.protocol import MetricsPayload
-from tests.helpers import FAKE_METRICS, make_fake_garage_state
+from tests.helpers import FAKE_METRICS, get_garage_state, make_fake_garage_state
 
 # ---------------------------------------------------------------------------
 # Heartbeat loop
@@ -114,13 +114,13 @@ async def test_metrics_loop_survives_collection_error(
 
 
 # ---------------------------------------------------------------------------
-# Garage loop (disabled case gated at reconnect - see TestGarageLiveGate)
+# Integration state loop (disabled case gated at reconnect - see TestGarageLiveGate)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.agent.loops.collect_garage_state")
-async def test_garage_loop_updates_state(
+@patch("stormpulse.garage.state.collect_garage_state")
+async def test_integration_state_loop_updates_state(
     mock_collect: MagicMock,
     agent_with_garage: Callable[..., Agent],
     shutdown: asyncio.Event,
@@ -134,6 +134,8 @@ async def test_garage_loop_updates_state(
         await asyncio.sleep(0.12)
         shutdown.set()
 
-    await asyncio.gather(loops.garage_loop(ag, ws), stop_after_delay())
-    assert ag.garage_state is fake
+    await asyncio.gather(
+        loops.integration_state_loop(ag, ws, "garage"), stop_after_delay()
+    )
+    assert get_garage_state(ag) is fake
     assert mock_collect.call_count >= 1

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.jobs import LongRunningFactory
-from stormpulse.config import CaddyConfig, CommandDef, ParamDef
+from stormpulse.config import CommandDef, ParamDef
 
 BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC = "buckets_custom_domain_caddy_sync"
 

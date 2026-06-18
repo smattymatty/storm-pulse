@@ -71,7 +71,7 @@ import re
 from collections import deque
 from dataclasses import dataclass, field
 
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 
 _S3_BUCKET_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 _PERM_FLAGS = frozenset({"--read", "--write", "--owner"})

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.state import GarageState, collect_garage_state
 
 logger = logging.getLogger(__name__)

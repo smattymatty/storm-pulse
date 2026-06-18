@@ -36,7 +36,7 @@ import logging
 import subprocess
 import tomllib
 
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 
 logger = logging.getLogger(__name__)
 

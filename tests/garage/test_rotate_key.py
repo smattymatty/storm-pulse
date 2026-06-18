@@ -23,8 +23,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
-from stormpulse.garage import rotate_key
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.rotate_key import (
     make_rotate_customer_key_handler,
     run_rotate_customer_key,

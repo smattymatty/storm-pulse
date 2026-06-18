@@ -108,7 +108,9 @@ class MetricsPayload:
     load_avg_5m: float
     uptime_seconds: float
     containers: list[ContainerInfo]
-    garage: dict[str, Any] | None = None
+    # CORE-005: per-Integration reports keyed by id (status/disabled_reason/state),
+    # replacing the old top-level ``garage`` key. Opaque to the protocol.
+    integrations: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -193,7 +195,8 @@ class RegisterPayload:
     version: str
     pulse_token: str
     commands: dict[str, Any] | None = None
-    garage: dict[str, Any] | None = None
+    # CORE-005: per-Integration reports keyed by id, replacing top-level ``garage``.
+    integrations: dict[str, Any] | None = None
     log_groups: list[str] | None = None
     system_inventory: dict[str, Any] | None = None
     # Whether the dashboard's verify-block hatch is currently disabled.
@@ -379,7 +382,7 @@ def make_register(
     version: str,
     pulse_token: str,
     commands: dict[str, Any] | None = None,
-    garage: dict[str, Any] | None = None,
+    integrations: dict[str, Any] | None = None,
     log_groups: list[str] | None = None,
     system_inventory: dict[str, Any] | None = None,
     signoff_sealed: bool | None = None,
@@ -394,7 +397,7 @@ def make_register(
                 version=version,
                 pulse_token=pulse_token,
                 commands=commands,
-                garage=garage,
+                integrations=integrations,
                 log_groups=log_groups,
                 system_inventory=system_inventory,
                 signoff_sealed=signoff_sealed,
@@ -407,12 +410,12 @@ def make_register(
 def make_metrics_push(
     agent_id: str,
     metrics: MetricsPayload,
-    garage: dict[str, Any] | None = None,
+    integrations: dict[str, Any] | None = None,
 ) -> Envelope:
     """Create a metrics.push envelope."""
     payload = asdict(metrics)
-    if garage is not None:
-        payload["garage"] = garage
+    if integrations is not None:
+        payload["integrations"] = integrations
     return _make_envelope(agent_id, MessageType.METRICS_PUSH, payload)
 
 

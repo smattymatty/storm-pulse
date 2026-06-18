@@ -883,7 +883,7 @@ def test_register_with_log_groups() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_make_metrics_push_with_garage_merges_dict() -> None:
+def test_make_metrics_push_with_integrations_merges_dict() -> None:
     from stormpulse.protocol import MetricsPayload
 
     metrics = MetricsPayload(
@@ -899,31 +899,45 @@ def test_make_metrics_push_with_garage_merges_dict() -> None:
         uptime_seconds=1.0,
         containers=[],
     )
-    garage = {"node_id": "abc", "healthy": True, "buckets": []}
-    env = make_metrics_push("agent-1", metrics, garage=garage)
-    assert env.payload["garage"] == garage
-    # Full round-trip preserves garage
+    integrations = {
+        "garage": {
+            "status": "live",
+            "disabled_reason": None,
+            "state": {"node_id": "abc", "healthy": True, "buckets": []},
+        }
+    }
+    env = make_metrics_push("agent-1", metrics, integrations=integrations)
+    assert env.payload["integrations"] == integrations
+    assert "garage" not in env.payload
+    # Full round-trip preserves integrations
     from stormpulse.protocol import Envelope
 
     round_tripped = Envelope.from_json(env.to_json())
-    assert round_tripped.payload["garage"] == garage
+    assert round_tripped.payload["integrations"] == integrations
     assert round_tripped.payload["cpu_percent"] == 1.0
 
 
-def test_make_register_with_garage_and_log_groups() -> None:
+def test_make_register_with_integrations_and_log_groups() -> None:
     from stormpulse.protocol import Envelope
 
-    garage = {"node_id": "n", "buckets": []}
+    integrations = {
+        "garage": {
+            "status": "live",
+            "disabled_reason": None,
+            "state": {"node_id": "n", "buckets": []},
+        }
+    }
     env = make_register(
         "agent-1",
         "1.0.0",
         "tok",
         commands={"git_pull": {"group": "deploy"}},
-        garage=garage,
+        integrations=integrations,
         log_groups=["storage"],
     )
     rt = Envelope.from_json(env.to_json())
-    assert rt.payload["garage"] == garage
+    assert rt.payload["integrations"] == integrations
+    assert "garage" not in rt.payload
     assert rt.payload["log_groups"] == ["storage"]
     assert rt.payload["commands"] == {"git_pull": {"group": "deploy"}}
 

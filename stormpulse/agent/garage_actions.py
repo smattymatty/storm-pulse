@@ -10,6 +10,10 @@ from typing import TYPE_CHECKING
 
 from websockets.asyncio.client import ClientConnection
 
+from stormpulse.agent.integrations_runtime import (
+    IntegrationRuntime,
+    build_integrations_payload,
+)
 from stormpulse.config import CommandDef
 from stormpulse.garage.state import collect_garage_state
 from stormpulse.metrics import collect_metrics
@@ -26,13 +30,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _live_garage(agent: Agent) -> IntegrationRuntime | None:
+    """Return the garage Integration runtime iff it is live, else None.
+
+    garage_actions is garage-specific (the garage_refresh ceremony, the
+    group=="garage" post-mutation hook), so it reaches the runtime by id.
+    """
+    rt = agent.integrations.get("garage")
+    return rt if rt is not None and rt.status == "live" else None
+
+
 async def collect_refresh_result(
     agent: Agent,
     request_id: str,
 ) -> CommandResultPayload:
-    """Collect a fresh Garage snapshot and return the payload; updates ``agent.garage_state`` on success. No wire IO."""
-    gc = agent.config.garage
-    if gc is None or not gc.enabled:
+    """Collect a fresh Garage snapshot and return the payload; updates the garage runtime state on success. No wire IO."""
+    rt = _live_garage(agent)
+    if rt is None:
         return CommandResultPayload(
             request_id=request_id,
             command="garage_refresh",
@@ -45,10 +59,10 @@ async def collect_refresh_result(
             failure_reason="not_configured",
         )
     start = time.monotonic()
-    state = await asyncio.to_thread(collect_garage_state, gc)
+    state = await asyncio.to_thread(collect_garage_state, rt.config)
     duration_ms = int((time.monotonic() - start) * 1000)
     if state is not None:
-        agent.garage_state = state
+        rt.state = state
         return CommandResultPayload(
             request_id=request_id,
             command="garage_refresh",
@@ -136,20 +150,21 @@ def post_success_hook(
 
 
 async def refresh_garage_state(agent: Agent) -> None:
-    """Collect a fresh Garage snapshot and store it on the agent."""
-    gc = agent.config.garage
-    assert gc is not None
-    state = await asyncio.to_thread(collect_garage_state, gc)
+    """Collect a fresh Garage snapshot and store it on the garage runtime."""
+    rt = _live_garage(agent)
+    if rt is None:
+        return
+    state = await asyncio.to_thread(collect_garage_state, rt.config)
     if state is not None:
-        agent.garage_state = state
+        rt.state = state
 
 
 async def build_metrics_envelope(agent: Agent) -> Envelope:
-    """Bundle host metrics + the latest Garage snapshot into a ``metrics.push``."""
+    """Bundle host metrics + the latest Integration snapshots into a ``metrics.push``."""
     metrics = await asyncio.to_thread(collect_metrics, agent.config)
-    garage_dict = agent.garage_state.to_dict() if agent.garage_state else None
+    integrations = build_integrations_payload(agent.integrations) or None
     return make_metrics_push(
         agent.config.agent.id,
         metrics,
-        garage=garage_dict,
+        integrations=integrations,
     )

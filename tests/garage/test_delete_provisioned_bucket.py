@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.delete_provisioned_bucket import (
     make_delete_provisioned_bucket_handler,
     run_delete_provisioned_bucket,

@@ -12,11 +12,10 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-import pytest
-
 from stormpulse.agent.bootstrap import build_agent_dependencies
-from stormpulse.config import CaddyConfig, ConfigError, LogGroupConfig
-from tests.helpers import build_config, build_garage_config
+from stormpulse.caddy.config import CaddyConfig
+from stormpulse.config import Config, LogGroupConfig
+from tests.helpers import build_config, build_garage_config, caddy_raw_table
 
 # Garage preconditions are patched to pass by the autouse fixture in
 # tests/conftest.py per ADR GARAGE-000.
@@ -127,7 +126,7 @@ def test_no_features_yields_empty_long_running_factories(tmp_path: Path) -> None
     assert deps.long_running_factories == {}
 
 
-def test_garage_enabled_publishes_nine_long_running_factories(tmp_path: Path) -> None:
+def test_garage_enabled_publishes_long_running_factories(tmp_path: Path) -> None:
     cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
     deps = build_agent_dependencies(
         cfg,
@@ -144,15 +143,22 @@ def test_garage_enabled_publishes_nine_long_running_factories(tmp_path: Path) ->
         "garage_provision_additional_key",
         "garage_provision_account_key",
         "garage_delete_provisioned_bucket",
+        "garage_delete_key",
+        "garage_detach_account_key",
+        "garage_attach_account_key",
+        "garage_converge_account_key_rotation",
+        "garage_snapshot_and_reap_account_key",
+        "garage_get_bucket_owners",
+        "garage_get_key_buckets",
     }
 
 
 # ---------------------------------------------------------------------------
-# Caddy fail-fast verification
+# Caddy soft-disable (CORE-005 decision 5: the bug the ADR names)
 # ---------------------------------------------------------------------------
 
 
-def _caddy_config(tmp_path: Path, *, drop_in_imported: bool) -> CaddyConfig:
+def _caddy_cfg(tmp_path: Path, *, drop_in_imported: bool) -> CaddyConfig:
     """Build a CaddyConfig pointing at a real on-disk Caddyfile.
 
     If ``drop_in_imported`` is True, the main Caddyfile contains an
@@ -171,43 +177,54 @@ def _caddy_config(tmp_path: Path, *, drop_in_imported: bool) -> CaddyConfig:
     )
 
 
-def test_caddy_missing_drop_in_import_raises_config_error(tmp_path: Path) -> None:
-    caddy = _caddy_config(tmp_path, drop_in_imported=False)
-    cfg = replace(build_config(tmp_path), caddy=caddy)
-    with pytest.raises(ConfigError, match="Caddy configuration invalid"):
-        build_agent_dependencies(
-            cfg,
-            signoff_sealed=False,
-            log_position_store=None,
-        )
+def _config_with_caddy(tmp_path: Path, caddy: CaddyConfig) -> Config:
+    return build_config(tmp_path, integrations={"caddy": caddy_raw_table(caddy)})
 
 
-def test_caddy_imported_drop_in_succeeds(tmp_path: Path) -> None:
-    caddy = _caddy_config(tmp_path, drop_in_imported=True)
-    cfg = replace(build_config(tmp_path), caddy=caddy)
+def test_caddy_missing_drop_in_import_soft_disables(tmp_path: Path) -> None:
+    # CORE-005: a missing import directive disables caddy alone, it does NOT
+    # raise/abort boot. The reason rides as disabled_error and no command merges.
+    caddy = _caddy_cfg(tmp_path, drop_in_imported=False)
+    cfg = _config_with_caddy(tmp_path, caddy)
     deps = build_agent_dependencies(
         cfg,
         signoff_sealed=False,
         log_position_store=None,
     )
+    rt = deps.integrations["caddy"]
+    assert rt.status == "disabled_error"
+    assert rt.disabled_reason is not None
+    assert "buckets_custom_domain_caddy_sync" not in deps.registry
+
+
+def test_caddy_imported_drop_in_succeeds(tmp_path: Path) -> None:
+    caddy = _caddy_cfg(tmp_path, drop_in_imported=True)
+    cfg = _config_with_caddy(tmp_path, caddy)
+    deps = build_agent_dependencies(
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
+    )
+    assert deps.integrations["caddy"].status == "live"
     assert "buckets_custom_domain_caddy_sync" in deps.registry
     assert "buckets_custom_domain_caddy_sync" in deps.long_running_factories
 
 
 def test_caddy_disabled_does_not_check_drop_in(tmp_path: Path) -> None:
-    # Even with a nonexistent main_caddyfile, disabled=False should skip.
+    # Even with a nonexistent main_caddyfile, enabled=False should skip the check.
     caddy = CaddyConfig(
         enabled=False,
         admin_url="http://localhost:2019",
         main_caddyfile=tmp_path / "missing.caddy",
         drop_in_path=tmp_path / "missing.conf",
     )
-    cfg = replace(build_config(tmp_path), caddy=caddy)
+    cfg = _config_with_caddy(tmp_path, caddy)
     deps = build_agent_dependencies(
         cfg,
         signoff_sealed=False,
         log_position_store=None,
     )
+    assert deps.integrations["caddy"].status == "disabled_choice"
     assert "buckets_custom_domain_caddy_sync" not in deps.registry
 
 

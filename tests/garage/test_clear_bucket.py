@@ -20,12 +20,12 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
 from stormpulse.garage.clear_bucket import (
     make_clear_bucket_handler,
     run_clear_bucket,
     run_clear_bucket_credential_less,
 )
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.s3 import (
     DeleteResult,
     ListResult,

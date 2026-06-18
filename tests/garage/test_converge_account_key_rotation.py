@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.config import GarageConfig
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.converge_account_key_rotation import (
     make_converge_account_key_rotation_handler,
     run_converge_account_key_rotation,

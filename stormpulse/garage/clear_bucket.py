@@ -32,8 +32,8 @@ import logging
 import time
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
-from stormpulse.config import GarageConfig
 from stormpulse.garage import admin_api
+from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.s3 import (
     GarageS3Client,
     S3AuthError,
