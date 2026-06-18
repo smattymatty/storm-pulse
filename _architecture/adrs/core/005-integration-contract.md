@@ -2,14 +2,14 @@
 adr:
   id: "CORE-005"
   title: "Integration contract: a registered, source-agnostic capability surface"
-  status: "Proposed"
+  status: "Accepted"
   date: "2026-06-18"
   tags: ["architecture", "integrations", "garage", "caddy", "contract", "registry"]
 ---
 
 # ADR: Integration contract
 
-**Status:** Proposed
+**Status:** Accepted
 
 ## Context
 
