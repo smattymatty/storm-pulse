@@ -76,7 +76,7 @@ def _find_agent_pid() -> int | None:
 def collect_status(config_path: Path) -> StatusInfo:
     """Collect all status fields. Never raises - graceful degradation.
 
-    Does NOT collect sign-off seal state — that lives in the signoff
+    Does NOT collect sign-off seal state - that lives in the signoff
     Feature, which sibling Features can't import (CORE-000). The CLI
     enriches the returned StatusInfo with seal data before printing.
     """
@@ -168,7 +168,7 @@ def _format_signoff(info: StatusInfo) -> str:
     if info.signoff_sealed:
         return "SEALED (verify-block disabled)"
     duration = info.unsealed_duration or "unknown"
-    label = f"⚠ UNSEALED  (for {duration}) — reseal with: stormpulse signoff seal"
+    label = f"⚠ UNSEALED  (for {duration}) - reseal with: stormpulse signoff seal"
     if sys.stdout.isatty():
         return f"\033[1;31m{label}\033[0m"
     return label

@@ -16,7 +16,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     from stormpulse.status import collect_status, print_status
 
     info = collect_status(Path(args.config))
-    # CLI (Entry) enriches the StatusInfo with seal state — the signoff
+    # CLI (Entry) enriches the StatusInfo with seal state - the signoff
     # Feature can't be imported from the sibling-Feature ``status`` module
     # under CORE-000's no-sibling-Features rule.
     if info.db_path != Path("unknown"):

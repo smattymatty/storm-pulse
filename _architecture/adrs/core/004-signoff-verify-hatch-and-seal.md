@@ -19,9 +19,9 @@ The website's sign-off checklist needs the dashboard to dispatch operator-author
 
 ## Decision
 
-**Ship sealed by default. Make unsealing loud. Make the unsealed window noisy in every direction.**
+**Ship sealed by default. Unsealing takes deliberate friction; the unsealed state is signposted on every surface that reports agent health.**
 
-1. **`run_verify_block` stays in the registry** — same argv, same opaque parameter. Constraining shell text semantically is the dashboard's contract, not the agent's.
+1. **`run_verify_block` stays in the registry** - same argv, same opaque parameter. Constraining shell text semantically is the dashboard's contract, not the agent's.
 2. **Freshly installed agents are sealed.** `stormpulse init` writes `signoff.sealed` as its last step. `build_registry(..., signoff_sealed=True)` excludes `run_verify_block`, so the first register advertises the pre-0.1.8 capability set.
 3. **Unseal has anti-paste friction.** `stormpulse signoff unseal` prints the consequences and refuses unless the operator types the host's hostname back. Automation passes `--confirm-hostname HOSTNAME`; the friction stays visible in the script.
 4. **The unsealed window is nagged from every surface.** WARNING log every 5 minutes naming duration (mirrored to `PulseLogger`); `stormpulse status` row bold red with reseal pointer; `register.signoff_sealed` advertises state on every (re)connect; `unsealed_since` is a UTC ISO timestamp in `signoff.unsealed_at` so the duration survives restart.
@@ -35,8 +35,8 @@ The website's sign-off checklist needs the dashboard to dispatch operator-author
 **Positive:**
 
 - Bootstrap window is gone. No default-unsealed period between enrolment and operator action.
-- Asymmetry favours safety: seal one keystroke, unseal loud and host-only.
-- Reseal is honestly framed as a kill switch, not recovery.
+- Seal is one keystroke; unseal is high-friction and host-only.
+- Reseal is a kill switch, not recovery.
 - Re-verification doesn't require re-enrolment; each cycle produces CLI, dashboard, and PulseLogger audit signal.
 
 **Negative:**
@@ -51,7 +51,7 @@ The website's sign-off checklist needs the dashboard to dispatch operator-author
 - **Time-bounded auto-seal after N hours.** Belt-and-suspenders. May layer in later as `[signoff] auto_seal_after_hours`; ships-sealed + nagging covers the same forgetting mode.
 - **Pre-baked verify primitives** (`ufw_status`, `compose_ps`, …). Shifts checklist edits from dashboard to agent releases. Misaligned with operator-authored verify.
 - **Confine verify with `bwrap`/`firejail`.** Verify legitimately needs docker socket and network; adds `bubblewrap` and unprivileged-userns dependencies often disabled on hardened boxes. Tracked as `[signoff] confine_verify` follow-up.
-- **Dashboard-side seal only.** Cosmetic — the control lives in the component you're worried about.
+- **Dashboard-side seal only.** Cosmetic: the control stays in the dashboard, the component being defended against.
 - **Drop the hatch, dashboard SSHes for verify.** Pushes trust onto SSH key management and breaks the agent's "one stream, HMAC-signed" property.
 
 ## Governance
@@ -60,4 +60,4 @@ The website's sign-off checklist needs the dashboard to dispatch operator-author
 
 A future ADR is required to: add additional opaque-shell registry entries; confine the verify shell; allow the dashboard to toggle the seal; or set an auto-seal timeout.
 
-**Related ADRs:** [CORE-000](000-internal-module-architecture.md) (signoff is a Feature), [CORE-001](001-fitness-functions.md) (registry-shape and import-linter rules hold), [CORE-002](002-release-and-ci-cd-pipeline.md) (0.1.8 ships this), [CORE-003](003-rootless-install-mode.md) (seal file at `~/.local/share/stormpulse/signoff.sealed` user-mode, `/var/lib/stormpulse/signoff.sealed` system-mode — `db_path.parent` either way).
+**Related ADRs:** [CORE-000](000-internal-module-architecture.md) (signoff is a Feature), [CORE-001](001-fitness-functions.md) (registry-shape and import-linter rules hold), [CORE-002](002-release-and-ci-cd-pipeline.md) (0.1.8 ships this), [CORE-003](003-rootless-install-mode.md) (seal file at `~/.local/share/stormpulse/signoff.sealed` user-mode, `/var/lib/stormpulse/signoff.sealed` system-mode - `db_path.parent` either way).

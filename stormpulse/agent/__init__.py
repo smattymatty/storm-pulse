@@ -20,7 +20,7 @@ The actual work lives in free functions in focused submodules:
 ``signoff_guard``             Sign-off seal predicate + refusal builder.
 ============================  ==============================================
 
-Submodules read ``Agent``'s state directly — it's all public, except
+Submodules read ``Agent``'s state directly - it's all public, except
 ``_secret``, ``_nonce_store``, ``_ssl_ctx`` (underscore sigil = cryptographic).
 """
 

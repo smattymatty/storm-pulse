@@ -75,8 +75,7 @@ The agent talks to Garage over the admin HTTP API. Three standing rules:
 - **Provisioning** (bucket/key create, permission grant, local-alias bind,
   delete): `CreateBucket`, `CreateKey`, `AllowBucketKey`, `AddBucketAlias` (local
   variant), `RemoveBucketAlias`, `DeleteBucket`, `DeleteKey`. The most
-  security-sensitive path; the value here is brittleness and structured errors
-  over speed.
+  security-sensitive path; the value here is structured errors over speed.
 
 ## Operator prerequisites (to activate the admin API)
 

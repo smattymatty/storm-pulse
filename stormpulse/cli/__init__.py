@@ -19,7 +19,7 @@ def _default_creds_dir() -> str:
     Root → /etc/stormpulse (legacy system install). Otherwise XDG
     config dir (~/.config/stormpulse by default). The agent is
     rootless on hardened boxes, so a non-root caller almost never
-    wants /etc/stormpulse — and writing there fails with PermissionError
+    wants /etc/stormpulse - and writing there fails with PermissionError
     after the CSR was already signed, burning the enrollment token.
     """
     if os.geteuid() == 0:

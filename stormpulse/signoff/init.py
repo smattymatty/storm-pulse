@@ -1,6 +1,6 @@
 """Install-time hook: ship the agent sealed by default.
 
-Imported for its registration side effect by ``stormpulse.cli.init`` —
+Imported for its registration side effect by ``stormpulse.cli.init`` -
 following the same dependency-inversion pattern as ``garage.init`` and
 ``logging.init`` so the install orchestrator (Framework) doesn't have
 to import this Feature directly.

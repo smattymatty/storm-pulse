@@ -68,7 +68,7 @@ def ssl_ctx() -> MagicMock:
 
 @pytest.fixture
 def config(tmp_path: Path) -> Config:
-    """Default Config for unit tests — no garage, no real port."""
+    """Default Config for unit tests - no garage, no real port."""
     return build_config(tmp_path)
 
 

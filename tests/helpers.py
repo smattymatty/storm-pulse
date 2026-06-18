@@ -90,7 +90,7 @@ def build_config(
 ) -> Config:
     """Build a Config pointing at ws://localhost:{port}/ws/ with fast intervals.
 
-    ``port=0`` is fine for unit tests that don't actually connect — the URL
+    ``port=0`` is fine for unit tests that don't actually connect - the URL
     is only consulted by the websocket client, which the tests mock.
     """
     return Config(
