@@ -7,11 +7,17 @@ from stormpulse.commands.jobs import LongRunningFactory
 from stormpulse.config import CommandDef, ParamDef
 
 BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC = "buckets_custom_domain_caddy_sync"
+CADDY_CERT_STATUS = "caddy_cert_status"
 
 # Region identifier: short lowercase alphanumeric + hyphen. Matches the
 # CustomerBucket.Region choices on the Django side (vancouver-1,
 # toronto-1, montreal-1).
 _REGION_PATTERN = r"[a-z0-9][a-z0-9-]{0,40}[a-z0-9]"
+
+# A custom-domain FQDN: dotted labels, no scheme/path/port. Used only in
+# Python (an SNI string for a loopback handshake), never a shell, but
+# validated for hygiene like every other param.
+_DOMAIN_PATTERN = r"[a-zA-Z0-9.-]{1,253}"
 
 # authorize_bulk rides the wire as a string ('true'/'false') because the
 # command param contract is string-valued end to end. Only a deliberate
@@ -86,15 +92,42 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        CADDY_CERT_STATUS: CommandDef(
+            group="caddy",
+            command=[CADDY_CERT_STATUS],  # internal - handled by JobManager
+            timeout=15,
+            description=(
+                "Probe Caddy's localhost HTTPS listener for a live, publicly-"
+                "trusted TLS cert for a domain. The custom-domain "
+                "CERT_PENDING -> ACTIVE reconcile backstop (BUCKETS-008): a "
+                "clean handshake under the system trust store confirms the "
+                "cert is real, in date, and covers the domain. Read-only, one "
+                "outbound loopback handshake."
+            ),
+            long_running=True,
+            read_only=True,
+            params={
+                "domain": ParamDef(
+                    placeholder="domain",
+                    default=None,
+                    pattern=_DOMAIN_PATTERN,
+                    description="FQDN to check (e.g. example.com)",
+                ),
+            },
+        ),
     }
 
 
 def long_running_factories(config: CaddyConfig) -> dict[str, LongRunningFactory]:
     """Return the Caddy long-running command name → handler-factory map."""
+    from stormpulse.caddy.cert_status import make_caddy_cert_status_handler
     from stormpulse.caddy.sync import make_caddy_sync_handler
 
     return {
         BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC: (
             lambda params: make_caddy_sync_handler(config, params)
+        ),
+        CADDY_CERT_STATUS: (
+            lambda params: make_caddy_cert_status_handler(config, params)
         ),
     }
