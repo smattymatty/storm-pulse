@@ -20,6 +20,7 @@ import logging
 import socket
 import ssl
 import time
+from typing import Any
 
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
@@ -72,7 +73,7 @@ async def run_caddy_cert_status(
     )
 
 
-def _probe_cert(domain: str) -> tuple[dict | None, str]:
+def _probe_cert(domain: str) -> tuple[dict[str, Any] | None, str]:
     """Localhost TLS handshake with SNI=domain under the system trust store.
 
     Returns ``(peer_cert_dict, "")`` when the handshake verifies (a real,
@@ -95,7 +96,7 @@ def _probe_cert(domain: str) -> tuple[dict | None, str]:
         return None, f"handshake failed: {exc}"
 
 
-def _issuer_name(cert: dict) -> str:
+def _issuer_name(cert: dict[str, Any]) -> str:
     """Issuer organizationName (or commonName) from a getpeercert() dict.
 
     ``issuer`` is a tuple of relative distinguished names, each a tuple of
@@ -104,7 +105,7 @@ def _issuer_name(cert: dict) -> str:
     for rdn in cert.get("issuer", ()):
         for key, value in rdn:
             if key in ("organizationName", "commonName"):
-                return value
+                return str(value)
     return ""
 
 
