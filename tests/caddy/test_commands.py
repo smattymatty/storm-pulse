@@ -8,7 +8,9 @@ import pytest
 
 from stormpulse.caddy.commands import (
     BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC,
+    CADDY_CERT_STATUS,
     build_caddy_commands,
+    long_running_factories,
 )
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.registry import (
@@ -65,6 +67,26 @@ class TestBuildCaddyCommands:
         authorize_bulk = cmd.params["authorize_bulk"]
         assert authorize_bulk.pattern is not None
         assert authorize_bulk.default == "false"
+
+    def test_registers_cert_status_command(self) -> None:
+        commands = build_caddy_commands(_make_caddy_config())
+        assert CADDY_CERT_STATUS in commands
+
+    def test_cert_status_is_read_only_long_running(self) -> None:
+        cmd = build_caddy_commands(_make_caddy_config())[CADDY_CERT_STATUS]
+        assert cmd.long_running is True
+        assert cmd.read_only is True
+        assert cmd.group == "caddy"
+
+    def test_cert_status_domain_param_uses_regex(self) -> None:
+        cmd = build_caddy_commands(_make_caddy_config())[CADDY_CERT_STATUS]
+        domain = cmd.params["domain"]
+        assert domain.pattern is not None
+        assert domain.max_bytes is None
+
+    def test_cert_status_has_a_handler_factory(self) -> None:
+        factories = long_running_factories(_make_caddy_config())
+        assert CADDY_CERT_STATUS in factories
 
 
 class TestValidateParams:
