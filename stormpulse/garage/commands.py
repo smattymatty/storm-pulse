@@ -210,30 +210,6 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_key_delete": CommandDef(
-            group="garage",
-            command=[
-                docker,
-                "exec",
-                container,
-                garage,
-                "key",
-                "delete",
-                "--yes",
-                "{key_id}",
-            ],
-            timeout=15,
-            requires_confirmation=True,
-            description="Delete an API key",
-            params={
-                "key_id": ParamDef(
-                    placeholder="key_id",
-                    default=None,
-                    pattern=_KEY_ID_PATTERN,
-                    description="Key ID to delete",
-                ),
-            },
-        ),
         "garage_bucket_allow": CommandDef(
             group="garage",
             command=[
@@ -663,10 +639,10 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             requires_confirmation=True,
             description=(
                 "Admin-API key delete reporting a structured confirmed-gone "
-                "outcome (deleted / already_absent), distinct from the legacy "
-                "CLI garage_key_delete. Backs the credential-kill tombstone "
-                "sweep (BUCKETS-013): a positive 404 is success, a transient "
-                "error is not, so a still-live key is never certified dead."
+                "outcome (deleted / already_absent). Backs the credential-kill "
+                "tombstone sweep (BUCKETS-013): a positive 404 is success, a "
+                "transient error is not, so a still-live key is never certified "
+                "dead."
             ),
             long_running=True,
             params={

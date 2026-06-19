@@ -33,7 +33,6 @@ class TestBuildGarageCommands:
             "garage_bucket_set_quota",
             "garage_set_account_key_create_bucket",
             "garage_key_create",
-            "garage_key_delete",
             "garage_bucket_allow",
             "garage_bucket_allow_rw",
             "garage_bucket_allow_ro",
@@ -98,7 +97,6 @@ class TestBuildGarageCommands:
         cmds = build_garage_commands(_make_config())
         for name in (
             "garage_bucket_delete",
-            "garage_key_delete",
             "garage_delete_key",
             "garage_detach_account_key",
             "garage_attach_account_key",
