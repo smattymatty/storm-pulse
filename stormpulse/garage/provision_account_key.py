@@ -43,23 +43,43 @@ def make_provision_account_key_handler(
         logger.error("garage_provision_account_key missing required param: new_key_name")
         return None
 
+    # BUCKETS-016: the account-key tier governs create capability. The website
+    # sends allow_create_bucket=False for a Read-Write / Read-Only key so it
+    # cannot create buckets; an Admin key, or a legacy mint with no param,
+    # defaults to True for back-compat with BUCKETS-012's single-shape key.
+    allow_create_bucket = _coerce_bool(params.get("allow_create_bucket", True))
+
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_provision_account_key(
             progress=progress,
             garage_config=garage_config,
             new_key_name=new_key_name,
+            allow_create_bucket=allow_create_bucket,
         )
 
     return handler
+
+
+def _coerce_bool(value: Any) -> bool:
+    """Params cross the wire as JSON; accept a real bool or a "true"/"false"
+    string. Anything unrecognized falls back to True (the back-compat default)."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() != "false"
+    return True
 
 
 async def run_provision_account_key(
     progress: ProgressCallback,
     garage_config: GarageConfig,
     new_key_name: str,
+    allow_create_bucket: bool = True,
 ) -> JobOutcome:
-    """Create one account key with ``allow_create_bucket`` set, return its
-    one-time secret. Single step, no rollback.
+    """Create one account key, return its one-time secret. Single step, no
+    rollback. ``allow_create_bucket`` is the BUCKETS-016 tier gate: True for an
+    Admin key (the lifecycle credential), False for a Read-Write / Read-Only key
+    that reaches buckets only through attach and can never create one.
     """
     started_at = time.monotonic()
 
@@ -77,13 +97,13 @@ async def run_provision_account_key(
             extras_extra={},
         )
 
-    # ---- Step 1: CreateKey with allow_create_bucket ----
+    # ---- Step 1: CreateKey with the tier's create capability ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating account key")
     info, err = admin_api.create_key(
         admin_url=admin_url,
         admin_token=admin_token,
         name=new_key_name,
-        allow_create_bucket=True,
+        allow_create_bucket=allow_create_bucket,
     )
     if info is None:
         return _failure(
@@ -120,7 +140,7 @@ async def run_provision_account_key(
             "new_key_id": new_key_id,
             "new_secret": new_secret,
             "new_key_name": new_key_name,
-            "can_create_bucket": True,
+            "can_create_bucket": allow_create_bucket,
             "step_completed": "account_key_create",
             "step_failed": None,
             "rollback_status": "not_required",

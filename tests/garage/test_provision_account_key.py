@@ -88,12 +88,14 @@ async def _run(
     fake: _FakeAdmin,
     *,
     new_key_name: str = "acct-key",
+    allow_create_bucket: bool = True,
     config: GarageConfig | None = None,
 ) -> JobOutcome:
     return await run_provision_account_key(
         progress=_ProgressRecorder(),
         garage_config=config or _make_config(),
         new_key_name=new_key_name,
+        allow_create_bucket=allow_create_bucket,
     )
 
 
@@ -120,6 +122,40 @@ async def test_happy_path_mints_key_with_create_bucket(
     assert outcome.extras["rollback_status"] == "not_required"
     # The single call carried the createBucket capability; no bucket touched.
     assert fake.calls == [{"name": "acct-key", "allow_create_bucket": True}]
+
+
+@pytest.mark.asyncio
+async def test_read_only_tier_mints_without_create_bucket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # BUCKETS-016: a Read-Write / Read-Only key is minted with create disabled,
+    # so it can never `aws s3 mb`; it reaches buckets only through attach.
+    fake = _install(monkeypatch)
+
+    outcome = await _run(fake, allow_create_bucket=False)
+
+    assert outcome.success is True
+    assert outcome.extras["can_create_bucket"] is False
+    assert fake.calls == [{"name": "acct-key", "allow_create_bucket": False}]
+
+
+@pytest.mark.asyncio
+async def test_handler_factory_coerces_string_false_to_no_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Params cross the wire as JSON; a "false" string must disable create, not
+    # fall through to the truthy default.
+    fake = _install(monkeypatch)
+    handler = make_provision_account_key_handler(
+        _make_config(),
+        params={"new_key_name": "ro-key", "allow_create_bucket": "false"},
+    )
+    assert handler is not None
+
+    outcome = await handler(_ProgressRecorder())
+
+    assert fake.calls == [{"name": "ro-key", "allow_create_bucket": False}]
+    assert outcome.extras["can_create_bucket"] is False
 
 
 # ---------------------------------------------------------------------------
