@@ -1,9 +1,9 @@
 """Handler for ``garage_delete_key``.
 
 Deletes an access key via the admin HTTP API (ADR garage/001) and reports a
-*structured, confirmed* outcome, distinct from the legacy CLI
-``garage_key_delete`` (``garage key delete --yes``) whose already-gone exit
-is indistinguishable from a transient error.
+*structured, confirmed* outcome. The earlier CLI approach
+(``garage key delete --yes``) could not distinguish an already-gone exit from
+a transient error; this handler does.
 
 The credential-kill tombstone sweep (website BUCKETS-013) needs exactly one
 unambiguous signal: "this key is positively gone from Garage." Two results
