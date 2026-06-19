@@ -580,7 +580,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "garage_provision_account_key"
             ],  # internal - handled by JobManager
             timeout=60,
-            description="Orchestrated provisioning of an account key (key-level allow_create_bucket set) for customer aws cli / terraform bucket lifecycle. One step, no rollback - owns no bucket until the customer creates one over S3.",
+            description="Orchestrated provisioning of an account key for customer aws cli / terraform bucket lifecycle. The tier governs create capability (BUCKETS-016): an Admin key is minted with key-level allow_create_bucket, a Read-Write/Read-Only key with create disabled. One step, no rollback - owns no bucket until the customer creates one over S3.",
             sensitive_output=True,  # the one-time secret rides in stdout/extras
             long_running=True,
             params={
@@ -589,6 +589,12 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     default=None,
                     pattern=_KEY_NAME_PATTERN,
                     description="Garage key name for the account key",
+                ),
+                "allow_create_bucket": ParamDef(
+                    placeholder="allow_create_bucket",
+                    default="true",
+                    pattern=r"(?:true|false)",
+                    description="BUCKETS-016 tier gate: 'true' mints an Admin key (key-level allow_create_bucket); 'false' mints a Read-Write/Read-Only key that cannot create buckets and reaches buckets only through attach. Defaults 'true' for back-compat with a pre-tier mint.",
                 ),
             },
         ),
