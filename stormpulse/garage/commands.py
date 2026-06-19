@@ -592,9 +592,9 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
                 "allow_create_bucket": ParamDef(
                     placeholder="allow_create_bucket",
-                    default="true",
+                    default="false",
                     pattern=r"(?:true|false)",
-                    description="BUCKETS-016 tier gate: 'true' mints an Admin key (key-level allow_create_bucket); 'false' mints a Read-Write/Read-Only key that cannot create buckets and reaches buckets only through attach. Defaults 'true' for back-compat with a pre-tier mint.",
+                    description="BUCKETS-016 tier gate: 'true' mints an Admin key (key-level allow_create_bucket); 'false' mints a Read-Write/Read-Only key that cannot create buckets and reaches buckets only through attach. Defaults 'false' (FAIL CLOSED): a capability gate must never grant create on an absent signal. An Admin mint always sends 'true' explicitly; a mint that fails to send the flag yields a powerless key, not a root one.",
                 ),
             },
         ),

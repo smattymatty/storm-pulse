@@ -158,6 +158,25 @@ async def test_handler_factory_coerces_string_false_to_no_create(
     assert outcome.extras["can_create_bucket"] is False
 
 
+@pytest.mark.asyncio
+async def test_handler_factory_fails_closed_without_create_param(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # FAIL CLOSED (BUCKETS-016): a mint that does not send the gate must NOT
+    # grant create. Deploy skew yields a powerless key, never a root one. This
+    # is the regression for "a Read-Only key could create a bucket".
+    fake = _install(monkeypatch)
+    handler = make_provision_account_key_handler(
+        _make_config(), params={"new_key_name": "skew-key"},
+    )
+    assert handler is not None
+
+    outcome = await handler(_ProgressRecorder())
+
+    assert fake.calls == [{"name": "skew-key", "allow_create_bucket": False}]
+    assert outcome.extras["can_create_bucket"] is False
+
+
 # ---------------------------------------------------------------------------
 # Failure points
 # ---------------------------------------------------------------------------

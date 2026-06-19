@@ -43,11 +43,12 @@ def make_provision_account_key_handler(
         logger.error("garage_provision_account_key missing required param: new_key_name")
         return None
 
-    # BUCKETS-016: the account-key tier governs create capability. The website
-    # sends allow_create_bucket=False for a Read-Write / Read-Only key so it
-    # cannot create buckets; an Admin key, or a legacy mint with no param,
-    # defaults to True for back-compat with BUCKETS-012's single-shape key.
-    allow_create_bucket = _coerce_bool(params.get("allow_create_bucket", True))
+    # BUCKETS-016: the account-key tier governs create capability. An Admin key
+    # is minted with create enabled (the website sends 'true'); a Read-Write /
+    # Read-Only key with 'false'. FAIL CLOSED: an absent or unrecognized signal
+    # yields a powerless key, never a root one, so deploy skew can never silently
+    # grant create on a read tier.
+    allow_create_bucket = _coerce_bool(params.get("allow_create_bucket"))
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_provision_account_key(
@@ -62,12 +63,14 @@ def make_provision_account_key_handler(
 
 def _coerce_bool(value: Any) -> bool:
     """Params cross the wire as JSON; accept a real bool or a "true"/"false"
-    string. Anything unrecognized falls back to True (the back-compat default)."""
+    string. FAIL CLOSED: only an explicit truthy value grants the capability;
+    a missing/None/unrecognized value is False, so create is never granted by
+    accident (BUCKETS-016)."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
-        return value.strip().lower() != "false"
-    return True
+        return value.strip().lower() == "true"
+    return False
 
 
 async def run_provision_account_key(
