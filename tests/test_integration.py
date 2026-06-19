@@ -35,7 +35,7 @@ from tests.helpers import (
 # ---------------------------------------------------------------------------
 
 
-def _plain_connect(url: str, **kwargs):  # type: ignore[no-untyped-def]
+def _plain_connect(url: str, **kwargs):
     """Wrap websockets connect to strip the ssl kwarg for plain ws:// tests."""
     kwargs.pop("ssl", None)
     return real_connect(url, **kwargs)

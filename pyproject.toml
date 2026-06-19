@@ -39,7 +39,14 @@ python_version = "3.12"
 
 [[tool.mypy.overrides]]
 module = "tests.*"
-strict = false
+# Tests are exempt from annotation requirements but their bodies are still
+# type-checked. NOTE: a per-module `strict = false` does NOT undo the
+# individual flags the global `strict = true` turns on (a known mypy gotcha),
+# so the relaxations are spelled out explicitly here.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+warn_return_any = false
 check_untyped_defs = true
 
 [tool.ruff]
