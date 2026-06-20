@@ -13,9 +13,11 @@ adr:
 
 ## Context
 
-This ADR governs the `stormpulse/` Python package: roughly 50 modules running on every VPS Storm operates. A compromised agent is the most privileged component on its box (host root in system mode, the operator's rootless-Docker user in the hardened user mode per CORE-003; see the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture)), so the import graph has to be one a single maintainer can reason about. It had grown organically: feature subpackages (`garage/`, `caddy/`, `logging/`), a command and job framework (`commands/`), an install-time framework (`init/`), wire-format and config modules (`protocol.py`, `config.py`), security primitives (`auth.py`), and process entry points (`agent.py`, `cli/`).
+This ADR governs the `stormpulse/` Python package: roughly 50 modules running on every VPS Storm operates. A compromised agent is the most privileged component on its box (host root in system mode, the operator's rootless-Docker user in the hardened user mode per CORE-003; see the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture)), so the import graph has to be one a single maintainer can reason about. It had grown organically: feature subpackages (`garage/`, `caddy/`, `logging/`), a command and job framework (`commands/`), an install-time framework (`init/`), wire-format and config modules (`protocol.py`, `config.py`), security primitives (`auth.py`), the integrations framework (`integrations/`), and process entry points (`agent.py`, `cli/`).
 
 Two adjacent ADRs hinge on this one. [CORE-001](001-fitness-functions.md) commits to mechanically enforced fitness functions, and a fitness function can only enforce a rule that exists on paper. [CORE-002](002-release-and-ci-cd-pipeline.md) makes storm-pulse a versioned PyPI artifact, at which point the internal structure becomes something shipped, not just used.
+
+**Note:** CORE-005 extends the architecture by introducing the Integration contract. Every `Feature` that drives an external system (like `garage/` or `caddy/`) is tagged as an `Integration`, creating a registration mechanism where Foundation and Entry no longer hard-code specific Feature names (`Config.garage`, protocol `make_register(garage=...)`), but Features continue to depend on Foundation normally.
 
 ## Decision
 
@@ -70,9 +72,12 @@ This ADR governs imports *between* modules. The internal sublayering of any sing
 - Rule 2 is enforced by the custom `fitness/` runner.
 - Both run in CI as part of `make fitness` and gate releases per [CORE-002](002-release-and-ci-cd-pipeline.md).
 
+- CORE-005 is enforced through the Integration contract in Framework (`integrations/`), which registers Features (`garage/`, `caddy/`) without Foundation or Entry coupling.
+
 **Manual review** covers what static checks miss: dynamic imports by string, registry lookups by name, dotted-path references. A feature-on-feature import is rejected in review; the resolution is always to hoist the shared code into Framework, never to grant an exception. A new module or subpackage is classified into a layer in "Current state" below on the commit that adds it.
 
 **Related ADRs:**
 
 - [CORE-001 Fitness functions](001-fitness-functions.md) mechanizes both rules.
 - [CORE-002 Release and CI-CD pipeline](002-release-and-ci-cd-pipeline.md) publishes the package this ADR structures.
+- [CORE-005 Integration contract](005-integration-contract.md) extends this architecture with the Features (Integrations) registration seam.
