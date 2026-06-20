@@ -734,6 +734,36 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
+        "garage_enforce_account_key_tier": CommandDef(
+            group="garage",
+            command=["garage_enforce_account_key_tier"],  # internal - JobManager
+            timeout=120,
+            description=(
+                "Enforce that an account key's per-bucket grants never exceed "
+                "its tier (BUCKETS-016): narrow every over-tier grant down to "
+                "the tier via a precise set. All-or-nothing on stranding (abort "
+                "if removing an owner grant would leave a bucket ownerless); "
+                "idempotent when already enforced."
+            ),
+            long_running=True,
+            params={
+                "account_key_id": ParamDef(
+                    placeholder="account_key_id",
+                    default=None,
+                    pattern=_KEY_ID_PATTERN,
+                    description="The account key (GK...) whose grants to enforce",
+                ),
+                "tier": ParamDef(
+                    placeholder="tier",
+                    default=None,
+                    pattern=r"(?:all|rw|ro)",
+                    description=(
+                        "The tier ceiling (all/rw/ro); grants above it are "
+                        "narrowed down"
+                    ),
+                ),
+            },
+        ),
         "garage_converge_account_key_rotation": CommandDef(
             group="garage",
             command=["garage_converge_account_key_rotation"],  # internal - JobManager
@@ -1013,6 +1043,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
     from stormpulse.garage.detach_account_key import (
         make_detach_account_key_handler,
     )
+    from stormpulse.garage.enforce_account_key_tier import (
+        make_enforce_account_key_tier_handler,
+    )
     from stormpulse.garage.get_bucket_owners import make_get_bucket_owners_handler
     from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
     from stormpulse.garage.provision_account_key import (
@@ -1072,6 +1105,9 @@ def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory
         ),
         "garage_attach_account_key": (
             lambda params: make_attach_account_key_handler(config, params)
+        ),
+        "garage_enforce_account_key_tier": (
+            lambda params: make_enforce_account_key_tier_handler(config, params)
         ),
         "garage_converge_account_key_rotation": (
             lambda params: make_converge_account_key_rotation_handler(config, params)
