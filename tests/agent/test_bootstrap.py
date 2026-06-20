@@ -146,6 +146,7 @@ def test_garage_enabled_publishes_long_running_factories(tmp_path: Path) -> None
         "garage_delete_key",
         "garage_detach_account_key",
         "garage_attach_account_key",
+        "garage_enforce_account_key_tier",
         "garage_converge_account_key_rotation",
         "garage_snapshot_and_reap_account_key",
         "garage_get_bucket_owners",
