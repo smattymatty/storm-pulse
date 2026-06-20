@@ -116,6 +116,25 @@ async def run_attach_account_key(
             stderr=err, started_at=started_at,
         )
 
+    # ---- Step 1b: deny the complement so the grant is EXACTLY the tier ----
+    # AllowBucketKey only widens. To make attach a precise SET, so a change-scope
+    # can NARROW (e.g. owner -> ro on a re-attach), deny every permission bit the
+    # tier excludes. The owner tier excludes nothing, so it denies nothing. The
+    # deny op's own positive result is the authoritative confirmation the bits
+    # were removed (BUCKETS-013 discipline). (BUCKETS-016 Slice 3.)
+    if not (read and write and owner):
+        ok, err = admin_api.deny_bucket_key(
+            admin_url=admin_url, admin_token=admin_token,
+            bucket_ref=bucket_id, access_key_id=account_key_id,
+            read=not read, write=not write, owner=not owner,
+        )
+        if not ok:
+            return _failure(
+                failure_reason="grant_narrow_failed",
+                bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
+                stderr=err, started_at=started_at,
+            )
+
     # ---- Step 2: AddBucketAlias (local; cosmetic, best-effort) ----
     await progress("running", 1, _TOTAL_STEPS, "Attaching alias")
     alias_ok, _alias_err = admin_api.add_bucket_alias_local(
