@@ -65,11 +65,19 @@ async def _run(*, config=None) -> JobOutcome:
 async def test_returns_owner_key_ids(monkeypatch):
     _install(monkeypatch, ({"keys": [
         {"accessKeyId": "GKowner", "permissions": {"owner": True}},
-        {"accessKeyId": "GKreader", "permissions": {"owner": False}},
+        {"accessKeyId": "GKrw", "permissions": {"read": True, "write": True}},
+        {"accessKeyId": "GKreader", "permissions": {"read": True}},
     ]}, ""))
     outcome = await _run()
     assert outcome.success is True
     assert outcome.extras["owner_key_ids"] == ["GKowner"]
+    # Slice 5: every key's grant tier is carried, not just owners, so the
+    # provenance line can show the level each account key holds.
+    assert outcome.extras["key_grants"] == [
+        {"key_id": "GKowner", "read": False, "write": False, "owner": True},
+        {"key_id": "GKrw", "read": True, "write": True, "owner": False},
+        {"key_id": "GKreader", "read": True, "write": False, "owner": False},
+    ]
 
 
 @pytest.mark.asyncio
