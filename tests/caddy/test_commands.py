@@ -9,8 +9,7 @@ import pytest
 from stormpulse.caddy.commands import (
     BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC,
     CADDY_CERT_STATUS,
-    build_caddy_commands,
-    long_running_factories,
+    build_caddy_specs,
 )
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.registry import (
@@ -30,18 +29,18 @@ def _make_caddy_config() -> CaddyConfig:
 
 class TestBuildCaddyCommands:
     def test_registers_sync_command(self) -> None:
-        commands = build_caddy_commands(_make_caddy_config())
+        commands = build_caddy_specs(_make_caddy_config())
         assert BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC in commands
 
     def test_sync_is_long_running(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         assert cmd.long_running is True
         assert cmd.group == "caddy"
 
     def test_region_param_uses_regex(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         region = cmd.params["region"]
@@ -49,7 +48,7 @@ class TestBuildCaddyCommands:
         assert region.max_bytes is None
 
     def test_tenants_param_uses_byte_cap(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         tenants = cmd.params["tenants"]
@@ -61,7 +60,7 @@ class TestBuildCaddyCommands:
         assert tenants.default == "{}"
 
     def test_authorize_bulk_param_uses_regex(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         authorize_bulk = cmd.params["authorize_bulk"]
@@ -69,24 +68,26 @@ class TestBuildCaddyCommands:
         assert authorize_bulk.default == "false"
 
     def test_registers_cert_status_command(self) -> None:
-        commands = build_caddy_commands(_make_caddy_config())
+        commands = build_caddy_specs(_make_caddy_config())
         assert CADDY_CERT_STATUS in commands
 
     def test_cert_status_is_read_only_long_running(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[CADDY_CERT_STATUS]
+        cmd = build_caddy_specs(_make_caddy_config())[CADDY_CERT_STATUS]
         assert cmd.long_running is True
         assert cmd.read_only is True
         assert cmd.group == "caddy"
 
     def test_cert_status_domain_param_uses_regex(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[CADDY_CERT_STATUS]
+        cmd = build_caddy_specs(_make_caddy_config())[CADDY_CERT_STATUS]
         domain = cmd.params["domain"]
         assert domain.pattern is not None
         assert domain.max_bytes is None
 
-    def test_cert_status_has_a_handler_factory(self) -> None:
-        factories = long_running_factories(_make_caddy_config())
-        assert CADDY_CERT_STATUS in factories
+    def test_cert_status_has_a_handler(self) -> None:
+        # Single source: the handler rides on the spec, not a parallel factory map.
+        cmd = build_caddy_specs(_make_caddy_config())[CADDY_CERT_STATUS]
+        assert cmd.mode == "job"
+        assert cmd.handler is not None
 
 
 class TestValidateParams:
@@ -99,7 +100,7 @@ class TestValidateParams:
     """
 
     def test_valid_region_tenants_and_flag(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         # Multi-line fragments with braces (would break a regex) are fine
@@ -123,7 +124,7 @@ class TestValidateParams:
         assert validated["authorize_bulk"] == "false"
 
     def test_omitted_params_use_defaults(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         validated = validate_params(cmd, {"region": "vancouver-1"})
@@ -132,7 +133,7 @@ class TestValidateParams:
         assert validated["authorize_bulk"] == "false"
 
     def test_bad_region_rejected(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         with pytest.raises(ParamValidationError):
@@ -142,7 +143,7 @@ class TestValidateParams:
             )
 
     def test_bad_authorize_bulk_rejected(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         # Only the literals 'true'/'false' cross the wire; anything else is
@@ -154,7 +155,7 @@ class TestValidateParams:
             )
 
     def test_oversize_manifest_rejected(self) -> None:
-        cmd = build_caddy_commands(_make_caddy_config())[
+        cmd = build_caddy_specs(_make_caddy_config())[
             BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
         ]
         oversize = '{"x": "' + "a" * 1_100_000 + '"}'  # over the 1MB cap

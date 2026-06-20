@@ -13,7 +13,7 @@ from stormpulse.agent.integrations_runtime import (
     IntegrationRuntime,
     build_integrations_payload,
 )
-from stormpulse.config import CommandDef
+from stormpulse.config import CommandSpec
 from stormpulse.integrations import (
     Integration,
     register_integration,
@@ -105,9 +105,9 @@ def test_notional_third_integration_resolves_through_bootstrap(
     commands, and produce a live runtime.
     """
 
-    def _commands(config: dict[str, object]) -> dict[str, CommandDef]:
+    def _commands(config: dict[str, object]) -> dict[str, CommandSpec]:
         return {
-            "notional_ping": CommandDef(
+            "notional_ping": CommandSpec(
                 group="notional", command=["/bin/true"], timeout=5
             )
         }
@@ -117,7 +117,7 @@ def test_notional_third_integration_resolves_through_bootstrap(
             id="notional",
             parse_config=lambda raw: raw,
             enabled=lambda c: bool(c.get("enabled")),
-            commands=_commands,
+            specs=_commands,
         )
     )
     cfg = build_config(tmp_path, integrations={"notional": {"enabled": True}})

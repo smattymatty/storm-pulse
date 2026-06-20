@@ -9,11 +9,8 @@ from typing import TYPE_CHECKING, TypeVar
 
 from websockets.asyncio.client import ClientConnection
 
-from stormpulse.agent.garage_actions import (
-    handle_garage_refresh,
-    post_success_hook,
-)
-from stormpulse.agent.long_running import resolve_long_running_handler
+from stormpulse.agent.garage_actions import post_success_hook
+from stormpulse.agent.refresh import handle_refresh
 from stormpulse.agent.signoff_guard import (
     SEALED_COMMANDS,
     is_blocked_by_seal,
@@ -27,7 +24,7 @@ from stormpulse.commands import (
     get_command,
 )
 from stormpulse.commands.registry import validate_params
-from stormpulse.config import CommandDef
+from stormpulse.config import CommandSpec
 from stormpulse.protocol import (
     CommandRequestPayload,
     CommandResultPayload,
@@ -120,7 +117,7 @@ async def handle_command_request(
     ws: ClientConnection,
     envelope: Envelope,
 ) -> None:
-    """Verify and execute a single command request. Three paths: inline garage_refresh, long-running, one-shot subprocess."""
+    """Verify and execute a single command request. Three paths, routed on spec.mode: refresh, job (long-running), subprocess."""
     payload = _verify_typed_payload(agent, envelope, CommandRequestPayload)
     if payload is None:
         return
@@ -130,10 +127,10 @@ async def handle_command_request(
     if await _refuse_if_sealed(agent, ws, envelope, payload, cmd_def):
         return
 
-    if payload.command == "garage_refresh":
-        await handle_garage_refresh(agent, ws, envelope.id)
+    if cmd_def is not None and cmd_def.mode == "refresh":
+        await handle_refresh(agent, ws, payload.command, envelope.id)
         return
-    if cmd_def is not None and cmd_def.long_running:
+    if cmd_def is not None and cmd_def.mode == "job":
         await dispatch_long_running(agent, envelope.id, payload, cmd_def)
         return
 
@@ -176,7 +173,7 @@ async def _refuse_if_sealed(
     ws: ClientConnection,
     envelope: Envelope,
     payload: CommandRequestPayload,
-    cmd_def: CommandDef | None,
+    cmd_def: CommandSpec | None,
 ) -> bool:
     """Refuse a sealed verify/apply block inline. Returns ``True`` if handled (ADR CORE-004)."""
     if not is_blocked_by_seal(agent.signoff_state, [payload.command]):
@@ -249,7 +246,7 @@ async def dispatch_long_running(
     agent: Agent,
     request_id: str,
     payload: CommandRequestPayload,
-    cmd_def: CommandDef,
+    cmd_def: CommandSpec,
 ) -> None:
     """Hand a long-running command off to the JobManager; emits synthetic failure on missing handler or no JobManager."""
     if agent.job_manager is None:
@@ -277,11 +274,11 @@ async def dispatch_long_running(
         )
         return
 
-    handler = resolve_long_running_handler(
-        agent.long_running_factories,
-        payload.command,
-        validated_params,
-    )
+    # The handler rides on the spec (single source); the thunk fires here with
+    # validated params. It may still return None when the feature is registered
+    # but unservable on this host.
+    factory = cmd_def.handler
+    handler = factory(validated_params) if factory is not None else None
     if handler is None:
         logger.error(
             "Command %r is marked long_running but no handler is registered",

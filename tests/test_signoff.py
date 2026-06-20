@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from stormpulse.commands import CommandDef, build_registry
+from stormpulse.commands import CommandSpec, build_registry
 from stormpulse.signoff import (
     SignoffState,
     format_unsealed_duration,
@@ -231,7 +231,7 @@ def test_build_registry_sealed_does_not_block_config_command_named_similarly() -
     # Only the built-in seal-gated commands are auto-disabled. A
     # config-defined command with a different name keeps working when
     # sealed.
-    custom = CommandDef(
+    custom = CommandSpec(
         group="custom",
         command=["/bin/echo", "ok"],
         timeout=5,

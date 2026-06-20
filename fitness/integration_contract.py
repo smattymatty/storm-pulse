@@ -26,8 +26,8 @@ def check_integration_contract() -> list[str]:
             violations.append(f"Integration {integ.id!r}: parse_config must be callable")
         if not callable(integ.enabled):
             violations.append(f"Integration {integ.id!r}: enabled must be callable")
-        if integ.commands is not None:
-            module = getattr(integ.commands, "__module__", "")
+        if integ.specs is not None:
+            module = getattr(integ.specs, "__module__", "")
             if not module.startswith("stormpulse"):
                 violations.append(
                     f"Integration {integ.id!r}: contributes commands from "

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from stormpulse.garage.commands import build_garage_commands
+from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig
 
 
@@ -21,7 +21,7 @@ def _make_config() -> GarageConfig:
 
 class TestBuildGarageCommands:
     def test_all_commands_present(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         expected = {
             "garage_status",
             "garage_stats",
@@ -43,7 +43,6 @@ class TestBuildGarageCommands:
             "garage_bucket_alias_global_remove",
             "garage_bucket_alias_local_add",
             "garage_bucket_alias_local_remove",
-            "garage_refresh",
             "garage_bucket_clear",
             "garage_provision_customer_bucket",
             "garage_provision_additional_key",
@@ -62,41 +61,25 @@ class TestBuildGarageCommands:
         }
         assert set(cmds.keys()) == expected
 
-    def test_all_commands_use_absolute_paths(self) -> None:
-        cmds = build_garage_commands(_make_config())
-        for name, cmd_def in cmds.items():
-            if name in {
-                "garage_refresh",
-                "garage_bucket_clear",
-                "garage_bucket_set_quota",
-                "garage_set_account_key_create_bucket",
-                "garage_provision_customer_bucket",
-                "garage_provision_additional_key",
-                "garage_provision_account_key",
-                "garage_delete_provisioned_bucket",
-                "garage_delete_key",
-                "garage_detach_account_key",
-                "garage_attach_account_key",
-                "garage_enforce_account_key_tier",
-                "garage_converge_account_key_rotation",
-                "garage_snapshot_and_reap_account_key",
-                "garage_get_key_buckets",
-                "garage_get_bucket_owners",
-                "garage_rotate_customer_key",
-                "garage_walk_bucket_stats",
-            }:
-                continue  # internal command, not a subprocess
-            assert cmd_def.command[0].startswith("/"), (
-                f"{name} first arg must be absolute: {cmd_def.command[0]}"
-            )
+    def test_subprocess_specs_have_absolute_binary_paths(self) -> None:
+        # Structural now, not a hand-maintained name skip-list: a subprocess spec
+        # with a relative command[0] cannot be constructed (CommandSpec.__post_init__
+        # rejects it), so every subprocess spec the builder returns is absolute by
+        # guarantee. Job specs carry a sentinel command and are exempt by mode.
+        cmds = build_garage_specs(_make_config())
+        for name, spec in cmds.items():
+            if spec.mode == "subprocess":
+                assert spec.command[0].startswith("/"), (
+                    f"{name} first arg must be absolute: {spec.command[0]}"
+                )
 
     def test_all_commands_in_garage_group(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         for name, cmd_def in cmds.items():
             assert cmd_def.group == "garage", f"{name} has wrong group: {cmd_def.group}"
 
     def test_destructive_commands_require_confirmation(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         for name in (
             "garage_bucket_delete",
             "garage_delete_key",
@@ -113,41 +96,40 @@ class TestBuildGarageCommands:
             )
 
     def test_read_only_commands_no_confirmation(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         for name in (
             "garage_status",
             "garage_stats",
             "garage_bucket_list",
             "garage_bucket_info",
             "garage_key_list",
-            "garage_refresh",
         ):
             assert cmds[name].requires_confirmation is False, (
                 f"{name} should not require confirmation"
             )
 
     def test_key_create_is_sensitive(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         assert cmds["garage_key_create"].sensitive_output is True
 
     def test_bucket_clear_is_sensitive(self) -> None:
         # Carries the customer's S3 secret in params; result must be filtered too.
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         assert cmds["garage_bucket_clear"].sensitive_output is True
 
     def test_bucket_clear_is_long_running(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         assert cmds["garage_bucket_clear"].long_running is True
 
     def test_set_quota_is_long_running_admin_api(self) -> None:
         # Applied via the Garage admin HTTP API (UpdateBucket), not a CLI
         # subprocess, so it rides the long-running JobManager path.
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         assert cmds["garage_bucket_set_quota"].long_running is True
         assert cmds["garage_bucket_set_quota"].command == ["garage_bucket_set_quota"]
 
     def test_other_commands_not_sensitive(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         sensitive_allowed = {
             "garage_key_create",
             "garage_bucket_clear",
@@ -172,14 +154,14 @@ class TestBuildGarageCommands:
             config_path=Path("/etc/garage.toml"),
             state_push_interval_seconds=60,
         )
-        cmds = build_garage_commands(cfg)
+        cmds = build_garage_specs(cfg)
         status_cmd = cmds["garage_status"].command
         assert status_cmd[0] == "/usr/local/bin/docker"
         assert status_cmd[2] == "my-garage"
         assert status_cmd[3] == "/opt/bin/garage"
 
     def test_bucket_name_param_pattern(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         param = cmds["garage_bucket_info"].params["bucket_name"]
         assert param.pattern == r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]"
         assert param.default is None
@@ -198,7 +180,7 @@ class TestBuildGarageCommands:
         """
         import re
 
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         pattern = cmds["garage_bucket_info"].params["bucket_name"].pattern
         assert pattern is not None
         # Flag-smuggling and S3-illegal names rejected.
@@ -240,7 +222,7 @@ class TestBuildGarageCommands:
         """
         import re
 
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         for cmd_name in (
             "garage_delete_provisioned_bucket",
             "garage_provision_additional_key",
@@ -274,7 +256,7 @@ class TestBuildGarageCommands:
     def test_key_name_pattern_rejects_leading_hyphen(self) -> None:
         import re
 
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         pattern = cmds["garage_key_create"].params["key_name"].pattern
         assert pattern is not None
         for bad in ("--help", "-c"):
@@ -296,7 +278,7 @@ class TestBuildGarageCommands:
         """
         import re
 
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         pattern = cmds["garage_walk_bucket_stats"].params["prefix"].pattern
         assert pattern is not None
         # Real S3 prefixes the old pattern wrongly rejected.
@@ -325,28 +307,28 @@ class TestBuildGarageCommands:
             )
 
     def test_bucket_allow_has_all_permission_flags(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         cmd = cmds["garage_bucket_allow"].command
         assert "--read" in cmd
         assert "--write" in cmd
         assert "--owner" in cmd
 
     def test_bucket_allow_rw_has_correct_flags(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         cmd = cmds["garage_bucket_allow_rw"].command
         assert "--read" in cmd
         assert "--write" in cmd
         assert "--owner" not in cmd
 
     def test_bucket_allow_ro_has_correct_flags(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         cmd = cmds["garage_bucket_allow_ro"].command
         assert "--read" in cmd
         assert "--write" not in cmd
         assert "--owner" not in cmd
 
     def test_bucket_allow_variants_no_confirmation(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         for name in (
             "garage_bucket_allow",
             "garage_bucket_allow_rw",
@@ -357,14 +339,14 @@ class TestBuildGarageCommands:
             )
 
     def test_bucket_deny_has_all_permission_flags(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         deny_cmd = cmds["garage_bucket_deny"].command
         assert "--read" in deny_cmd
         assert "--write" in deny_cmd
         assert "--owner" in deny_cmd
 
     def test_alias_global_add_command_shape(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         cmd = cmds["garage_bucket_alias_global_add"].command
         assert cmd[-3:] == ["alias", "{bucket_name}", "{new_alias}"]
         assert "--local" not in cmd
@@ -372,7 +354,7 @@ class TestBuildGarageCommands:
         assert set(params.keys()) == {"bucket_name", "new_alias"}
 
     def test_alias_global_remove_command_shape(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         cmd = cmds["garage_bucket_alias_global_remove"].command
         assert cmd[-2:] == ["unalias", "{alias_name}"]
         assert "--local" not in cmd
@@ -380,7 +362,7 @@ class TestBuildGarageCommands:
         assert set(params.keys()) == {"alias_name"}
 
     def test_alias_local_add_command_shape(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         cmd = cmds["garage_bucket_alias_local_add"].command
         assert "alias" in cmd
         assert "--local" in cmd
@@ -391,7 +373,7 @@ class TestBuildGarageCommands:
         assert set(params.keys()) == {"key_id", "bucket_name", "new_alias"}
 
     def test_alias_local_remove_command_shape(self) -> None:
-        cmds = build_garage_commands(_make_config())
+        cmds = build_garage_specs(_make_config())
         cmd = cmds["garage_bucket_alias_local_remove"].command
         assert "unalias" in cmd
         assert "--local" in cmd

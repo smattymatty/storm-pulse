@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from stormpulse.garage import discover as garage_discover
 from stormpulse.garage import state as garage_state
-from stormpulse.garage.commands import build_garage_commands, long_running_factories
+from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig, parse_garage_config
 from stormpulse.garage.preconditions import run_preconditions
 from stormpulse.garage.state import GarageState
@@ -45,8 +45,7 @@ GARAGE_INTEGRATION = Integration(
     parse_config=parse_garage_config,
     enabled=_enabled,
     preconditions=_preconditions,
-    commands=build_garage_commands,
-    long_running=long_running_factories,
+    specs=build_garage_specs,
     discover=_discover,
     collect_state=_collect_state,
     state_push_interval=_state_push_interval,

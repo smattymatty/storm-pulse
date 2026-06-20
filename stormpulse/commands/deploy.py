@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Generator
 
-from stormpulse.config import CommandDef, ProjectConfig
+from stormpulse.config import CommandSpec, ProjectConfig
 from stormpulse.protocol import CommandResultPayload
 
 from .registry import execute_command, get_command
@@ -17,7 +17,7 @@ def run_deploy_sequence(
     sequence_id: str,
     *,
     stop_on_failure: bool = True,
-    registry: dict[str, CommandDef],
+    registry: dict[str, CommandSpec],
 ) -> Generator[CommandResultPayload, None, None]:
     """Execute commands in order, yielding each result.
 

@@ -6,9 +6,10 @@ import dataclasses
 import logging
 import re
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -88,19 +89,77 @@ class ParamDef:
             )
 
 
+# Execution-mode discriminator the agent dispatcher routes on. The whole point
+# of carrying it explicitly: subprocess vs long-running-job vs agent-internal
+# refresh used to be smeared across a magic command name, a bool, and "fell
+# through to subprocess". Now it is one field, validated at construction.
+CommandMode = Literal["subprocess", "job", "refresh"]
+
+# A "job" command's lazy handler thunk: given validated runtime params, build
+# the JobHandler (or None when unservable on this host). Typed loosely here
+# because the concrete JobHandler / LongRunningFactory live in the Framework
+# layer (commands/jobs.py), which Foundation (config) must not import per the
+# CORE-000 four-layer topology. The real type re-forms in commands/ and agent/.
+CommandHandler = Callable[[dict[str, str]], Any]
+
+
 @dataclass(frozen=True, slots=True)
-class CommandDef:
-    """A single whitelisted command definition."""
+class CommandSpec:
+    """A single whitelisted command: its schema and, for a job, its handler.
+
+    One spec per command is the registry's whole source of truth - there is no
+    parallel name->factory map to fall out of sync with, because there is no
+    second map. ``mode`` is the execution discriminator:
+
+    - ``subprocess``: ``command`` is a real argv run with ``shell=False``; the
+      first element must be an absolute binary path. No handler.
+    - ``job``: a long-running command handed to the JobManager. ``handler`` is a
+      lazy per-integration thunk; ``command`` is the sentinel ``[name]`` that
+      backs the advertised wire template.
+    - ``refresh``: an agent-owned "collect this integration's state now and push
+      metrics" command, synthesized for any Integration declaring
+      ``collect_state``. No handler (the agent owns the one generic routine).
+
+    Illegal combinations are rejected at construction, so half-registration is
+    structurally impossible rather than caught by a hand-maintained test.
+    """
 
     group: str
     command: list[str]
     timeout: int
+    mode: CommandMode = "subprocess"
     requires_confirmation: bool = False
     description: str = ""
     sensitive_output: bool = False
-    long_running: bool = False
     read_only: bool = False  # no state mutation; skips the garage post-success refresh hook
+    handler: CommandHandler | None = None
     params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.mode == "job":
+            if self.handler is None:
+                raise ValueError(
+                    f"CommandSpec {self.command!r}: mode 'job' requires a handler "
+                    "(a job with no handler is the half-registration footgun this "
+                    "guard exists to make impossible)"
+                )
+        elif self.handler is not None:
+            raise ValueError(
+                f"CommandSpec {self.command!r}: mode {self.mode!r} must not carry a "
+                "handler (only 'job' commands have one)"
+            )
+        if self.mode == "subprocess" and (
+            not self.command or not self.command[0].startswith("/")
+        ):
+            raise ValueError(
+                f"CommandSpec {self.command!r}: mode 'subprocess' requires an "
+                "absolute binary path as command[0] (the Layer-4 whitelist invariant)"
+            )
+
+    @property
+    def long_running(self) -> bool:
+        """Derived: a job rides the JobManager path. Kept for the wire manifest and dispatch readers."""
+        return self.mode == "job"
 
 
 PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset(
@@ -161,7 +220,7 @@ class Config:
     metrics: MetricsConfig
     project: ProjectConfig
     storage: StorageConfig
-    commands: dict[str, CommandDef] = dataclasses.field(default_factory=dict)
+    commands: dict[str, CommandSpec] = dataclasses.field(default_factory=dict)
     integrations: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
     log_groups: list[LogGroupConfig] = dataclasses.field(default_factory=list)
 
@@ -336,8 +395,8 @@ def _parse_storage(raw: dict[str, Any]) -> StorageConfig:
     )
 
 
-def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
-    """Parse optional [commands.*] sub-tables into CommandDef instances.
+def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandSpec]:
+    """Parse optional [commands.*] sub-tables into CommandSpec instances.
 
     Returns an empty dict if no [commands] section exists.
     Raises ConfigError for invalid command definitions.
@@ -348,7 +407,7 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
     if not isinstance(section, dict):
         raise ConfigError("[commands] must be a table")
 
-    result: dict[str, CommandDef] = {}
+    result: dict[str, CommandSpec] = {}
     for name, entry in section.items():
         label = f"commands.{name}"
         if not isinstance(entry, dict):
@@ -378,7 +437,13 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
 
         requires_confirmation = optional_key(entry, "requires_confirmation", bool, False, label)
         sensitive_output = optional_key(entry, "sensitive_output", bool, False, label)
-        long_running = optional_key(entry, "long_running", bool, False, label)
+        if optional_key(entry, "long_running", bool, False, label):
+            raise ConfigError(
+                f"[{label}]: 'long_running' is not supported for config-defined "
+                "commands. Long-running (job) commands are contributed by "
+                "integrations, which supply the handler; a config command is "
+                "always a subprocess. Remove the key."
+            )
         description = optional_key(entry, "description", str, "", label)
 
         params_raw = entry.get("params", {})
@@ -416,14 +481,13 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandDef]:
                 description=pdescription,
             )
 
-        result[name] = CommandDef(
+        result[name] = CommandSpec(
             group=group,
             command=command,
             timeout=timeout,
             requires_confirmation=requires_confirmation,
             description=description,
             sensitive_output=sensitive_output,
-            long_running=long_running,
             params=param_defs,
         )
 

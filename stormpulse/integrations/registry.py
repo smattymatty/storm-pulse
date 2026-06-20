@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from stormpulse.config import CommandDef
+from stormpulse.config import CommandSpec
 
 
 class StateBlob(Protocol):
@@ -27,10 +27,12 @@ class StateBlob(Protocol):
 ParseConfig = Callable[[dict[str, Any]], Any]
 EnabledPredicate = Callable[[Any], bool]
 Preconditions = Callable[[Any], str | None]
-BuildCommands = Callable[[Any], dict[str, CommandDef]]
-# name -> LongRunningFactory. The value types as Any because LongRunningFactory
-# lives in commands/ (a Framework sibling this module may not import, CORE-000).
-BuildLongRunning = Callable[[Any], dict[str, Any]]
+# One seam, not two. Each CommandSpec carries its own schema and (for a job) its
+# handler thunk, so an Integration contributes its whole command surface through
+# a single builder. The old split (a CommandDef map plus a parallel
+# name->factory map that had to agree but were not 1:1) is gone: there is no
+# second map to drift against.
+BuildSpecs = Callable[[Any], dict[str, CommandSpec]]
 CollectState = Callable[[Any], "StateBlob | None"]
 StateInterval = Callable[[Any], float]
 
@@ -53,8 +55,7 @@ class Integration:
     parse_config: ParseConfig
     enabled: EnabledPredicate
     preconditions: Preconditions | None = None
-    commands: BuildCommands | None = None
-    long_running: BuildLongRunning | None = None
+    specs: BuildSpecs | None = None
     discover: CollectState | None = None
     collect_state: CollectState | None = None
     state_push_interval: StateInterval | None = None

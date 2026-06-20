@@ -11,7 +11,7 @@ from stormpulse.agent.signoff_guard import (
     is_blocked_by_seal,
     sealed_refusal_result,
 )
-from stormpulse.config import CommandDef
+from stormpulse.config import CommandSpec
 from stormpulse.signoff import SignoffState
 
 
@@ -41,7 +41,7 @@ def test_sealed_state_blocks_only_seal_gated_commands(tmp_path: Path) -> None:
 
 
 def test_sealed_refusal_includes_cmd_def_group(tmp_path: Path) -> None:
-    cmd_def = CommandDef(
+    cmd_def = CommandSpec(
         group="signoff",
         command=["/bin/bash", "-c", "{verify_command}"],
         timeout=30,
@@ -55,7 +55,7 @@ def test_sealed_refusal_includes_cmd_def_group(tmp_path: Path) -> None:
 
 
 def test_sealed_refusal_for_apply_command_carries_command_name() -> None:
-    cmd_def = CommandDef(
+    cmd_def = CommandSpec(
         group="signoff",
         command=["/bin/bash", "-c", "{apply_command}"],
         timeout=600,

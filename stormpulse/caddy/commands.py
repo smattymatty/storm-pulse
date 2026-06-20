@@ -1,10 +1,14 @@
-"""Caddy command registry: one entry for custom-domain Caddyfile sync."""
+"""Caddy command registry: custom-domain Caddyfile sync + cert status.
+
+Both entries are ``mode="job"`` and carry their own lazy handler thunk, so there
+is no separate name->factory map. caddy declares no ``collect_state``, so it
+gets no synthesized ``caddy_refresh`` command (nothing to refresh).
+"""
 
 from __future__ import annotations
 
 from stormpulse.caddy.config import CaddyConfig
-from stormpulse.commands.jobs import LongRunningFactory
-from stormpulse.config import CommandDef, ParamDef
+from stormpulse.config import CommandSpec, ParamDef
 
 BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC = "buckets_custom_domain_caddy_sync"
 CADDY_CERT_STATUS = "caddy_cert_status"
@@ -34,21 +38,18 @@ _BOOL_PATTERN = r"true|false"
 _MANIFEST_MAX_BYTES = 1_000_000
 
 
-def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
-    """Build the Caddy command registry.
+def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
+    """Build the Caddy command registry, binding each job's handler to ``config``.
 
-    Today this is exactly one command. Future Caddy-side operations
-    (e.g. raw fragment removal for region migration) would land here.
-
-    The config parameter is currently unused - the handler reads paths
-    and admin URL from config at dispatch time, not from the registry
-    metadata. Kept in the signature so the call site mirrors
-    ``build_garage_commands(config.garage)`` and future config-derived
-    metadata (e.g. command timeouts tuned per-deployment) has a natural
-    home.
+    Today this is two commands. Future Caddy-side operations would land here.
     """
+    # Lazy handler imports: loaded only when a live caddy integration builds its
+    # specs. Each thunk fires at dispatch.
+    from stormpulse.caddy.cert_status import make_caddy_cert_status_handler
+    from stormpulse.caddy.sync import make_caddy_sync_handler
+
     return {
-        BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC: CommandDef(
+        BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC: CommandSpec(
             group="caddy",
             command=[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC],  # internal - JobManager
             timeout=30,
@@ -57,7 +58,8 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
                 "a region against the supplied manifest and reload Caddy "
                 "via the admin API."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_caddy_sync_handler(config, params),
             params={
                 "region": ParamDef(
                     placeholder="region",
@@ -92,7 +94,7 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        CADDY_CERT_STATUS: CommandDef(
+        CADDY_CERT_STATUS: CommandSpec(
             group="caddy",
             command=[CADDY_CERT_STATUS],  # internal - handled by JobManager
             timeout=15,
@@ -104,8 +106,9 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
                 "cert is real, in date, and covers the domain. Read-only, one "
                 "outbound loopback handshake."
             ),
-            long_running=True,
+            mode="job",
             read_only=True,
+            handler=lambda params: make_caddy_cert_status_handler(config, params),
             params={
                 "domain": ParamDef(
                     placeholder="domain",
@@ -114,20 +117,5 @@ def build_caddy_commands(_config: CaddyConfig) -> dict[str, CommandDef]:
                     description="FQDN to check (e.g. example.com)",
                 ),
             },
-        ),
-    }
-
-
-def long_running_factories(config: CaddyConfig) -> dict[str, LongRunningFactory]:
-    """Return the Caddy long-running command name → handler-factory map."""
-    from stormpulse.caddy.cert_status import make_caddy_cert_status_handler
-    from stormpulse.caddy.sync import make_caddy_sync_handler
-
-    return {
-        BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC: (
-            lambda params: make_caddy_sync_handler(config, params)
-        ),
-        CADDY_CERT_STATUS: (
-            lambda params: make_caddy_cert_status_handler(config, params)
         ),
     }

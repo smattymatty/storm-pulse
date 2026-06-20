@@ -11,7 +11,7 @@ import pytest
 
 from stormpulse.commands import (
     COMMAND_REGISTRY,
-    CommandDef,
+    CommandSpec,
     CommandError,
     ParamValidationError,
     build_registry,
@@ -564,7 +564,7 @@ def test_build_registry_no_config_commands() -> None:
 
 
 def test_build_registry_adds_custom_command() -> None:
-    custom = CommandDef(
+    custom = CommandSpec(
         group="maintenance",
         command=["/usr/bin/systemctl", "restart", "caddy.service"],
         timeout=30,
@@ -578,7 +578,7 @@ def test_build_registry_adds_custom_command() -> None:
 
 
 def test_build_registry_overrides_builtin() -> None:
-    custom_git = CommandDef(
+    custom_git = CommandSpec(
         group="deploy",
         command=["/usr/local/bin/git", "-C", "{project_dir}", "pull"],
         timeout=120,
@@ -598,7 +598,7 @@ def test_build_registry_disables_builtin() -> None:
 
 
 def test_build_registry_disables_custom_command() -> None:
-    custom = CommandDef(
+    custom = CommandSpec(
         group="maintenance",
         command=["/usr/bin/systemctl", "restart", "caddy.service"],
         timeout=30,
@@ -636,7 +636,7 @@ def test_build_registry_disabled_unknown_is_harmless() -> None:
 
 
 def test_build_registry_does_not_mutate_original() -> None:
-    custom = CommandDef(
+    custom = CommandSpec(
         group="test",
         command=["/bin/true"],
         timeout=10,
@@ -660,7 +660,7 @@ def test_execute_config_defined_command(
         stdout="ok\n",
         stderr="",
     )
-    custom = CommandDef(
+    custom = CommandSpec(
         group="maintenance",
         command=["/usr/bin/systemctl", "restart", "caddy.service"],
         timeout=30,
@@ -679,9 +679,9 @@ def test_execute_config_defined_command(
 # ---------------------------------------------------------------------------
 
 
-def _cmd_with_params(**params: ParamDef) -> CommandDef:
-    """Helper to build a CommandDef with params."""
-    return CommandDef(
+def _cmd_with_params(**params: ParamDef) -> CommandSpec:
+    """Helper to build a CommandSpec with params."""
+    return CommandSpec(
         group="test",
         command=["/bin/true"],
         timeout=10,

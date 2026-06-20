@@ -1,26 +1,28 @@
-"""Garage-state side effects: ``handle_garage_refresh`` (inline ceremony) and ``post_success_hook`` (JobManager after-success)."""
+"""Garage-state side effects: the JobManager post-success refresh+push hook.
+
+The on-demand ``garage_refresh`` ceremony moved to the generic, agent-owned
+``stormpulse.agent.refresh`` (one routine for every state-collecting
+integration). What stays here is genuinely garage-specific: the post-mutation
+``on_success`` hook a garage job fires, plus the metrics-envelope builder it
+shares with the generic refresh.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
-
-from websockets.asyncio.client import ClientConnection
 
 from stormpulse.agent.integrations_runtime import (
     IntegrationRuntime,
     build_integrations_payload,
 )
-from stormpulse.config import CommandDef
+from stormpulse.config import CommandSpec
 from stormpulse.garage.state import collect_garage_state
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
-    CommandResultPayload,
     Envelope,
-    make_command_result,
     make_metrics_push,
 )
 
@@ -33,97 +35,16 @@ logger = logging.getLogger(__name__)
 def _live_garage(agent: Agent) -> IntegrationRuntime | None:
     """Return the garage Integration runtime iff it is live, else None.
 
-    garage_actions is garage-specific (the garage_refresh ceremony, the
-    group=="garage" post-mutation hook), so it reaches the runtime by id.
+    The post-mutation hook is garage-specific (the group=="garage" refresh+push),
+    so it reaches the runtime by id.
     """
     rt = agent.integrations.get("garage")
     return rt if rt is not None and rt.status == "live" else None
 
 
-async def collect_refresh_result(
-    agent: Agent,
-    request_id: str,
-) -> CommandResultPayload:
-    """Collect a fresh Garage snapshot and return the payload; updates the garage runtime state on success. No wire IO."""
-    rt = _live_garage(agent)
-    if rt is None:
-        return CommandResultPayload(
-            request_id=request_id,
-            command="garage_refresh",
-            group="garage",
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr="Garage integration not enabled",
-            duration_ms=0,
-            failure_reason="not_configured",
-        )
-    start = time.monotonic()
-    state = await asyncio.to_thread(collect_garage_state, rt.config)
-    duration_ms = int((time.monotonic() - start) * 1000)
-    if state is not None:
-        rt.state = state
-        return CommandResultPayload(
-            request_id=request_id,
-            command="garage_refresh",
-            group="garage",
-            success=True,
-            exit_code=0,
-            stdout=f"Refreshed: {len(state.buckets)} buckets",
-            stderr="",
-            duration_ms=duration_ms,
-        )
-    return CommandResultPayload(
-        request_id=request_id,
-        command="garage_refresh",
-        group="garage",
-        success=False,
-        exit_code=-1,
-        stdout="",
-        stderr="Failed to collect garage state",
-        duration_ms=duration_ms,
-        failure_reason="collection_failed",
-    )
-
-
-async def handle_garage_refresh(
-    agent: Agent,
-    ws: ClientConnection,
-    request_id: str,
-) -> None:
-    """Inline garage_refresh ceremony: collect, send result, pulse-log, push metrics on success."""
-    result = await collect_refresh_result(agent, request_id)
-    await ws.send(make_command_result(agent.config.agent.id, result).to_json())
-    logger.info(
-        "Sent result for 'garage_refresh': success=%s, %dms",
-        result.success,
-        result.duration_ms,
-    )
-    if agent.pulse_logger is not None:
-        cmd_def = agent.registry.get("garage_refresh")
-        sensitive = cmd_def.sensitive_output if cmd_def else False
-        agent.pulse_logger.log_command_result(
-            command=result.command,
-            success=result.success,
-            duration_ms=result.duration_ms,
-            sensitive=sensitive,
-        )
-    if not result.success:
-        return
-    try:
-        envelope = await build_metrics_envelope(agent)
-        await ws.send(envelope.to_json())
-        logger.info("Sent immediate metrics push after garage_refresh")
-    except Exception:
-        logger.warning(
-            "Failed to send metrics after garage_refresh",
-            exc_info=True,
-        )
-
-
 def post_success_hook(
     agent: Agent,
-    cmd_def: CommandDef,
+    cmd_def: CommandSpec,
     command: str,
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the after-success callback for a garage long-runner (immediate refresh+push), or ``None`` for non-garage."""
