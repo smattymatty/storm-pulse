@@ -44,6 +44,7 @@ class _FakeAdmin:
     def __init__(self):
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.allow_result: tuple[bool, str] = (True, "")
+        self.deny_result: tuple[bool, str] = (True, "")
         self.alias_result: tuple[bool, str] = (True, "")
         # Default read-back: the key now holds rw on the bucket.
         self.key_info: tuple[dict[str, Any] | None, str] = (
@@ -55,6 +56,10 @@ class _FakeAdmin:
     def allow_bucket_key(self, *, read, write, owner, **kw):
         self.calls.append(("allow_bucket_key", {"read": read, "write": write, "owner": owner}))
         return self.allow_result
+
+    def deny_bucket_key(self, *, read, write, owner, **kw):
+        self.calls.append(("deny_bucket_key", {"read": read, "write": write, "owner": owner}))
+        return self.deny_result
 
     def add_bucket_alias_local(self, **kw):
         self.calls.append(("add_bucket_alias_local", {}))
@@ -70,7 +75,7 @@ class _FakeAdmin:
 
 def _install(monkeypatch):
     fake = _FakeAdmin()
-    for name in ("allow_bucket_key", "add_bucket_alias_local", "get_key_info"):
+    for name in ("allow_bucket_key", "deny_bucket_key", "add_bucket_alias_local", "get_key_info"):
         monkeypatch.setattr(
             f"stormpulse.garage.attach_account_key.admin_api.{name}",
             getattr(fake, name),
@@ -94,7 +99,10 @@ async def test_attach_rw_confirmed(monkeypatch):
     assert outcome.extras["tier"] == "rw"
     grant = next(c for c in fake.calls if c[0] == "allow_bucket_key")
     assert grant[1] == {"read": True, "write": True, "owner": False}
-    assert fake.ops() == ["allow_bucket_key", "add_bucket_alias_local", "get_key_info"]
+    # Precise set: rw denies the complement (owner) so a re-attach can NARROW.
+    narrow = next(c for c in fake.calls if c[0] == "deny_bucket_key")
+    assert narrow[1] == {"read": False, "write": False, "owner": True}
+    assert fake.ops() == ["allow_bucket_key", "deny_bucket_key", "add_bucket_alias_local", "get_key_info"]
 
 
 @pytest.mark.asyncio
@@ -107,6 +115,9 @@ async def test_attach_ro_grants_read_only(monkeypatch):
     assert outcome.success is True
     grant = next(c for c in fake.calls if c[0] == "allow_bucket_key")
     assert grant[1] == {"read": True, "write": False, "owner": False}
+    # ro denies write + owner: the narrow that makes a change-scope to ro real.
+    narrow = next(c for c in fake.calls if c[0] == "deny_bucket_key")
+    assert narrow[1] == {"read": False, "write": True, "owner": True}
 
 
 @pytest.mark.asyncio
@@ -119,6 +130,8 @@ async def test_attach_owner(monkeypatch):
     assert outcome.success is True
     grant = next(c for c in fake.calls if c[0] == "allow_bucket_key")
     assert grant[1]["owner"] is True
+    # owner is the full set: nothing to deny, no narrow call.
+    assert "deny_bucket_key" not in fake.ops()
 
 
 @pytest.mark.asyncio
