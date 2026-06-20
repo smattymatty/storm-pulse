@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
@@ -62,23 +63,38 @@ async def run_get_bucket_owners(
     )
     if info is None:
         if admin_api.is_not_found(err):
-            return _success(bucket_id, owner_key_ids=[], started_at=started_at)
+            return _success(
+                bucket_id, owner_key_ids=[], key_grants=[], started_at=started_at,
+            )
         return _failure(
             failure_reason="bucket_read_failed",
             bucket_id=bucket_id, stderr=err, started_at=started_at,
         )
 
     owner_key_ids: list[str] = []
+    # BUCKETS-016 Slice 5: carry every key's actual grant tier on the bucket, so
+    # the provenance line can show "linked at Read-Write", not just "owner".
+    key_grants: list[dict[str, Any]] = []
     for entry in info.get("keys") or []:
         kid = entry.get("accessKeyId") or ""
+        if not kid:
+            continue
         perms = entry.get("permissions") or {}
-        if kid and perms.get("owner"):
+        r, w, o = (
+            bool(perms.get("read")), bool(perms.get("write")), bool(perms.get("owner")),
+        )
+        key_grants.append({"key_id": kid, "read": r, "write": w, "owner": o})
+        if o:
             owner_key_ids.append(kid)
-    return _success(bucket_id, owner_key_ids=owner_key_ids, started_at=started_at)
+    return _success(
+        bucket_id, owner_key_ids=owner_key_ids, key_grants=key_grants,
+        started_at=started_at,
+    )
 
 
 def _success(
-    bucket_id: str, *, owner_key_ids: list[str], started_at: float,
+    bucket_id: str, *, owner_key_ids: list[str],
+    key_grants: list[dict[str, Any]], started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=True,
@@ -87,6 +103,7 @@ def _success(
         extras={
             "bucket_id": bucket_id[:16],
             "owner_key_ids": owner_key_ids,
+            "key_grants": key_grants,
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
         },
