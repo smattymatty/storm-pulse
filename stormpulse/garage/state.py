@@ -93,6 +93,15 @@ class GarageState:
         """Convert to plain dict for inclusion in protocol payloads."""
         return asdict(self)
 
+    def summary(self) -> str:
+        """One-line summary for the on-demand refresh command result.
+
+        The optional ``summary()`` capability the generic agent refresh routine
+        uses (falling back to a default for a state type that doesn't define
+        one). Preserves the pre-single-source ``Refreshed: N buckets`` line.
+        """
+        return f"{len(self.buckets)} buckets"
+
 
 def _perm_flags(permissions: dict[str, Any] | None) -> str:
     """Render Garage's structured key permissions as the legacy ``RWO`` string.

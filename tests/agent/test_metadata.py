@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
-from stormpulse.config import CommandDef, ParamDef
+from stormpulse.config import CommandSpec, ParamDef
 from tests.helpers import DUMMY_PROJECT
 
 # ---------------------------------------------------------------------------
@@ -42,7 +42,7 @@ def test_strip_binary_path_flag_unchanged() -> None:
 
 def test_build_commands_metadata_basic() -> None:
     registry = {
-        "git_pull": CommandDef(
+        "git_pull": CommandSpec(
             group="deploy",
             command=["/usr/bin/git", "-C", "{project_dir}", "pull"],
             timeout=60,
@@ -63,7 +63,7 @@ def test_build_commands_metadata_basic() -> None:
 
 def test_build_commands_metadata_strips_paths() -> None:
     registry = {
-        "docker_up": CommandDef(
+        "docker_up": CommandSpec(
             group="deploy",
             command=["/usr/bin/docker", "compose", "up", "-d"],
             timeout=120,
@@ -76,8 +76,8 @@ def test_build_commands_metadata_strips_paths() -> None:
 
 def test_build_commands_metadata_sorted_keys() -> None:
     registry = {
-        "z_cmd": CommandDef(group="z", command=["/bin/z"], timeout=10),
-        "a_cmd": CommandDef(group="a", command=["/bin/a"], timeout=10),
+        "z_cmd": CommandSpec(group="z", command=["/bin/z"], timeout=10),
+        "a_cmd": CommandSpec(group="a", command=["/bin/a"], timeout=10),
     }
     result = build_commands_metadata(registry, DUMMY_PROJECT)
     assert list(result.keys()) == ["a_cmd", "z_cmd"]
@@ -85,7 +85,7 @@ def test_build_commands_metadata_sorted_keys() -> None:
 
 def test_build_commands_metadata_with_params() -> None:
     registry = {
-        "docker_logs": CommandDef(
+        "docker_logs": CommandSpec(
             group="diagnostics",
             command=["/usr/bin/docker", "logs", "{service}"],
             timeout=30,
@@ -113,7 +113,7 @@ def test_build_commands_metadata_with_params() -> None:
 
 def test_build_commands_metadata_param_no_default() -> None:
     registry = {
-        "logs": CommandDef(
+        "logs": CommandSpec(
             group="diagnostics",
             command=["/usr/bin/docker", "logs", "{service}"],
             timeout=30,
@@ -133,7 +133,7 @@ def test_build_commands_metadata_param_no_default() -> None:
 def test_build_commands_metadata_param_default_from_config() -> None:
     """Params with no static default get their default from project config."""
     registry = {
-        "docker_logs": CommandDef(
+        "docker_logs": CommandSpec(
             group="diagnostics",
             command=["/usr/bin/docker", "logs", "{docker_service_name}"],
             timeout=30,
@@ -153,7 +153,7 @@ def test_build_commands_metadata_param_default_from_config() -> None:
 
 def test_build_commands_metadata_with_confirmation() -> None:
     registry = {
-        "docker_down": CommandDef(
+        "docker_down": CommandSpec(
             group="deploy",
             command=["/usr/bin/docker", "compose", "down"],
             timeout=60,

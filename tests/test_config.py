@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from stormpulse.config import CommandDef, ConfigError, load_config
+from stormpulse.config import CommandSpec, ConfigError, load_config
 from stormpulse.garage.config import GarageConfig, parse_garage_config
 
 # ---------------------------------------------------------------------------
@@ -341,7 +341,7 @@ def test_custom_command_parsed(write_config: Callable[[str], Path]) -> None:
     config = load_config(write_config(MINIMAL_VALID + CUSTOM_COMMAND_TOML))
     assert "restart_caddy" in config.commands
     cmd = config.commands["restart_caddy"]
-    assert isinstance(cmd, CommandDef)
+    assert isinstance(cmd, CommandSpec)
     assert cmd.group == "maintenance"
     assert cmd.command == ["/usr/bin/systemctl", "restart", "caddy.service"]
     assert cmd.timeout == 30
@@ -366,7 +366,13 @@ timeout = 5
     assert cmd.long_running is False
 
 
-def test_custom_command_long_running(write_config: Callable[[str], Path]) -> None:
+def test_custom_command_long_running_rejected(
+    write_config: Callable[[str], Path],
+) -> None:
+    # Config-defined commands are subprocess-only: a job command's handler can
+    # only be contributed by an integration, so 'long_running' in config is
+    # refused at load rather than silently producing a command that fails at
+    # dispatch (no handler).
     toml = (
         MINIMAL_VALID
         + """
@@ -377,8 +383,42 @@ timeout = 600
 long_running = true
 """
     )
-    config = load_config(write_config(toml))
-    assert config.commands["bulk_op"].long_running is True
+    with pytest.raises(ConfigError, match="long_running"):
+        load_config(write_config(toml))
+
+
+def test_command_spec_job_requires_handler() -> None:
+    # The single-source guarantee made structural: a job with no handler is the
+    # half-registration footgun, and it must be impossible to even construct.
+    with pytest.raises(ValueError, match="job"):
+        CommandSpec(group="x", command=["x"], timeout=5, mode="job")
+
+
+def test_command_spec_non_job_rejects_handler() -> None:
+    with pytest.raises(ValueError, match="handler"):
+        CommandSpec(
+            group="x",
+            command=["/bin/true"],
+            timeout=5,
+            mode="subprocess",
+            handler=lambda _p: None,
+        )
+
+
+def test_command_spec_subprocess_requires_absolute_path() -> None:
+    # The Layer-4 whitelist invariant, enforced at construction instead of by a
+    # hand-maintained skip-list of exempt command names.
+    with pytest.raises(ValueError, match="absolute"):
+        CommandSpec(group="x", command=["relative-binary"], timeout=5)
+
+
+def test_command_spec_long_running_derived_from_mode() -> None:
+    job = CommandSpec(
+        group="x", command=["x"], timeout=5, mode="job", handler=lambda _p: None
+    )
+    sub = CommandSpec(group="x", command=["/bin/true"], timeout=5)
+    assert job.long_running is True
+    assert sub.long_running is False
 
 
 def test_custom_command_long_running_wrong_type_raises(

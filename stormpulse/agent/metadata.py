@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from stormpulse.config import CommandDef, ProjectConfig
+from stormpulse.config import CommandSpec, ProjectConfig
 
 
 def strip_binary_path(arg: str) -> str:
@@ -15,7 +15,7 @@ def strip_binary_path(arg: str) -> str:
 
 
 def build_commands_metadata(
-    registry: dict[str, CommandDef],
+    registry: dict[str, CommandSpec],
     config: ProjectConfig,
 ) -> dict[str, Any]:
     """Command-metadata dict for the register payload; params fall back to project config defaults, keys sorted."""

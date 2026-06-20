@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from stormpulse.config import CommandDef
+from stormpulse.config import CommandSpec
 from stormpulse.protocol import CommandResultPayload
 from stormpulse.signoff import SignoffState
 
@@ -24,7 +24,7 @@ def is_blocked_by_seal(
 def sealed_refusal_result(
     request_id: str,
     command: str,
-    cmd_def: CommandDef | None,
+    cmd_def: CommandSpec | None,
 ) -> CommandResultPayload:
     """Build the structured failure the agent emits when refusing a sealed verify or apply block."""
     return CommandResultPayload(

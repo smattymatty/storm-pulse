@@ -36,7 +36,7 @@ from stormpulse.agent.log_batches import PendingBatches
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
 from stormpulse.agent.ssl_context import create_ssl_context
 from stormpulse.auth import NonceStore
-from stormpulse.commands.jobs import JobManager, LongRunningFactory
+from stormpulse.commands.jobs import JobManager
 from stormpulse.config import Config
 from stormpulse.logging import (
     LogPositionStore,
@@ -82,9 +82,6 @@ class Agent:
             log_position_store=log_position_store,
         )
         self.registry = deps.registry
-        self.long_running_factories: dict[str, LongRunningFactory] = (
-            deps.long_running_factories
-        )
         self.shippers: dict[str, LogShipper] = deps.shippers
         self.streaming_tailers: list[StreamingDockerTailer] = deps.streaming_tailers
         # CORE-005: one runtime per configured Integration, keyed by id. The

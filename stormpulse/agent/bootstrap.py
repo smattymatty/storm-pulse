@@ -13,8 +13,7 @@ from stormpulse.agent.integrations_runtime import (
     IntegrationRuntime,
 )
 from stormpulse.commands import build_registry
-from stormpulse.commands.jobs import LongRunningFactory
-from stormpulse.config import CommandDef, Config, ConfigError
+from stormpulse.config import CommandSpec, Config, ConfigError
 from stormpulse.integrations import Integration, registered_integrations
 from stormpulse.logging import (
     DockerTailer,
@@ -31,24 +30,51 @@ logger = logging.getLogger(__name__)
 class AgentDependencies:
     """Per-process runtime built once at startup. ``integrations`` carries one IntegrationRuntime per configured Integration (CORE-005)."""
 
-    registry: dict[str, CommandDef]
-    long_running_factories: dict[str, LongRunningFactory]
+    registry: dict[str, CommandSpec]
     shippers: dict[str, LogShipper]
     streaming_tailers: list[StreamingDockerTailer]
     integrations: dict[str, IntegrationRuntime]
 
 
+# Kept byte-identical to the pre-single-source ``garage_refresh`` entry so the
+# advertised wire manifest is unchanged. The text is integration-agnostic.
+_REFRESH_DESCRIPTION = (
+    "Internal command - triggers immediate state collection and metrics push"
+)
+
+
+def _refresh_spec(integ_id: str) -> CommandSpec:
+    """Synthesize the generic ``{id}_refresh`` command for a state-collecting Integration.
+
+    "Refresh my state now" is an agent-owned capability, not a per-integration
+    handler: any Integration that declares ``collect_state`` gets it on equal
+    terms (garage as much as a third party), dispatched by the one generic
+    routine in ``stormpulse.agent.refresh``. ``mode="refresh"`` carries no
+    handler.
+    """
+    name = f"{integ_id}_refresh"
+    return CommandSpec(
+        group=integ_id,
+        command=[name],
+        timeout=30,
+        mode="refresh",
+        description=_REFRESH_DESCRIPTION,
+    )
+
+
 def _resolve_integration(
     integ: Integration,
     raw: dict[str, object],
-    commands: dict[str, CommandDef],
-    long_running: dict[str, LongRunningFactory],
+    commands: dict[str, CommandSpec],
 ) -> IntegrationRuntime:
     """Parse, gate, and (if live) register one Integration's commands.
 
     The fatal/soft line lives here (CORE-005 decision 5): a config error, a
-    disabled flag, or a failed precondition disables this one Integration with a
-    status the wire reports; the core agent and every sibling stay up.
+    disabled flag, a failed precondition, OR a command surface that won't build
+    disables this one Integration with a status the wire reports; the core agent
+    and every sibling stay up. A spec that trips the load-time guard soft-disables
+    its integration identically whether it is in-repo or third-party - garage gets
+    no privilege a third party wouldn't.
     """
     try:
         ic = integ.parse_config(raw)
@@ -59,10 +85,19 @@ def _resolve_integration(
     reason = integ.preconditions(ic) if integ.preconditions is not None else None
     if reason is not None:
         return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, ic, integ)
-    if integ.commands is not None:
-        commands.update(integ.commands(ic))
-    if integ.long_running is not None:
-        long_running.update(integ.long_running(ic))
+    try:
+        integ_specs = dict(integ.specs(ic)) if integ.specs is not None else {}
+        if integ.collect_state is not None:
+            integ_specs[f"{integ.id}_refresh"] = _refresh_spec(integ.id)
+    except Exception as exc:  # noqa: BLE001 - any build failure is a soft-disable, never a crash
+        return IntegrationRuntime(
+            integ.id,
+            STATUS_DISABLED_ERROR,
+            f"command registration failed: {exc}",
+            ic,
+            integ,
+        )
+    commands.update(integ_specs)
     return IntegrationRuntime(integ.id, STATUS_LIVE, None, ic, integ)
 
 
@@ -80,13 +115,12 @@ def build_agent_dependencies(
     aborts boot (CORE-005 decision 5).
     """
     commands = dict(config.commands)
-    long_running: dict[str, LongRunningFactory] = {}
     integrations: dict[str, IntegrationRuntime] = {}
     for integ in registered_integrations():
         raw = config.integrations.get(integ.id)
         if raw is None:
             continue
-        rt = _resolve_integration(integ, raw, commands, long_running)
+        rt = _resolve_integration(integ, raw, commands)
         integrations[integ.id] = rt
         if rt.status == STATUS_DISABLED_ERROR:
             logger.warning(
@@ -124,7 +158,6 @@ def build_agent_dependencies(
 
     return AgentDependencies(
         registry=registry,
-        long_running_factories=long_running,
         shippers=shippers,
         streaming_tailers=streaming_tailers,
         integrations=integrations,

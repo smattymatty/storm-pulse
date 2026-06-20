@@ -112,46 +112,47 @@ def test_disabled_commands_are_removed(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Long-running factory composition
+# Single-source command surface: handlers ride on the spec, refresh synthesized
 # ---------------------------------------------------------------------------
 
 
-def test_no_features_yields_empty_long_running_factories(tmp_path: Path) -> None:
-    cfg = build_config(tmp_path)
-    deps = build_agent_dependencies(
-        cfg,
-        signoff_sealed=False,
-        log_position_store=None,
-    )
-    assert deps.long_running_factories == {}
-
-
-def test_garage_enabled_publishes_long_running_factories(tmp_path: Path) -> None:
+def test_garage_job_handlers_ride_on_the_spec(tmp_path: Path) -> None:
+    # Single source: a job command carries its own handler thunk; there is no
+    # parallel name->factory map (deleted by this redesign).
     cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
     deps = build_agent_dependencies(
         cfg,
         signoff_sealed=False,
         log_position_store=None,
     )
-    assert set(deps.long_running_factories.keys()) == {
-        "garage_bucket_clear",
-        "garage_bucket_set_quota",
-        "garage_set_account_key_create_bucket",
-        "garage_walk_bucket_stats",
-        "garage_provision_customer_bucket",
-        "garage_rotate_customer_key",
-        "garage_provision_additional_key",
-        "garage_provision_account_key",
-        "garage_delete_provisioned_bucket",
-        "garage_delete_key",
-        "garage_detach_account_key",
-        "garage_attach_account_key",
-        "garage_enforce_account_key_tier",
-        "garage_converge_account_key_rotation",
-        "garage_snapshot_and_reap_account_key",
-        "garage_get_bucket_owners",
-        "garage_get_key_buckets",
-    }
+    clear = deps.registry["garage_bucket_clear"]
+    assert clear.mode == "job"
+    assert clear.handler is not None
+
+
+def test_garage_enabled_synthesizes_refresh_command(tmp_path: Path) -> None:
+    # "Refresh now" is a generic agent-owned capability: garage declares
+    # collect_state, so bootstrap synthesizes garage_refresh (mode="refresh",
+    # no handler) the same way a third-party state integration would get one.
+    cfg = build_config(tmp_path, garage=build_garage_config(tmp_path))
+    deps = build_agent_dependencies(
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
+    )
+    assert "garage_refresh" in deps.registry
+    assert deps.registry["garage_refresh"].mode == "refresh"
+    assert deps.registry["garage_refresh"].handler is None
+
+
+def test_no_features_yields_no_refresh_command(tmp_path: Path) -> None:
+    cfg = build_config(tmp_path)
+    deps = build_agent_dependencies(
+        cfg,
+        signoff_sealed=False,
+        log_position_store=None,
+    )
+    assert "garage_refresh" not in deps.registry
 
 
 # ---------------------------------------------------------------------------
@@ -208,7 +209,8 @@ def test_caddy_imported_drop_in_succeeds(tmp_path: Path) -> None:
     )
     assert deps.integrations["caddy"].status == "live"
     assert "buckets_custom_domain_caddy_sync" in deps.registry
-    assert "buckets_custom_domain_caddy_sync" in deps.long_running_factories
+    assert deps.registry["buckets_custom_domain_caddy_sync"].mode == "job"
+    assert deps.registry["buckets_custom_domain_caddy_sync"].handler is not None
 
 
 def test_caddy_disabled_does_not_check_drop_in(tmp_path: Path) -> None:

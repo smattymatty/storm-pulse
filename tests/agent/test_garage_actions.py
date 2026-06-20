@@ -19,7 +19,7 @@ from stormpulse.agent.garage_actions import (
     refresh_garage_state,
 )
 from stormpulse.commands.jobs import JobManager
-from stormpulse.config import CommandDef
+from stormpulse.config import CommandSpec
 from stormpulse.protocol import Envelope
 from tests.helpers import (
     FAKE_METRICS,
@@ -100,15 +100,15 @@ async def test_refresh_garage_state_leaves_state_untouched_on_collect_failure(
 
 
 def test_post_success_hook_none_for_non_garage_group(agent: Agent) -> None:
-    cmd_def = CommandDef(group="deploy", command=["/bin/git", "pull"], timeout=60)
+    cmd_def = CommandSpec(group="deploy", command=["/bin/git", "pull"], timeout=60)
     assert post_success_hook(agent, cmd_def, "git_pull") is None
 
 
 def test_post_success_hook_present_when_garage_enabled(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
-    cmd_def = CommandDef(
-        group="garage", command=["/garage"], timeout=60, long_running=True
+    cmd_def = CommandSpec(
+        group="garage", command=["/garage"], timeout=60, mode="job", handler=lambda _p: None
     )
     ag = agent_with_garage()
     assert post_success_hook(ag, cmd_def, "garage_bucket_clear") is not None
@@ -120,11 +120,11 @@ def test_post_success_hook_none_for_set_quota(
     # BUCKETS-006 invariant 2: set_quota is the recompute's OWN action, so it must
     # not emit a post-mutation metrics push, which would re-trigger the recompute
     # (the feedback storm). Its hook is None even though it is a garage command.
-    cmd_def = CommandDef(
+    cmd_def = CommandSpec(
         group="garage",
         command=["garage_bucket_set_quota"],
         timeout=30,
-        long_running=True,
+        mode="job", handler=lambda _p: None,
     )
     ag = agent_with_garage()
     assert post_success_hook(ag, cmd_def, "garage_bucket_set_quota") is None
@@ -136,15 +136,15 @@ def test_post_success_hook_none_for_read_only(
     # Read-only garage long-runners (get_bucket_owners, get_key_buckets,
     # walk_bucket_stats) mutate nothing; the refresh+push hook must skip them or a
     # polling dashboard floods state pushes. A mutating garage long-runner still gets one.
-    read_cmd = CommandDef(
+    read_cmd = CommandSpec(
         group="garage",
         command=["garage_get_bucket_owners"],
         timeout=30,
-        long_running=True,
+        mode="job", handler=lambda _p: None,
         read_only=True,
     )
-    mutate_cmd = CommandDef(
-        group="garage", command=["/garage"], timeout=60, long_running=True
+    mutate_cmd = CommandSpec(
+        group="garage", command=["/garage"], timeout=60, mode="job", handler=lambda _p: None
     )
     ag = agent_with_garage()
     assert post_success_hook(ag, read_cmd, "garage_get_bucket_owners") is None
@@ -172,8 +172,8 @@ async def test_post_success_hook_refreshes_and_pushes(
 
     ag.job_manager = JobManager(ag.config.agent.id, fake_send)
 
-    cmd_def = CommandDef(
-        group="garage", command=["/garage"], timeout=60, long_running=True
+    cmd_def = CommandSpec(
+        group="garage", command=["/garage"], timeout=60, mode="job", handler=lambda _p: None
     )
     hook = post_success_hook(ag, cmd_def, "garage_bucket_clear")
     assert hook is not None

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from stormpulse.agent import Agent, garage_actions, loops
+from stormpulse.agent import Agent, loops, refresh
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.garage.config import GarageConfig
@@ -202,10 +202,10 @@ class TestGarageRefresh:
             peers=[],
         )
         with patch(
-            "stormpulse.agent.garage_actions.collect_garage_state",
+            "stormpulse.garage.state.collect_garage_state",
             return_value=fake_state,
         ):
-            result = await garage_actions.collect_refresh_result(agent, "req-1")
+            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
 
         assert result.success is True
         assert result.command == "garage_refresh"
@@ -219,7 +219,7 @@ class TestGarageRefresh:
         config = _make_config(tmp_path, garage=None)
         agent, _ = _make_agent(config, tmp_path)
 
-        result = await garage_actions.collect_refresh_result(agent, "req-1")
+        result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
 
         assert result.success is False
         assert result.failure_reason == "not_configured"
@@ -230,10 +230,10 @@ class TestGarageRefresh:
         agent, _ = _make_agent(config, tmp_path)
 
         with patch(
-            "stormpulse.agent.garage_actions.collect_garage_state",
+            "stormpulse.garage.state.collect_garage_state",
             return_value=None,
         ):
-            result = await garage_actions.collect_refresh_result(agent, "req-1")
+            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
 
         assert result.success is False
         assert result.failure_reason == "collection_failed"

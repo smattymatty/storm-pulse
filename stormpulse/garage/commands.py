@@ -1,21 +1,21 @@
-"""Garage-specific whitelisted commands.
+"""Garage-specific whitelisted commands, as single-source CommandSpecs.
 
-Most resolve to ``docker exec <container> /garage <subcommand>``, shell=False.
-``garage_refresh`` is the exception: an internal command handled directly by
-the agent, triggering immediate state collection without a subprocess.
+Most resolve to ``docker exec <container> /garage <subcommand>``, shell=False
+(``mode="subprocess"``). The admin-API / S3 orchestrations are ``mode="job"``:
+each carries its own lazy handler thunk, so there is no separate name->factory
+map to drift against.
 
-Long-running commands (bucket clear, provisioning, key rotation, CORS) are
-declared here as well via ``long_running_factories``; each factory is bound
-to a Garage config so the bootstrap can compose a flat name→factory map
-without the agent knowing each handler module by name.
+There is no ``garage_refresh`` here anymore: "refresh my state now" is a
+generic, agent-owned capability synthesized for any Integration that declares
+``collect_state`` (see ``stormpulse.agent.refresh``), so garage gets it for
+free the same way a third-party integration would.
 """
 
 from __future__ import annotations
 
 import logging
 
-from stormpulse.commands.jobs import LongRunningFactory
-from stormpulse.config import CommandDef, ParamDef
+from stormpulse.config import CommandSpec, ParamDef
 from stormpulse.garage.config import GarageConfig
 
 logger = logging.getLogger(__name__)
@@ -42,37 +42,79 @@ _KEY_ID_PATTERN = r"[a-zA-Z0-9]+"
 _DOCUMENT_PATTERN = r"[a-zA-Z0-9._/-]+"
 
 
-def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
-    """Build Garage command registry from config.
+def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
+    """Build the Garage command registry from config.
 
     Uses config.docker_binary, config.container_name, and config.garage_binary
-    to construct the full command templates.
+    to construct the full subprocess command templates, and binds each job's
+    handler thunk to ``config``.
     """
     docker = config.docker_binary
     container = config.container_name
     garage = config.garage_binary
 
+    # Lazy handler imports: loaded only when a live garage integration builds
+    # its specs, so a garage-less host never imports handler code. Each thunk
+    # fires at dispatch, when validated params exist.
+    from stormpulse.garage.attach_account_key import (
+        make_attach_account_key_handler,
+    )
+    from stormpulse.garage.clear_bucket import make_clear_bucket_handler
+    from stormpulse.garage.converge_account_key_rotation import (
+        make_converge_account_key_rotation_handler,
+    )
+    from stormpulse.garage.delete_key import make_delete_key_handler
+    from stormpulse.garage.delete_provisioned_bucket import (
+        make_delete_provisioned_bucket_handler,
+    )
+    from stormpulse.garage.detach_account_key import (
+        make_detach_account_key_handler,
+    )
+    from stormpulse.garage.enforce_account_key_tier import (
+        make_enforce_account_key_tier_handler,
+    )
+    from stormpulse.garage.get_bucket_owners import make_get_bucket_owners_handler
+    from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
+    from stormpulse.garage.provision_account_key import (
+        make_provision_account_key_handler,
+    )
+    from stormpulse.garage.provision_additional_key import (
+        make_provision_additional_key_handler,
+    )
+    from stormpulse.garage.provision_bucket import (
+        make_provision_customer_bucket_handler,
+    )
+    from stormpulse.garage.rotate_key import make_rotate_customer_key_handler
+    from stormpulse.garage.set_account_key_capability import (
+        make_set_account_key_capability_handler,
+    )
+    from stormpulse.garage.set_quota import make_set_quota_handler
+    from stormpulse.garage.snapshot_and_reap_account_key import (
+        make_snapshot_and_reap_account_key_handler,
+    )
+    from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
+
     return {
         # ----- Read-only -----
-        "garage_status": CommandDef(
+        "garage_status": CommandSpec(
             group="garage",
             command=[docker, "exec", container, garage, "status"],
             timeout=15,
             description="Show Garage node status",
         ),
-        "garage_stats": CommandDef(
+        "garage_stats": CommandSpec(
             group="garage",
             command=[docker, "exec", container, garage, "stats"],
             timeout=15,
             description="Show Garage cluster statistics",
         ),
-        "garage_bucket_list": CommandDef(
+        "garage_bucket_list": CommandSpec(
             group="garage",
             command=[docker, "exec", container, garage, "bucket", "list"],
             timeout=15,
             description="List all Garage buckets",
         ),
-        "garage_bucket_info": CommandDef(
+        "garage_bucket_info": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -94,14 +136,14 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_key_list": CommandDef(
+        "garage_key_list": CommandSpec(
             group="garage",
             command=[docker, "exec", container, garage, "key", "list"],
             timeout=15,
             description="List all Garage API keys",
         ),
         # ----- State-changing -----
-        "garage_bucket_create": CommandDef(
+        "garage_bucket_create": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -123,7 +165,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_delete": CommandDef(
+        "garage_bucket_delete": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -153,12 +195,15 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
         # Handled by the JobManager, see garage/set_quota.py. The website's
         # recompute + provision dispatch this with bucket_id + max_size (decimal
         # bytes); without it, buckets silently carry no quota.
-        "garage_bucket_set_quota": CommandDef(
+        "garage_bucket_set_quota": CommandSpec(
             group="garage",
             command=["garage_bucket_set_quota"],  # internal - handled by JobManager
             timeout=30,  # single admin API call; long_running ignores this for duration
             description="Set the max-size Headroom quota on a bucket via the Garage admin API (BUCKETS-006)",
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_set_quota_handler(
+                params, admin_url=config.admin_url, admin_token=config.admin_token,
+            ),
             params={
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
@@ -174,12 +219,15 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_set_account_key_create_bucket": CommandDef(
+        "garage_set_account_key_create_bucket": CommandSpec(
             group="garage",
             command=["garage_set_account_key_create_bucket"],  # internal - handled by JobManager
             timeout=30,  # single admin API call; long_running ignores this for duration
             description="Set or clear an account key's allow_create_bucket capability via the Garage admin API (BUCKETS-012 count backstop).",
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_set_account_key_capability_handler(
+                params, admin_url=config.admin_url, admin_token=config.admin_token,
+            ),
             params={
                 "access_key_id": ParamDef(
                     placeholder="access_key_id",
@@ -195,7 +243,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_key_create": CommandDef(
+        "garage_key_create": CommandSpec(
             group="garage",
             command=[docker, "exec", container, garage, "key", "create", "{key_name}"],
             timeout=15,
@@ -210,7 +258,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_allow": CommandDef(
+        "garage_bucket_allow": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -243,7 +291,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_allow_rw": CommandDef(
+        "garage_bucket_allow_rw": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -275,7 +323,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_allow_ro": CommandDef(
+        "garage_bucket_allow_ro": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -306,7 +354,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_website_allow": CommandDef(
+        "garage_bucket_website_allow": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -345,7 +393,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_website_deny": CommandDef(
+        "garage_bucket_website_deny": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -369,7 +417,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_alias_global_add": CommandDef(
+        "garage_bucket_alias_global_add": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -398,7 +446,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_alias_global_remove": CommandDef(
+        "garage_bucket_alias_global_remove": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -421,7 +469,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_alias_local_add": CommandDef(
+        "garage_bucket_alias_local_add": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -458,7 +506,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_alias_local_remove": CommandDef(
+        "garage_bucket_alias_local_remove": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -489,14 +537,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        # ----- Internal -----
-        "garage_refresh": CommandDef(
-            group="garage",
-            command=["garage_refresh"],  # internal - not a subprocess
-            timeout=30,
-            description="Internal command - triggers immediate state collection and metrics push",
-        ),
-        "garage_provision_customer_bucket": CommandDef(
+        "garage_provision_customer_bucket": CommandSpec(
             group="garage",
             command=[
                 "garage_provision_customer_bucket"
@@ -504,7 +545,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             timeout=600,  # per-step reference; long_running ignores it for total duration
             description="Orchestrated bucket + admin key provisioning. Atomic with rollback. The rw/ro keys are added on demand via garage_provision_additional_key.",
             sensitive_output=True,  # secrets ride in stdout/extras
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_provision_customer_bucket_handler(config, params),
             params={
                 "display_name": ParamDef(
                     placeholder="display_name",
@@ -520,7 +562,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_delete_provisioned_bucket": CommandDef(
+        "garage_delete_provisioned_bucket": CommandSpec(
             group="garage",
             command=[
                 "garage_delete_provisioned_bucket"
@@ -528,7 +570,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             timeout=120,
             requires_confirmation=True,
             description="Orchestrated bucket deletion: detaches all aliases (using a temp global to bypass the orphan-rule deadlock when only locals exist), then deletes. Atomic with rollback.",
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_delete_provisioned_bucket_handler(config, params),
             params={
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
@@ -538,7 +581,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_provision_additional_key": CommandDef(
+        "garage_provision_additional_key": CommandSpec(
             group="garage",
             command=[
                 "garage_provision_additional_key"
@@ -546,7 +589,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             timeout=120,
             description="Orchestrated provisioning of an additional rw or ro key on an existing bucket. Atomic with rollback.",
             sensitive_output=True,  # the new secret rides in stdout/extras
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_provision_additional_key_handler(config, params),
             params={
                 "new_key_name": ParamDef(
                     placeholder="new_key_name",
@@ -574,7 +618,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_provision_account_key": CommandDef(
+        "garage_provision_account_key": CommandSpec(
             group="garage",
             command=[
                 "garage_provision_account_key"
@@ -582,7 +626,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             timeout=60,
             description="Orchestrated provisioning of an account key for customer aws cli / terraform bucket lifecycle. The tier governs create capability (BUCKETS-016): an Admin key is minted with key-level allow_create_bucket, a Read-Write/Read-Only key with create disabled. One step, no rollback - owns no bucket until the customer creates one over S3.",
             sensitive_output=True,  # the one-time secret rides in stdout/extras
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_provision_account_key_handler(config, params),
             params={
                 "new_key_name": ParamDef(
                     placeholder="new_key_name",
@@ -598,13 +643,14 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_rotate_customer_key": CommandDef(
+        "garage_rotate_customer_key": CommandSpec(
             group="garage",
             command=["garage_rotate_customer_key"],  # internal - handled by JobManager
             timeout=120,
             description="Orchestrated key rotation: create new key, attach local alias, delete old key. Atomic with rollback.",
             sensitive_output=True,  # secrets ride in stdout/extras
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_rotate_customer_key_handler(config, params),
             params={
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
@@ -638,7 +684,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_delete_key": CommandDef(
+        "garage_delete_key": CommandSpec(
             group="garage",
             command=["garage_delete_key"],  # internal - handled by JobManager
             timeout=30,
@@ -650,7 +696,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "transient error is not, so a still-live key is never certified "
                 "dead."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_delete_key_handler(config, params),
             params={
                 "key_id": ParamDef(
                     placeholder="key_id",
@@ -660,7 +707,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_detach_account_key": CommandDef(
+        "garage_detach_account_key": CommandSpec(
             group="garage",
             command=["garage_detach_account_key"],  # internal - handled by JobManager
             timeout=30,
@@ -672,7 +719,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "from its grant list. Grant-removal, not key-destruction: the "
                 "key survives. Confirmed by the deny op's own result, never a 404."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_detach_account_key_handler(config, params),
             params={
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
@@ -694,7 +742,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_attach_account_key": CommandDef(
+        "garage_attach_account_key": CommandSpec(
             group="garage",
             command=["garage_attach_account_key"],  # internal - handled by JobManager
             timeout=30,
@@ -706,7 +754,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "confirm the grant landed. A deliberate, password-gated "
                 "widening of a root credential, least-privilege by tier."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_attach_account_key_handler(config, params),
             params={
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
@@ -734,7 +783,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_enforce_account_key_tier": CommandDef(
+        "garage_enforce_account_key_tier": CommandSpec(
             group="garage",
             command=["garage_enforce_account_key_tier"],  # internal - JobManager
             timeout=120,
@@ -745,7 +794,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "if removing an owner grant would leave a bucket ownerless); "
                 "idempotent when already enforced."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_enforce_account_key_tier_handler(config, params),
             params={
                 "account_key_id": ParamDef(
                     placeholder="account_key_id",
@@ -764,7 +814,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_converge_account_key_rotation": CommandDef(
+        "garage_converge_account_key_rotation": CommandSpec(
             group="garage",
             command=["garage_converge_account_key_rotation"],  # internal - JobManager
             timeout=120,
@@ -775,7 +825,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "token. Re-dispatched each tick until it reports converged. "
                 "Additive only (4a); the old key keeps its access until 4b."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_converge_account_key_rotation_handler(config, params),
             params={
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
@@ -802,7 +853,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_snapshot_and_reap_account_key": CommandDef(
+        "garage_snapshot_and_reap_account_key": CommandSpec(
             group="garage",
             command=["garage_snapshot_and_reap_account_key"],  # internal - JobManager
             timeout=60,
@@ -814,7 +865,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "(not per-bucket deny) so a live key can't keep spawning "
                 "buckets. The new key converges from the returned snapshot."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_snapshot_and_reap_account_key_handler(config, params),
             params={
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
@@ -824,7 +876,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_get_key_buckets": CommandDef(
+        "garage_get_key_buckets": CommandSpec(
             group="garage",
             command=["garage_get_key_buckets"],  # internal - JobManager
             read_only=True,
@@ -835,7 +887,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "link, so the dashboard's per-key bucket list and revoke "
                 "at-risk split come from this live read."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_get_key_buckets_handler(config, params),
             params={
                 "key_id": ParamDef(
                     placeholder="key_id",
@@ -845,7 +898,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_get_bucket_owners": CommandDef(
+        "garage_get_bucket_owners": CommandSpec(
             group="garage",
             command=["garage_get_bucket_owners"],  # internal - JobManager
             read_only=True,
@@ -856,7 +909,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "Storm matches the ids to AccountKey rows for the bucket-detail "
                 "provenance line."
             ),
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_get_bucket_owners_handler(config, params),
             params={
                 "bucket_id": ParamDef(
                     placeholder="bucket_id",
@@ -866,7 +920,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_clear": CommandDef(
+        "garage_bucket_clear": CommandSpec(
             group="garage",
             command=[
                 "garage_bucket_clear"
@@ -881,7 +935,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
             ),
             requires_confirmation=True,
             sensitive_output=True,  # the secret arrives in params; never log them
-            long_running=True,
+            mode="job",
+            handler=lambda params: make_clear_bucket_handler(config, params),
             params={
                 "bucket_name": ParamDef(
                     placeholder="bucket_name",
@@ -924,7 +979,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_walk_bucket_stats": CommandDef(
+        "garage_walk_bucket_stats": CommandSpec(
             group="garage",
             command=["garage_walk_bucket_stats"],  # internal - handled by JobManager
             read_only=True,
@@ -936,7 +991,8 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 "customer's home IP doesn't appear in Garage's access log."
             ),
             sensitive_output=True,  # the secret arrives in params
-            long_running=True,
+            mode="job",
+            handler=make_walk_bucket_stats_handler,
             params={
                 "bucket_name": ParamDef(
                     placeholder="bucket_name",
@@ -984,7 +1040,7 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                 ),
             },
         ),
-        "garage_bucket_deny": CommandDef(
+        "garage_bucket_deny": CommandSpec(
             group="garage",
             command=[
                 docker,
@@ -1017,108 +1073,5 @@ def build_garage_commands(config: GarageConfig) -> dict[str, CommandDef]:
                     description="Key to revoke access for",
                 ),
             },
-        ),
-    }
-
-
-def long_running_factories(config: GarageConfig) -> dict[str, LongRunningFactory]:
-    """Return the Garage long-running command name → handler-factory map.
-
-    Each factory accepts the validated runtime params and returns a
-    ``JobHandler`` coroutine. Imports its handler module lazily so the
-    agent process doesn't load handler code for features that aren't
-    installed on a given host.
-    """
-    from stormpulse.garage.attach_account_key import (
-        make_attach_account_key_handler,
-    )
-    from stormpulse.garage.clear_bucket import make_clear_bucket_handler
-    from stormpulse.garage.converge_account_key_rotation import (
-        make_converge_account_key_rotation_handler,
-    )
-    from stormpulse.garage.delete_key import make_delete_key_handler
-    from stormpulse.garage.delete_provisioned_bucket import (
-        make_delete_provisioned_bucket_handler,
-    )
-    from stormpulse.garage.detach_account_key import (
-        make_detach_account_key_handler,
-    )
-    from stormpulse.garage.enforce_account_key_tier import (
-        make_enforce_account_key_tier_handler,
-    )
-    from stormpulse.garage.get_bucket_owners import make_get_bucket_owners_handler
-    from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
-    from stormpulse.garage.provision_account_key import (
-        make_provision_account_key_handler,
-    )
-    from stormpulse.garage.provision_additional_key import (
-        make_provision_additional_key_handler,
-    )
-    from stormpulse.garage.provision_bucket import (
-        make_provision_customer_bucket_handler,
-    )
-    from stormpulse.garage.rotate_key import make_rotate_customer_key_handler
-    from stormpulse.garage.set_account_key_capability import (
-        make_set_account_key_capability_handler,
-    )
-    from stormpulse.garage.set_quota import make_set_quota_handler
-    from stormpulse.garage.snapshot_and_reap_account_key import (
-        make_snapshot_and_reap_account_key_handler,
-    )
-    from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
-
-    return {
-        "garage_bucket_clear": (
-            lambda params: make_clear_bucket_handler(config, params)
-        ),
-        "garage_bucket_set_quota": (
-            lambda params: make_set_quota_handler(
-                params, admin_url=config.admin_url, admin_token=config.admin_token,
-            )
-        ),
-        "garage_set_account_key_create_bucket": (
-            lambda params: make_set_account_key_capability_handler(
-                params, admin_url=config.admin_url, admin_token=config.admin_token,
-            )
-        ),
-        "garage_walk_bucket_stats": make_walk_bucket_stats_handler,
-        "garage_provision_customer_bucket": (
-            lambda params: make_provision_customer_bucket_handler(config, params)
-        ),
-        "garage_rotate_customer_key": (
-            lambda params: make_rotate_customer_key_handler(config, params)
-        ),
-        "garage_provision_additional_key": (
-            lambda params: make_provision_additional_key_handler(config, params)
-        ),
-        "garage_provision_account_key": (
-            lambda params: make_provision_account_key_handler(config, params)
-        ),
-        "garage_delete_provisioned_bucket": (
-            lambda params: make_delete_provisioned_bucket_handler(config, params)
-        ),
-        "garage_delete_key": (
-            lambda params: make_delete_key_handler(config, params)
-        ),
-        "garage_detach_account_key": (
-            lambda params: make_detach_account_key_handler(config, params)
-        ),
-        "garage_attach_account_key": (
-            lambda params: make_attach_account_key_handler(config, params)
-        ),
-        "garage_enforce_account_key_tier": (
-            lambda params: make_enforce_account_key_tier_handler(config, params)
-        ),
-        "garage_converge_account_key_rotation": (
-            lambda params: make_converge_account_key_rotation_handler(config, params)
-        ),
-        "garage_snapshot_and_reap_account_key": (
-            lambda params: make_snapshot_and_reap_account_key_handler(config, params)
-        ),
-        "garage_get_bucket_owners": (
-            lambda params: make_get_bucket_owners_handler(config, params)
-        ),
-        "garage_get_key_buckets": (
-            lambda params: make_get_key_buckets_handler(config, params)
         ),
     }

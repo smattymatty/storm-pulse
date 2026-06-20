@@ -8,7 +8,7 @@ import subprocess
 import time
 from typing import Any
 
-from stormpulse.config import CommandDef, ParamDef, ProjectConfig
+from stormpulse.config import CommandSpec, ParamDef, ProjectConfig
 from stormpulse.protocol import CommandResultPayload
 
 logger = logging.getLogger(__name__)
@@ -22,14 +22,14 @@ class ParamValidationError(Exception):
     """Raised when runtime params fail validation."""
 
 
-COMMAND_REGISTRY: dict[str, CommandDef] = {
-    "git_pull": CommandDef(
+COMMAND_REGISTRY: dict[str, CommandSpec] = {
+    "git_pull": CommandSpec(
         group="deploy",
         command=["/usr/bin/git", "-C", "{project_dir}", "pull"],
         timeout=60,
         description="Pull latest changes from remote",
     ),
-    "docker_logs": CommandDef(
+    "docker_logs": CommandSpec(
         group="diagnostics",
         command=[
             "/usr/bin/docker",
@@ -70,7 +70,7 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
     # against a compromised dashboard. Confined to read-only verify
     # checks by the dashboard side (the website refuses to dispatch
     # any block whose `kind != verify`).
-    "run_verify_block": CommandDef(
+    "run_verify_block": CommandSpec(
         group="signoff",
         command=["/bin/bash", "-c", "{verify_command}"],
         timeout=30,
@@ -91,7 +91,7 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
     # vulnerability scans, image builds) and multi-line heredocs that
     # the verify limits were never sized for. Seal-gated identically to
     # run_verify_block, see build_registry below.
-    "run_apply_block": CommandDef(
+    "run_apply_block": CommandSpec(
         group="signoff",
         command=["/bin/bash", "-c", "{apply_command}"],
         timeout=600,
@@ -109,11 +109,11 @@ COMMAND_REGISTRY: dict[str, CommandDef] = {
 
 
 def build_registry(
-    config_commands: dict[str, CommandDef],
+    config_commands: dict[str, CommandSpec],
     disabled: frozenset[str] = frozenset(),
     *,
     signoff_sealed: bool = False,
-) -> dict[str, CommandDef]:
+) -> dict[str, CommandSpec]:
     """Merge built-in commands with config-defined commands.
 
     Config commands override built-ins on name collision.
@@ -133,7 +133,7 @@ def build_registry(
 
 
 def validate_params(
-    cmd_def: CommandDef,
+    cmd_def: CommandSpec,
     runtime_params: dict[str, str],
 ) -> dict[str, str]:
     """Validate runtime params against a command's ParamDefs.
@@ -217,7 +217,7 @@ def _resolve_command(
     return cleaned
 
 
-def get_command(name: str, *, registry: dict[str, CommandDef]) -> CommandDef:
+def get_command(name: str, *, registry: dict[str, CommandSpec]) -> CommandSpec:
     """Look up a command by name, or raise CommandError."""
     try:
         return registry[name]
@@ -232,7 +232,7 @@ def execute_command(
     request_id: str,
     sequence_id: str | None = None,
     *,
-    registry: dict[str, CommandDef],
+    registry: dict[str, CommandSpec],
     runtime_params: dict[str, str] | None = None,
 ) -> CommandResultPayload:
     """Execute a whitelisted command and return the result.
