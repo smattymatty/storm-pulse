@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-21
+
+Reworks the integration system into a single-source contract. This is the point of 0.2: authoring a command is now one entry that cannot be half-registered, an integration plugs into one seam instead of two, and "refresh my state" is a generic kernel capability rather than a per-integration special case. The advertised command manifest is byte-identical to 0.1.10, so no dashboard or website change is required to run this agent.
+
+The footgun this closes: a command used to live in two parallel name-keyed maps that had to agree but were not 1:1, a schema (`CommandDef`) and, separately, a long-running handler factory. A command added to one but not the other surfaced at runtime as `Unknown command`, `Unknown params`, or a type error mid-dispatch. That class of bug recurred through the BUCKETS-016 work. There is now one `CommandSpec` per command carrying both, so there is no second map to drift against.
+
+New contributors should start at the [Architecture guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Architecture), which is the readable replacement for excavating internal decision records.
+
+### Changed
+
+- **One `CommandSpec` per command.** `CommandSpec` replaces `CommandDef` as the single registry type. It carries the command's schema and, for a long-running command, its handler. A new `mode` field (`subprocess` | `job` | `refresh`) is how the dispatcher routes; `long_running` is now a derived property of `mode`, not a separately-set flag. The advertised wire manifest is unchanged.
+- **One integration command seam.** `Integration.commands` and `Integration.long_running` collapse into a single `Integration.specs` builder, so an integration contributes its whole command surface, schemas and handlers together, through one function. Garage and Caddy moved to it as the reference implementations.
+- **`garage_refresh` is now generic.** "Collect this integration's state now and push it" is a kernel-owned capability synthesized as `{id}_refresh` for any integration that declares `collect_state`. Garage gets `garage_refresh` exactly as a third-party state integration would get its own, instead of a hardcoded special case in the dispatcher.
+- **Command dispatch routes on `mode`** rather than a `long_running` bool plus a hardcoded command-name check.
+
+### Removed
+
+- **The parallel handler-factory maps.** The garage and caddy `long_running_factories` functions and `resolve_long_running_handler` are gone; a job's handler rides on its spec. The public builders `build_garage_commands` and `build_caddy_commands` are replaced by `build_garage_specs` and `build_caddy_specs`. (Breaking for code importing the old names.)
+- **The internal `garage_refresh` special-case** in the dispatcher (the `== "garage_refresh"` magic string) and the bespoke `handle_garage_refresh` ceremony, replaced by the generic refresh routine.
+- **`long_running` for config-defined `[[commands]]`.** A config command is always a subprocess (a job's handler can only come from an integration), so `long_running = true` in a `[commands.*]` table is now refused at load with an actionable error instead of silently producing a command that failed at dispatch. (Breaking only for configs that set it; it never functioned.)
+
+### Added
+
+- **Construction-time command guard.** A `CommandSpec` rejects illegal shapes the moment it is built: a `job` with no handler, a `subprocess` without an absolute binary path, or a non-`job` carrying a handler. Half-registration is structurally impossible now, not caught by a hand-maintained list of expected command names in a test.
+- **Optional `StateBlob.summary()`.** A state object may expose a one-line summary used in its refresh result (garage reports `Refreshed: N buckets`); integrations without one get a generic line.
+- **[Architecture wiki guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Architecture).** One page: the kernel/integration model, why it is shaped this way, the security and failure models, and a worked "write your own integration" walkthrough.
+
+### Security
+
+- **A broken command surface soft-disables its integration instead of crashing the agent.** A spec that fails to build at startup disables that one integration with a reported reason (matching the existing integration failure model), in-repo and third-party treated identically; the kernel and every other integration stay up. The Layer-4 whitelist invariants (absolute binary path, handler presence) are enforced at construction, not by a test's name-list, so a malformed privileged command cannot be built in the first place.
+
 ## [0.1.10] - 2026-05-31
 
 Adds `run_apply_block`, the dashboard-driven apply-block sibling of `run_verify_block` introduced in 0.1.8. The website's command-block dispatch path sends `run_verify_block` for verify blocks and `run_apply_block` for apply blocks; the agent only implemented the verify side, so apply-block "Run (Pulse)" clicks were rejected as `Unknown command: 'run_apply_block'` and the operator had to fall back to **Mark run** plus a manual SSH paste. Discovered 2026-05-29 during the alpha-node 002-garage walk, where the Step 2 grype scan would not dispatch. The verify and apply hatches share the same seal: a sealed agent now auto-disables both. Also ships the rootless-install `--config` EUID-awareness fix queued from 0.1.9 cleanup work.
