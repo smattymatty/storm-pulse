@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Reworks the integration system into a single-source contract. This is the point of 0.2: authoring a command is now one entry that cannot be half-registered, an integration plugs into one seam instead of two, and "refresh my state" is a generic kernel capability rather than a per-integration special case. The advertised command manifest is byte-identical to 0.1.10, so no dashboard or website change is required to run this agent.
 
-The footgun this closes: a command used to live in two parallel name-keyed maps that had to agree but were not 1:1, a schema (`CommandDef`) and, separately, a long-running handler factory. A command added to one but not the other surfaced at runtime as `Unknown command`, `Unknown params`, or a type error mid-dispatch. That class of bug recurred through the BUCKETS-016 work. There is now one `CommandSpec` per command carrying both, so there is no second map to drift against.
+The footgun this closes: a command used to live in two parallel name-keyed maps that had to agree but were not 1:1, a schema (`CommandDef`) and, separately, a long-running handler factory. A command added to one but not the other surfaced at runtime as `Unknown command`, `Unknown params`, or a type error mid-dispatch. That class of bug recurred through earlier integration work. There is now one `CommandSpec` per command carrying both, so there is no second map to drift against.
 
 New contributors should start at the [Architecture guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Architecture), which is the readable replacement for excavating internal decision records.
 

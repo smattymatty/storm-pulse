@@ -8,7 +8,7 @@ Secure server management agent for [Storm Developments](https://stormdevelopment
 
 ## How It Works
 
-1. Agent connects **outbound** to the dashboard. Nginx terminates mTLS.
+1. Agent connects **outbound** to the dashboard. Caddy terminates mTLS.
 2. Sends a `register` message (including its available commands list), then pushes metrics every 15s (CPU, memory, disk, load, containers).
 3. Dashboard sends HMAC-signed commands. Agent verifies signature, nonce, and expiry before executing.
 4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config with optional overridable parameters (regex-validated). No shell injection possible.
@@ -23,9 +23,9 @@ Five layers, each independent:
 - **Transport** -- mTLS with per-agent certs from a private CA.
 - **Application** -- HMAC-SHA256 + nonce + expiry on every command.
 - **Execution** -- Whitelisted commands only. Absolute paths. `shell=False`. Config placeholders from local config only; runtime params are regex-validated.
-- **OS** -- Dedicated user. Systemd sandboxing.
+- **OS** -- Rootless by default: a sudo-less operator user against rootless Docker, no host root, no docker group. Systemd sandboxing. (A legacy system-mode install under a dedicated system user is still supported.)
 
-See the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) wiki page for the full design.
+See the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) wiki page for the full design. Found a vulnerability? [SECURITY.md](SECURITY.md) has the reporting path.
 
 ## Setup
 
@@ -37,13 +37,21 @@ Install from PyPI:
 pip install storm-pulse-agent
 ```
 
-For full setup instructions (system user, permissions, systemd, firewall), see the [Setup Guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Setup-Guide).
+For full setup instructions (operator user, permissions, systemd, firewall), see the [Setup Guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Setup-Guide).
+
+**Install modes.** `stormpulse init` auto-detects which to use:
+
+- **User mode (rootless), the default on hardened boxes.** Runs as a sudo-less operator user against rootless Docker. Config and creds under `~/.config/stormpulse/`, data under `~/.local/share/stormpulse/`, a systemd user unit. No host root, no docker group, no system user.
+- **System mode (legacy).** Runs under a dedicated `stormpulse` system user with a system unit; config and creds under `/etc/stormpulse/`. Used only where rootless Docker is not present.
+
+Already on a system install? `stormpulse migrate-to-rootless` converts it in place.
 
 ## CLI
 
 ```
 stormpulse enroll ENDPOINT AGENT_ID TOKEN [--creds-dir DIR] [--force]
-stormpulse init [--creds-dir DIR] [--force]
+stormpulse init [--creds-dir DIR] [--user | --system] [--force]
+stormpulse migrate-to-rootless [--force]
 stormpulse run [CONFIG]
 stormpulse status [CONFIG]
 stormpulse signoff status [CONFIG]
@@ -56,9 +64,11 @@ stormpulse update [--source {pip,git}] [--branch BRANCH] [--version VERSION] [--
 stormpulse --version
 ```
 
-**enroll** -- One-time enrollment. Generates an EC P-256 keypair, sends a CSR to the dashboard, writes the signed cert + CA cert + HMAC key to `/etc/stormpulse/`. The private key never leaves the machine.
+**enroll** -- One-time enrollment. Generates an EC P-256 keypair, sends a CSR to the dashboard, writes the signed cert + CA cert + HMAC key to the credentials directory (`~/.config/stormpulse/` for a rootless user-mode install, `/etc/stormpulse/` for a legacy system install; override with `--creds-dir`). The private key never leaves the machine.
 
-**init** -- Interactive setup wizard. Generates config, creates systemd service, sets permissions. Run after enrollment. Auto-detects Garage installations and running Docker containers and offers to enable integration / log shipping.
+**init** -- Interactive setup wizard. Auto-detects the install mode (rootless user mode when it finds a rootless Docker socket, legacy system mode otherwise; force with `--user` / `--system`). Generates config, creates the matching systemd unit (user unit or system unit), sets permissions. Run after enrollment. Auto-detects Garage installations and running Docker containers and offers to enable integration / log shipping.
+
+**migrate-to-rootless** -- Converts an existing legacy system install to rootless user mode in place. Preserves the agent's cryptographic identity so the dashboard sees the same agent. Use `--force` to overwrite user-mode files left by a previous migration.
 
 **run** -- Starts the agent. Connects to the dashboard, sends heartbeats and metrics, executes commands. Reconnects automatically with exponential backoff.
 

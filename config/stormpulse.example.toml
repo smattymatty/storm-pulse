@@ -1,5 +1,10 @@
 # Storm Pulse Agent Configuration
-# Copy to /etc/stormpulse/stormpulse.toml and edit.
+#
+# `stormpulse init` generates this file for you with paths that match the
+# detected install mode, so you normally do not hand-write it. This example
+# shows a rootless user-mode install (the production default) for an operator
+# user named `deploy`. A legacy system install puts creds under /etc/stormpulse/
+# and data under /opt/stormpulse/data/ instead.
 
 [agent]
 id = "vps-toronto-01"
@@ -13,12 +18,12 @@ reconnect_max_seconds = 60
 heartbeat_interval_seconds = 30
 
 [tls]
-ca_cert = "/etc/stormpulse/ca.pem"
-client_cert = "/etc/stormpulse/agent.pem"
-client_key = "/etc/stormpulse/agent-key.pem"
+ca_cert = "/home/deploy/.config/stormpulse/ca.pem"
+client_cert = "/home/deploy/.config/stormpulse/agent.pem"
+client_key = "/home/deploy/.config/stormpulse/agent-key.pem"
 
 [auth]
-hmac_secret = "/etc/stormpulse/hmac.key"
+hmac_secret = "/home/deploy/.config/stormpulse/hmac.key"
 command_max_age_seconds = 60
 
 [metrics]
@@ -32,7 +37,7 @@ docker_service_name = "web"
 # env_file = "/home/deploy/stormdevelopments/.env"  # optional, passed as --env-file to docker compose
 
 [storage]
-db_path = "/opt/stormpulse/data/stormpulse.db"
+db_path = "/home/deploy/.local/share/stormpulse/stormpulse.db"
 
 # ---------------------------------------------------------------------------
 # Custom commands (optional)
@@ -103,9 +108,10 @@ db_path = "/opt/stormpulse/data/stormpulse.db"
 # ---------------------------------------------------------------------------
 # Caddy (optional) - present on regional VPS agents that serve customer
 # custom-domain HTTPS via Caddy. Enables the
-# buckets_custom_domain_caddy_sync command. The agent hard-fails at boot
-# if main_caddyfile does not have an `import` directive resolving to
-# drop_in_path (exact path or glob both count).
+# buckets_custom_domain_caddy_sync command. If main_caddyfile does not have
+# an `import` directive resolving to drop_in_path (exact path or glob both
+# count), the Caddy integration soft-disables with a named reason; the agent
+# and every other integration keep running.
 # ---------------------------------------------------------------------------
 #
 # [caddy]
