@@ -15,37 +15,37 @@ adr:
 
 storm-pulse ships as `pip install storm-pulse-agent` from PyPI. The agent runs on every VPS Storm operates and, even rootless (CORE-003), holds enough local privilege to manage that host's Garage and read its admin token. That makes a compromised PyPI credential the worst class of supply-chain attack: anyone who can publish storm-pulse-agent reaches every host that installs it.
 
-Project-scoping limits the blast radius of a leaked credential to one package, but here that one package is the one that matters. The strongest mitigation is to keep no standing PyPI credential on any server. Publishing happens by hand, from my workstation.
+Project-scoping limits the blast radius of a leaked credential to one package, but here that one package is the one that matters. The strongest mitigation is to keep no standing PyPI credential on any server. Publishing happens by hand, from the maker's workstation.
 
 ## Decision
 
-**Release is a four-step act on my machine:**
+**Release is a four-step act on the maker's machine:**
 
 1. Bump `[project].version` in `pyproject.toml` and add the matching entry to `CHANGELOG.md`.
 2. Commit. Push.
 3. Locally: `make check` for the codebase, then `make pre-release-check` to assert `[project].version` and the top `CHANGELOG.md` entry agree.
-4. `uv build && uv publish`. Pre-publish, smoke-test the wheel in a fresh venv: `pip install dist/storm_pulse_agent-*.whl && stormpulse --version`. Catches install-time breakage before PyPI's immutability eats you.
+4. `uv build && uv publish`. Pre-publish, smoke-test the wheel in a fresh venv: `pip install dist/storm_pulse_agent-*.whl && stormpulse --version`. Catches install-time breakage before PyPI's immutability makes it permanent.
 
 **Version is static, in `pyproject.toml`.** Single source of truth, one line to edit. `setuptools-scm` is not adopted: a build-time dep and a layer of indirection to save editing one line.
 
-**Token never on a server.** The PyPI API token is project-scoped to `storm-pulse-agent` and stored only on my workstation (env var / keyring). Compromise scope: my dev machine. Rotation: whenever I want, no shared secret to coordinate.
+**Token never on a server.** The PyPI API token is project-scoped to `storm-pulse-agent` and stored only on the maker's workstation (env var / keyring). Compromise scope: that one dev machine. Rotation: at the maker's discretion, no shared secret to coordinate.
 
-**Lockfile is hand-rolled.** `uv lock` is run when I bump a dependency or want to refresh, never on a schedule. The supply chain doesn't move without me.
+**Lockfile is hand-rolled.** `uv lock` is run when the maker bumps a dependency or wants to refresh, never on a schedule. The supply chain doesn't move without a deliberate local action.
 
 ## Consequences
 
 **Positive:**
 
-- No standing PyPI credential on any server I operate.
-- No release-specific machinery to maintain. No tag-triggered workflow, no release secret in any store but my own.
-- The version-consistency check is a Python script I own and run, not a YAML step at a moment I can't see.
+- No standing PyPI credential on any server Storm operates.
+- No release-specific machinery to maintain. No tag-triggered workflow, no release secret in any store but the maker's own.
+- The version-consistency check is a Python script the maker owns and runs, not a YAML step firing at an unseen moment.
 - Release is a conscious moment: green checks are permission to publish, not the publish itself.
 - One toolchain (uv) for build, lock, and publish.
 
 **Negative:**
 
 - Not a one-action release. The push is step 2 of 4; the publish is step 4. For a low release cadence this is fine; for daily releases it would be friction.
-- No machine-enforced gate between "code is shippable" and "uv publish ran." If I publish broken code, broken code goes up. The human-in-the-loop is the design, but it is a real cost.
+- No machine-enforced gate between "code is shippable" and "uv publish ran." If the maker publishes broken code, broken code goes up. The human-in-the-loop is the design, but it is a real cost.
 - No provenance link between any external record and the PyPI artifact. The audit trail is `CHANGELOG.md` plus `git log -- pyproject.toml`, joined by version number.
 
 ## Governance
