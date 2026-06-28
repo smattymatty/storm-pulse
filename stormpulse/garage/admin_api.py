@@ -16,11 +16,114 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
+import time
+from collections import deque
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
 _TIMEOUT_SECONDS = 15.0
 _FULL_BUCKET_ID_LEN = 64
+
+
+# --- Admin-API call meter (observability) ----------------------------------
+# Every admin call routes through ``_request``, so wrapping it once meters 100%
+# of admin traffic - state reads, the detector, and command-driven mutations
+# alike. The meter holds a trailing time window of per-call latencies keyed by
+# target endpoint, so the agent reports admin-API call-rate and p95 latency per
+# target node on the metrics push.
+#
+# This is the signal the 2026-06-27 saturation incident had no graph for: the
+# saturating resource was admin-API request serialization while CPU/RAM/disk all
+# read healthy. The meter is a process singleton (admin load is a property of the
+# process talking to the node, and rightly survives a websocket reconnect like
+# the state reader's topology cache). It records, never blocks, and meters
+# failures too: a timed-out call still consumed admin time and is the most
+# important latency to see under saturation.
+_ADMIN_METER_WINDOW_SECONDS = 300.0
+
+
+@dataclass(frozen=True, slots=True)
+class AdminCallStats:
+    """One endpoint's admin-API call stats over the trailing meter window."""
+
+    sample_count: int
+    calls_per_sec: float
+    p95_latency_ms: float
+
+
+def _percentile(sorted_vals: list[float], q: float) -> float:
+    """Nearest-rank percentile of a pre-sorted list (``q`` in [0, 1]); 0.0 if empty.
+
+    Nearest-rank, not interpolated: with the handful of admin calls per window a
+    small agent makes, an interpolated p95 buys false precision. The rank is
+    ``ceil(q * n)`` clamped into range, so p95 of 20 samples is the 19th.
+    """
+    if not sorted_vals:
+        return 0.0
+    rank = max(1, math.ceil(q * len(sorted_vals)))
+    return sorted_vals[min(rank, len(sorted_vals)) - 1]
+
+
+class _AdminCallMeter:
+    """Trailing-window admin-API latency samples, keyed by endpoint (``admin_url``).
+
+    Per endpoint a deque of ``(monotonic_ts, duration_ms)``; samples older than
+    the window are evicted on every record and snapshot, so memory is bounded by
+    the call rate, not by uptime. Stateless across nothing: one process-lifetime
+    instance, never reset on read (the window is rolling, evicted by age).
+    """
+
+    def __init__(self, window_seconds: float = _ADMIN_METER_WINDOW_SECONDS) -> None:
+        self._window = window_seconds
+        self._samples: dict[str, deque[tuple[float, float]]] = {}
+
+    def record(self, admin_url: str, duration_ms: float, now: float) -> None:
+        dq = self._samples.get(admin_url)
+        if dq is None:
+            dq = deque()
+            self._samples[admin_url] = dq
+        dq.append((now, duration_ms))
+        self._evict(dq, now)
+
+    def _evict(self, dq: deque[tuple[float, float]], now: float) -> None:
+        cutoff = now - self._window
+        while dq and dq[0][0] < cutoff:
+            dq.popleft()
+
+    def snapshot(self, now: float) -> dict[str, AdminCallStats]:
+        """Read the current window per endpoint. Eviction-only; never clears.
+
+        ``calls_per_sec`` is the window's sample count over the FULL window span,
+        so it averages over the trailing window (a cold-started agent ramps to
+        the true rate over one window, never spikes). ``p95`` is over the same
+        surviving samples.
+        """
+        out: dict[str, AdminCallStats] = {}
+        for url, dq in self._samples.items():
+            self._evict(dq, now)
+            if not dq:
+                continue
+            durations = sorted(d for _, d in dq)
+            out[url] = AdminCallStats(
+                sample_count=len(durations),
+                calls_per_sec=len(durations) / self._window,
+                p95_latency_ms=_percentile(durations, 0.95),
+            )
+        return out
+
+
+_METER = _AdminCallMeter()
+
+
+def admin_call_stats() -> dict[str, AdminCallStats]:
+    """Snapshot the admin-API meter, keyed by endpoint.
+
+    The garage state read folds this into the per-node ``admin_metrics`` it puts
+    on the metrics push (``state.GarageState.admin_metrics``).
+    """
+    return _METER.snapshot(time.monotonic())
 
 
 def set_bucket_quota(
@@ -524,6 +627,10 @@ def _request(
     )
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
+    # Meter every real call attempt (past URL validation), success or failure:
+    # a timeout consumed admin time and is the saturation signal. Timed across
+    # the whole request/response so latency reflects what the admin API took.
+    start = time.monotonic()
     try:
         conn = conn_class(parsed.hostname, port, timeout=_TIMEOUT_SECONDS)
         conn.request(method, path, body=body, headers=headers)
@@ -531,7 +638,11 @@ def _request(
         status = resp.status
         resp_body = resp.read().decode("utf-8", errors="replace")
         conn.close()
+        result: tuple[int | None, str] = (status, resp_body)
     except (OSError, http.client.HTTPException) as exc:
-        return None, f"Could not reach Garage admin API at {admin_url}: {exc}"
+        result = (None, f"Could not reach Garage admin API at {admin_url}: {exc}")
+    finally:
+        now = time.monotonic()
+        _METER.record(admin_url, (now - start) * 1000.0, now)
 
-    return status, resp_body
+    return result
