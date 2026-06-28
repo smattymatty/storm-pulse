@@ -69,6 +69,26 @@ class GarageBucket:
 
 
 @dataclass(frozen=True, slots=True)
+class GarageAdminMetric:
+    """Admin-API call telemetry for one target node, observed over the agent's
+    trailing meter window (``admin_api._AdminCallMeter``).
+
+    Node-adjacent operational telemetry: how the agent's admin-API traffic to
+    this node is behaving - the signal the 2026-06-27 saturation incident had no
+    graph for (admin-API request serialization saturated while CPU/RAM/disk read
+    healthy). Keyed by target node so a future multi-node dispatch attributes
+    load to the endpoint being serialized, not to the agent. It rides the state
+    blob as garage's own telemetry, but is NOT durable state; the website stores
+    it in its own time-series table (``GarageNodeMetric``), not the state JSON.
+    """
+
+    target_node_id: str
+    calls_per_sec: float
+    p95_latency_ms: float
+    sample_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class GarageState:
     """Full Garage node state, the ``state`` blob of garage's Integration report.
 
@@ -89,6 +109,10 @@ class GarageState:
     buckets: list[GarageBucket]
     keys: list[GarageKeyRef]
     peers: list[GaragePeer]
+    # Per-target-node admin-API call telemetry over the agent's meter window.
+    # Empty by default so test/fixture states and the detector's merged pushes
+    # (which carry the last periodic value, see ``with_buckets``) stay valid.
+    admin_metrics: tuple[GarageAdminMetric, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to plain dict for inclusion in protocol payloads."""
@@ -404,6 +428,29 @@ def _walk_and_compose(config: GarageConfig, topology: _Topology) -> GarageState 
         buckets=buckets,
         keys=topology.keys,
         peers=topology.peers,
+        admin_metrics=_read_admin_metrics(config, node),
+    )
+
+
+def _read_admin_metrics(
+    config: GarageConfig, node: GaragePeer
+) -> tuple[GarageAdminMetric, ...]:
+    """Fold the admin-API meter snapshot into per-node telemetry for the push.
+
+    The meter keys by admin endpoint (``admin_url``). Today every admin call
+    targets the dispatch node's endpoint, so the one endpoint maps to ``node``,
+    the node this read composed. A future multi-endpoint dispatch keys each by
+    its own endpoint string rather than collapsing to the dispatch node - the
+    saturation lives at the target, so we never hardcode the dispatch identity.
+    """
+    return tuple(
+        GarageAdminMetric(
+            target_node_id=node.node_id if endpoint == config.admin_url else endpoint,
+            calls_per_sec=stats.calls_per_sec,
+            p95_latency_ms=stats.p95_latency_ms,
+            sample_count=stats.sample_count,
+        )
+        for endpoint, stats in admin_api.admin_call_stats().items()
     )
 
 
