@@ -15,8 +15,29 @@ from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.garage import integration as garage_integration
+from stormpulse.garage.state import GarageStateReader
 from stormpulse.signoff import SignoffState
 from tests.helpers import SECRET, build_config
+
+
+@pytest.fixture(autouse=True)
+def _fresh_garage_state_reader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test a fresh process-global garage state reader.
+
+    The reader is a process-lifetime singleton by design: its topology cache
+    must survive a websocket reconnect (same cluster), so a per-connection
+    reader would re-read topology on every reconnect, burning admin calls during
+    a reconnect storm. Process-lifetime data, modelled as a process-global.
+
+    That makes it shared mutable state across tests. Any test that exercises the
+    REAL ``collect`` through the global would otherwise inherit another test's
+    call counter and cached topology, producing order-dependent failures. This
+    swaps in a fresh instance per test (auto-reverted by monkeypatch), so
+    isolation holds structurally - for tests in any directory, not just
+    ``tests/garage/`` - rather than by the accident of tests happening to patch
+    ``GarageStateReader.collect``.
+    """
+    monkeypatch.setattr(garage_integration, "_state_reader", GarageStateReader())
 
 
 @pytest.fixture(autouse=True)

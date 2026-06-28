@@ -300,7 +300,7 @@ async def dispatch_long_running(
         )
         return
 
-    on_success = post_success_hook(agent, cmd_def, payload.command)
+    on_success = post_success_hook(agent, cmd_def, payload.command, validated_params)
     try:
         agent.job_manager.start(
             request_id,

@@ -10,8 +10,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from stormpulse.agent import Agent, loops
+from stormpulse.garage.state import GarageState, GarageStateReader
 from stormpulse.protocol import MetricsPayload
-from tests.helpers import FAKE_METRICS, get_garage_state, make_fake_garage_state
+from tests.helpers import (
+    FAKE_METRICS,
+    get_garage_state,
+    make_fake_garage_state,
+    make_garage_bucket,
+    set_garage_state,
+)
 
 # ---------------------------------------------------------------------------
 # Heartbeat loop
@@ -119,7 +126,7 @@ async def test_metrics_loop_survives_collection_error(
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.garage.state.collect_garage_state")
+@patch.object(GarageStateReader, "collect")
 async def test_integration_state_loop_updates_state(
     mock_collect: MagicMock,
     agent_with_garage: Callable[..., Agent],
@@ -139,3 +146,32 @@ async def test_integration_state_loop_updates_state(
     )
     assert get_garage_state(ag) is fake
     assert mock_collect.call_count >= 1
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.garage_actions.collect_metrics")
+@patch("stormpulse.garage.state.detect_new_buckets")
+async def test_integration_detect_loop_merges_newcomer_and_pushes(
+    mock_detect: MagicMock,
+    mock_metrics: MagicMock,
+    agent_with_garage: Callable[..., Agent],
+    shutdown: asyncio.Event,
+) -> None:
+    ag = agent_with_garage()
+    set_garage_state(ag, make_fake_garage_state())  # baseline present
+    mock_detect.return_value = [make_garage_bucket("brand-new")]
+    mock_metrics.return_value = FAKE_METRICS
+    ws = AsyncMock()
+
+    async def stop_after_delay() -> None:
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    await asyncio.gather(
+        loops.integration_detect_loop(ag, ws, "garage"), stop_after_delay()
+    )
+    # The newcomer is merged into the runtime snapshot and a push is sent.
+    state = get_garage_state(ag)
+    assert isinstance(state, GarageState)
+    assert "brand-new" in {b.id for b in state.buckets}
+    assert ws.send.call_count >= 1

@@ -137,7 +137,6 @@ container_name = "{container_name}"
 garage_binary = "{garage_binary}"
 docker_binary = "{docker_binary}"
 config_path = "{config_path}"
-state_push_interval_seconds = {state_push_interval_seconds}
 """
 
 # Appended only when garage.toml's [admin] block is detected. Powers the
@@ -255,7 +254,6 @@ def append_garage_section(
     garage_binary: str,
     docker_binary: str,
     garage_config_path: str,
-    state_push_interval_seconds: int,
     admin_url: str = "",
     admin_token_file: str = "",
     force: bool = False,
@@ -294,7 +292,6 @@ def append_garage_section(
         garage_binary=garage_binary,
         docker_binary=docker_binary,
         config_path=garage_config_path,
-        state_push_interval_seconds=state_push_interval_seconds,
     )
     if admin_url and admin_token_file:
         block += _GARAGE_ADMIN_LINES.format(
@@ -314,32 +311,17 @@ def prompt_garage_values(
     garage_binary: str = "/garage",
     docker_binary: str = "/usr/bin/docker",
     garage_config_path: str = "/opt/garage/garage.toml",
-    state_push_interval_seconds: int = 30,
-) -> dict[str, str | int]:
+) -> dict[str, str]:
     """Prompt user for Garage config values with defaults."""
     container_name = prompt("Container name", default=container_name)
     garage_binary = prompt("Garage binary", default=garage_binary)
     docker_binary = prompt("Docker binary", default=docker_binary)
-
-    while True:
-        interval_str = prompt(
-            "State push interval seconds",
-            default=str(state_push_interval_seconds),
-        )
-        try:
-            interval = int(interval_str)
-            if interval > 0:
-                break
-            print("  Must be a positive integer", file=sys.stderr)
-        except ValueError:
-            print("  Must be a positive integer", file=sys.stderr)
 
     return {
         "container_name": container_name,
         "garage_binary": garage_binary,
         "docker_binary": docker_binary,
         "garage_config_path": garage_config_path,
-        "state_push_interval_seconds": interval,
     }
 
 
@@ -442,7 +424,6 @@ def run_garage_init(
         garage_binary=str(values["garage_binary"]),
         docker_binary=str(values["docker_binary"]),
         garage_config_path=str(values["garage_config_path"]),
-        state_push_interval_seconds=int(values["state_push_interval_seconds"]),
         admin_url=admin_url,
         admin_token_file=admin_token_file,
         force=force,
@@ -496,7 +477,6 @@ def garage_init_step(config_path: Path) -> None:
         garage_binary=str(values["garage_binary"]),
         docker_binary=str(values["docker_binary"]),
         garage_config_path=str(values["garage_config_path"]),
-        state_push_interval_seconds=int(values["state_push_interval_seconds"]),
     )
 
 

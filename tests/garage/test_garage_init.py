@@ -265,7 +265,6 @@ container_name = "garaged"
 garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
-state_push_interval_seconds = 300
 """
 
 
@@ -324,14 +323,12 @@ class TestAppendGarageSection:
             garage_binary="/garage",
             docker_binary="/usr/bin/docker",
             garage_config_path="/opt/garage/garage.toml",
-            state_push_interval_seconds=300,
         )
         # Verify the result is valid TOML
         with open(cfg, "rb") as f:
             raw = tomllib.load(f)
         assert raw["garage"]["enabled"] is True
         assert raw["garage"]["container_name"] == "garaged"
-        assert raw["garage"]["state_push_interval_seconds"] == 300
         # Original sections intact
         assert raw["agent"]["id"] == "test-01"
         assert raw["storage"]["db_path"] == "/var/lib/stormpulse/nonces.db"
@@ -346,7 +343,6 @@ class TestAppendGarageSection:
                 garage_binary="/garage",
                 docker_binary="/usr/bin/docker",
                 garage_config_path="/opt/garage/garage.toml",
-                state_push_interval_seconds=300,
             )
 
     def test_force_replaces_existing(self, tmp_path: Path) -> None:
@@ -358,13 +354,11 @@ class TestAppendGarageSection:
             garage_binary="/opt/garage/bin/garage",
             docker_binary="/usr/bin/docker",
             garage_config_path="/etc/garage.toml",
-            state_push_interval_seconds=60,
             force=True,
         )
         with open(cfg, "rb") as f:
             raw = tomllib.load(f)
         assert raw["garage"]["container_name"] == "my-garage"
-        assert raw["garage"]["state_push_interval_seconds"] == 60
         # No duplicate sections
         content = cfg.read_text()
         assert content.count("[garage]") == 1
@@ -377,7 +371,6 @@ class TestAppendGarageSection:
                 garage_binary="/garage",
                 docker_binary="/usr/bin/docker",
                 garage_config_path="/opt/garage/garage.toml",
-                state_push_interval_seconds=300,
             )
 
     def test_preserves_comments(self, tmp_path: Path) -> None:
@@ -390,7 +383,6 @@ class TestAppendGarageSection:
             garage_binary="/garage",
             docker_binary="/usr/bin/docker",
             garage_config_path="/opt/garage/garage.toml",
-            state_push_interval_seconds=300,
         )
         content = cfg.read_text()
         assert "# This is a comment" in content
@@ -458,7 +450,6 @@ class TestGarageInitStep:
             "garage_binary": "/garage",
             "docker_binary": "/usr/bin/docker",
             "garage_config_path": str(gcfg),
-            "state_push_interval_seconds": 30,
         }
         with (
             patch("stormpulse.garage.init.find_garage_config", return_value=gcfg),
@@ -531,7 +522,6 @@ class TestAppendEmitsAdminLines:
             garage_binary="/garage",
             docker_binary="/usr/bin/docker",
             garage_config_path="/home/storm/garage/etc/garage.toml",
-            state_push_interval_seconds=5,
             admin_url="http://127.0.0.1:3903",
             admin_token_file="/etc/garage/secrets/admin_token",
         )
@@ -549,7 +539,6 @@ class TestAppendEmitsAdminLines:
             garage_binary="/garage",
             docker_binary="/usr/bin/docker",
             garage_config_path="/home/storm/garage/etc/garage.toml",
-            state_push_interval_seconds=5,
         )
         with open(cfg, "rb") as f:
             raw = tomllib.load(f)

@@ -38,7 +38,6 @@ def _make_config(*, configured: bool = True) -> GarageConfig:
         enabled=True, container_name="garaged", garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=Path("/opt/garage/garage.toml"),
-        state_push_interval_seconds=300,
         admin_url="http://127.0.0.1:3903" if configured else "",
         admin_token="tok" if configured else "",
     )

@@ -13,8 +13,8 @@ from stormpulse.garage import state as garage_state
 from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig, parse_garage_config
 from stormpulse.garage.preconditions import run_preconditions
-from stormpulse.garage.state import GarageState
-from stormpulse.integrations import Integration, register_integration
+from stormpulse.garage.state import GarageBucket, GarageState
+from stormpulse.integrations import Detector, Integration, register_integration
 
 
 def _enabled(config: GarageConfig) -> bool:
@@ -28,16 +28,27 @@ def _preconditions(config: GarageConfig) -> str | None:
     return run_preconditions(config)
 
 
+# One stateful reader per process: the periodic loop and on-demand refresh share
+# it, so topology's slow-multiple cadence and cache persist across reconnects
+# (topology does not change on reconnect). Discovery uses the full
+# ``collect_garage_state`` directly (see ``_discover``).
+_state_reader = garage_state.GarageStateReader()
+
+
 def _collect_state(config: GarageConfig) -> GarageState | None:
-    return garage_state.collect_garage_state(config)
+    return _state_reader.collect(config)
 
 
 def _discover(config: GarageConfig) -> GarageState | None:
     return garage_discover.discover_garage(config)
 
 
-def _state_push_interval(config: GarageConfig) -> float:
-    return config.state_push_interval_seconds
+def _detect(config: GarageConfig, current_state: GarageState | None) -> list[GarageBucket]:
+    return garage_state.detect_new_buckets(config, current_state)
+
+
+def _detect_interval(config: GarageConfig) -> float:
+    return config.detector_interval_seconds
 
 
 GARAGE_INTEGRATION = Integration(
@@ -48,7 +59,7 @@ GARAGE_INTEGRATION = Integration(
     specs=build_garage_specs,
     discover=_discover,
     collect_state=_collect_state,
-    state_push_interval=_state_push_interval,
+    detect=Detector(run=_detect, interval=_detect_interval),
 )
 
 register_integration(GARAGE_INTEGRATION)

@@ -219,6 +219,10 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             timeout=30,  # single admin API call; long_running ignores this for duration
             description="Set the max-size Headroom quota on a bucket via the Garage admin API (BUCKETS-006)",
             mode="job",
+            # The recompute's OWN action: a post-success push would re-enter the
+            # recompute and dispatch more set_quotas (a feedback loop), and a quota
+            # change alters no customer-visible usage. No post-mutation refresh.
+            self_reconciling=True,
             handler=lambda params: make_set_quota_handler(
                 params, admin_url=config.admin_url, admin_token=config.admin_token,
             ),
@@ -660,6 +664,10 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "Additive only (4a); the old key keeps its access until 4b."
             ),
             mode="job",
+            # Re-dispatched each tick until it converges, so no single success is
+            # the "did it land" moment; each pass's grant changes ride the periodic
+            # walk already. No post-mutation refresh.
+            self_reconciling=True,
             handler=lambda params: make_converge_account_key_rotation_handler(config, params),
             params={
                 "old_key_id": ParamDef(

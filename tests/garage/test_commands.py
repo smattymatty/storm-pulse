@@ -15,7 +15,6 @@ def _make_config() -> GarageConfig:
         garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=Path("/opt/garage/garage.toml"),
-        state_push_interval_seconds=300,
     )
 
 
@@ -128,6 +127,28 @@ class TestBuildGarageCommands:
         assert cmds["garage_bucket_set_quota"].long_running is True
         assert cmds["garage_bucket_set_quota"].command == ["garage_bucket_set_quota"]
 
+    def test_self_reconciling_flag_wiring(self) -> None:
+        # The post-success refresh hook skips self_reconciling commands. Exactly the
+        # two reconciliation-loop commands carry the flag; one-shot mutations (whose
+        # success IS the "did it land" moment, incl. the credential kills) do not.
+        cmds = build_garage_specs(_make_config())
+        for name in (
+            "garage_bucket_set_quota",
+            "garage_converge_account_key_rotation",
+        ):
+            assert cmds[name].self_reconciling is True, f"{name} should be self_reconciling"
+        for name in (
+            "garage_delete_key",
+            "garage_snapshot_and_reap_account_key",
+            "garage_attach_account_key",
+            "garage_detach_account_key",
+            "garage_bucket_clear",
+            "garage_enforce_account_key_tier",
+        ):
+            assert cmds[name].self_reconciling is False, (
+                f"{name} is a one-shot action; it must stay hooked"
+            )
+
     def test_other_commands_not_sensitive(self) -> None:
         cmds = build_garage_specs(_make_config())
         sensitive_allowed = {
@@ -152,7 +173,6 @@ class TestBuildGarageCommands:
             garage_binary="/opt/bin/garage",
             docker_binary="/usr/local/bin/docker",
             config_path=Path("/etc/garage.toml"),
-            state_push_interval_seconds=60,
         )
         cmds = build_garage_specs(cfg)
         status_cmd = cmds["garage_status"].command

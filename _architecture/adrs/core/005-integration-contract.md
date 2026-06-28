@@ -26,7 +26,7 @@ Entry layers.
 
 Two integrations is the hand-wiring limit, and the drift already shows. garage and
 caddy disagree on failure semantics: garage's preconditions return a disabled-reason
-and self-disable (per [GARAGE-000](../garage/000-garage-feature-foundational.md)),
+and self-disable (per the [Garage Integration](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Garage-Integration) wiki guide),
 while caddy's drop-in check is raised as `ConfigError` and aborts agent boot. The
 Garage name is baked into Foundation (`config.py` `Config.garage`) and into the wire
 protocol (`make_register(garage=...)`, `make_metrics_push(garage=...)`). Adding a
@@ -130,6 +130,49 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
   and [CORE-002](002-release-and-ci-cd-pipeline.md) supply chain, all sealed. The
   most-privileged component on the box loading arbitrary external code is its own ADR.
 
+## Amendment (2026-06-27): periodic-state cadence and post-mutation refresh shape
+
+A Garage admin-API saturation incident, one cadence dial driving a full cluster
+sweep faster than the state was transmitted, sharpened two of decision 2's opt-in
+capabilities. Both refinements are contract-level; the garage-specific mechanism
+lives in the Garage Integration wiki page, and the cross-repo capacity anchor is
+`core/buckets-capacity-model.md` in the website tree.
+
+- **Periodic state carries one cadence, by design.** The contract exposes a
+  single state-collection interval, defaulting to the metrics-push interval. It
+  must never be set *faster* than transmission: integration state rides the
+  metrics push, so a faster collect is discarded work that still pays full
+  backend cost (this incident). An Integration needing different freshness for
+  different data does NOT get multiple contract intervals, that taxes every
+  Integration, including those like caddy that collect no state. It composes its
+  own reads at its own sub-cadences internally. Reference realization: garage
+  splits a cheap constant-cost detector (fast, the security-relevant
+  new-resource signal) from the full per-resource walk (pinned to transmission)
+  from rarely-changing topology (a hardcoded slow multiple), behind its own
+  state reader. garage no longer overrides the contract interval. The same
+  cadence-aware reader serves the periodic loop and on-demand refresh alike, so
+  on-demand refresh is itself cadence-aware; the command result, not the state
+  manifest, is the synchronous answer to "did this land", and the manifest is a
+  reconciliation view that tolerates a bounded topology lag (see
+  `core/buckets-capacity-model.md`).
+
+- **A state reader's lifetime is the process, not the connection.** A reader
+  that caches slowly-changing data between refreshes (garage caches topology
+  between its slow-multiple reads) holds state whose natural lifetime is the
+  process: the external system is the same system across a websocket reconnect.
+  A per-connection reader would re-read that data on every reconnect, spending
+  backend calls during a reconnect storm, the worst moment for it. The reader is
+  therefore a process-lifetime singleton, and its cache rightly survives a
+  reconnect rather than being rebuilt per connection.
+
+- **Post-mutation refresh is a targeted delta, not a full re-collect.** The
+  capability re-reads only the resource(s) the mutation touched, merges them into
+  the in-memory state snapshot through one shared merge primitive, and pushes the
+  whole snapshot. It never pushes a partial, which a manifest-diffing control
+  plane reads as deletions. A full re-collect per mutation amplifies a burst into
+  N full sweeps; bounded job concurrency (a semaphore in the long-running job
+  manager) backstops the burst regardless of per-job cost.
+
 ## Governance
 
 A new fitness function should assert every registered Integration satisfies the required
@@ -142,6 +185,7 @@ commands; or relax the runtime dependency allowlist for an Integration.
 Feature), [CORE-001](001-fitness-functions.md) (Fn4 and the whitelist hold; a contract
 fitness function is added), [CORE-002](002-release-and-ci-cd-pipeline.md) (the loader's
 future supply-chain concern), [CORE-004](004-signoff-verify-hatch-and-seal.md)
-(soft-disable and dashboard signalling precedent), [GARAGE-000](../garage/000-garage-feature-foundational.md)
-(soft-disable origin), [GARAGE-001](../garage/001-admin-http-api-over-cli-scrape.md)
-(garage as reference Integration).
+(soft-disable and dashboard signalling precedent), and the
+[Garage Integration](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Garage-Integration)
+wiki guide (the rehomed garage foundation + admin-HTTP-API-over-CLI decisions; garage
+as the reference Integration).
