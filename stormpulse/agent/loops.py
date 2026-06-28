@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
+from stormpulse.agent.garage_actions import (
+    build_metrics_envelope,
+    merge_buckets_into_runtime,
+)
 from stormpulse.agent.integrations_runtime import build_integrations_payload
 from stormpulse.garage.bucket_resolver import BucketIdResolver
 from stormpulse.metrics import collect_metrics
@@ -72,21 +76,23 @@ async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
 async def integration_state_loop(
     agent: Agent, ws: ClientConnection, integ_id: str
 ) -> None:
-    """Refresh one live Integration's state at its configured interval (CORE-005).
+    """Refresh one live Integration's state on the metrics-push cadence (CORE-005).
 
     Generic heir of ``garage_loop``: it calls the Integration's own
     ``collect_state`` and stores the result on its runtime, where ``metrics_loop``
     bundles it into the wire. Spun up only for Integrations that declare
     ``collect_state`` (see reconnect), so caddy never enters here.
+
+    State rides the metrics push, so collection runs at exactly the push
+    interval: a faster collect is discarded work that still pays full backend
+    cost (the 2026-06-27 saturation incident). An Integration needing different
+    freshness for different data composes its own sub-cadences internally (garage
+    does, behind ``GarageStateReader``), never a per-Integration interval knob.
     """
     rt = agent.integrations[integ_id]
     desc = rt.descriptor
     assert desc.collect_state is not None
-    interval = (
-        desc.state_push_interval(rt.config)
-        if desc.state_push_interval is not None
-        else agent.config.metrics.push_interval_seconds
-    )
+    interval = agent.config.metrics.push_interval_seconds
     while not agent.shutdown.is_set():
         try:
             state = await asyncio.to_thread(desc.collect_state, rt.config)
@@ -95,6 +101,49 @@ async def integration_state_loop(
                 logger.debug("Refreshed %s state", integ_id)
         except Exception:
             logger.warning("Failed to collect %s state", integ_id, exc_info=True)
+        if await sleep_or_shutdown(agent.shutdown, interval):
+            return
+
+
+async def integration_detect_loop(
+    agent: Agent, ws: ClientConnection, integ_id: str
+) -> None:
+    """Run one Integration's fast new-resource detector (capacity-model 2026-06-27 amendment).
+
+    Spun up only for Integrations declaring a ``Detector`` (see reconnect), at the
+    detector's own interval - the one tunable state-read cadence, the security
+    dial bounding the window in which an out-of-band-created resource is uncapped. The detector is constant-cost (a single list call); on a
+    newcomer it merges the new resource(s) into the current snapshot and pushes
+    immediately, so a fresh resource reaches the control plane within one
+    detector interval rather than waiting for the slower periodic walk.
+
+    Merge and push name the garage runtime helpers directly, as ``log_loop`` does
+    for log enrichment: detection is, in practice, the garage new-bucket signal.
+    The race discipline is preserved by ``merge_buckets_into_runtime``, which
+    reads the *current* ``rt.state`` after the admin await and assigns in one
+    synchronous step. The snapshot handed to ``detect`` is only the diff baseline,
+    and re-merging an already-known resource is an idempotent upsert, so a bucket
+    that another writer added mid-await is merged correctly, never lost.
+    """
+    rt = agent.integrations[integ_id]
+    detector = rt.descriptor.detect
+    assert detector is not None
+    interval = detector.interval(rt.config)
+    while not agent.shutdown.is_set():
+        try:
+            newcomers = await asyncio.to_thread(detector.run, rt.config, rt.state)
+            if newcomers and merge_buckets_into_runtime(rt, newcomers):
+                envelope = await build_metrics_envelope(agent)
+                await ws.send(envelope.to_json())
+                logger.info(
+                    "Detector pushed %d new %s resource(s)",
+                    len(newcomers),
+                    integ_id,
+                )
+        except ConnectionClosed:
+            raise
+        except Exception:
+            logger.warning("Detect loop error for %s", integ_id, exc_info=True)
         if await sleep_or_shutdown(agent.shutdown, interval):
             return
 

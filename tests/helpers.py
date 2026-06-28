@@ -24,7 +24,7 @@ from stormpulse.config import (
     TlsConfig,
 )
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.state import GarageState
+from stormpulse.garage.state import GarageBucket, GarageKeyRef, GarageState
 from stormpulse.protocol import (
     CommandResultPayload,
     Envelope,
@@ -60,6 +60,29 @@ DUMMY_PROJECT = ProjectConfig(
     compose_file=Path("/opt/myapp/docker-compose.yml"),
     docker_service_name="web",
 )
+
+
+def make_garage_bucket(
+    bucket_id: str,
+    *,
+    alias: str = "",
+    size_bytes: int = 0,
+    object_count: int = 0,
+    keys: list[GarageKeyRef] | None = None,
+) -> GarageBucket:
+    """A GarageBucket with test-friendly defaults; override only what a test asserts on."""
+    return GarageBucket(
+        id=bucket_id,
+        alias=alias,
+        size_bytes=size_bytes,
+        object_count=object_count,
+        keys=keys or [],
+        website_access=False,
+        website_index_document="index.html",
+        website_error_document=None,
+        quota_max_size_bytes=None,
+        quota_max_objects=None,
+    )
 
 
 def make_fake_garage_state() -> GarageState:
@@ -108,7 +131,6 @@ def garage_raw_table(garage: GarageConfig) -> dict[str, object]:
         "garage_binary": garage.garage_binary,
         "docker_binary": garage.docker_binary,
         "config_path": str(garage.config_path),
-        "state_push_interval_seconds": garage.state_push_interval_seconds,
     }
     if garage.admin_url:
         table["admin_url"] = garage.admin_url
@@ -132,6 +154,7 @@ def build_config(
     port: int = 0,
     garage: GarageConfig | None = None,
     integrations: dict[str, dict[str, object]] | None = None,
+    metrics_push_interval: float = 0.05,
 ) -> Config:
     """Build a Config pointing at ws://localhost:{port}/ws/ with fast intervals.
 
@@ -157,7 +180,9 @@ def build_config(
             client_key=tmp_path / "key.pem",
         ),
         auth=AuthConfig(hmac_secret=tmp_path / "hmac.key", command_max_age_seconds=60),
-        metrics=MetricsConfig(push_interval_seconds=0.05, collect_containers=False),
+        metrics=MetricsConfig(
+            push_interval_seconds=metrics_push_interval, collect_containers=False
+        ),
         project=ProjectConfig(
             project_dir=Path("/opt/myapp"),
             compose_file=Path("/opt/myapp/docker-compose.yml"),
@@ -178,7 +203,6 @@ def build_garage_config(tmp_path: Path) -> GarageConfig:
         garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=config_path,
-        state_push_interval_seconds=0.05,
     )
 
 

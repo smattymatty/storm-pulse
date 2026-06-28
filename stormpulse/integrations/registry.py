@@ -34,7 +34,29 @@ Preconditions = Callable[[Any], str | None]
 # second map to drift against.
 BuildSpecs = Callable[[Any], dict[str, CommandSpec]]
 CollectState = Callable[[Any], "StateBlob | None"]
-StateInterval = Callable[[Any], float]
+# New-resource detector: given the config and the current state snapshot (for the
+# baseline diff), return only the resources that are new since that snapshot. The
+# generic loop merges them into the *current* state and pushes. Constant-cost by
+# design (a single list call); see the garage realization in its wiki page.
+Detect = Callable[[Any, Any], list[Any]]
+# The detector's own cadence - the one tunable state-read interval (a security
+# dial), read from the Integration's own config. Distinct from periodic state,
+# which rides the metrics-push cadence and has no knob.
+DetectInterval = Callable[[Any], float]
+
+
+@dataclass(frozen=True, slots=True)
+class Detector:
+    """A fast new-resource detector and its cadence, as one capability.
+
+    Bundled so "a detector always has a cadence" is structural, not prose: an
+    Integration cannot declare detection without its interval, and the loop never
+    has to defend a half-declared pair. One seam, not two - the same reason
+    CORE-005 collapsed the command CommandDef/factory split.
+    """
+
+    run: Detect
+    interval: DetectInterval
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +80,9 @@ class Integration:
     specs: BuildSpecs | None = None
     discover: CollectState | None = None
     collect_state: CollectState | None = None
-    state_push_interval: StateInterval | None = None
+    # Optional fast new-resource detector (its run + cadence as one object).
+    # caddy declares none; the detect loop spawns iff this is present.
+    detect: Detector | None = None
 
 
 _integrations: list[Integration] = []

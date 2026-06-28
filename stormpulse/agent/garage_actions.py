@@ -1,17 +1,20 @@
-"""Garage-state side effects: the JobManager post-success refresh+push hook.
+"""Garage-state side effects on the agent runtime: the JobManager post-success hook.
 
 The on-demand ``garage_refresh`` ceremony moved to the generic, agent-owned
 ``stormpulse.agent.refresh`` (one routine for every state-collecting
-integration). What stays here is genuinely garage-specific: the post-mutation
-``on_success`` hook a garage job fires, plus the metrics-envelope builder it
-shares with the generic refresh.
+integration). What stays here is the agent-side orchestration a garage mutation
+needs: the post-success ``on_success`` hook that targeted-re-reads the touched
+buckets and pushes, the race-discipline merge into runtime state, and the
+metrics-envelope builder it shares with the generic refresh. The garage-domain
+read planning (which buckets a mutation touched) and execution live in
+``stormpulse.garage.state`` (``affected_bucket_ids`` / ``read_buckets_by_id``).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
 from stormpulse.agent.integrations_runtime import (
@@ -19,7 +22,13 @@ from stormpulse.agent.integrations_runtime import (
     build_integrations_payload,
 )
 from stormpulse.config import CommandSpec
-from stormpulse.garage.state import collect_garage_state
+from stormpulse.garage.state import (
+    MAX_TARGETED_BUCKET_READS,
+    GarageBucket,
+    GarageState,
+    affected_bucket_ids,
+    read_buckets_by_id,
+)
 from stormpulse.metrics import collect_metrics
 from stormpulse.protocol import (
     Envelope,
@@ -30,6 +39,38 @@ if TYPE_CHECKING:
     from stormpulse.agent import Agent
 
 logger = logging.getLogger(__name__)
+
+
+def merge_buckets_into_runtime(
+    rt: IntegrationRuntime,
+    buckets: list[GarageBucket],
+) -> bool:
+    """Upsert *buckets* into ``rt.state`` atomically. Returns False if no baseline.
+
+    The race discipline made executable. Three loops write ``rt.state`` - the
+    new-bucket detector, the post-mutation hook, and the per-bucket usage walk -
+    so the hazard is **lost-update-across-await**: a writer that captured
+    ``rt.state`` BEFORE its admin ``await``s and merged into that stale snapshot
+    afterward would silently drop another writer's concurrent change, and a
+    dropped bucket reads downstream as a deletion (manifest alarms, never acts).
+
+    The discipline this enforces: do ALL admin I/O FIRST, leaving the freshly
+    read bucket(s) in locals, THEN call this helper. It is fully synchronous -
+    there is no ``await`` between reading ``rt.state`` and assigning it - so the
+    event loop cannot interleave another writer between the read and the store.
+    No lost update, no Lock. NEVER capture ``rt.state`` before an ``await`` and
+    pass a snapshot built from that capture in here; that reintroduces the bug.
+
+    Returns False when no baseline state exists yet (a cold start before the
+    first full collect): a targeted merge has no full snapshot to upsert into, so
+    the caller defers to the next full collect rather than synthesizing an
+    invalid partial-manifest snapshot.
+    """
+    state: GarageState | None = rt.state
+    if state is None:
+        return False
+    rt.state = state.with_buckets(buckets)
+    return True
 
 
 def _live_garage(agent: Agent) -> IntegrationRuntime | None:
@@ -46,28 +87,31 @@ def post_success_hook(
     agent: Agent,
     cmd_def: CommandSpec,
     command: str,
+    params: Mapping[str, str],
 ) -> Callable[[], Awaitable[None]] | None:
-    """Build the after-success callback for a garage long-runner (immediate refresh+push), or ``None`` for non-garage."""
+    """Build the after-success callback for a garage mutation (targeted re-read + push), or ``None``.
+
+    Returns None for non-garage commands, read-only garage long-runners (which
+    mutate nothing, so a push would only flood the dashboard), and self-reconciling
+    commands (dispatched repeatedly by a reconciliation loop, so no single success
+    is the "did it land" moment a push would serve - the periodic walk reflects
+    them each cycle). Both gates read a ``CommandSpec`` flag set at the spec, the
+    same way ``read_only`` is, so the agent layer never hardcodes garage command
+    names. Everything else gets a callback that re-reads only the buckets this
+    command's ``params`` identify and pushes the merged snapshot - never a full sweep.
+    """
     if cmd_def.group != "garage":
         return None
-
-    # Read-only garage commands (long-running provenance/stats reads) mutate
-    # nothing, so a refresh+push after them is pure waste and floods state pushes.
-    if cmd_def.read_only:
-        return None
-
-    # set-quota is the recompute's OWN action (BUCKETS-006). Refreshing + pushing
-    # metrics after it re-enters the website recompute, which dispatches more
-    # set-quotas, a runaway feedback loop (each set_quota fans out into more).
-    # A quota change does not alter customer-visible usage either, so there is
-    # nothing for the push to deliver. Skip the hook for it.
-    if command == "garage_bucket_set_quota":
+    if cmd_def.read_only or cmd_def.self_reconciling:
         return None
 
     async def refresh_and_push() -> None:
         if agent.job_manager is None:
             return
-        await refresh_garage_state(agent)
+        # No affected bucket read back (new-bucket op, alias-only op, a delete's
+        # 404, or no baseline yet): nothing to push; the periodic walk reflects it.
+        if not await refresh_affected_buckets(agent, params):
+            return
         envelope = await build_metrics_envelope(agent)
         await agent.job_manager.send_now(envelope)
         logger.info("Sent post-mutation metrics push for %s", command)
@@ -75,14 +119,42 @@ def post_success_hook(
     return refresh_and_push
 
 
-async def refresh_garage_state(agent: Agent) -> None:
-    """Collect a fresh Garage snapshot and store it on the garage runtime."""
+async def refresh_affected_buckets(agent: Agent, params: Mapping[str, str]) -> bool:
+    """Re-read only the buckets a mutation touched and merge them; True iff any merged.
+
+    The targeted heir of the old full-sweep refresh. It resolves the affected ids
+    from the command's ``params`` plus the current snapshot, bounds the fan-out by
+    ``MAX_TARGETED_BUCKET_READS`` (a key may touch many buckets), re-reads ONLY
+    those over the admin API, and upserts them. Returns False - no push - when
+    nothing is affected, there is no baseline yet, or the affected buckets did not
+    read back (e.g. a delete's 404). Removals are never expressed here (upsert
+    only, manifest alarms never acts); they ride the periodic walk + reconcile.
+
+    Race discipline: the snapshot only chooses *which* ids to re-read; the admin
+    I/O runs first, then ``merge_buckets_into_runtime`` reads the *current*
+    ``rt.state`` and assigns in one await-free step, so a concurrent writer's
+    change is never lost.
+    """
     rt = _live_garage(agent)
     if rt is None:
-        return
-    state = await asyncio.to_thread(collect_garage_state, rt.config)
-    if state is not None:
-        rt.state = state
+        return False
+    state = rt.state
+    if state is None:
+        return False
+    ids = affected_bucket_ids(params, state)
+    if not ids:
+        return False
+    capped = ids[:MAX_TARGETED_BUCKET_READS]
+    if len(ids) > len(capped):
+        logger.info(
+            "Post-mutation affects %d buckets; re-reading %d, deferring %d to "
+            "the periodic walk",
+            len(ids), len(capped), len(ids) - len(capped),
+        )
+    buckets = await asyncio.to_thread(read_buckets_by_id, rt.config, capped)
+    if not buckets:
+        return False
+    return merge_buckets_into_runtime(rt, buckets)
 
 
 async def build_metrics_envelope(agent: Agent) -> Envelope:

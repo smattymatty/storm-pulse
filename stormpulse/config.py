@@ -132,6 +132,10 @@ class CommandSpec:
     description: str = ""
     sensitive_output: bool = False
     read_only: bool = False  # no state mutation; skips the garage post-success refresh hook
+    # mutates, but is dispatched repeatedly by a reconciliation loop, so no single
+    # success is the "did it land" moment a push would serve; also skips the hook
+    # (the periodic walk reflects it each cycle). Sibling of read_only.
+    self_reconciling: bool = False
     handler: CommandHandler | None = None
     params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
 

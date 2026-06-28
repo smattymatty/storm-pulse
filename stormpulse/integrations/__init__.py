@@ -6,12 +6,14 @@ set without importing any Integration by name.
 """
 
 from stormpulse.integrations.registry import (
+    Detector,
     Integration,
     register_integration,
     registered_integrations,
 )
 
 __all__ = [
+    "Detector",
     "Integration",
     "register_integration",
     "registered_integrations",

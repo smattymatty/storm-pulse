@@ -84,10 +84,20 @@ class JobManager:
     One instance per active WebSocket connection. Recreated on reconnect.
     """
 
+    # Max jobs whose body (handler + on_success hook) runs at once. Both halves hit
+    # Garage's serialized admin API, so an unbounded burst of concurrent jobs
+    # saturates it - one of the three amplifiers behind the 2026-06-27 incident.
+    # The bound is governed by what that serialized API tolerates, not by anything
+    # an operator tunes, so it is hardcoded (same discipline as the topology
+    # multiple and the targeted-read cap). Acceptance stays unbounded; only
+    # execution is capped (see ``_run``).
+    MAX_CONCURRENT_JOBS = 6
+
     def __init__(self, agent_id: str, send: SendCallback) -> None:
         self._agent_id = agent_id
         self._send = send
         self._jobs: dict[str, asyncio.Task[None]] = {}
+        self._sem = asyncio.Semaphore(self.MAX_CONCURRENT_JOBS)
 
     def start(
         self,
@@ -181,13 +191,39 @@ class JobManager:
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
-        """Drive one job from spawn to terminal result."""
+        """Acquire one execution permit, then drive the job to its terminal result.
+
+        The cap is HERE, around execution, never on the acceptance path (start()
+        keeps a bare create_task): a burst queues for a permit instead of either
+        hammering Garage's serialized admin API or blocking the message loop that
+        sends keepalives. The permit covers the WHOLE lifecycle - the handler AND
+        the on_success hook - because both hit the admin API (the hook fires the
+        targeted re-read). ``async with`` releases the permit on every exit -
+        normal, crash, or cancellation - so the pool can never leak to a deadlock.
+        """
+        async with self._sem:
+            await self._execute(request_id, command, group, handler, on_success)
+
+    async def _execute(
+        self,
+        request_id: str,
+        command: str,
+        group: str,
+        handler: JobHandler,
+        on_success: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """Drive one job from handler through terminal result and on_success hook.
+
+        Runs holding an execution permit (acquired in ``_run``). Timing and the
+        concurrency diagnostic are captured here, after the permit, so
+        ``duration_ms`` measures actual work, not time spent queued for a permit.
+        """
         start = time.monotonic()
-        # In-flight job count at this job's start. A burst of concurrent
-        # dispatches (e.g. the BUCKETS-006 recompute setting N bucket quotas at
-        # once) then reads as overlapping work, not escalating per-job slowness:
-        # the durations within a wave climb only because the jobs run together and
-        # contend, so the wave's wall-clock is ~the slowest one, NOT the sum.
+        # Jobs spawned right now (running + queued for a permit). At most
+        # MAX_CONCURRENT_JOBS run concurrently; the rest wait. So per-job
+        # durations reflect contention only among the running set, and a high
+        # count here signals queue pressure (jobs waiting on a permit), not that
+        # this many ran at once.
         concurrent = len(self._jobs)
         progress = self._make_progress_callback(request_id, command, group)
         outcome: JobOutcome

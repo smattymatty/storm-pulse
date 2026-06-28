@@ -1167,7 +1167,6 @@ container_name = "garaged"
 garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/etc/garage/garage.toml"
-state_push_interval_seconds = 300
 """
 
 
@@ -1181,7 +1180,6 @@ def test_garage_section_parses(write_config: Callable[[str], Path]) -> None:
     gc = _parse_garage(write_config, MINIMAL_VALID + _VALID_GARAGE)
     assert gc.enabled is True
     assert gc.container_name == "garaged"
-    assert gc.state_push_interval_seconds == 300.0
 
 
 def test_garage_admin_token_file_is_read_and_stripped(
@@ -1268,13 +1266,17 @@ def test_garage_docker_binary_must_be_absolute(
         _parse_garage(write_config, toml)
 
 
-def test_garage_interval_must_be_positive(write_config: Callable[[str], Path]) -> None:
-    toml = MINIMAL_VALID + _VALID_GARAGE.replace(
-        "state_push_interval_seconds = 300",
-        "state_push_interval_seconds = 0",
-    )
-    with pytest.raises(ConfigError, match="state_push_interval_seconds.*positive"):
-        _parse_garage(write_config, toml)
+def test_garage_legacy_state_push_interval_ignored(
+    write_config: Callable[[str], Path],
+) -> None:
+    # The state_push_interval_seconds knob was removed (the state read no longer
+    # has a tunable interval). A deployed TOML still carrying it - any value, even
+    # a once-invalid one - must update cleanly, so the key is ignored, not
+    # rejected: parse succeeds and the config carries no such field.
+    toml = MINIMAL_VALID + _VALID_GARAGE + "state_push_interval_seconds = 0\n"
+    gc = _parse_garage(write_config, toml)
+    assert gc.enabled is True
+    assert not hasattr(gc, "state_push_interval_seconds")
 
 
 # ---------------------------------------------------------------------------

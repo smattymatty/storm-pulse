@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from stormpulse.agent import Agent, dispatch, refresh
+from stormpulse.garage.state import GarageStateReader
 from tests.helpers import (
     FAKE_METRICS,
     get_garage_state,
@@ -26,7 +27,7 @@ from tests.helpers import (
 
 @pytest.mark.asyncio
 @patch("stormpulse.agent.garage_actions.collect_metrics")
-@patch("stormpulse.garage.state.collect_garage_state")
+@patch.object(GarageStateReader, "collect")
 async def test_garage_refresh_command_success(
     mock_collect: MagicMock,
     mock_metrics: MagicMock,
@@ -63,7 +64,7 @@ async def test_garage_refresh_when_disabled_returns_failure(
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.garage.state.collect_garage_state", return_value=None)
+@patch.object(GarageStateReader, "collect", return_value=None)
 async def test_garage_refresh_collection_failure(
     _mock: MagicMock,
     agent_with_garage: Callable[..., Agent],

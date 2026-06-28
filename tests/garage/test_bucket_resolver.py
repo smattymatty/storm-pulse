@@ -8,28 +8,9 @@ no-bucket line) resolves to ``''`` so the website falls back to key-anchoring.
 
 from __future__ import annotations
 
-from stormpulse.garage.state import GarageBucket, GarageKeyRef, GarageState
 from stormpulse.garage.bucket_resolver import BucketIdResolver
-
-
-def _bucket(
-    bucket_id: str,
-    *,
-    alias: str = "",
-    keys: list[GarageKeyRef] | None = None,
-) -> GarageBucket:
-    return GarageBucket(
-        id=bucket_id,
-        alias=alias,
-        size_bytes=0,
-        object_count=0,
-        keys=keys or [],
-        website_access=False,
-        website_index_document="index.html",
-        website_error_document=None,
-        quota_max_size_bytes=None,
-        quota_max_objects=None,
-    )
+from stormpulse.garage.state import GarageBucket, GarageKeyRef, GarageState
+from tests.helpers import make_garage_bucket
 
 
 def _state(buckets: list[GarageBucket]) -> GarageState:
@@ -59,7 +40,7 @@ def _keyref(key_id: str, aliases: tuple[str, ...]) -> GarageKeyRef:
 
 def test_key_scoped_local_alias_resolves() -> None:
     state = _state([
-        _bucket("bid-media-0001", keys=[_keyref("GKaccount", ("media",))]),
+        make_garage_bucket("bid-media-0001", keys=[_keyref("GKaccount", ("media",))]),
     ])
     resolver = BucketIdResolver.from_state(state)
     assert resolver.resolve("GKaccount", "media") == "bid-media-0001"
@@ -68,7 +49,7 @@ def test_key_scoped_local_alias_resolves() -> None:
 def test_global_alias_fallback_resolves() -> None:
     # Dashboard-provisioned bucket: carries a global alias, owning key holds
     # no local alias.
-    state = _state([_bucket("bid-dash-0001", alias="dash-bucket")])
+    state = _state([make_garage_bucket("bid-dash-0001", alias="dash-bucket")])
     resolver = BucketIdResolver.from_state(state)
     assert resolver.resolve("GKwhatever", "dash-bucket") == "bid-dash-0001"
 
@@ -80,8 +61,8 @@ def test_same_name_two_buckets_disambiguated_by_key() -> None:
     structurally impossible.
     """
     state = _state([
-        _bucket("bid-first-0001", keys=[_keyref("GKkeyA", ("media",))]),
-        _bucket("bid-second-002", keys=[_keyref("GKkeyB", ("media",))]),
+        make_garage_bucket("bid-first-0001", keys=[_keyref("GKkeyA", ("media",))]),
+        make_garage_bucket("bid-second-002", keys=[_keyref("GKkeyB", ("media",))]),
     ])
     resolver = BucketIdResolver.from_state(state)
     assert resolver.resolve("GKkeyA", "media") == "bid-first-0001"
@@ -92,8 +73,8 @@ def test_key_scoped_wins_over_global_alias() -> None:
     # A name that exists as both a key-local alias (-> A) and a global alias
     # (-> B): the key-scoped, more specific match wins.
     state = _state([
-        _bucket("bid-A-00000001", keys=[_keyref("GKkey", ("shared",))]),
-        _bucket("bid-B-00000002", alias="shared"),
+        make_garage_bucket("bid-A-00000001", keys=[_keyref("GKkey", ("shared",))]),
+        make_garage_bucket("bid-B-00000002", alias="shared"),
     ])
     resolver = BucketIdResolver.from_state(state)
     assert resolver.resolve("GKkey", "shared") == "bid-A-00000001"
@@ -102,14 +83,14 @@ def test_key_scoped_wins_over_global_alias() -> None:
 
 
 def test_unknown_name_resolves_empty() -> None:
-    state = _state([_bucket("bid-known-0001", alias="known")])
+    state = _state([make_garage_bucket("bid-known-0001", alias="known")])
     resolver = BucketIdResolver.from_state(state)
     assert resolver.resolve("GKkey", "brand-new-bucket") == ""
 
 
 def test_empty_name_resolves_empty() -> None:
     # Admin-operation lines and bucket-less requests carry no name.
-    resolver = BucketIdResolver.from_state(_state([_bucket("bid-x-00000001")]))
+    resolver = BucketIdResolver.from_state(_state([make_garage_bucket("bid-x-00000001")]))
     assert resolver.resolve("", "") == ""
     assert resolver.resolve("GKkey", "") == ""
 
@@ -122,12 +103,12 @@ def test_none_state_yields_empty_resolver() -> None:
 
 
 def test_bucket_with_blank_id_skipped() -> None:
-    state = _state([_bucket("", alias="nameless")])
+    state = _state([make_garage_bucket("", alias="nameless")])
     resolver = BucketIdResolver.from_state(state)
     assert resolver.resolve("GKkey", "nameless") == ""
 
 
 def test_callable_matches_resolve() -> None:
-    state = _state([_bucket("bid-c-00000001", keys=[_keyref("GKkey", ("c",))])])
+    state = _state([make_garage_bucket("bid-c-00000001", keys=[_keyref("GKkey", ("c",))])])
     resolver = BucketIdResolver.from_state(state)
     assert resolver("GKkey", "c") == resolver.resolve("GKkey", "c") == "bid-c-00000001"

@@ -352,3 +352,112 @@ async def test_send_now_swallows_send_errors() -> None:
     # Should not raise
     await mgr.send_now(make_command_result("agent-1", payload))
     assert wire.sent == []
+
+
+# ---------------------------------------------------------------------------
+# Concurrency cap (the Semaphore: bound execution, never acceptance)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_execution_concurrency_is_capped() -> None:
+    """At most MAX_CONCURRENT_JOBS run their handler at once; the rest queue."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    gate = asyncio.Event()
+    entered = 0
+    peak = 0
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        nonlocal entered, peak
+        entered += 1
+        peak = max(peak, entered)
+        await gate.wait()
+        entered -= 1
+        return JobOutcome(success=True)
+
+    total = JobManager.MAX_CONCURRENT_JOBS + 4
+    for i in range(total):
+        mgr.start(f"req-{i}", "cmd", "g", handler)
+
+    # Acceptance is unbounded: every job is spawned and live...
+    assert mgr.active_count() == total
+    # ...but only MAX get past the semaphore into the handler.
+    for _ in range(1000):
+        if entered == JobManager.MAX_CONCURRENT_JOBS:
+            break
+        await asyncio.sleep(0)
+    assert entered == JobManager.MAX_CONCURRENT_JOBS
+    # The overflow stays parked: a few more ticks must not let an extra in.
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert entered == JobManager.MAX_CONCURRENT_JOBS
+
+    gate.set()
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    assert peak == JobManager.MAX_CONCURRENT_JOBS
+    assert mgr.active_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_on_success_hook_holds_its_permit() -> None:
+    """The permit covers the on_success hook: a job parked in its hook still blocks a new job."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    hook_gate = asyncio.Event()
+    handler_runs = 0
+
+    async def fast_handler(progress: ProgressCallback) -> JobOutcome:
+        nonlocal handler_runs
+        handler_runs += 1
+        return JobOutcome(success=True)
+
+    async def blocking_hook() -> None:
+        await hook_gate.wait()
+
+    # Fill every permit with a job whose handler is done but whose hook is blocked.
+    for i in range(JobManager.MAX_CONCURRENT_JOBS):
+        mgr.start(f"hold-{i}", "cmd", "g", fast_handler, on_success=blocking_hook)
+    for _ in range(1000):
+        if handler_runs == JobManager.MAX_CONCURRENT_JOBS:
+            break
+        await asyncio.sleep(0)
+    assert handler_runs == JobManager.MAX_CONCURRENT_JOBS
+
+    # One more job: its handler must NOT run while the hooks hold every permit.
+    mgr.start("extra", "cmd", "g", fast_handler)
+    for _ in range(50):
+        await asyncio.sleep(0)
+    assert handler_runs == JobManager.MAX_CONCURRENT_JOBS
+
+    hook_gate.set()
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    assert handler_runs == JobManager.MAX_CONCURRENT_JOBS + 1
+
+
+@pytest.mark.asyncio
+async def test_crashing_jobs_do_not_leak_permits() -> None:
+    """A crash must return its permit (async with), or the pool drains to deadlock."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    async def crashing(progress: ProgressCallback) -> JobOutcome:
+        raise RuntimeError("boom")
+
+    for i in range(JobManager.MAX_CONCURRENT_JOBS * 2):
+        mgr.start(f"crash-{i}", "cmd", "g", crashing)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+
+    # If any crash leaked a permit, the pool is short and this hangs (test times out).
+    ran = False
+
+    async def ok(progress: ProgressCallback) -> JobOutcome:
+        nonlocal ran
+        ran = True
+        return JobOutcome(success=True)
+
+    for i in range(JobManager.MAX_CONCURRENT_JOBS):
+        mgr.start(f"ok-{i}", "cmd", "g", ok)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    assert ran is True
+    assert mgr.active_count() == 0

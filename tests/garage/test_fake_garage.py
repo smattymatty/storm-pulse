@@ -28,7 +28,6 @@ def _config() -> GarageConfig:
         garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=Path("/opt/garage/garage.toml"),
-        state_push_interval_seconds=300,
     )
 
 

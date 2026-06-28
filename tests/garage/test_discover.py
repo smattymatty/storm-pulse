@@ -19,7 +19,6 @@ def _make_config(tmp_path: Path, *, enabled: bool = True) -> GarageConfig:
         garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=config_path,
-        state_push_interval_seconds=300,
     )
 
 
@@ -38,7 +37,6 @@ class TestDiscoverGarage:
             garage_binary="/garage",
             docker_binary="/usr/bin/docker",
             config_path=tmp_path / "nonexistent.toml",
-            state_push_interval_seconds=300,
         )
         assert discover_garage(cfg) is None
 

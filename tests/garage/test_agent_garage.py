@@ -13,25 +13,31 @@ from stormpulse.agent import Agent, loops, refresh
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.state import GarageState
+from stormpulse.garage.state import GarageState, GarageStateReader
 from stormpulse.signoff import SignoffState
 from tests.helpers import build_config
 
 SECRET = b"test-secret-key-256-bits-long!!!"
 
 
-def _make_config(tmp_path: Path, garage: GarageConfig | None = None) -> Config:
-    return build_config(tmp_path, garage=garage)
+def _make_config(
+    tmp_path: Path,
+    garage: GarageConfig | None = None,
+    *,
+    metrics_push_interval: float = 0.05,
+) -> Config:
+    return build_config(
+        tmp_path, garage=garage, metrics_push_interval=metrics_push_interval
+    )
 
 
-def _garage_cfg(tmp_path: Path, *, enabled: bool = True, interval: float = 0.05) -> GarageConfig:
+def _garage_cfg(tmp_path: Path, *, enabled: bool = True) -> GarageConfig:
     return GarageConfig(
         enabled=enabled,
         container_name="garaged",
         garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=tmp_path / "garage.toml",
-        state_push_interval_seconds=interval,
     )
 
 
@@ -102,9 +108,8 @@ class TestGarageLoopEnabled:
         )
 
         async def run_loop() -> None:
-            with patch(
-                "stormpulse.garage.state.collect_garage_state",
-                return_value=fake_state,
+            with patch.object(
+                GarageStateReader, "collect", return_value=fake_state,
             ):
                 task = asyncio.create_task(
                     loops.integration_state_loop(agent, ws, "garage")
@@ -121,7 +126,13 @@ class TestGarageLoopEnabled:
     @pytest.mark.asyncio
     async def test_collects_before_first_wait(self, tmp_path: Path) -> None:
         """First action in the loop must be collect, not sleep."""
-        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=600))
+        # Long push interval so the loop's first sleep is effectively forever:
+        # this proves collect runs BEFORE the first wait, not that it eventually
+        # runs. The state loop now rides the metrics-push cadence (no per-garage
+        # interval knob), so the interval lives on the metrics config.
+        config = _make_config(
+            tmp_path, garage=_garage_cfg(tmp_path), metrics_push_interval=600
+        )
         agent, shutdown = _make_agent(config, tmp_path)
         ws = AsyncMock()
 
@@ -140,9 +151,8 @@ class TestGarageLoopEnabled:
         )
 
         async def run_loop() -> None:
-            with patch(
-                "stormpulse.garage.state.collect_garage_state",
-                return_value=fake_state,
+            with patch.object(
+                GarageStateReader, "collect", return_value=fake_state,
             ) as mock_collect:
                 task = asyncio.create_task(
                     loops.integration_state_loop(agent, ws, "garage")
@@ -151,7 +161,7 @@ class TestGarageLoopEnabled:
                 # near 600s - proves collect happens before the wait
                 await asyncio.sleep(0.1)
                 assert mock_collect.called, (
-                    "collect_garage_state was not called before wait"
+                    "reader.collect was not called before wait"
                 )
                 shutdown.set()
                 await task
@@ -166,7 +176,7 @@ class TestGarageCommandsInRegistry:
     """Garage commands are merged into the registry when enabled."""
 
     def test_garage_commands_registered(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path))
         agent, _ = _make_agent(config, tmp_path)
         assert "garage_status" in agent.registry
         assert "garage_bucket_list" in agent.registry
@@ -185,7 +195,7 @@ class TestGarageRefresh:
 
     @pytest.mark.asyncio
     async def test_refresh_updates_state(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path))
         agent, _ = _make_agent(config, tmp_path)
 
         fake_state = GarageState(
@@ -201,9 +211,8 @@ class TestGarageRefresh:
             keys=[],
             peers=[],
         )
-        with patch(
-            "stormpulse.garage.state.collect_garage_state",
-            return_value=fake_state,
+        with patch.object(
+            GarageStateReader, "collect", return_value=fake_state,
         ):
             result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
 
@@ -226,12 +235,11 @@ class TestGarageRefresh:
 
     @pytest.mark.asyncio
     async def test_refresh_collection_fails(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path))
         agent, _ = _make_agent(config, tmp_path)
 
-        with patch(
-            "stormpulse.garage.state.collect_garage_state",
-            return_value=None,
+        with patch.object(
+            GarageStateReader, "collect", return_value=None,
         ):
             result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
 
@@ -240,7 +248,7 @@ class TestGarageRefresh:
         assert _garage_state(agent) is None
 
     def test_garage_refresh_in_registry(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path))
         agent, _ = _make_agent(config, tmp_path)
         assert "garage_refresh" in agent.registry
 
@@ -249,7 +257,7 @@ class TestSensitiveOutputLogging:
     """Verify sensitive_output flag prevents logging."""
 
     def test_sensitive_command_no_debug_log(self, tmp_path: Path) -> None:
-        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path, interval=300))
+        config = _make_config(tmp_path, garage=_garage_cfg(tmp_path))
         agent, _ = _make_agent(config, tmp_path)
         cmd_def = agent.registry["garage_key_create"]
         assert cmd_def.sensitive_output is True

@@ -71,7 +71,6 @@ container_name = "garaged"
 garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
-state_push_interval_seconds = 300
 """,
         )
         gc = parse_garage_config(_garage_section(path))
@@ -80,7 +79,6 @@ state_push_interval_seconds = 300
         assert gc.garage_binary == "/garage"
         assert gc.docker_binary == "/usr/bin/docker"
         assert str(gc.config_path) == "/opt/garage/garage.toml"
-        assert gc.state_push_interval_seconds == 300.0
 
     def test_disabled(self, tmp_path: Path) -> None:
         path = _write_toml(
@@ -92,7 +90,6 @@ container_name = "garaged"
 garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
-state_push_interval_seconds = 300
 """,
         )
         gc = parse_garage_config(_garage_section(path))
@@ -120,13 +117,16 @@ container_name = "garaged"
 garage_binary = "/garage"
 docker_binary = "docker"
 config_path = "/opt/garage/garage.toml"
-state_push_interval_seconds = 300
 """,
         )
         with pytest.raises(ConfigError, match="absolute path"):
             parse_garage_config(_garage_section(path))
 
-    def test_negative_interval(self, tmp_path: Path) -> None:
+    def test_legacy_state_push_interval_ignored(self, tmp_path: Path) -> None:
+        # A deployed TOML may still carry the removed state_push_interval_seconds
+        # key (any value, even a once-invalid one). Updating the agent on that box
+        # must be a clean restart, so the key is ignored, never rejected: parse
+        # succeeds and the config carries no such field.
         path = _write_toml(
             tmp_path,
             """\
@@ -139,7 +139,57 @@ config_path = "/opt/garage/garage.toml"
 state_push_interval_seconds = -1
 """,
         )
-        with pytest.raises(ConfigError, match="positive"):
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.enabled is True
+        assert not hasattr(gc, "state_push_interval_seconds")
+
+    def test_detector_interval_defaults_when_absent(self, tmp_path: Path) -> None:
+        # A config without the knob (e.g. a box that just updated) runs at the
+        # default rather than soft-disabling.
+        path = _write_toml(
+            tmp_path,
+            """\
+[garage]
+enabled = true
+container_name = "garaged"
+garage_binary = "/garage"
+docker_binary = "/usr/bin/docker"
+config_path = "/opt/garage/garage.toml"
+""",
+        )
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.detector_interval_seconds == 2.0
+
+    def test_detector_interval_custom_value(self, tmp_path: Path) -> None:
+        path = _write_toml(
+            tmp_path,
+            """\
+[garage]
+enabled = true
+container_name = "garaged"
+garage_binary = "/garage"
+docker_binary = "/usr/bin/docker"
+config_path = "/opt/garage/garage.toml"
+detector_interval_seconds = 5
+""",
+        )
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.detector_interval_seconds == 5.0
+
+    def test_detector_interval_must_be_positive(self, tmp_path: Path) -> None:
+        path = _write_toml(
+            tmp_path,
+            """\
+[garage]
+enabled = true
+container_name = "garaged"
+garage_binary = "/garage"
+docker_binary = "/usr/bin/docker"
+config_path = "/opt/garage/garage.toml"
+detector_interval_seconds = 0
+""",
+        )
+        with pytest.raises(ConfigError, match="detector_interval_seconds.*positive"):
             parse_garage_config(_garage_section(path))
 
     def test_empty_container_name(self, tmp_path: Path) -> None:
@@ -152,7 +202,6 @@ container_name = ""
 garage_binary = "/garage"
 docker_binary = "/usr/bin/docker"
 config_path = "/opt/garage/garage.toml"
-state_push_interval_seconds = 300
 """,
         )
         with pytest.raises(ConfigError, match="container_name"):
