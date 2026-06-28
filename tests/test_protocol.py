@@ -694,6 +694,28 @@ def test_make_metrics_push_valid() -> None:
     env = make_metrics_push("test-01", metrics)
     assert env.type == MessageType.METRICS_PUSH
     assert env.payload["cpu_percent"] == 5.0
+    assert "jobs" not in env.payload  # absent unless job_load is provided
+    Envelope.from_json(env.to_json())
+
+
+def test_make_metrics_push_carries_job_load() -> None:
+    metrics = MetricsPayload(
+        cpu_percent=5.0,
+        memory_percent=10.0,
+        memory_used_mb=512.0,
+        memory_total_mb=1024.0,
+        disk_percent=20.0,
+        disk_used_gb=8.0,
+        disk_total_gb=40.0,
+        load_avg_1m=0.0,
+        load_avg_5m=0.0,
+        uptime_seconds=100.0,
+        containers=[],
+    )
+    env = make_metrics_push(
+        "test-01", metrics, job_load={"pending": 8, "running": 6},
+    )
+    assert env.payload["jobs"] == {"pending": 8, "running": 6}
     Envelope.from_json(env.to_json())
 
 

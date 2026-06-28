@@ -461,3 +461,36 @@ async def test_crashing_jobs_do_not_leak_permits() -> None:
     await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
     assert ran is True
     assert mgr.active_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_load_reports_pending_and_caps_running_at_the_semaphore() -> None:
+    """load() is the #3 queue-depth signal: running pins at the cap, pending climbs."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    assert mgr.load() == {"pending": 0, "running": 0}
+
+    barrier = asyncio.Event()
+
+    async def parked(progress: ProgressCallback) -> JobOutcome:
+        await barrier.wait()
+        return JobOutcome(success=True)
+
+    n = JobManager.MAX_CONCURRENT_JOBS + 2
+    for i in range(n):
+        mgr.start(f"job-{i}", "cmd", "g", parked)
+
+    # Let the scheduler run so up-to-cap jobs acquire a permit and park.
+    for _ in range(20):
+        await asyncio.sleep(0)
+        if mgr.load()["running"] >= JobManager.MAX_CONCURRENT_JOBS:
+            break
+
+    load = mgr.load()
+    assert load["running"] == JobManager.MAX_CONCURRENT_JOBS  # capped, not stampeding
+    assert load["pending"] == n                               # all accepted, none done
+    assert load["pending"] - load["running"] == 2             # parked on the semaphore
+
+    barrier.set()
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    assert mgr.load() == {"pending": 0, "running": 0}          # permits + tasks released
