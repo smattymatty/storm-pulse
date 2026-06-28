@@ -23,10 +23,10 @@ from stormpulse.agent.integrations_runtime import (
 )
 from stormpulse.config import CommandSpec
 from stormpulse.garage.state import (
-    MAX_TARGETED_BUCKET_READS,
     GarageBucket,
     GarageState,
     affected_bucket_ids,
+    cap_targeted_reads,
     read_buckets_by_id,
 )
 from stormpulse.metrics import collect_metrics
@@ -123,9 +123,9 @@ async def refresh_affected_buckets(agent: Agent, params: Mapping[str, str]) -> b
     """Re-read only the buckets a mutation touched and merge them; True iff any merged.
 
     The targeted heir of the old full-sweep refresh. It resolves the affected ids
-    from the command's ``params`` plus the current snapshot, bounds the fan-out by
-    ``MAX_TARGETED_BUCKET_READS`` (a key may touch many buckets), re-reads ONLY
-    those over the admin API, and upserts them. Returns False - no push - when
+    from the command's ``params`` plus the current snapshot, bounds the fan-out via
+    ``cap_targeted_reads`` (a key may touch many buckets), re-reads ONLY those over
+    the admin API, and upserts them. Returns False - no push - when
     nothing is affected, there is no baseline yet, or the affected buckets did not
     read back (e.g. a delete's 404). Removals are never expressed here (upsert
     only, manifest alarms never acts); they ride the periodic walk + reconcile.
@@ -144,13 +144,7 @@ async def refresh_affected_buckets(agent: Agent, params: Mapping[str, str]) -> b
     ids = affected_bucket_ids(params, state)
     if not ids:
         return False
-    capped = ids[:MAX_TARGETED_BUCKET_READS]
-    if len(ids) > len(capped):
-        logger.info(
-            "Post-mutation affects %d buckets; re-reading %d, deferring %d to "
-            "the periodic walk",
-            len(ids), len(capped), len(ids) - len(capped),
-        )
+    capped = cap_targeted_reads(ids, context="Post-mutation")
     buckets = await asyncio.to_thread(read_buckets_by_id, rt.config, capped)
     if not buckets:
         return False
