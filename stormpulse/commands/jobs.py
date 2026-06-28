@@ -98,6 +98,10 @@ class JobManager:
         self._send = send
         self._jobs: dict[str, asyncio.Task[None]] = {}
         self._sem = asyncio.Semaphore(self.MAX_CONCURRENT_JOBS)
+        # Jobs currently holding an execution permit (running the handler/hook),
+        # distinct from accepted-but-queued. The gap between this and
+        # ``active_count()`` is queue pressure; both ride the metrics push (#3).
+        self._running = 0
 
     def start(
         self,
@@ -160,6 +164,18 @@ class JobManager:
         """Number of currently-running jobs. Used by tests and diagnostics."""
         return sum(1 for t in self._jobs.values() if not t.done())
 
+    def load(self) -> dict[str, int]:
+        """Queue-depth snapshot for the metrics push (observability #3).
+
+        ``pending`` is every accepted job not yet done (running + waiting for an
+        execution permit); ``running`` is those holding a permit (<=
+        ``MAX_CONCURRENT_JOBS``). The gap between them is queue pressure - jobs
+        parked on the semaphore. This is where the concurrency cap becomes
+        observable: under a burst ``running`` pins at the cap while ``pending``
+        climbs past it, instead of the old unbounded stampede.
+        """
+        return {"pending": self.active_count(), "running": self._running}
+
     async def shutdown_all(self) -> None:
         """Cancel every in-flight job and wait for them to finish.
 
@@ -202,7 +218,11 @@ class JobManager:
         normal, crash, or cancellation - so the pool can never leak to a deadlock.
         """
         async with self._sem:
-            await self._execute(request_id, command, group, handler, on_success)
+            self._running += 1
+            try:
+                await self._execute(request_id, command, group, handler, on_success)
+            finally:
+                self._running -= 1
 
     async def _execute(
         self,

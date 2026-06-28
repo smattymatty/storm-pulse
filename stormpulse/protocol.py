@@ -411,11 +411,19 @@ def make_metrics_push(
     agent_id: str,
     metrics: MetricsPayload,
     integrations: dict[str, Any] | None = None,
+    job_load: dict[str, int] | None = None,
 ) -> Envelope:
-    """Create a metrics.push envelope."""
+    """Create a metrics.push envelope.
+
+    ``job_load`` is the agent-level job-queue snapshot (pending + running job
+    counts, observability #3); when present it rides the push at top level under
+    ``jobs``, the same way ``integrations`` does. Opaque to the protocol.
+    """
     payload = asdict(metrics)
     if integrations is not None:
         payload["integrations"] = integrations
+    if job_load is not None:
+        payload["jobs"] = job_load
     return _make_envelope(agent_id, MessageType.METRICS_PUSH, payload)
 
 

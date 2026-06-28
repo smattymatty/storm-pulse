@@ -62,7 +62,10 @@ async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
         try:
             metrics = await asyncio.to_thread(collect_metrics, agent.config)
             integrations = build_integrations_payload(agent.integrations) or None
-            envelope = make_metrics_push(agent_id, metrics, integrations=integrations)
+            job_load = agent.job_manager.load() if agent.job_manager else None
+            envelope = make_metrics_push(
+                agent_id, metrics, integrations=integrations, job_load=job_load,
+            )
             await ws.send(envelope.to_json())
             logger.debug("Sent metrics push %s", envelope.id)
         except ConnectionClosed:
