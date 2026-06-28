@@ -6,6 +6,7 @@ from pathlib import Path
 
 from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.state import _BUCKET_ID_PARAMS, _KEY_ID_PARAMS
 
 
 def _make_config() -> GarageConfig:
@@ -148,6 +149,57 @@ class TestBuildGarageCommands:
             assert cmds[name].self_reconciling is False, (
                 f"{name} is a one-shot action; it must stay hooked"
             )
+
+    def test_hooked_commands_resource_id_params_are_resolvable(self) -> None:
+        """Every resource-id param on a HOOKED garage command is wired into the
+        post-mutation resolver, so the mutation's effect is re-read and pushed,
+        never silently left to ride only the periodic walk.
+
+        The footgun this closes (state.py names it on ``new_key_id``): the
+        resolver ``affected_bucket_ids`` matches bucket/key ids by an explicit
+        allowlist of param NAMES (``_BUCKET_ID_PARAMS`` / ``_KEY_ID_PARAMS``). A
+        hooked command that grows a resource-id param the allowlist doesn't cover
+        resolves to nothing and defers to the walk - safe, but slow and invisible,
+        and "safe by coincidence, not design" until something pins it.
+
+        The cross-check is independent of the allowlist itself: the naming
+        convention. A param named ``*bucket_id`` or ``*key_id`` identifies an
+        existing resource and MUST be matched. Alias params (the deliberate defer
+        path) and new-resource names (``display_name``, ``new_key_name``) are out
+        of scope by design - they correctly resolve to nothing, the detector owns
+        newcomers. So a renamed or added id-param on a hooked command fails here
+        unless it is also wired into the resolver.
+
+        A command is hooked iff ``post_success_hook`` returns a callback: garage
+        group, job mode (``long_running``), and neither ``read_only`` nor
+        ``self_reconciling``. The gate is read off the spec exactly as the hook
+        reads it, so this never hardcodes command names. (This is why a
+        ``self_reconciling`` command may carry an uncovered id - e.g. converge's
+        ``new_key_id`` - without failing: it is never hooked. Drop that flag and
+        this test demands the id be wired in.)
+        """
+        cmds = build_garage_specs(_make_config())
+        resolver_covered = set(_BUCKET_ID_PARAMS) | set(_KEY_ID_PARAMS)
+        offenders: dict[str, list[str]] = {}
+        for name, spec in cmds.items():
+            hooked = (
+                spec.group == "garage"
+                and spec.long_running
+                and not spec.read_only
+                and not spec.self_reconciling
+            )
+            if not hooked:
+                continue
+            for param in spec.params:
+                is_resource_id = param.endswith("bucket_id") or param.endswith("key_id")
+                if is_resource_id and param not in resolver_covered:
+                    offenders.setdefault(name, []).append(param)
+        assert not offenders, (
+            "Hooked garage command(s) carry resource-id params the post-mutation "
+            "resolver does not match, so their effect would silently ride only the "
+            "periodic walk. Add each param name to _BUCKET_ID_PARAMS or "
+            f"_KEY_ID_PARAMS in stormpulse.garage.state: {offenders}"
+        )
 
     def test_other_commands_not_sensitive(self) -> None:
         cmds = build_garage_specs(_make_config())

@@ -493,6 +493,29 @@ class GarageStateReader:
 MAX_TARGETED_BUCKET_READS = 8
 
 
+def cap_targeted_reads(ids: list[str], *, context: str) -> list[str]:
+    """Cap a targeted-read fan-out at ``MAX_TARGETED_BUCKET_READS``, logging any deferral.
+
+    Both fan-out points - the new-bucket detector and the post-mutation
+    key->buckets path (``agent.garage_actions``) - bound their per-trigger admin
+    calls by the one shared constant, and both must defer the overflow loudly
+    rather than truncate it silently. That cap-and-say-what-deferred idiom lives
+    here once instead of being copy-pasted at each site. The overflow is caught by
+    the periodic full walk within one push interval regardless of caller, so the
+    log names that single backstop; ``context`` only identifies which fan-out
+    deferred (``"Detector"`` / ``"Post-mutation"``).
+    """
+    capped = ids[:MAX_TARGETED_BUCKET_READS]
+    deferred = len(ids) - len(capped)
+    if deferred:
+        logger.info(
+            "%s: %d targeted reads requested; reading %d this pass, deferring %d "
+            "to the periodic walk",
+            context, len(ids), len(capped), deferred,
+        )
+    return capped
+
+
 def detect_new_buckets(
     config: GarageConfig, current_state: GarageState | None
 ) -> list[GarageBucket]:
@@ -529,12 +552,4 @@ def detect_new_buckets(
             new_ids.append(bucket_id)
     if not new_ids:
         return []
-    # Bound the fan-out (no silent truncation: say what deferred).
-    capped = new_ids[:MAX_TARGETED_BUCKET_READS]
-    if len(new_ids) > len(capped):
-        logger.info(
-            "Detector found %d new buckets; fetching %d this tick, deferring %d "
-            "to the next tick / periodic walk",
-            len(new_ids), len(capped), len(new_ids) - len(capped),
-        )
-    return read_buckets_by_id(config, capped)
+    return read_buckets_by_id(config, cap_targeted_reads(new_ids, context="Detector"))
