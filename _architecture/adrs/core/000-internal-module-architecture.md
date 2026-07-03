@@ -26,14 +26,14 @@ The `stormpulse/` package is organized into four layers. Every module and subpac
 | Layer | Members | May import |
 |-------|---------|------------|
 | **Foundation** | `protocol.py`, `config.py` | nothing intra-package |
-| **Framework** | `commands/`, `init/`, `auth.py` | Foundation |
-| **Features** | `garage/`, `caddy/`, `logging/`, `metrics.py`, `enroll.py`, `status.py` | Foundation, Framework; not sibling Features |
-| **Entry** | `agent.py`, `cli/`, `__main__.py` | any layer |
+| **Framework** | `commands/`, `init/`, `auth.py`, `integrations/` | Foundation |
+| **Features** | `garage/`, `caddy/`, `logging/`, `signoff/`, `metrics.py`, `enroll.py`, `status.py`, `system_inventory.py` | Foundation, Framework; not sibling Features |
+| **Entry** | `agent/`, `cli/`, `__main__.py` | any layer |
 
 - **Foundation** is the wire-format and config substrate. `protocol.py` carries the message envelope and payload contracts; `config.py` carries the TOML-backed dataclasses. Foundation imports nothing intra-package.
-- **Framework** is shared infrastructure: `commands/` is the runtime command registry and job runner, `init/` is the install-time setup framework, `auth.py` is HMAC and nonce verification.
+- **Framework** is shared infrastructure: `commands/` is the runtime command registry and job runner, `init/` is the install-time setup framework, `auth.py` is HMAC and nonce verification, `integrations/` is the Integration contract registry ([CORE-005](005-integration-contract.md)).
 - **Features** are capability surfaces. Size is not the criterion: `metrics.py` is a one-module Feature, `garage/` is a fifteen-module Feature, and the same rule binds both. Placement comes from the capability test, not the import shape.
-- **Entry** is composition. `agent.py` wires the running agent; `cli/` and `__main__.py` are the command-line surface. Nothing imports Entry.
+- **Entry** is composition. `agent/` wires the running agent; `cli/` and `__main__.py` are the command-line surface. Nothing imports Entry.
 
 **Two rules govern imports.**
 
@@ -74,7 +74,7 @@ This ADR governs imports *between* modules. The internal sublayering of any sing
 
 - CORE-005 is enforced through the Integration contract in Framework (`integrations/`), which registers Features (`garage/`, `caddy/`) without Foundation or Entry coupling.
 
-**Manual review** covers what static checks miss: dynamic imports by string, registry lookups by name, dotted-path references. A feature-on-feature import is rejected in review; the resolution is always to hoist the shared code into Framework, never to grant an exception. A new module or subpackage is classified into a layer in "Current state" below on the commit that adds it.
+**Manual review** covers what static checks miss: dynamic imports by string, registry lookups by name, dotted-path references. A feature-on-feature import is rejected in review; the resolution is always to hoist the shared code into Framework, never to grant an exception. A new module or subpackage is classified into the layer table above on the commit that adds it; the table is the current-state record and `.importlinter` is its enforced mirror, and they must not drift.
 
 **Related ADRs:**
 
