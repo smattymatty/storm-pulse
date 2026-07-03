@@ -111,7 +111,7 @@ class GarageState:
     peers: list[GaragePeer]
     # Per-target-node admin-API call telemetry over the agent's meter window.
     # Empty by default so test/fixture states and the detector's merged pushes
-    # (which carry the last periodic value, see ``with_buckets``) stay valid.
+    # (which carry the last periodic value, see ``with_items``) stay valid.
     admin_metrics: tuple[GarageAdminMetric, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -127,7 +127,7 @@ class GarageState:
         """
         return f"{len(self.buckets)} buckets"
 
-    def with_buckets(self, buckets: Iterable[GarageBucket]) -> GarageState:
+    def with_items(self, buckets: Iterable[GarageBucket]) -> GarageState:
         """Return a new state with *buckets* upserted by id - the shared merge primitive.
 
         The single merge path used by every targeted writer (the new-bucket
@@ -136,7 +136,7 @@ class GarageState:
         Unaffected buckets keep their position, so the snapshot is order-stable
         across merges. ``GarageState`` is frozen, so this builds and returns a
         new object; the caller assigns it to ``rt.state`` in one await-free step
-        (the race discipline, ``agent.garage_actions.merge_buckets_into_runtime``).
+        (the race discipline, ``agent.integrations_runtime.merge_items_into_runtime``).
 
         The result always carries the FULL bucket set, never a partial: the
         control plane treats ``garage_state.buckets`` as a manifest, so a partial
@@ -243,10 +243,10 @@ def read_buckets_by_id(
     The single per-id fetch loop behind every targeted read: the full walk's
     enumeration (``_collect_buckets_via_admin``), the new-bucket detector's capped
     newcomers (``detect_new_buckets``), and the post-mutation re-read
-    (``agent.garage_actions``). A bucket whose ``GetBucketInfo`` fails - including
+    (the ``read_affected`` capability). A bucket whose ``GetBucketInfo`` fails - including
     a positive 404 after a delete - is skipped and logged, never fabricated: the
     result carries only buckets that read back. Targeted callers merge the result
-    upsert-only (``GarageState.with_buckets``), so a just-deleted bucket is simply
+    upsert-only (``GarageState.with_items``), so a just-deleted bucket is simply
     not re-asserted; its removal rides the periodic full walk + reconcile, never a
     partial-manifest deletion (manifest alarms, never acts). Returns [] when the
     admin API is unconfigured.
@@ -289,8 +289,8 @@ _KEY_ID_PARAMS = ("key_id", "account_key_id", "access_key_id", "old_key_id")
 def affected_bucket_ids(params: Mapping[str, str], state: GarageState) -> list[str]:
     """Resolve the bucket ids a just-succeeded garage mutation could have changed.
 
-    The read-planning half of the post-mutation targeted re-read (the agent hook
-    in ``agent.garage_actions`` feeds the result to ``read_buckets_by_id``).
+    The read-planning half of the post-mutation targeted re-read (garage's
+    ``read_affected`` capability feeds the result to ``read_buckets_by_id``).
     Precedence, not per-command branching:
 
     1. A command that names a bucket by id (``bucket_id``) affects exactly that
@@ -532,7 +532,7 @@ class GarageStateReader:
 # The targeted-read fan-out bound, shared by every place that fans ``GetBucketInfo``
 # out per id off a cheap trigger: the new-bucket detector (a create burst of N
 # buckets between two ticks) and the post-mutation hook's key->buckets path (a key
-# owning N buckets, ``agent.garage_actions``). Either would otherwise fire N serial
+# owning N buckets, the ``read_affected`` capability). Either would otherwise fire N serial
 # admin calls at once - the saturation shape. The bound is governed by the admin
 # API's tolerance, not by the operation, so both fan-out points move together on
 # one constant. Overflow is caught by the periodic full walk within one push
@@ -544,7 +544,7 @@ def cap_targeted_reads(ids: list[str], *, context: str) -> list[str]:
     """Cap a targeted-read fan-out at ``MAX_TARGETED_BUCKET_READS``, logging any deferral.
 
     Both fan-out points - the new-bucket detector and the post-mutation
-    key->buckets path (``agent.garage_actions``) - bound their per-trigger admin
+    key->buckets path (``read_affected``) - bound their per-trigger admin
     calls by the one shared constant, and both must defer the overflow loudly
     rather than truncate it silently. That cap-and-say-what-deferred idiom lives
     here once instead of being copy-pasted at each site. The overflow is caught by

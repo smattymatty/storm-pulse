@@ -5,11 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, TypeVar
 
 from websockets.asyncio.client import ClientConnection
 
-from stormpulse.agent.garage_actions import post_success_hook
+from stormpulse.agent.integrations_runtime import (
+    STATUS_LIVE,
+    build_metrics_envelope,
+    merge_items_into_runtime,
+)
 from stormpulse.agent.refresh import handle_refresh
 from stormpulse.agent.signoff_guard import (
     SEALED_COMMANDS,
@@ -128,7 +133,8 @@ async def handle_command_request(
         return
 
     if cmd_def is not None and cmd_def.mode == "refresh":
-        await handle_refresh(agent, ws, payload.command, envelope.id)
+        # group == id (bootstrap-enforced): the spec's group names its integration.
+        await handle_refresh(agent, ws, payload.command, envelope.id, cmd_def.group)
         return
     if cmd_def is not None and cmd_def.mode == "job":
         await dispatch_long_running(agent, envelope.id, payload, cmd_def)
@@ -240,6 +246,52 @@ def _log_to_pulse(
         duration_ms=result.duration_ms,
         sensitive=sensitive,
     )
+
+
+def post_success_hook(
+    agent: Agent,
+    cmd_def: CommandSpec,
+    command: str,
+    params: Mapping[str, str],
+) -> Callable[[], Awaitable[None]] | None:
+    """Build the after-success callback (targeted re-read + push) for a mutating integration command, or ``None``.
+
+    Generic over the contract: the owning Integration resolves via
+    ``cmd_def.group`` (group == id, enforced at bootstrap) and the hook fires
+    only if it declares ``read_affected``. Returns None for read-only
+    long-runners (they mutate nothing, so a push would only flood the dashboard)
+    and self-reconciling commands (dispatched repeatedly by a reconciliation
+    loop, so no single success is the "did it land" moment a push would serve -
+    the periodic walk reflects them). Both gates read a ``CommandSpec`` flag set
+    at the spec, so this layer never hardcodes command names.
+    """
+    rt = agent.integrations.get(cmd_def.group)
+    if rt is None or rt.status != STATUS_LIVE:
+        return None
+    read_affected = rt.descriptor.read_affected
+    if read_affected is None:
+        return None
+    if cmd_def.read_only or cmd_def.self_reconciling:
+        return None
+
+    async def refresh_and_push() -> None:
+        if agent.job_manager is None:
+            return
+        # The snapshot only plans WHICH items to re-read; the merge below reads
+        # the CURRENT rt.state, so a concurrent writer's change is never lost.
+        state = rt.state
+        if state is None:
+            return
+        items = await asyncio.to_thread(read_affected, rt.config, state, params)
+        # Nothing read back (new-resource op, alias-only op, a delete's 404):
+        # nothing to push; the periodic walk reflects it.
+        if not items or not merge_items_into_runtime(rt, items):
+            return
+        envelope = await build_metrics_envelope(agent)
+        await agent.job_manager.send_now(envelope)
+        logger.info("Sent post-mutation metrics push for %s", command)
+
+    return refresh_and_push
 
 
 async def dispatch_long_running(

@@ -97,6 +97,18 @@ def _resolve_integration(
             ic,
             integ,
         )
+    # Contract invariant: an Integration's specs carry group == id. The group is
+    # how dispatch resolves a command back to its owning Integration.
+    for name, spec in integ_specs.items():
+        if spec.group != integ.id:
+            return IntegrationRuntime(
+                integ.id,
+                STATUS_DISABLED_ERROR,
+                f"command {name!r} declares group {spec.group!r}; an "
+                f"Integration's commands must carry group == id ({integ.id!r})",
+                ic,
+                integ,
+            )
     commands.update(integ_specs)
     return IntegrationRuntime(integ.id, STATUS_LIVE, None, ic, integ)
 

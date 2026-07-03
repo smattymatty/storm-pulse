@@ -63,7 +63,7 @@ async def test_heartbeat_loop_stops_on_shutdown(
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.agent.loops.collect_metrics")
+@patch("stormpulse.agent.integrations_runtime.collect_metrics")
 async def test_metrics_loop_sends_metrics(
     mock_collect: MagicMock,
     agent: Agent,
@@ -90,7 +90,7 @@ async def test_metrics_loop_sends_metrics(
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.agent.loops.collect_metrics")
+@patch("stormpulse.agent.integrations_runtime.collect_metrics")
 async def test_metrics_loop_survives_collection_error(
     mock_collect: MagicMock,
     agent: Agent,
@@ -149,7 +149,7 @@ async def test_integration_state_loop_updates_state(
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.agent.garage_actions.collect_metrics")
+@patch("stormpulse.agent.integrations_runtime.collect_metrics")
 @patch("stormpulse.garage.state.detect_new_buckets")
 async def test_integration_detect_loop_merges_newcomer_and_pushes(
     mock_detect: MagicMock,

@@ -8,6 +8,9 @@ set without importing any Integration by name.
 from stormpulse.integrations.registry import (
     Detector,
     Integration,
+    LogEnricher,
+    MergeableState,
+    StateBlob,
     register_integration,
     registered_integrations,
 )
@@ -15,6 +18,9 @@ from stormpulse.integrations.registry import (
 __all__ = [
     "Detector",
     "Integration",
+    "LogEnricher",
+    "MergeableState",
+    "StateBlob",
     "register_integration",
     "registered_integrations",
 ]

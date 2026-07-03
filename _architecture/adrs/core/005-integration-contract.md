@@ -44,9 +44,10 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
 
 2. **Minimal required core, everything else opt-in.** A legal Integration declares
    only an id, a config section, and an `enabled` predicate. Preconditions, commands,
-   long-running factories, discovery, periodic state, post-mutation refresh, and CLI
-   are opt-in capabilities declared only when present. caddy (no discovery, no loop)
-   and a future read-only monitor (no commands) are both legal with no empty stubs.
+   long-running factories, discovery, periodic state, detection, post-mutation
+   refresh, and CLI are opt-in capabilities declared only when present. caddy (no
+   discovery, no loop) and a future read-only monitor (no commands) are both legal
+   with no empty stubs.
 
 3. **One registration seam, source-agnostic.** `register_integration()` mirrors
    `register_init_step()`: an Integration registers itself at import time and the
@@ -89,6 +90,61 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
    [CORE-001](001-fitness-functions.md) Fn4 (three runtime deps, no third-party imports)
    and the whitelist registry are unchanged by this ADR.
 
+9. **Periodic state carries one cadence, by design.** The contract exposes a single
+   state-collection interval, defaulting to the metrics-push interval. It must never
+   be set *faster* than transmission: integration state rides the metrics push, so a
+   faster collect is discarded work that still pays full backend cost (the 2026-06-27
+   Garage admin-API saturation incident). An Integration needing different freshness
+   for different data does NOT get multiple contract intervals, that taxes every
+   Integration, including those like caddy that collect no state. It composes its own
+   reads at its own sub-cadences internally, behind its own state reader. The same
+   cadence-aware reader serves the periodic loop and on-demand refresh alike; the
+   command result, not the state manifest, is the synchronous answer to "did this
+   land", and the manifest is a reconciliation view that tolerates a bounded topology
+   lag (see `core/buckets-capacity-model.md` in the website tree).
+
+10. **A state reader's lifetime is the process, not the connection.** A reader that
+    caches slowly-changing data between refreshes holds state whose natural lifetime
+    is the process: the external system is the same system across a websocket
+    reconnect. A per-connection reader would re-read that data on every reconnect,
+    spending backend calls during a reconnect storm, the worst moment for it. The
+    reader is therefore a process-lifetime singleton and its cache survives a
+    reconnect.
+
+11. **Post-mutation refresh is a contract capability, a targeted delta, never a full
+    re-collect.** An Integration declares `read_affected(config, state, params)`: the
+    snapshot plans which resources the mutation touched, the callable re-reads only
+    those and returns them. The agent owns everything after: the thread hop, the
+    atomic merge into the runtime snapshot through one shared primitive
+    (`merge_items_into_runtime`, the lost-update-across-await discipline), and the
+    push of the whole snapshot, never a partial, which a manifest-diffing control
+    plane reads as deletions. A full re-collect per mutation amplifies a burst into N
+    full sweeps; bounded job concurrency backstops the burst regardless of per-job
+    cost. State types opt in structurally: `StateBlob` requires only `to_dict()`; an
+    Integration declaring `detect` or `read_affected` must carry `MergeableState`
+    (`with_items()`, the upsert merge), checked loudly at the merge site. Every push
+    (periodic, post-mutation, detect, refresh) is built by the one envelope builder
+    and carries the job-load snapshot, so the envelope cannot drift between triggers.
+
+12. **A command's `group` is its owning Integration's id.** Enforced at bootstrap: a
+    spec declaring a foreign group soft-disables its Integration with a named reason.
+    The group is the one mapping dispatch uses to resolve a command back to its
+    Integration (the post-mutation hook, refresh routing); built-in and operator
+    command groups never collide with integration ids by construction.
+
+13. **Log enrichment is a contract capability, keyed by parser.** An Integration
+    declares `log_enrichers`, parser name to a builder that turns its current state
+    blob into a line enricher; the composition root wires each log group's parser to
+    its declarer and the log loop rebuilds per batch from the current snapshot
+    (tick-fresh, BUCKETS-015). The parser key makes multi-implementer dispatch data,
+    not invention, and keys are disjoint across Integrations (fitness-enforced). A
+    builder accepts a `None` state and returns the honest empty enricher, so the
+    wire shape is constant: no answer is `bucket_id=""`, never a vanished key a
+    reader must distinguish from change (the partial-manifest rule in miniature).
+    With this, the agent package carries zero integration names outside the
+    registration manifest: loop bodies, dispatch, refresh, runtime helpers, and the
+    composition root are all contract-generic.
+
 ## Consequences
 
 **Positive:**
@@ -109,7 +165,8 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
   protocol bump across both repos.
 - Per-Integration state loses end-to-end static typing at the protocol boundary; the
   typing re-forms on each side, in the Integration's module and the control plane's
-  per-id parser.
+  per-id parser. The `StateBlob`/`MergeableState` protocols name the structural
+  contract; they do not restore end-to-end typing.
 - The loader-ready shape carries an unused seam (discovered registration) until the
   future loader ADR lands. It is shape only: no discovery, no trust mechanism ships here.
 
@@ -129,57 +186,35 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
 - **Build the third-party loader now.** Detonates CORE-001 Fn4, the whitelist registry,
   and [CORE-002](002-release-and-ci-cd-pipeline.md) supply chain, all sealed. The
   most-privileged component on the box loading arbitrary external code is its own ADR.
-
-## Amendment (2026-06-27): periodic-state cadence and post-mutation refresh shape
-
-A Garage admin-API saturation incident, one cadence dial driving a full cluster
-sweep faster than the state was transmitted, sharpened two of decision 2's opt-in
-capabilities. Both refinements are contract-level; the garage-specific mechanism
-lives in the Garage Integration wiki page, and the cross-repo capacity anchor is
-`core/buckets-capacity-model.md` in the website tree.
-
-- **Periodic state carries one cadence, by design.** The contract exposes a
-  single state-collection interval, defaulting to the metrics-push interval. It
-  must never be set *faster* than transmission: integration state rides the
-  metrics push, so a faster collect is discarded work that still pays full
-  backend cost (this incident). An Integration needing different freshness for
-  different data does NOT get multiple contract intervals, that taxes every
-  Integration, including those like caddy that collect no state. It composes its
-  own reads at its own sub-cadences internally. Reference realization: garage
-  splits a cheap constant-cost detector (fast, the security-relevant
-  new-resource signal) from the full per-resource walk (pinned to transmission)
-  from rarely-changing topology (a hardcoded slow multiple), behind its own
-  state reader. garage no longer overrides the contract interval. The same
-  cadence-aware reader serves the periodic loop and on-demand refresh alike, so
-  on-demand refresh is itself cadence-aware; the command result, not the state
-  manifest, is the synchronous answer to "did this land", and the manifest is a
-  reconciliation view that tolerates a bounded topology lag (see
-  `core/buckets-capacity-model.md`).
-
-- **A state reader's lifetime is the process, not the connection.** A reader
-  that caches slowly-changing data between refreshes (garage caches topology
-  between its slow-multiple reads) holds state whose natural lifetime is the
-  process: the external system is the same system across a websocket reconnect.
-  A per-connection reader would re-read that data on every reconnect, spending
-  backend calls during a reconnect storm, the worst moment for it. The reader is
-  therefore a process-lifetime singleton, and its cache rightly survives a
-  reconnect rather than being rebuilt per connection.
-
-- **Post-mutation refresh is a targeted delta, not a full re-collect.** The
-  capability re-reads only the resource(s) the mutation touched, merges them into
-  the in-memory state snapshot through one shared merge primitive, and pushes the
-  whole snapshot. It never pushes a partial, which a manifest-diffing control
-  plane reads as deletions. A full re-collect per mutation amplifies a burst into
-  N full sweeps; bounded job concurrency (a semaphore in the long-running job
-  manager) backstops the burst regardless of per-job cost.
+- **A named composition-root join for log enrichment.** Legitimate composition (the
+  root may name its concrete parts), but it leaves one integration name in the agent
+  that every audit re-litigates, and the parser key was already the natural dispatch
+  datum, so the capability costs one optional field, not invented semantics.
+- **Dashboard-side log enrichment.** Reopens sealed BUCKETS-015 (agent-side,
+  tick-fresh) across two repos to remove one import. Wrong trade.
 
 ## Governance
 
-A new fitness function should assert every registered Integration satisfies the required
-core and that command-contributing Integrations are first-party (in `stormpulse/`). The
-command-registry fence stays manual-review plus the future-ADR gate of decision 8. A
-future ADR is required to: add a third-party loader; let external code contribute
-commands; or relax the runtime dependency allowlist for an Integration.
+A fitness function asserts every registered Integration satisfies the required core,
+that command-contributing Integrations are first-party (in `stormpulse/`), and that
+log-enricher parser keys are disjoint (decision 13). Bootstrap enforces decision 12
+(group == id) and the merge site enforces decision 11's `MergeableState`
+requirement, both loudly. The command-registry fence stays manual-review plus the
+future-ADR gate of decision 8. A future ADR is required to: add a third-party
+loader; let external code contribute commands; or relax the runtime dependency
+allowlist for an Integration.
+
+## Change log
+
+- 2026-06-18: Accepted (decisions 1-8).
+- 2026-06-27: decisions 9-11's semantics added after the Garage admin-API saturation
+  incident (one cadence, process-lifetime readers, targeted-delta post-mutation).
+- 2026-07-03: decision 11 landed on the contract (`read_affected`,
+  `StateBlob`/`MergeableState`, one envelope builder with job load on every push);
+  decisions 12-13 added; the agent's garage-named orchestration module
+  (`agent/garage_actions.py`) deleted. The log-enrichment join was briefly kept as a
+  named composition-root exception; the parser key made its semantics data, so it
+  was promoted to the `log_enrichers` capability the same day.
 
 **Related ADRs:** [CORE-000](000-internal-module-architecture.md) (Integration sub-types
 Feature), [CORE-001](001-fitness-functions.md) (Fn4 and the whitelist hold; a contract

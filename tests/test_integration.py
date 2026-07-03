@@ -154,7 +154,7 @@ async def test_full_lifecycle(tmp_path: Path, free_port: int) -> None:
             "stormpulse.agent.dispatch.execute_command",
             side_effect=_exec_side_effect_factory(),
         ),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -208,7 +208,7 @@ async def test_bad_hmac_rejected(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -264,7 +264,7 @@ async def test_nonce_replay_rejected(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -312,7 +312,7 @@ async def test_stale_timestamp_rejected(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -364,7 +364,7 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -417,7 +417,7 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
             "stormpulse.agent.dispatch.execute_command",
             side_effect=_exec_side_effect_factory(),
         ),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -472,7 +472,7 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -529,7 +529,7 @@ async def test_heartbeat_and_metrics_flow(tmp_path: Path, free_port: int) -> Non
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -594,7 +594,7 @@ async def test_reconnect_after_disconnect(tmp_path: Path, free_port: int) -> Non
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -638,7 +638,7 @@ async def test_shutdown_during_backoff(tmp_path: Path, free_port: int) -> None:
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.loops.collect_metrics", return_value=FAKE_METRICS),
+        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(

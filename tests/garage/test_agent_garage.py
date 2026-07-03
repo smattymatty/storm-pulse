@@ -58,7 +58,8 @@ def _make_agent(config: Config, tmp_path: Path) -> tuple[Agent, asyncio.Event]:
 
 def _garage_state(agent: Agent) -> GarageState | None:
     rt = agent.integrations.get("garage")
-    return rt.state if rt is not None else None
+    state = rt.state if rt is not None else None
+    return state if isinstance(state, GarageState) else None
 
 
 class TestGarageLiveGate:
@@ -214,7 +215,7 @@ class TestGarageRefresh:
         with patch.object(
             GarageStateReader, "collect", return_value=fake_state,
         ):
-            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
+            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1", "garage")
 
         assert result.success is True
         assert result.command == "garage_refresh"
@@ -228,7 +229,7 @@ class TestGarageRefresh:
         config = _make_config(tmp_path, garage=None)
         agent, _ = _make_agent(config, tmp_path)
 
-        result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
+        result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1", "garage")
 
         assert result.success is False
         assert result.failure_reason == "not_configured"
@@ -241,7 +242,7 @@ class TestGarageRefresh:
         with patch.object(
             GarageStateReader, "collect", return_value=None,
         ):
-            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1")
+            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1", "garage")
 
         assert result.success is False
         assert result.failure_reason == "collection_failed"

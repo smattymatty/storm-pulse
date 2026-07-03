@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from websockets.asyncio.client import ClientConnection
 
-from stormpulse.agent.garage_actions import build_metrics_envelope
+from stormpulse.agent.integrations_runtime import build_metrics_envelope
 from stormpulse.protocol import CommandResultPayload, make_command_result
 
 if TYPE_CHECKING:
@@ -24,23 +24,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _integration_id_for(command: str) -> str:
-    """``garage_refresh`` -> ``garage``: the refresh command is named ``{id}_refresh``."""
-    return command.removesuffix("_refresh")
-
-
 async def collect_refresh_result(
     agent: Agent,
     command: str,
     request_id: str,
+    integ_id: str,
 ) -> CommandResultPayload:
     """Collect a fresh snapshot for the command's integration and store it; no wire IO.
 
     Generic over the Integration contract: it calls ``descriptor.collect_state``
     rather than any one integration's collector, so the routine names no
-    integration.
+    integration. ``integ_id`` is the spec's ``group`` (group == id,
+    bootstrap-enforced), resolved once at dispatch.
     """
-    integ_id = _integration_id_for(command)
     rt = agent.integrations.get(integ_id)
     if rt is None or rt.status != "live" or rt.descriptor.collect_state is None:
         return CommandResultPayload(
@@ -91,9 +87,10 @@ async def handle_refresh(
     ws: ClientConnection,
     command: str,
     request_id: str,
+    integ_id: str,
 ) -> None:
     """Inline refresh ceremony: collect, send result, pulse-log, push metrics on success."""
-    result = await collect_refresh_result(agent, command, request_id)
+    result = await collect_refresh_result(agent, command, request_id, integ_id)
     await ws.send(make_command_result(agent.config.agent.id, result).to_json())
     logger.info(
         "Sent result for %r: success=%s, %dms",
