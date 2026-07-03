@@ -1,8 +1,8 @@
 """Fitness suite harness.
 
-Runs Functions 2, 3, and 4 from CORE-001. Function 1 (layer topology)
-is enforced separately by ``lint-imports`` (see Makefile target
-``fitness``).
+Runs Functions 2 through 6 (CORE-001 defines 2-4; CORE-005 governance adds
+5 and 6). Function 1 (layer topology) is enforced separately by
+``lint-imports`` (see Makefile target ``fitness``).
 
 Discipline: run every check, report every violation, exit non-zero
 on any. Never fail-fast - a run that stops at the first violation
@@ -20,6 +20,7 @@ from pathlib import Path
 
 from fitness.dependency_allowlist import check_dependencies
 from fitness.integration_contract import check_integration_contract
+from fitness.merge_fence import check_merge_fence
 from fitness.no_shell import check_no_shell
 from fitness.private_imports import check_private_imports
 
@@ -45,6 +46,7 @@ def main() -> int:
         ("Function 3 - no shell=True", check_no_shell),
         ("Function 4 - runtime dependency allowlist", check_dependencies),
         ("Function 5 - integration contract", check_integration_contract),
+        ("Function 6 - merge-primitive fence", check_merge_fence),
     ]:
         violations = [v for v in check() if v not in baseline]
         findings.append((label, violations))
