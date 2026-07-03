@@ -77,3 +77,44 @@ async def test_run_handles_unexpected_exception(
     with patch("stormpulse.agent.reconnect.connect", side_effect=mock_connect):
         await agent.run()
     assert attempts >= 1
+
+
+# ---------------------------------------------------------------------------
+# log_enricher_provider (CORE-005 decision 13: enrichment keyed by parser)
+# ---------------------------------------------------------------------------
+
+
+def test_log_enricher_provider_is_tick_fresh(
+    agent_with_garage,
+) -> None:
+    """The provider rebuilds from the declarer's CURRENT state on every call (BUCKETS-015)."""
+    from stormpulse.agent.reconnect import log_enricher_provider
+    from tests.helpers import make_fake_garage_state, make_garage_bucket, set_garage_state
+
+    ag = agent_with_garage()
+    provider = log_enricher_provider(ag, "garage_s3")
+
+    bucket_id = "c" * 64
+    state = make_fake_garage_state().with_items(
+        [make_garage_bucket(bucket_id, alias="my-bucket")]
+    )
+    set_garage_state(ag, state)
+    enricher = provider()
+    assert enricher is not None
+    assert enricher("GKkey", "my-bucket") == bucket_id
+
+    # State changes; the NEXT provider() call must see it, not a frozen snapshot.
+    set_garage_state(ag, None)
+    enricher = provider()
+    assert enricher is not None
+    assert enricher("GKkey", "my-bucket") == ""
+
+
+def test_log_enricher_provider_none_for_undeclared_parser(
+    agent_with_garage,
+) -> None:
+    """A parser no Integration declares yields None: the shipper skips stamping."""
+    from stormpulse.agent.reconnect import log_enricher_provider
+
+    ag = agent_with_garage()
+    assert log_enricher_provider(ag, "raw")() is None

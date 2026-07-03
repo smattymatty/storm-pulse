@@ -9,9 +9,9 @@ loosely on purpose.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 from stormpulse.config import CommandSpec
 
@@ -20,6 +20,13 @@ class StateBlob(Protocol):
     """An Integration's own state object: opaque to the protocol, owns its to_dict()."""
 
     def to_dict(self) -> dict[str, Any]: ...
+
+
+@runtime_checkable
+class MergeableState(StateBlob, Protocol):
+    """State supporting the targeted upsert merge; required iff ``detect`` or ``read_affected`` is declared."""
+
+    def with_items(self, items: Iterable[Any], /) -> "MergeableState": ...
 
 
 # Capability signatures. The parsed config is integration-owned, so it types as
@@ -43,6 +50,13 @@ Detect = Callable[[Any, Any], list[Any]]
 # dial), read from the Integration's own config. Distinct from periodic state,
 # which rides the metrics-push cadence and has no knob.
 DetectInterval = Callable[[Any], float]
+# Post-mutation targeted re-read: given config, the current snapshot (id planning
+# only), and the mutation's params, return only the freshly re-read items.
+ReadAffected = Callable[[Any, Any, Mapping[str, str]], list[Any]]
+# Log-line enrichment: (key_id, name) -> resolved id. Built tick-fresh from the
+# integration's current state blob; must accept None (no state yet) and stay honest.
+LogEnricher = Callable[[str, str], str]
+BuildLogEnricher = Callable[[Any], LogEnricher]
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +97,12 @@ class Integration:
     # Optional fast new-resource detector (its run + cadence as one object).
     # caddy declares none; the detect loop spawns iff this is present.
     detect: Detector | None = None
+    # Optional post-mutation targeted re-read; the generic dispatch hook fires
+    # it after a mutating job succeeds and pushes the merged snapshot.
+    read_affected: ReadAffected | None = None
+    # Optional log enrichers keyed by parser name: "my state can enrich lines of
+    # this parser". Parser keys are disjoint across Integrations (fitness-checked).
+    log_enrichers: Mapping[str, BuildLogEnricher] | None = None
 
 
 _integrations: list[Integration] = []

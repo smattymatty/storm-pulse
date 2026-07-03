@@ -128,6 +128,60 @@ def test_notional_third_integration_resolves_through_bootstrap(
     assert "notional_ping" in deps.registry
 
 
+def test_spec_group_must_equal_integration_id(
+    tmp_path: Path, isolated_registry: None
+) -> None:
+    """The group == id invariant: a spec under a foreign group soft-disables its integration.
+
+    The group is how dispatch resolves a command back to its owning Integration
+    (post-success hook, refresh), so a mismatch would silently orphan those paths.
+    """
+
+    def _commands(config: dict[str, object]) -> dict[str, CommandSpec]:
+        return {
+            "rogue_ping": CommandSpec(
+                group="somewhere-else", command=["/bin/true"], timeout=5
+            )
+        }
+
+    register_integration(
+        Integration(
+            id="rogue",
+            parse_config=lambda raw: raw,
+            enabled=lambda c: True,
+            specs=_commands,
+        )
+    )
+    cfg = build_config(tmp_path, integrations={"rogue": {}})
+    deps = build_agent_dependencies(
+        cfg, signoff_sealed=False, log_position_store=None
+    )
+    rt = deps.integrations["rogue"]
+    assert rt.status == "disabled_error"
+    assert rt.disabled_reason is not None
+    assert "group" in rt.disabled_reason
+    assert "rogue_ping" not in deps.registry
+
+
+def test_duplicate_log_enricher_parser_is_a_contract_violation(
+    isolated_registry: None,
+) -> None:
+    """Parser keys are disjoint across Integrations (CORE-005 decision 13)."""
+    from fitness.integration_contract import check_integration_contract
+
+    register_integration(
+        Integration(
+            id="rival",
+            parse_config=lambda raw: raw,
+            enabled=lambda c: True,
+            # garage already declares garage_s3; a second declarer is a violation.
+            log_enrichers={"garage_s3": lambda state: lambda key_id, name: ""},
+        )
+    )
+    violations = check_integration_contract()
+    assert any("garage_s3" in v and "disjoint" in v for v in violations)
+
+
 def test_absent_integration_not_reported(tmp_path: Path) -> None:
     # garage/caddy are registered but absent from this config: they must not
     # appear in the runtime set (spec: absent from config => not on the wire).

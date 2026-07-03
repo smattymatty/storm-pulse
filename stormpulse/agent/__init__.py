@@ -1,6 +1,6 @@
 """The Storm Pulse agent: a long-lived WebSocket client over mutual TLS.
 
-Five concurrent tasks per session (heartbeat, metrics, garage refresh,
+Five concurrent tasks per session (heartbeat, metrics, integration state,
 dispatch, log shipping); exponential reconnect when the session drops.
 
 ``Agent`` is a composition root: per-process state plus one public ``run()``.
@@ -13,7 +13,7 @@ The actual work lives in free functions in focused submodules:
 ``register``                  Initial register envelope after each connect.
 ``loops``                     Periodic-loop bodies (heartbeat, metrics, ...).
 ``dispatch``                  Inbound message dispatch + command execution.
-``garage_actions``            Garage-state side effects of command dispatch.
+``integrations_runtime``      Integration runtime state, merge, metrics envelope.
 ``metadata``                  Build the register-payload command metadata.
 ``log_batches``               In-flight log-batch tracking.
 ``long_running``              Resolve long-running commands to handlers.

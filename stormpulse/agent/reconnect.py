@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -16,6 +17,7 @@ from stormpulse.agent.register import send_register
 from stormpulse.agent.signoff_nag import signoff_nag_loop
 from stormpulse.agent.signoff_push import signoff_state_push_loop
 from stormpulse.commands.jobs import JobManager
+from stormpulse.integrations import LogEnricher, registered_integrations
 from stormpulse.protocol import Envelope
 
 if TYPE_CHECKING:
@@ -100,6 +102,31 @@ async def run_with_backoff(agent: Agent) -> None:
     logger.info("Agent shutting down")
 
 
+def log_enricher_provider(
+    agent: Agent, parser: str
+) -> Callable[[], LogEnricher | None]:
+    """Build one log group's tick-fresh enricher provider from the contract.
+
+    The provider is re-invoked per batch and builds from the declaring
+    Integration's CURRENT state (BUCKETS-015 tick-freshness); a declarer with no
+    state yet builds from ``None``, keeping the wire shape constant. A parser no
+    Integration declares always yields ``None`` (the parser skips stamping).
+    Parser keys are disjoint across Integrations (fitness-checked), so the first
+    declarer is the only declarer.
+    """
+    for integ in registered_integrations():
+        build = (integ.log_enrichers or {}).get(parser)
+        if build is not None:
+            integ_id = integ.id
+
+            def provider() -> LogEnricher | None:
+                rt = agent.integrations.get(integ_id)
+                return build(rt.state if rt is not None else None)
+
+            return provider
+    return lambda: None
+
+
 async def _run_session(
     agent: Agent,
     ws: ClientConnection,
@@ -131,8 +158,9 @@ async def _run_session(
                     tg.create_task(loops.integration_detect_loop(agent, ws, integ_id))
             tg.create_task(signoff_nag_loop(agent, ws))
             tg.create_task(signoff_state_push_loop(agent, ws))
-            for group_name in agent.shippers:
-                tg.create_task(loops.log_loop(agent, ws, group_name))
+            for group_name, shipper in agent.shippers.items():
+                provider = log_enricher_provider(agent, shipper.parser_name)
+                tg.create_task(loops.log_loop(agent, ws, group_name, provider))
     finally:
         await agent.job_manager.shutdown_all()
         agent.job_manager = None

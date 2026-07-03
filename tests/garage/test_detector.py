@@ -41,7 +41,7 @@ def _config(*, admin_url: str = ADMIN_URL, admin_token: str = "tok") -> GarageCo
 
 def _state_with(ids: list[str]) -> Any:
     """A GarageState whose baseline contains exactly the given bucket ids."""
-    return make_fake_garage_state().with_buckets([make_garage_bucket(i) for i in ids])
+    return make_fake_garage_state().with_items([make_garage_bucket(i) for i in ids])
 
 
 def _info(bucket_id: str) -> dict[str, Any]:

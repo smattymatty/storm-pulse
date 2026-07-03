@@ -26,7 +26,7 @@ from tests.helpers import (
 
 
 @pytest.mark.asyncio
-@patch("stormpulse.agent.garage_actions.collect_metrics")
+@patch("stormpulse.agent.integrations_runtime.collect_metrics")
 @patch.object(GarageStateReader, "collect")
 async def test_garage_refresh_command_success(
     mock_collect: MagicMock,
@@ -58,7 +58,7 @@ async def test_garage_refresh_when_disabled_returns_failure(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     ag = agent_with_garage(enabled=False)
-    result = await refresh.collect_refresh_result(ag, "garage_refresh", "req-1")
+    result = await refresh.collect_refresh_result(ag, "garage_refresh", "req-1", "garage")
     assert result.success is False
     assert result.failure_reason == "not_configured"
 
@@ -70,6 +70,6 @@ async def test_garage_refresh_collection_failure(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     ag = agent_with_garage()
-    result = await refresh.collect_refresh_result(ag, "garage_refresh", "req-1")
+    result = await refresh.collect_refresh_result(ag, "garage_refresh", "req-1", "garage")
     assert result.success is False
     assert result.failure_reason == "collection_failed"

@@ -26,7 +26,7 @@ def _owned_by(bucket_id: str, key_id: str) -> GarageBucket:
 
 
 def _state_with(*buckets: GarageBucket) -> GarageState:
-    return make_fake_garage_state().with_buckets(buckets)
+    return make_fake_garage_state().with_items(buckets)
 
 
 def test_bucket_id_wins_over_key() -> None:

@@ -8,8 +8,11 @@ imports ``garage.init`` to fire its init-step registration.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from stormpulse.garage import discover as garage_discover
 from stormpulse.garage import state as garage_state
+from stormpulse.garage.bucket_resolver import BucketIdResolver
 from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig, parse_garage_config
 from stormpulse.garage.preconditions import run_preconditions
@@ -51,6 +54,26 @@ def _detect_interval(config: GarageConfig) -> float:
     return config.detector_interval_seconds
 
 
+def _read_affected(
+    config: GarageConfig, state: GarageState, params: Mapping[str, str]
+) -> list[GarageBucket]:
+    """Post-mutation targeted re-read: plan the affected ids, cap the fan-out, read only those."""
+    ids = garage_state.affected_bucket_ids(params, state)
+    if not ids:
+        return []
+    capped = garage_state.cap_targeted_reads(ids, context="Post-mutation")
+    return garage_state.read_buckets_by_id(config, capped)
+
+
+def _log_enricher(state: object) -> BucketIdResolver:
+    """Tick-fresh ``(key_id, name) -> bucket_id`` map for ``garage_s3`` lines (BUCKETS-015).
+
+    A ``None`` / foreign state builds the empty resolver: every lookup returns
+    ``""``, the honest "no enrichment available" the wire shape already carries.
+    """
+    return BucketIdResolver.from_state(state if isinstance(state, GarageState) else None)
+
+
 GARAGE_INTEGRATION = Integration(
     id="garage",
     parse_config=parse_garage_config,
@@ -60,6 +83,8 @@ GARAGE_INTEGRATION = Integration(
     discover=_discover,
     collect_state=_collect_state,
     detect=Detector(run=_detect, interval=_detect_interval),
+    read_affected=_read_affected,
+    log_enrichers={"garage_s3": _log_enricher},
 )
 
 register_integration(GARAGE_INTEGRATION)

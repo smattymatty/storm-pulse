@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The kernel goes garage-free. Post-mutation refresh becomes a contract capability instead of garage-named orchestration inside the agent, so the last integration-specific module in the kernel is deleted and the third integration inherits the whole path for free.
+
+### Changed
+
+- **Post-mutation refresh is a contract capability.** An integration declares `read_affected(config, state, params)`, the targeted "which resources did this mutation touch, re-read only those" planner. The kernel owns everything after: the atomic snapshot merge and the metrics push. Garage moved to it as the reference implementer; `stormpulse/agent/garage_actions.py` is deleted. (Breaking for code importing that module.)
+- **State types are named protocols.** A state blob implements `StateBlob` (`to_dict()`); an integration declaring `detect` or `read_affected` implements `MergeableState` (`with_items()`, the upsert merge, previously garage-only as `GarageState.with_buckets`). (Breaking for callers of the old method name.)
+- **A command's `group` must equal its integration's id**, refused at startup with a soft-disable otherwise. The group is how the kernel maps a command back to its owning integration, so the coincidence is now a checked invariant.
+- **Every metrics push carries the job-load snapshot.** Previously only the periodic push did; post-mutation, detector, and refresh pushes now ride the same single envelope builder, so a push sent right after a job completes reflects the queue that just changed. (Additive wire change: `jobs` appears on more pushes.)
+- **Log enrichment is a contract capability, keyed by parser.** An integration declares `log_enrichers` ("my state can enrich lines of this parser"); the kernel wires each log group's parser to its declarer and rebuilds the enricher per batch from current state. Parser keys must be disjoint across integrations (fitness-checked). With this, the kernel carries zero integration names outside the registration manifest.
+
 ## [0.2.0] - 2026-06-21
 
 Reworks the integration system into a single-source contract. This is the point of 0.2: authoring a command is now one entry that cannot be half-registered, an integration plugs into one seam instead of two, and "refresh my state" is a generic kernel capability rather than a per-integration special case. The advertised command manifest is byte-identical to 0.1.10, so no dashboard or website change is required to run this agent.

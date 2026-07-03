@@ -6,23 +6,18 @@ import asyncio
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
-from stormpulse.agent.garage_actions import (
+from stormpulse.agent.integrations_runtime import (
     build_metrics_envelope,
-    merge_buckets_into_runtime,
+    merge_items_into_runtime,
 )
-from stormpulse.agent.integrations_runtime import build_integrations_payload
-from stormpulse.garage.bucket_resolver import BucketIdResolver
-from stormpulse.metrics import collect_metrics
-from stormpulse.protocol import (
-    make_heartbeat,
-    make_log_batch,
-    make_metrics_push,
-)
+from stormpulse.integrations import LogEnricher
+from stormpulse.protocol import make_heartbeat, make_log_batch
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
@@ -57,15 +52,9 @@ async def heartbeat_loop(agent: Agent, ws: ClientConnection) -> None:
 async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
     """Collect and push metrics at the configured interval."""
     interval = agent.config.metrics.push_interval_seconds
-    agent_id = agent.config.agent.id
     while not agent.shutdown.is_set():
         try:
-            metrics = await asyncio.to_thread(collect_metrics, agent.config)
-            integrations = build_integrations_payload(agent.integrations) or None
-            job_load = agent.job_manager.load() if agent.job_manager else None
-            envelope = make_metrics_push(
-                agent_id, metrics, integrations=integrations, job_load=job_load,
-            )
+            envelope = await build_metrics_envelope(agent)
             await ws.send(envelope.to_json())
             logger.debug("Sent metrics push %s", envelope.id)
         except ConnectionClosed:
@@ -120,12 +109,10 @@ async def integration_detect_loop(
     immediately, so a fresh resource reaches the control plane within one
     detector interval rather than waiting for the slower periodic walk.
 
-    Merge and push name the garage runtime helpers directly, as ``log_loop`` does
-    for log enrichment: detection is, in practice, the garage new-bucket signal.
-    The race discipline is preserved by ``merge_buckets_into_runtime``, which
+    The race discipline is preserved by ``merge_items_into_runtime``, which
     reads the *current* ``rt.state`` after the admin await and assigns in one
     synchronous step. The snapshot handed to ``detect`` is only the diff baseline,
-    and re-merging an already-known resource is an idempotent upsert, so a bucket
+    and re-merging an already-known resource is an idempotent upsert, so a resource
     that another writer added mid-await is merged correctly, never lost.
     """
     rt = agent.integrations[integ_id]
@@ -135,7 +122,7 @@ async def integration_detect_loop(
     while not agent.shutdown.is_set():
         try:
             newcomers = await asyncio.to_thread(detector.run, rt.config, rt.state)
-            if newcomers and merge_buckets_into_runtime(rt, newcomers):
+            if newcomers and merge_items_into_runtime(rt, newcomers):
                 envelope = await build_metrics_envelope(agent)
                 await ws.send(envelope.to_json())
                 logger.info(
@@ -151,8 +138,17 @@ async def integration_detect_loop(
             return
 
 
-async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
-    """Tail, parse, batch, and ship logs for one group."""
+async def log_loop(
+    agent: Agent,
+    ws: ClientConnection,
+    group_name: str,
+    resolver_provider: Callable[[], LogEnricher | None],
+) -> None:
+    """Tail, parse, batch, and ship logs for one group.
+
+    ``resolver_provider`` is this group's enrichment join, wired by the
+    composition root from the contract's ``log_enrichers`` (keyed by parser).
+    """
     shipper = agent.shippers[group_name]
     interval = shipper.ship_interval_seconds
     agent_id = agent.config.agent.id
@@ -161,14 +157,9 @@ async def log_loop(agent: Agent, ws: ClientConnection, group_name: str) -> None:
             agent.pending_batches.prune_stale()
 
             started = time.monotonic()
-            # Build the (key_id, name) -> bucket_id map from the latest
-            # garage-state snapshot the refresh loop published (BUCKETS-015).
-            # Log enrichment is inherently garage-specific, so this names the
-            # garage runtime directly; rt.state is reassigned atomically, so the
-            # captured snapshot is a consistent, immutable view for this tick.
-            garage_rt = agent.integrations.get("garage")
-            garage_state = garage_rt.state if garage_rt is not None else None
-            resolver = BucketIdResolver.from_state(garage_state)
+            # Tick-fresh enrichment map (BUCKETS-015); state is reassigned
+            # atomically, so each tick sees a consistent view.
+            resolver = resolver_provider()
             batch = await asyncio.to_thread(shipper.collect_batch, resolver)
             if batch is not None:
                 batch_id = str(uuid.uuid4())

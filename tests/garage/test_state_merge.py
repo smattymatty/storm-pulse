@@ -1,4 +1,4 @@
-"""Tests for the shared GarageState merge primitive (``with_buckets`` / ``with_bucket``).
+"""Tests for the shared GarageState merge primitive (``with_items`` / ``with_bucket``).
 
 This is the single merge path every targeted writer uses (the new-bucket
 detector and the post-mutation hook). The invariants it must hold:
@@ -44,7 +44,7 @@ def _ids(state: GarageState) -> list[str]:
 
 def test_upsert_replaces_in_place_and_preserves_position() -> None:
     state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B, size_bytes=10), make_garage_bucket(ID_C)])
-    merged = state.with_buckets([make_garage_bucket(ID_B, size_bytes=999)])
+    merged = state.with_items([make_garage_bucket(ID_B, size_bytes=999)])
     # B is replaced where it sat; A and C keep their slots.
     assert _ids(merged) == [ID_A, ID_B, ID_C]
     by_id = {b.id: b for b in merged.buckets}
@@ -53,13 +53,13 @@ def test_upsert_replaces_in_place_and_preserves_position() -> None:
 
 def test_new_bucket_is_appended() -> None:
     state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B)])
-    merged = state.with_buckets([make_garage_bucket(ID_C, size_bytes=5)])
+    merged = state.with_items([make_garage_bucket(ID_C, size_bytes=5)])
     assert _ids(merged) == [ID_A, ID_B, ID_C]
 
 
 def test_merge_many_mixes_upsert_and_append() -> None:
     state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B, size_bytes=1)])
-    merged = state.with_buckets([make_garage_bucket(ID_B, size_bytes=2), make_garage_bucket(ID_C)])
+    merged = state.with_items([make_garage_bucket(ID_B, size_bytes=2), make_garage_bucket(ID_C)])
     assert _ids(merged) == [ID_A, ID_B, ID_C]
     assert {b.id: b for b in merged.buckets}[ID_B].size_bytes == 2
 
@@ -68,19 +68,19 @@ def test_full_snapshot_never_partial() -> None:
     # Merging ONE bucket into a 3-bucket state must yield all 3, never just the
     # merged one - a partial reads downstream as two deletions.
     state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B), make_garage_bucket(ID_C)])
-    merged = state.with_buckets([make_garage_bucket(ID_B, size_bytes=42)])
+    merged = state.with_items([make_garage_bucket(ID_B, size_bytes=42)])
     assert len(merged.buckets) == 3
     assert set(_ids(merged)) == {ID_A, ID_B, ID_C}
 
 
 def test_empty_merge_returns_full_set() -> None:
     state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B)])
-    assert _ids(state.with_buckets([])) == [ID_A, ID_B]
+    assert _ids(state.with_items([])) == [ID_A, ID_B]
 
 
 def test_falsy_id_bucket_ignored() -> None:
     state = _state([make_garage_bucket(ID_A)])
-    merged = state.with_buckets([make_garage_bucket(""), make_garage_bucket(ID_B)])
+    merged = state.with_items([make_garage_bucket(""), make_garage_bucket(ID_B)])
     # The blank-id bucket never enters the manifest; the real newcomer does.
     assert _ids(merged) == [ID_A, ID_B]
 
@@ -88,7 +88,7 @@ def test_falsy_id_bucket_ignored() -> None:
 def test_source_state_is_untouched() -> None:
     original_buckets = [make_garage_bucket(ID_A, size_bytes=1)]
     state = _state(original_buckets)
-    merged = state.with_buckets([make_garage_bucket(ID_A, size_bytes=2)])
+    merged = state.with_items([make_garage_bucket(ID_A, size_bytes=2)])
     assert merged is not state
     # The original list and its bucket are unchanged (frozen state, new object).
     assert state.buckets[0].size_bytes == 1
