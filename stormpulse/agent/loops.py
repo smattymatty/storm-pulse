@@ -69,31 +69,22 @@ async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
 async def integration_state_loop(
     agent: Agent, ws: ClientConnection, integ_id: str
 ) -> None:
-    """Refresh one live Integration's state on the metrics-push cadence (CORE-005).
-
-    Generic heir of ``garage_loop``: it calls the Integration's own
-    ``collect_state`` and stores the result on its runtime, where ``metrics_loop``
-    bundles it into the wire. Spun up only for Integrations that declare
-    ``collect_state`` (see reconnect), so caddy never enters here.
-
-    State rides the metrics push, so collection runs at exactly the push
-    interval: a faster collect is discarded work that still pays full backend
-    cost (the 2026-06-27 saturation incident). An Integration needing different
-    freshness for different data composes its own sub-cadences internally (garage
-    does, behind ``GarageStateReader``), never a per-Integration interval knob.
-    """
-    rt = agent.integrations[integ_id]
-    desc = rt.descriptor
-    assert desc.collect_state is not None
+    """Refresh one live Integration's state on the metrics-push cadence (CORE-005
+    decision 9: faster collection is discarded work that still pays backend cost)."""
+    runtime = agent.integrations[integ_id]
+    # collect_state is the Integration's own reader; garage composes its
+    # sub-cadences inside GarageStateReader (decision 9), never a knob here.
+    descriptor = runtime.descriptor
+    assert descriptor.collect_state is not None
     interval = agent.config.metrics.push_interval_seconds
     # Attribute every admin call made under this loop (contextvars
     # propagate into asyncio.to_thread) to the periodic walk.
     events.trigger_var.set("periodic_walk")
     while not agent.shutdown.is_set():
         try:
-            state = await asyncio.to_thread(desc.collect_state, rt.config)
+            state = await asyncio.to_thread(descriptor.collect_state, runtime.config)
             if state is not None:
-                rt.state = state
+                runtime.state = state
                 logger.debug("Refreshed %s state", integ_id)
         except Exception:
             logger.warning("Failed to collect %s state", integ_id, exc_info=True)
@@ -104,31 +95,20 @@ async def integration_state_loop(
 async def integration_detect_loop(
     agent: Agent, ws: ClientConnection, integ_id: str
 ) -> None:
-    """Run one Integration's fast new-resource detector (capacity-model 2026-06-27 amendment).
-
-    Spun up only for Integrations declaring a ``Detector`` (see reconnect), at the
-    detector's own interval - the one tunable state-read cadence, the security
-    dial bounding the window in which an out-of-band-created resource is uncapped. The detector is constant-cost (a single list call); on a
-    newcomer it merges the new resource(s) into the current snapshot and pushes
-    immediately, so a fresh resource reaches the control plane within one
-    detector interval rather than waiting for the slower periodic walk.
-
-    The race discipline is preserved by ``merge_items_into_runtime``, which
-    reads the *current* ``rt.state`` after the admin await and assigns in one
-    synchronous step. The snapshot handed to ``detect`` is only the diff baseline,
-    and re-merging an already-known resource is an idempotent upsert, so a resource
-    that another writer added mid-await is merged correctly, never lost.
-    """
-    rt = agent.integrations[integ_id]
-    detector = rt.descriptor.detect
+    """Run one Integration's new-resource detector at its own interval - the one
+    tunable state-read cadence, a security dial (CORE-005 decision 9)."""
+    runtime = agent.integrations[integ_id]
+    detector = runtime.descriptor.detect
     assert detector is not None
-    interval = detector.interval(rt.config)
+    interval = detector.interval(runtime.config)
     # Attribute admin calls made under this loop to the detector.
     events.trigger_var.set("detector")
     while not agent.shutdown.is_set():
         try:
-            newcomers = await asyncio.to_thread(detector.run, rt.config, rt.state)
-            if newcomers and merge_items_into_runtime(rt, newcomers):
+            # The snapshot handed to detect is only the diff baseline; the merge
+            # reads the CURRENT state (decision 11 race discipline), then push.
+            newcomers = await asyncio.to_thread(detector.run, runtime.config, runtime.state)
+            if newcomers and merge_items_into_runtime(runtime, newcomers):
                 envelope = await build_metrics_envelope(agent)
                 await ws.send(envelope.to_json())
                 logger.info(
@@ -150,11 +130,8 @@ async def log_loop(
     group_name: str,
     resolver_provider: Callable[[], LogEnricher | None],
 ) -> None:
-    """Tail, parse, batch, and ship logs for one group.
-
-    ``resolver_provider`` is this group's enrichment join, wired by the
-    composition root from the contract's ``log_enrichers`` (keyed by parser).
-    """
+    """Tail, parse, batch, and ship logs for one group. ``resolver_provider`` is its
+    tick-fresh enrichment join, wired from ``log_enrichers`` by the composition root."""
     shipper = agent.shippers[group_name]
     interval = shipper.ship_interval_seconds
     agent_id = agent.config.agent.id
@@ -181,9 +158,8 @@ async def log_loop(
                 )
                 agent.pending_batches.add(batch_id, group_name, batch.to_position)
                 await ws.send(envelope.to_json())
-                # INFO + duration_ms while bringing log shipping up, same shape as
-                # the garage job logs, so the collect+ship cost is visible at a 2s
-                # interval. Drop to logger.debug once shipping is proven steady.
+                # INFO + duration_ms while shipping is being proven out; drop to
+                # debug once steady.
                 duration_ms = int((time.monotonic() - started) * 1000)
                 logger.info(
                     "Shipped log.batch %s group=%s lines=%d dropped=%d duration_ms=%d",

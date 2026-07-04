@@ -26,13 +26,13 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
 
     # CORE-005: discover initial state for each live Integration that declares a
     # discover capability and has no state yet (GARAGE-000: garage discovers here).
-    for rt in agent.integrations.values():
+    for runtime in agent.integrations.values():
         if (
-            rt.status == "live"
-            and rt.descriptor.discover is not None
-            and rt.state is None
+            runtime.status == "live"
+            and runtime.descriptor.discover is not None
+            and runtime.state is None
         ):
-            rt.state = await asyncio.to_thread(rt.descriptor.discover, rt.config)
+            runtime.state = await asyncio.to_thread(runtime.descriptor.discover, runtime.config)
     integrations = build_integrations_payload(agent.integrations) or None
 
     log_group_names = sorted(agent.shippers.keys()) or None
