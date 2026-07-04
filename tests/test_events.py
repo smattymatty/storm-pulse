@@ -39,6 +39,21 @@ class TestEmit:
         assert batch[0]["trigger"] == "detector"
         assert "trigger" not in batch[1]
 
+    def test_emit_stamps_command_ref_from_contextvar(self) -> None:
+        token = events.command_ref_var.set("pc-123")
+        try:
+            # An admin call inside a job inherits the job's ref...
+            events.emit("admin_call", source="garage_admin")
+            # ...but an explicit ref (the job_result's own) always wins.
+            events.emit("job_result", source="jobs", command_ref="pc-123")
+        finally:
+            events.command_ref_var.reset(token)
+        events.emit("admin_call", source="garage_admin")
+        batch = events.buffer().drain("b1")
+        assert batch[0]["command_ref"] == "pc-123"
+        assert batch[1]["command_ref"] == "pc-123"
+        assert "command_ref" not in batch[2]
+
 
 class TestEventBuffer:
     def test_ack_releases_batch(self) -> None:

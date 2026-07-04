@@ -179,3 +179,22 @@ class TestListBuckets:
         items, err = admin_api.list_buckets(**_ADMIN)
         assert items is None
         assert "Could not reach" in err
+
+
+class TestEventTarget:
+    """Admin-call events attribute their target resource by endpoint
+    family, from the ?id= query param (events answer "which bucket or
+    key was this call about")."""
+
+    def test_bucket_endpoint_maps_to_bucket_id(self) -> None:
+        out = admin_api._event_target("UpdateBucket", "/v2/UpdateBucket?id=abc123")
+        assert out == {"bucket_id": "abc123"}
+
+    def test_key_endpoint_maps_to_key_id(self) -> None:
+        out = admin_api._event_target("GetKeyInfo", "/v2/GetKeyInfo?id=GK1")
+        assert out == {"key_id": "GK1"}
+
+    def test_idless_and_unfamiliar_endpoints_contribute_nothing(self) -> None:
+        assert admin_api._event_target("ListBuckets", "/v2/ListBuckets") == {}
+        assert admin_api._event_target("GetClusterStatus", "/v2/GetClusterStatus") == {}
+        assert admin_api._event_target("GetNodeInfo", "/v2/GetNodeInfo?id=n1") == {}

@@ -38,6 +38,14 @@ _MAX_ERROR_CHARS = 500
 # made three frames down still knows why it ran.
 trigger_var: ContextVar[str] = ContextVar("stormpulse_event_trigger", default="")
 
+# Which command the work belongs to (the dispatch request id). Set by
+# the job manager beside ``trigger_var``, so every admin call a job's
+# handler makes carries the ref that stitches the command's whole story
+# together at read time. An explicit ``command_ref=`` field wins.
+command_ref_var: ContextVar[str] = ContextVar(
+    "stormpulse_event_command_ref", default=""
+)
+
 
 class EventBuffer:
     """Bounded, thread-safe event buffer with in-flight ack tracking.
@@ -139,6 +147,9 @@ def emit(kind: str, *, source: str, **fields: Any) -> None:
     trigger = trigger_var.get()
     if trigger:
         event["trigger"] = trigger
+    command_ref = command_ref_var.get()
+    if command_ref and not fields.get("command_ref"):
+        event["command_ref"] = command_ref
     for key, value in fields.items():
         if value is None or value == "":
             continue
