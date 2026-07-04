@@ -79,6 +79,32 @@ SendCallback = Callable[[Envelope], Awaitable[None]]
 """How the manager puts a message on the wire."""
 
 
+_RESERVED_EVENT_FIELDS = frozenset({
+    "ts", "source", "kind", "trigger", "status", "failure_reason",
+    "error", "duration_ms", "command", "command_ref", "concurrent",
+    "bucket_id",
+})
+_PARAM_CONTEXT_MAX_CHARS = 100
+
+
+def _param_context(params: dict[str, str] | None) -> dict[str, str]:
+    """A job's small params, as wide-event context.
+
+    A quota event should say which quota it set; the params carry that
+    story. Values longer than the cap (a caddy tenants manifest) and
+    keys that would collide with a typed event field are skipped, so
+    context rides the attrs long tail without bloating the wire.
+    """
+    if not params:
+        return {}
+    return {
+        key: value
+        for key, value in params.items()
+        if key not in _RESERVED_EVENT_FIELDS
+        and len(str(value)) <= _PARAM_CONTEXT_MAX_CHARS
+    }
+
+
 class JobManager:
     """Owns the asyncio.Task for each in-flight long-running command.
 
@@ -111,6 +137,7 @@ class JobManager:
         group: str,
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
+        params: dict[str, str] | None = None,
     ) -> None:
         """Spawn a background task for ``handler``.
 
@@ -134,7 +161,7 @@ class JobManager:
             group,
         )
         task = asyncio.create_task(
-            self._run(request_id, command, group, handler, on_success),
+            self._run(request_id, command, group, handler, on_success, params),
             name=f"job:{command}:{request_id}",
         )
         self._jobs[request_id] = task
@@ -207,6 +234,7 @@ class JobManager:
         group: str,
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
+        params: dict[str, str] | None = None,
     ) -> None:
         """Acquire one execution permit, then drive the job to its terminal result.
 
@@ -226,7 +254,7 @@ class JobManager:
         async with self._sem:
             self._running += 1
             try:
-                await self._execute(request_id, command, group, handler, on_success)
+                await self._execute(request_id, command, group, handler, on_success, params)
             finally:
                 self._running -= 1
 
@@ -237,6 +265,7 @@ class JobManager:
         group: str,
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
+        params: dict[str, str] | None = None,
     ) -> None:
         """Drive one job from handler through terminal result and on_success hook.
 
@@ -309,6 +338,8 @@ class JobManager:
             error=outcome.stderr if not outcome.success else "",
             duration_ms=duration_ms,
             concurrent=concurrent,
+            bucket_id=(params or {}).get("bucket_id", ""),
+            **_param_context(params),
         )
         result = CommandResultPayload(
             request_id=request_id,

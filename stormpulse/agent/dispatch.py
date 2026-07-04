@@ -373,6 +373,7 @@ async def dispatch_long_running(
             cmd_def.group,
             handler,
             on_success=on_success,
+            params=validated_params,
         )
     except ValueError:
         logger.warning("Duplicate dispatch for request %s", request_id)
