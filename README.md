@@ -82,7 +82,7 @@ stormpulse --version
 
 **logging init** -- Detects running Docker containers and appends `[[log_groups]]` blocks for each, using `source_type = "docker_stream"` and the `docker_raw` parser. Skips containers already present in the config. See [Log Shipping](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Logging) for details.
 
-**update** -- Reinstalls the agent in place via `pipx install --force`. `--source pip` (default) pulls the published release; `--source git` pulls from the official repo, optionally pinned to `--branch`. `--no-restart` skips the post-install systemctl restart so you can stage the update without bouncing the agent.
+**update** -- Reinstalls the agent in place via `pipx install --force`. `--source git` (default) pulls from the official repo, optionally pinned to `--branch`; `--source pip` pulls the published release. `--no-restart` skips the post-install systemctl restart so you can stage the update without bouncing the agent.
 
 ## Configuration
 
