@@ -278,10 +278,10 @@ def post_success_hook(
     the periodic walk reflects them). Both gates read a ``CommandSpec`` flag set
     at the spec, so this layer never hardcodes command names.
     """
-    rt = agent.integrations.get(cmd_def.group)
-    if rt is None or rt.status != STATUS_LIVE:
+    runtime = agent.integrations.get(cmd_def.group)
+    if runtime is None or runtime.status != STATUS_LIVE:
         return None
-    read_affected = rt.descriptor.read_affected
+    read_affected = runtime.descriptor.read_affected
     if read_affected is None:
         return None
     if cmd_def.read_only or cmd_def.self_reconciling:
@@ -291,14 +291,14 @@ def post_success_hook(
         if agent.job_manager is None:
             return
         # The snapshot only plans WHICH items to re-read; the merge below reads
-        # the CURRENT rt.state, so a concurrent writer's change is never lost.
-        state = rt.state
+        # the CURRENT runtime.state, so a concurrent writer's change is never lost.
+        state = runtime.state
         if state is None:
             return
-        items = await asyncio.to_thread(read_affected, rt.config, state, params)
+        items = await asyncio.to_thread(read_affected, runtime.config, state, params)
         # Nothing read back (new-resource op, alias-only op, a delete's 404):
         # nothing to push; the periodic walk reflects it.
-        if not items or not merge_items_into_runtime(rt, items):
+        if not items or not merge_items_into_runtime(runtime, items):
             return
         envelope = await build_metrics_envelope(agent)
         await agent.job_manager.send_now(envelope)

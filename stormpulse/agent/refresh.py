@@ -37,8 +37,8 @@ async def collect_refresh_result(
     integration. ``integ_id`` is the spec's ``group`` (group == id,
     bootstrap-enforced), resolved once at dispatch.
     """
-    rt = agent.integrations.get(integ_id)
-    if rt is None or rt.status != "live" or rt.descriptor.collect_state is None:
+    runtime = agent.integrations.get(integ_id)
+    if runtime is None or runtime.status != "live" or runtime.descriptor.collect_state is None:
         return CommandResultPayload(
             request_id=request_id,
             command=command,
@@ -51,7 +51,7 @@ async def collect_refresh_result(
             failure_reason="not_configured",
         )
     start = time.monotonic()
-    state = await asyncio.to_thread(rt.descriptor.collect_state, rt.config)
+    state = await asyncio.to_thread(runtime.descriptor.collect_state, runtime.config)
     duration_ms = int((time.monotonic() - start) * 1000)
     if state is None:
         return CommandResultPayload(
@@ -65,7 +65,7 @@ async def collect_refresh_result(
             duration_ms=duration_ms,
             failure_reason="collection_failed",
         )
-    rt.state = state
+    runtime.state = state
     # Optional per-state summary (default when a state type doesn't define one).
     # Preserves the pre-single-source "Refreshed: N buckets" line for garage.
     summary = state.summary() if hasattr(state, "summary") else None

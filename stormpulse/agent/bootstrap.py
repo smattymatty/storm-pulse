@@ -77,16 +77,16 @@ def _resolve_integration(
     no privilege a third party wouldn't.
     """
     try:
-        ic = integ.parse_config(raw)
+        parsed = integ.parse_config(raw)
     except ConfigError as exc:
         return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, str(exc), None, integ)
-    if not integ.enabled(ic):
-        return IntegrationRuntime(integ.id, STATUS_DISABLED_CHOICE, None, ic, integ)
-    reason = integ.preconditions(ic) if integ.preconditions is not None else None
+    if not integ.enabled(parsed):
+        return IntegrationRuntime(integ.id, STATUS_DISABLED_CHOICE, None, parsed, integ)
+    reason = integ.preconditions(parsed) if integ.preconditions is not None else None
     if reason is not None:
-        return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, ic, integ)
+        return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, parsed, integ)
     try:
-        integ_specs = dict(integ.specs(ic)) if integ.specs is not None else {}
+        integ_specs = dict(integ.specs(parsed)) if integ.specs is not None else {}
         if integ.collect_state is not None:
             integ_specs[f"{integ.id}_refresh"] = _refresh_spec(integ.id)
     except Exception as exc:  # noqa: BLE001 - any build failure is a soft-disable, never a crash
@@ -94,7 +94,7 @@ def _resolve_integration(
             integ.id,
             STATUS_DISABLED_ERROR,
             f"command registration failed: {exc}",
-            ic,
+            parsed,
             integ,
         )
     # Contract invariant: an Integration's specs carry group == id. The group is
@@ -106,11 +106,11 @@ def _resolve_integration(
                 STATUS_DISABLED_ERROR,
                 f"command {name!r} declares group {spec.group!r}; an "
                 f"Integration's commands must carry group == id ({integ.id!r})",
-                ic,
+                parsed,
                 integ,
             )
     commands.update(integ_specs)
-    return IntegrationRuntime(integ.id, STATUS_LIVE, None, ic, integ)
+    return IntegrationRuntime(integ.id, STATUS_LIVE, None, parsed, integ)
 
 
 def build_agent_dependencies(
@@ -132,18 +132,18 @@ def build_agent_dependencies(
         raw = config.integrations.get(integ.id)
         if raw is None:
             continue
-        rt = _resolve_integration(integ, raw, commands)
-        integrations[integ.id] = rt
-        if rt.status == STATUS_DISABLED_ERROR:
+        runtime = _resolve_integration(integ, raw, commands)
+        integrations[integ.id] = runtime
+        if runtime.status == STATUS_DISABLED_ERROR:
             logger.warning(
                 "Integration %r disabled (error): %s. The agent and other "
                 "integrations stay up; fix and restart to re-enable.",
-                rt.id, rt.disabled_reason,
+                runtime.id, runtime.disabled_reason,
             )
-        elif rt.status == STATUS_DISABLED_CHOICE:
-            logger.info("Integration %r present but disabled by config.", rt.id)
+        elif runtime.status == STATUS_DISABLED_CHOICE:
+            logger.info("Integration %r present but disabled by config.", runtime.id)
         else:
-            logger.info("Integration %r live.", rt.id)
+            logger.info("Integration %r live.", runtime.id)
 
     registry = build_registry(
         commands,

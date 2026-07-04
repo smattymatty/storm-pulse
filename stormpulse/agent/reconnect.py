@@ -121,8 +121,8 @@ def log_enricher_provider(
             integ_id = integ.id
 
             def provider() -> LogEnricher | None:
-                rt = agent.integrations.get(integ_id)
-                return build(rt.state if rt is not None else None)
+                runtime = agent.integrations.get(integ_id)
+                return build(runtime.state if runtime is not None else None)
 
             return provider
     return lambda: None
@@ -157,12 +157,12 @@ async def _run_session(
             # Per live Integration: a periodic state loop (if it collects state)
             # and a fast new-resource detector (if it declares one). caddy
             # declares neither, so no loop spins up for it (CORE-005).
-            for integ_id, rt in agent.integrations.items():
-                if rt.status != "live":
+            for integ_id, runtime in agent.integrations.items():
+                if runtime.status != "live":
                     continue
-                if rt.descriptor.collect_state is not None:
+                if runtime.descriptor.collect_state is not None:
                     tg.create_task(loops.integration_state_loop(agent, ws, integ_id))
-                if rt.descriptor.detect is not None:
+                if runtime.descriptor.detect is not None:
                     tg.create_task(loops.integration_detect_loop(agent, ws, integ_id))
             tg.create_task(signoff_nag_loop(agent, ws))
             tg.create_task(signoff_state_push_loop(agent, ws))

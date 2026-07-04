@@ -128,28 +128,14 @@ class GarageState:
         return f"{len(self.buckets)} buckets"
 
     def with_items(self, buckets: Iterable[GarageBucket]) -> GarageState:
-        """Return a new state with *buckets* upserted by id - the shared merge primitive.
-
-        The single merge path used by every targeted writer (the new-bucket
-        detector and the post-mutation hook): each incoming bucket replaces the
-        existing entry with the same ``id`` in place, or is appended if new.
-        Unaffected buckets keep their position, so the snapshot is order-stable
-        across merges. ``GarageState`` is frozen, so this builds and returns a
-        new object; the caller assigns it to ``rt.state`` in one await-free step
-        (the race discipline, ``agent.integrations_runtime.merge_items_into_runtime``).
-
-        The result always carries the FULL bucket set, never a partial: the
-        control plane treats ``garage_state.buckets`` as a manifest, so a partial
-        would read as deletions (BUCKETS-006 invariant 4 / manifest alarms,
-        never acts). Buckets with a falsy id are ignored (defensive: a bucket
-        with no id cannot be keyed and never reaches the manifest).
-        """
+        """Upsert *buckets* by id into a new, order-stable state - the shared merge
+        primitive (CORE-005 decision 11). Always the FULL set, never a partial
+        (BUCKETS-006 invariant 4: manifest alarms, never acts); falsy ids ignored."""
         incoming = {b.id: b for b in buckets if b.id}
         if not incoming:
             return self
-        # Replace each existing bucket in place if it's in the incoming set
-        # (popping consumes it); whatever remains in ``incoming`` afterward is a
-        # genuinely new id, appended in order. No parallel bookkeeping set.
+        # Pop replaces known ids in place; whatever remains in incoming is new,
+        # appended in order.
         merged = [incoming.pop(existing.id, existing) for existing in self.buckets]
         merged.extend(incoming.values())
         return replace(self, buckets=merged)
@@ -238,19 +224,9 @@ def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
 def read_buckets_by_id(
     config: GarageConfig, bucket_ids: Iterable[str]
 ) -> list[GarageBucket]:
-    """Targeted admin read: ``GetBucketInfo`` per id -> ``GarageBucket``, failures skipped.
-
-    The single per-id fetch loop behind every targeted read: the full walk's
-    enumeration (``_collect_buckets_via_admin``), the new-bucket detector's capped
-    newcomers (``detect_new_buckets``), and the post-mutation re-read
-    (the ``read_affected`` capability). A bucket whose ``GetBucketInfo`` fails - including
-    a positive 404 after a delete - is skipped and logged, never fabricated: the
-    result carries only buckets that read back. Targeted callers merge the result
-    upsert-only (``GarageState.with_items``), so a just-deleted bucket is simply
-    not re-asserted; its removal rides the periodic full walk + reconcile, never a
-    partial-manifest deletion (manifest alarms, never acts). Returns [] when the
-    admin API is unconfigured.
-    """
+    """Targeted ``GetBucketInfo`` per id; a failed read (incl. a delete's 404) is
+    skipped and logged, never fabricated. Callers merge upsert-only, so a removal
+    rides the full walk + reconcile, never a partial-manifest deletion."""
     admin_url, admin_token = config.admin_url, config.admin_token
     if not (admin_url and admin_token):
         return []
@@ -403,14 +379,8 @@ def _collect_topology(config: GarageConfig) -> _Topology | None:
 
 
 def _walk_and_compose(config: GarageConfig, topology: _Topology) -> GarageState | None:
-    """Walk every bucket and fold it with ``topology`` into one wire ``GarageState``.
-
-    Returns None when the walk can't enumerate the cluster (``ListBuckets``
-    failed): skip rather than push an empty bucket set, which reads downstream as
-    "every bucket vanished" (BUCKETS-006 invariant 4). The shared tail of the
-    full collect and the cadence-aware reader, which differ only in how they
-    resolve ``topology``.
-    """
+    """Walk every bucket and fold with *topology* into one wire ``GarageState``; None
+    when enumeration fails (never push an empty set: BUCKETS-006 invariant 4)."""
     buckets = _collect_buckets_via_admin(config)
     if buckets is None:
         logger.warning("Bucket state unavailable this tick; skipping state push")
@@ -473,28 +443,9 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
 
 
 class GarageStateReader:
-    """Cadence-aware periodic garage state read (capacity-model 2026-06-27 amendment).
-
-    One garage state read cannot serve three freshness needs at one cadence, so
-    this composes them behind the CORE-005 single ``collect_state`` interval:
-
-    - **Per-bucket usage** is read on EVERY call. It is pinned to the
-      metrics-push cadence because the website recompute consumes it on every
-      push: fresher is wasted admin load (the 2026-06-27 saturation incident),
-      staler breaks recompute. Pinned, not knob-tuned.
-    - **Topology** (cluster status, statistics, key inventory) changes only on
-      rare operator-initiated layout/key ops, so it refreshes on the cold first
-      call and then once every ``TOPOLOGY_EVERY`` calls, reusing the last good
-      read in between. Hardcoded slow multiple, no knob.
-
-    New-bucket detection is NOT here: that is the separate cheap ``ListBuckets``
-    detector loop (the one surviving knob). ``collect_garage_state`` remains the
-    full every-field read for discovery and force-full.
-
-    Stateful (call counter + cached topology). One instance is held per process
-    by the garage Integration and reused across reconnects: topology does not
-    change on reconnect, so the cache rightly survives it.
-    """
+    """Cadence-aware periodic read (CORE-005 decision 9): per-bucket usage every call,
+    topology cached on a hardcoded slow multiple. One process-lifetime instance;
+    the topology cache deliberately survives reconnects."""
 
     TOPOLOGY_EVERY = 6
 
@@ -507,9 +458,8 @@ class GarageStateReader:
         if not _admin_configured(config):
             return None
 
-        # Refresh topology on the cold first read or once the slow multiple is
-        # due; otherwise reuse the cache. A failed refresh keeps the cache and
-        # leaves the counter due, so the next call retries.
+        # Cold start or slow multiple due: refresh topology. A failed refresh
+        # keeps the cache and stays due, so the next call retries.
         if self._topology is None or self._since_topology >= self.TOPOLOGY_EVERY:
             fresh = _collect_topology(config)
             if fresh is not None:
@@ -529,14 +479,9 @@ class GarageStateReader:
         return state
 
 
-# The targeted-read fan-out bound, shared by every place that fans ``GetBucketInfo``
-# out per id off a cheap trigger: the new-bucket detector (a create burst of N
-# buckets between two ticks) and the post-mutation hook's key->buckets path (a key
-# owning N buckets, the ``read_affected`` capability). Either would otherwise fire N serial
-# admin calls at once - the saturation shape. The bound is governed by the admin
-# API's tolerance, not by the operation, so both fan-out points move together on
-# one constant. Overflow is caught by the periodic full walk within one push
-# interval. Hardcoded, no knob.
+# Shared fan-out bound for every per-id GetBucketInfo burst (detector newcomers,
+# read_affected key->buckets): sized to admin-API tolerance, overflow rides the
+# next full walk. Hardcoded, no knob.
 MAX_TARGETED_BUCKET_READS = 8
 
 
@@ -566,22 +511,9 @@ def cap_targeted_reads(ids: list[str], *, context: str) -> list[str]:
 def detect_new_buckets(
     config: GarageConfig, current_state: GarageState | None
 ) -> list[GarageBucket]:
-    """Cheap new-bucket detector: a ``ListBuckets``-only diff against the baseline.
-
-    One admin call, constant cost regardless of bucket count. For each id present
-    now but absent from ``current_state``, fires a single targeted
-    ``GetBucketInfo`` (no per-bucket calls for already-known buckets) and returns
-    the newcomer(s). The per-tick fan-out is bounded by
-    ``MAX_TARGETED_BUCKET_READS``: under a create burst, only that many are
-    fetched this tick and the rest defer (they are still absent next tick, and
-    the periodic full walk backstops the whole burst within one push interval).
-    The caller merges the result into the *current* state and pushes; this
-    function reads nothing but Garage and mutates nothing.
-
-    Returns an empty list when there is no baseline yet (``current_state`` is
-    None - the periodic full collect establishes it first), when the admin API
-    is unconfigured, or when ``ListBuckets`` can't be read this tick.
-    """
+    """One constant-cost ``ListBuckets`` diff against the baseline, then a capped
+    targeted read of the newcomers (overflow defers: still absent next tick, and the
+    full walk backstops). Returns [] with no baseline or an unreadable admin API."""
     if current_state is None:
         return []
     admin_url, admin_token = config.admin_url, config.admin_token
