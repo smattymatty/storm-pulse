@@ -16,6 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from stormpulse import events
 from stormpulse.protocol import (
     CommandProgressPayload,
     CommandResultPayload,
@@ -217,6 +218,9 @@ class JobManager:
         targeted re-read). ``async with`` releases the permit on every exit -
         normal, crash, or cancellation - so the pool can never leak to a deadlock.
         """
+        # Attribute every admin call made by this job's handler AND its
+        # on_success hook (both run in this task's context) to the job.
+        events.trigger_var.set("job")
         async with self._sem:
             self._running += 1
             try:
@@ -288,6 +292,21 @@ class JobManager:
             outcome.success,
             duration_ms,
             concurrent,
+        )
+        # The durable record of this job's outcome. The command.result
+        # below reaches the dashboard once and evaporates with the relay;
+        # this event is what an investigator queries a week later
+        # (the evaporated-os_error lesson, 2026-07-03).
+        events.emit(
+            "job_result",
+            source="jobs",
+            command=command,
+            command_ref=request_id,
+            status="success" if outcome.success else "failed",
+            failure_reason=outcome.failure_reason,
+            error=outcome.stderr if not outcome.success else "",
+            duration_ms=duration_ms,
+            concurrent=concurrent,
         )
         result = CommandResultPayload(
             request_id=request_id,

@@ -7,6 +7,7 @@ import json
 from stormpulse.logging.parsers import (
     MAX_LINE_BYTES,
     parse_caddy_json,
+    parse_django,
     parse_docker_raw,
     parse_garage_s3,
     parse_stormpulse,
@@ -345,6 +346,58 @@ class TestParseCaddyJson:
             }
         )
         assert parse_caddy_json(line) is None
+
+
+class TestParseDjango:
+    _LINE = (
+        "2026-07-03T19:42:15.900000000Z "
+        "2026-07-03 19:42:15,823 developer.pulse WARNING "
+        "Adopt: bucket 8742c023e7e97dc8 owner key GK2ad974 is not an AccountKey"
+    )
+
+    def test_leveled_line(self) -> None:
+        result = parse_django(self._LINE)
+        assert result is not None
+        assert result["ts"] == "2026-07-03T19:42:15.823Z"
+        assert result["level"] == "warning"
+        assert result["logger"] == "developer.pulse"
+        assert result["message"].startswith("Adopt: bucket 8742c023e7e97dc8")
+        assert result["truncated"] is False
+
+    def test_leveled_line_without_docker_prefix(self) -> None:
+        result = parse_django(
+            "2026-07-03 19:42:15,823 developer.pulse ERROR boom",
+        )
+        assert result is not None
+        assert result["ts"] == "2026-07-03T19:42:15.823Z"
+        assert result["level"] == "error"
+        assert result["message"] == "boom"
+
+    def test_non_django_line_passes_through(self) -> None:
+        # Traceback bodies and daphne access lines must survive as
+        # unattributed passthrough, never be dropped. Leading indentation
+        # is collapsed by the shared docker-prefix regex, the same
+        # behavior docker_raw has today.
+        line = '2026-07-03T19:42:16.000000000Z   File "/app/x.py", line 3'
+        result = parse_django(line)
+        assert result is not None
+        assert result["ts"] == "2026-07-03T19:42:16.000000000Z"
+        assert result["message"] == 'File "/app/x.py", line 3'
+        assert "level" not in result
+
+    def test_no_timestamp_anywhere_returns_none(self) -> None:
+        assert parse_django("no timestamp here") is None
+        assert parse_django("") is None
+
+    def test_strips_ansi_escapes(self) -> None:
+        line = (
+            "2026-07-03T19:42:16.000000000Z "
+            "\x1b[33m2026-07-03 19:42:15,823 app.views WARNING slow\x1b[0m"
+        )
+        result = parse_django(line)
+        assert result is not None
+        assert result["level"] == "warning"
+        assert "\x1b" not in result["message"]
 
 
 class TestParseDockerRaw:

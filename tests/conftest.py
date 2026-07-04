@@ -41,6 +41,21 @@ def _fresh_garage_state_reader(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _fresh_event_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give each test a fresh process-global event buffer.
+
+    The buffer is a process-lifetime singleton by design (like the state
+    reader above): it must survive websocket reconnects so flap events
+    recorded while disconnected ship on the next session. Tests exercising
+    code that emits (jobs, admin API, reconnect) would otherwise share one
+    buffer and leak events across tests.
+    """
+    import stormpulse.events as events_module
+
+    monkeypatch.setattr(events_module, "_BUFFER", events_module.EventBuffer())
+
+
+@pytest.fixture(autouse=True)
 def _garage_preconditions_pass_in_tests() -> Generator[None, None, None]:
     """Default Garage preconditions to PASS in every test.
 
