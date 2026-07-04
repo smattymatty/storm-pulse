@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
+from stormpulse import events
 from stormpulse.agent import dispatch, loops
 from stormpulse.agent.register import send_register
 from stormpulse.agent.signoff_nag import signoff_nag_loop
@@ -141,10 +142,17 @@ async def _run_session(
     agent_id = agent.config.agent.id
     agent.job_manager = JobManager(agent_id, ws_send)
     try:
+        # Batches the previous connection never acked go back to the
+        # buffer front so the new session's events loop re-ships them.
+        requeued = events.buffer().requeue_unacked()
+        if requeued:
+            logger.info("Requeued %d unacked events from previous session", requeued)
+
         async with asyncio.TaskGroup() as tg:
             tg.create_task(_shutdown_watcher(agent, ws))
             tg.create_task(loops.heartbeat_loop(agent, ws))
             tg.create_task(loops.metrics_loop(agent, ws))
+            tg.create_task(loops.events_loop(agent, ws))
             tg.create_task(dispatch.receive_loop(agent, ws))
             # Per live Integration: a periodic state loop (if it collects state)
             # and a fast new-resource detector (if it declares one). caddy
@@ -197,6 +205,13 @@ def _log_connection_event(
         logger.error("%s: %s", message, exc, exc_info=True)
     else:
         logger.warning("%s: %s", message, exc)
+    # Flap events are recorded here, while disconnected, and shipped once
+    # the next session's events loop drains the buffer - so the flapping
+    # period itself is never a telemetry blind spot (the 45-drops-behind-
+    # a-green-dot lesson, 2026-06-27).
+    events.emit(
+        "reconnect", source="ws", reason=message, error=str(exc), category=category
+    )
     if agent.pulse_logger is None:
         return
     log_fn = getattr(agent.pulse_logger, level)

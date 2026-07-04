@@ -324,9 +324,63 @@ def parse_docker_raw(line: str) -> dict[str, Any] | None:
     }
 
 
+# Django application log format (a web app container's stdout):
+#   2026-07-03 19:42:15,823 developer.pulse WARNING Adopt: bucket ...
+# i.e. logging's default asctime plus "%(name)s %(levelname)s %(message)s".
+_DJANGO_RE = re.compile(
+    r"^(?P<date>\d{4}-\d{2}-\d{2})\s(?P<time>\d{2}:\d{2}:\d{2}),(?P<ms>\d{3})\s+"
+    r"(?P<logger>[\w.]+)\s+"
+    r"(?P<level>DEBUG|INFO|WARNING|ERROR|CRITICAL)\s"
+    r"(?P<message>.*)$"
+)
+
+
+def parse_django(line: str) -> dict[str, Any] | None:
+    """Parse a Django application log line from a docker source.
+
+    Lifts ts/logger/level out of the standard ``%(asctime)s %(name)s
+    %(levelname)s %(message)s`` layout so application lines land with a
+    real ``level`` instead of unattributed text. The asctime carries no
+    zone; it is taken as UTC (every Storm container runs UTC).
+
+    Lines that don't match (traceback bodies, daphne access lines, print
+    output) pass through with the docker timestamp, like ``docker_raw``.
+    Dropping them would eat traceback bodies, the most valuable lines a
+    web app group ships.
+    """
+    stripped = line.rstrip("\r\n")
+    if not stripped:
+        return None
+    truncated_line, truncated = _truncate(stripped)
+
+    docker = _DOCKER_TS_RE.match(truncated_line)
+    if docker is not None:
+        fallback_ts = docker.group(1)
+        body = _ANSI_ESCAPE_RE.sub("", docker.group(2))
+    else:
+        fallback_ts = ""
+        body = _ANSI_ESCAPE_RE.sub("", truncated_line)
+
+    m = _DJANGO_RE.match(body)
+    if m is not None:
+        return {
+            "ts": f"{m.group('date')}T{m.group('time')}.{m.group('ms')}Z",
+            "level": m.group("level").lower(),
+            "logger": m.group("logger"),
+            "message": m.group("message"),
+            "truncated": truncated,
+        }
+    if not fallback_ts:
+        # No docker prefix and not a Django line: nothing to anchor the
+        # entry's timestamp to.
+        return None
+    return {"ts": fallback_ts, "message": body, "truncated": truncated}
+
+
 PARSERS: dict[str, Any] = {
     "garage_s3": parse_garage_s3,
     "stormpulse": parse_stormpulse,
     "caddy_json": parse_caddy_json,
     "docker_raw": parse_docker_raw,
+    "django": parse_django,
 }

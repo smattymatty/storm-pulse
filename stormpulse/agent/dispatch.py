@@ -21,6 +21,7 @@ from stormpulse.agent.signoff_guard import (
     is_blocked_by_seal,
     sealed_refusal_result,
 )
+from stormpulse import events
 from stormpulse.auth import AuthError, verify_envelope
 from stormpulse.commands import (
     CommandError,
@@ -90,8 +91,20 @@ async def dispatch_message(
             await handle_command_sequence(agent, ws, envelope)
         case MessageType.LOG_BATCH_ACK:
             await handle_log_batch_ack(agent, envelope)
+        case MessageType.EVENTS_BATCH_ACK:
+            handle_events_batch_ack(envelope)
         case _:
             logger.warning("Unexpected message type: %s", envelope.type.value)
+
+
+def handle_events_batch_ack(envelope: Envelope) -> None:
+    """Release an acknowledged events batch from the in-process buffer."""
+    batch_id = envelope.payload.get("batch_id")
+    if not isinstance(batch_id, str):
+        logger.warning("events.batch.ack missing batch_id")
+        return
+    if not events.buffer().ack(batch_id):
+        logger.debug("events.batch.ack for unknown batch_id %s", batch_id)
 
 
 async def handle_log_batch_ack(agent: Agent, envelope: Envelope) -> None:

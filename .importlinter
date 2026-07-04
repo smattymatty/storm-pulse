@@ -28,4 +28,4 @@ layers =
     stormpulse.__main__ : stormpulse.cli : stormpulse.agent
     stormpulse.status | stormpulse.enroll | stormpulse.metrics | stormpulse.logging | stormpulse.caddy | stormpulse.garage | stormpulse.signoff | stormpulse.system_inventory
     stormpulse.auth | stormpulse.init | stormpulse.commands | stormpulse.integrations
-    stormpulse.config | stormpulse.protocol
+    stormpulse.config | stormpulse.protocol | stormpulse.events

@@ -24,12 +24,14 @@ class MessageType(StrEnum):
     COMMAND_PROGRESS = "command.progress"
     REGISTER = "register"
     LOG_BATCH = "log.batch"
+    EVENTS_BATCH = "events.batch"
     SIGNOFF_STATE = "signoff.state"
 
     # Dashboard → Agent (actionable)
     COMMAND_REQUEST = "command.request"
     COMMAND_SEQUENCE = "command.sequence"
     LOG_BATCH_ACK = "log.batch.ack"
+    EVENTS_BATCH_ACK = "events.batch.ack"
 
     # Dashboard → Agent (acknowledgements)
     REGISTER_OK = "register.ok"
@@ -452,6 +454,26 @@ def make_command_result(
 def make_command_progress(agent_id: str, progress: CommandProgressPayload) -> Envelope:
     """Create a command.progress envelope."""
     return _make_envelope(agent_id, MessageType.COMMAND_PROGRESS, asdict(progress))
+
+
+def make_events_batch(
+    agent_id: str,
+    *,
+    batch_id: str,
+    events: list[dict[str, Any]],
+) -> Envelope:
+    """Create an events.batch envelope carrying wide events.
+
+    Events are opaque dicts built by ``stormpulse.events.emit``; the
+    control plane validates and maps them per field. ``batch_id`` is
+    echoed back in the ``events.batch.ack`` that releases the batch from
+    the agent's buffer.
+    """
+    return _make_envelope(
+        agent_id,
+        MessageType.EVENTS_BATCH,
+        {"batch_id": batch_id, "events": events},
+    )
 
 
 def make_signoff_state(

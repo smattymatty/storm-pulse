@@ -23,6 +23,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
+from stormpulse import events
+
 _TIMEOUT_SECONDS = 15.0
 _FULL_BUCKET_ID_LEN = 64
 
@@ -643,6 +645,20 @@ def _request(
         result = (None, f"Could not reach Garage admin API at {admin_url}: {exc}")
     finally:
         now = time.monotonic()
-        _METER.record(admin_url, (now - start) * 1000.0, now)
+        duration_ms = (now - start) * 1000.0
+        _METER.record(admin_url, duration_ms, now)
+        # One wide event per call: the raw record the meter's aggregate is
+        # derived FROM, control-plane side, at read time. The meter freezes
+        # the questions it was built to answer; the event answers the ones
+        # nobody has asked yet (write-time-aggregation scar, 2026-06-27).
+        events.emit(
+            "admin_call",
+            source="garage_admin",
+            endpoint=path.split("?", 1)[0].rsplit("/", 1)[-1],
+            http_method=method,
+            duration_ms=int(duration_ms),
+            status=result[0],
+            error=result[1] if result[0] is None else "",
+        )
 
     return result
