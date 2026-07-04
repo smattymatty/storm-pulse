@@ -221,6 +221,24 @@ def _plan_reconcile(
     return ReconcilePlan(writes=writes, deletes=delete_names)
 
 
+# One reconcile per region at a time, per agent process. Each sync is a
+# full read-modify-write of the region's drop-in set (scan -> plan ->
+# apply -> reload), so two running concurrently race on the shared file
+# set: the 2026-07-04 persist_failed in the events plane's first live
+# minutes was two same-second syncs sharing site-<id>.caddy.tmp, the
+# loser's os.replace hitting Errno 2. Bursts of same-region dispatches
+# are legitimate website behavior (per-bucket closure sweeps), so the
+# serialization lives here, at the invariant's home.
+_REGION_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _region_lock(region: str) -> asyncio.Lock:
+    lock = _REGION_LOCKS.get(region)
+    if lock is None:
+        lock = _REGION_LOCKS[region] = asyncio.Lock()
+    return lock
+
+
 def make_caddy_sync_handler(
     caddy: CaddyConfig,
     params: dict[str, str],
@@ -249,6 +267,10 @@ def make_caddy_sync_handler(
     """
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
+        async with _region_lock(params.get("region", "")):
+            return await _sync_once(progress)
+
+    async def _sync_once(progress: ProgressCallback) -> JobOutcome:
         region = params.get("region", "")
         tenants_raw = params.get("tenants", "{}")
         authorize_bulk = params.get("authorize_bulk", "false") == "true"
