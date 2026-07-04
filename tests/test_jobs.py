@@ -494,3 +494,25 @@ async def test_load_reports_pending_and_caps_running_at_the_semaphore() -> None:
     barrier.set()
     await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
     assert mgr.load() == {"pending": 0, "running": 0}          # permits + tasks released
+
+
+class TestParamContext:
+    """Job params ride the job_result event as story context: which
+    bucket, which quota. Big values and typed-field collisions stay off
+    the wire."""
+
+    def test_small_params_ride_reserved_and_big_skipped(self) -> None:
+        from stormpulse.commands.jobs import _param_context
+
+        out = _param_context({
+            "bucket_id": "abc",            # reserved: typed field, explicit
+            "max_size": "5000000000",      # the quota story
+            "command": "collides",         # reserved: typed field
+            "tenants": "x" * 5000,         # a manifest; too big for context
+        })
+        assert out == {"max_size": "5000000000"}
+
+    def test_none_params_is_empty(self) -> None:
+        from stormpulse.commands.jobs import _param_context
+
+        assert _param_context(None) == {}

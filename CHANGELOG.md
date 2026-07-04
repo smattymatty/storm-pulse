@@ -5,6 +5,12 @@ All notable changes to Storm Pulse are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Job results carry their command's context.** The target `bucket_id` rides as a typed event field and the job's other small params (e.g. `max_size` on a quota set) ride the attrs long tail, so a quota event says which bucket it capped and at what value. Oversized params (a caddy tenants manifest) stay off the wire.
+
 ## [0.2.1] - 2026-07-04
 
 The events plane: one wide, structured event per unit of agent work, shipped reliably to the control plane and analyzed at read time. Rate, p95, and every future summary are queries over raw events, never agent-side aggregates, so tomorrow's question is answerable from yesterday's data. Also in this release: the kernel goes garage-free (post-mutation refresh becomes a contract capability), and the first live catch of the events plane, a caddy sync race, is fixed.
