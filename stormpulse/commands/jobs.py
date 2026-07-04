@@ -219,8 +219,10 @@ class JobManager:
         normal, crash, or cancellation - so the pool can never leak to a deadlock.
         """
         # Attribute every admin call made by this job's handler AND its
-        # on_success hook (both run in this task's context) to the job.
+        # on_success hook (both run in this task's context) to the job,
+        # and to THIS command, so one command's story is queryable.
         events.trigger_var.set("job")
+        events.command_ref_var.set(request_id)
         async with self._sem:
             self._running += 1
             try:

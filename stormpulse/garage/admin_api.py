@@ -21,7 +21,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from stormpulse import events
 
@@ -607,6 +607,24 @@ def _resolve_full_bucket_id(
     return full, ""
 
 
+def _event_target(endpoint: str, path: str) -> dict[str, str]:
+    """The admin call's target resource, as event fields.
+
+    Per-resource endpoints carry their target as ``?id=``; attribute it
+    to the right typed column by endpoint family, so events answer
+    "which bucket (or key) was this call about". Endpoints without an
+    id (list/cluster calls) contribute nothing.
+    """
+    target_id = parse_qs(urlparse(path).query).get("id", [""])[0]
+    if not target_id:
+        return {}
+    if "Bucket" in endpoint:
+        return {"bucket_id": target_id}
+    if "Key" in endpoint:
+        return {"key_id": target_id}
+    return {}
+
+
 def _request(
     admin_url: str,
     method: str,
@@ -651,14 +669,16 @@ def _request(
         # derived FROM, control-plane side, at read time. The meter freezes
         # the questions it was built to answer; the event answers the ones
         # nobody has asked yet (write-time-aggregation scar, 2026-06-27).
+        endpoint = path.split("?", 1)[0].rsplit("/", 1)[-1]
         events.emit(
             "admin_call",
             source="garage_admin",
-            endpoint=path.split("?", 1)[0].rsplit("/", 1)[-1],
+            endpoint=endpoint,
             http_method=method,
             duration_ms=int(duration_ms),
             status=result[0],
             error=result[1] if result[0] is None else "",
+            **_event_target(endpoint, path),
         )
 
     return result
