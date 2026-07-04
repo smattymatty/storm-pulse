@@ -5,7 +5,20 @@ All notable changes to Storm Pulse are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2026-07-04
+
+The events plane: one wide, structured event per unit of agent work, shipped reliably to the control plane and analyzed at read time. Rate, p95, and every future summary are queries over raw events, never agent-side aggregates, so tomorrow's question is answerable from yesterday's data. Also in this release: the kernel goes garage-free (post-mutation refresh becomes a contract capability), and the first live catch of the events plane, a caddy sync race, is fixed.
+
+### Added
+
+- **Wide-event emission** (`stormpulse.events`). Foundation-tier `emit()` feeding a bounded in-process buffer; events ship as `events.batch` envelopes on the metrics cadence and are released only by dashboard ack, so a connection flap never loses the events that describe it. A full buffer drops oldest and the next drain prepends a `dropped_events` event: truncation is never silent. (Additive wire change: a new envelope type; older dashboards answer it with an error envelope and nothing breaks.)
+- **Emit points.** Every Garage admin call (endpoint, method, duration, status, error text), every job result (durable `failure_reason` and stderr, the record that used to evaporate with the relay), and every reconnect (recorded while disconnected, shipped on the next session).
+- **Events carry their target and their command.** Per-resource admin calls attribute their `?id=` to `bucket_id` or `key_id` by endpoint family, and a `command_ref` contextvar stamps every admin call a job's handler makes with the job's dispatch ref, so one command's whole story is queryable server-side.
+
+### Fixed
+
+- **Caddy sync drop-in persist race.** A sync is a full read-modify-write of a region's drop-in set; two running concurrently shared `site-<id>.caddy.tmp` and the loser's rename failed with `persist_failed`. Same-region syncs now serialize on a per-region lock inside the agent, since bursts of same-region dispatches are legitimate website behavior. Found by the events plane in its first minutes live, 2026-07-04.
+- **`stormpulse update` docs said pip was the default source; the code's default is git.** The README now matches the code.
 
 The kernel goes garage-free. Post-mutation refresh becomes a contract capability instead of garage-named orchestration inside the agent, so the last integration-specific module in the kernel is deleted and the third integration inherits the whole path for free.
 
