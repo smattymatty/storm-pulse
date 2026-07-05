@@ -1356,3 +1356,47 @@ retention_days = 365
     assert cfg.log_groups[0].ship_interval_seconds == 5.0
     assert cfg.log_groups[0].max_lines_per_batch == 200
     assert cfg.log_groups[0].retention_days == 365
+
+
+def test_custom_command_credential_param_requires_secret(
+    write_config: Callable[[str], Path],
+) -> None:
+    # The events-plane guard reaches operator config too: a credential-shaped
+    # param name is refused at load unless marked secret.
+    toml = (
+        MINIMAL_VALID
+        + """
+[commands.notify]
+group = "test"
+command = ["/usr/bin/notify"]
+timeout = 5
+
+[commands.notify.params.api_token]
+placeholder = "api_token"
+pattern = ".+"
+"""
+    )
+    with pytest.raises(ConfigError, match="secret=True"):
+        load_config(write_config(toml))
+
+
+def test_custom_command_secret_param_loads_and_is_tagged(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
+[commands.notify]
+group = "test"
+command = ["/usr/bin/notify"]
+timeout = 5
+sensitive_output = true
+
+[commands.notify.params.api_token]
+placeholder = "api_token"
+pattern = ".+"
+secret = true
+"""
+    )
+    config = load_config(write_config(toml))
+    assert config.commands["notify"].params["api_token"].secret is True

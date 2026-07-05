@@ -935,3 +935,15 @@ def test_non_secret_params_passes_all_when_none_secret() -> None:
         params={"branch": ParamDef("branch", default=None, pattern=r".+")},
     )
     assert non_secret_params(cmd, {"branch": "main"}) == {"branch": "main"}
+
+
+def test_credential_shaped_param_name_requires_secret_flag() -> None:
+    # Fix-the-system guard for the events-plane leak: a future param named
+    # like a credential cannot be constructed untagged.
+    with pytest.raises(ValueError, match="secret=True"):
+        ParamDef("api_token", default=None, pattern=r".+")
+    with pytest.raises(ValueError, match="secret=True"):
+        ParamDef("db_password", default=None, pattern=r".+")
+    # Tagged, it constructs fine.
+    pdef = ParamDef("api_token", default=None, pattern=r".+", secret=True)
+    assert pdef.secret is True

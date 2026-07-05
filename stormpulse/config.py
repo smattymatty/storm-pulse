@@ -90,6 +90,15 @@ class ParamDef:
                 f"ParamDef {self.placeholder!r}: must set pattern or max_bytes "
                 f"(unvalidated params are a footgun)"
             )
+        # A new sink for command data must never meet an untagged credential:
+        # a credential-shaped name without secret=True fails at construction.
+        if not self.secret and re.search(
+            r"secret|password|token|passphrase", self.placeholder, re.IGNORECASE
+        ):
+            raise ValueError(
+                f"ParamDef {self.placeholder!r}: credential-shaped name requires "
+                f"secret=True (redacts it from event and log context)"
+            )
 
 
 # Execution-mode discriminator the agent dispatcher routes on. The whole point
@@ -481,12 +490,17 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandSpec]:
                     f"'pattern' in [{plabel}] is not valid regex: {exc}"
                 ) from exc
             pdescription = optional_key(pentry, "description", str, "", plabel)
-            param_defs[placeholder] = ParamDef(
-                placeholder=placeholder,
-                default=default_raw,
-                pattern=pattern,
-                description=pdescription,
-            )
+            psecret = optional_key(pentry, "secret", bool, False, plabel)
+            try:
+                param_defs[placeholder] = ParamDef(
+                    placeholder=placeholder,
+                    default=default_raw,
+                    pattern=pattern,
+                    description=pdescription,
+                    secret=psecret,
+                )
+            except ValueError as exc:
+                raise ConfigError(f"[{plabel}]: {exc}") from exc
 
         result[name] = CommandSpec(
             group=group,

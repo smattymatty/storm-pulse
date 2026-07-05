@@ -87,6 +87,11 @@ db_path = "/home/deploy/.local/share/stormpulse/stormpulse.db"
 # The dashboard sends runtime overrides in the params dict; the agent
 # validates them before substituting into the command template.
 #
+# A param carrying a credential must set `secret = true`: its value still
+# reaches the command but is redacted from the agent's event and log records.
+# Credential-shaped names (secret/password/token/passphrase) are refused at
+# load without it.
+#
 # [commands.service_logs]
 # group = "diagnostics"
 # command = ["/usr/bin/docker", "compose", "-f", "{compose_file}", "logs", "--tail", "{lines}", "{service}"]
