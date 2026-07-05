@@ -176,6 +176,18 @@ def validate_params(
     return merged
 
 
+def non_secret_params(
+    cmd_def: CommandSpec,
+    params: dict[str, str],
+) -> dict[str, str]:
+    """Drop ``secret``-flagged params, for event/log context. The handler keeps the full set."""
+    return {
+        name: value
+        for name, value in params.items()
+        if not (name in cmd_def.params and cmd_def.params[name].secret)
+    }
+
+
 def _resolve_command(
     template: list[str],
     config: ProjectConfig,

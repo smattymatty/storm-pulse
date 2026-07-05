@@ -80,6 +80,9 @@ class ParamDef:
     pattern: str | None = None
     description: str = ""
     max_bytes: int | None = None
+    # A secret input (an S3 secret key): the value reaches the handler but is
+    # redacted from the wide-event context at dispatch, never a durable record.
+    secret: bool = False
 
     def __post_init__(self) -> None:
         if self.pattern is None and self.max_bytes is None:

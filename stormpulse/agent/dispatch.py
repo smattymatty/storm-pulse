@@ -29,7 +29,7 @@ from stormpulse.commands import (
     execute_command,
     get_command,
 )
-from stormpulse.commands.registry import validate_params
+from stormpulse.commands.registry import non_secret_params, validate_params
 from stormpulse.config import CommandSpec
 from stormpulse.protocol import (
     CommandRequestPayload,
@@ -359,6 +359,8 @@ async def dispatch_long_running(
         return
 
     on_success = post_success_hook(agent, cmd_def, payload.command, validated_params)
+    # The handler (above) closed over the full params; the JobManager copy is only
+    # event/log context, so secret-flagged params are dropped before it ever sees them.
     try:
         agent.job_manager.start(
             request_id,
@@ -366,7 +368,7 @@ async def dispatch_long_running(
             cmd_def.group,
             handler,
             on_success=on_success,
-            params=validated_params,
+            params=non_secret_params(cmd_def, validated_params),
         )
     except ValueError:
         logger.warning("Duplicate dispatch for request %s", request_id)

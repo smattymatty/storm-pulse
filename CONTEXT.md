@@ -46,6 +46,15 @@ is a Feature, not every Feature is an Integration (`metrics.py`, `status.py`,
 "Integration" for the contract that registers config, commands, and runtime surfaces.
 _Avoid_: plugin (implies a third-party runtime loader, a separate unsealed decision)
 
+**Runner**:
+A Pulse box whose configured Integration is rclone and nothing else: it runs
+migration/backup jobs (source -> Storm) in isolation from the storage nodes, so a
+multi-hour pull cannot starve a storage node's own job slots. Same agent binary,
+different `[integration]` config. Customer file data transits the runner in
+flight; it is never the resting place for that data.
+_Avoid_: migration server (implies a separate service; it is a Pulse agent),
+worker (overloaded; the JobManager already has "jobs").
+
 ## Privacy by design
 
 Pulse is built so the agent has almost nothing to hold and therefore
