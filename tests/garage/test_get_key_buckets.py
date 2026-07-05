@@ -1,6 +1,6 @@
-"""Tests for stormpulse.garage.get_key_buckets.
+"""Tests for stormpulse.garage.jobs.get_key_buckets.
 
-Read-only: return the buckets an account key owns (BUCKETS-013 unit 5). Powers
+Read-only: return the buckets an account key owns. Powers
 the dashboard's per-key bucket list and the revoke at-risk split, since Storm
 does not store the key->bucket link.
 """
@@ -14,7 +14,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.get_key_buckets import (
+from stormpulse.garage.jobs.get_key_buckets import (
     make_get_key_buckets_handler,
     run_get_key_buckets,
 )
@@ -58,7 +58,7 @@ class _FakeAdmin:
 def _install(monkeypatch, key_info):
     fake = _FakeAdmin(key_info)
     monkeypatch.setattr(
-        "stormpulse.garage.get_key_buckets.admin_api.get_key_info",
+        "stormpulse.garage.jobs.get_key_buckets.admin_api.get_key_info",
         fake.get_key_info,
     )
     return fake

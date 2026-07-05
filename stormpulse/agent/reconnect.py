@@ -107,7 +107,7 @@ def log_enricher_provider(
     agent: Agent, parser: str
 ) -> Callable[[], LogEnricher | None]:
     """Build one log group's tick-fresh enricher provider from the contract's
-    ``log_enrichers`` (BUCKETS-015); an undeclared parser always yields ``None``."""
+    ``log_enrichers``; an undeclared parser always yields ``None``."""
     for integ in registered_integrations():
         build = (integ.log_enrichers or {}).get(parser)
         if build is not None:

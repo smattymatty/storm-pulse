@@ -1,6 +1,6 @@
-"""Tests for stormpulse.garage.provision_account_key.
+"""Tests for stormpulse.garage.jobs.provision_account_key.
 
-Mints a BUCKETS-012 account key: one CreateKey with the key-level
+Mints a account key: one CreateKey with the key-level
 ``allow_create_bucket`` capability set, returning the one-time secret. One
 forward step, no rollback. As in ``test_provision_additional_key``, we patch
 ``admin_api.create_key`` and assert on the recorded call and the
@@ -16,7 +16,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.provision_account_key import (
+from stormpulse.garage.jobs.provision_account_key import (
     make_provision_account_key_handler,
     run_provision_account_key,
 )
@@ -77,7 +77,7 @@ class _FakeAdmin:
 def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
     fake = _FakeAdmin()
     monkeypatch.setattr(
-        "stormpulse.garage.provision_account_key.admin_api.create_key",
+        "stormpulse.garage.jobs.provision_account_key.admin_api.create_key",
         fake.create_key,
     )
     return fake
@@ -127,7 +127,7 @@ async def test_happy_path_mints_key_with_create_bucket(
 async def test_read_only_tier_mints_without_create_bucket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # BUCKETS-016: a Read-Write / Read-Only key is minted with create disabled,
+    # a Read-Write / Read-Only key is minted with create disabled,
     # so it can never `aws s3 mb`; it reaches buckets only through attach.
     fake = _install(monkeypatch)
 
@@ -161,7 +161,7 @@ async def test_handler_factory_coerces_string_false_to_no_create(
 async def test_handler_factory_fails_closed_without_create_param(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # FAIL CLOSED (BUCKETS-016): a mint that does not send the gate must NOT
+    # FAIL CLOSED: a mint that does not send the gate must NOT
     # grant create. Deploy skew yields a powerless key, never a root one. This
     # is the regression for "a Read-Only key could create a bucket".
     fake = _install(monkeypatch)

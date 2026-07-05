@@ -25,7 +25,7 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
     logger.info("Connected to dashboard at %s", url)
 
     # CORE-005: discover initial state for each live Integration that declares a
-    # discover capability and has no state yet (GARAGE-000: garage discovers here).
+    # discover capability and has no state yet (garage discovers here).
     for runtime in agent.integrations.values():
         if (
             runtime.status == "live"

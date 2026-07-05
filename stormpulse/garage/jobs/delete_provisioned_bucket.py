@@ -1,6 +1,6 @@
 """Handler for ``garage_delete_provisioned_bucket``.
 
-Deletes an empty provisioned bucket via the admin HTTP API (ADR garage/001):
+Deletes an empty provisioned bucket via the admin HTTP API:
 read the bucket (``GetBucketInfo``), ``DeleteBucket`` by id (which removes the
 bucket together with ALL its aliases in one call), then best-effort cleanup of
 any access keys the deletion left unmoored.
@@ -62,7 +62,7 @@ async def run_delete_provisioned_bucket(
     started_at = time.monotonic()
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
-        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        # Fail loud: a migrated operation never silently no-ops.
         return _failure(
             failure_reason="admin_api_unconfigured",
             step_failed=None,

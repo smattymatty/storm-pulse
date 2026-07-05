@@ -1,7 +1,7 @@
-"""Tests for stormpulse.garage.delete_key.
+"""Tests for stormpulse.garage.jobs.delete_key.
 
 Admin-API key delete that reports a structured confirmed-gone outcome
-(ADR garage/001), backing the BUCKETS-013 credential-kill tombstone sweep.
+(ADR garage/001), backing the credential-kill tombstone sweep.
 The contract the sweep depends on:
 
   - 2xx          -> success, outcome="deleted",        confirmed_absent=True
@@ -20,7 +20,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.delete_key import (
+from stormpulse.garage.jobs.delete_key import (
     make_delete_key_handler,
     run_delete_key,
 )
@@ -71,7 +71,7 @@ class _FakeAdmin:
 def _install(monkeypatch: pytest.MonkeyPatch, result: tuple[bool, str]) -> _FakeAdmin:
     fake = _FakeAdmin(result)
     monkeypatch.setattr(
-        "stormpulse.garage.delete_key.admin_api.delete_key", fake.delete_key,
+        "stormpulse.garage.jobs.delete_key.admin_api.delete_key", fake.delete_key,
     )
     return fake
 

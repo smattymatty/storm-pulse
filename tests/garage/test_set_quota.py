@@ -1,4 +1,4 @@
-"""Tests for the BUCKETS-006 quota write: the admin-API client + the handler."""
+"""Tests for the quota write: the admin-API client + the handler."""
 from __future__ import annotations
 
 import json
@@ -6,8 +6,9 @@ from typing import Any
 
 import pytest
 
-from stormpulse.garage import admin_api, set_quota
-from stormpulse.garage.set_quota import make_set_quota_handler, run_set_quota
+from stormpulse.garage import admin_api
+from stormpulse.garage.jobs import set_quota
+from stormpulse.garage.jobs.set_quota import make_set_quota_handler, run_set_quota
 
 _ADMIN = {"admin_url": "http://127.0.0.1:3903", "admin_token": "tok"}
 _PREFIX = "8742c023e7e97dc8"  # Storm's 16-char garage_bucket_id

@@ -4,7 +4,7 @@ Adds a new tiered (rw or ro) key to an existing bucket: create key, allow
 permissions, attach local alias. Atomic rollback runs in reverse order; the
 bucket is never touched by rollback (this handler owns the new key only).
 
-All Garage interaction is the admin HTTP API (ADR garage/001), never the CLI.
+All Garage interaction is the admin HTTP API, never the CLI.
 The bucket reference is the 16-char UUID prefix stored in
 ``CustomerBucket.garage_bucket_id``; the admin client resolves it to Garage's
 full 64-char id before each bucket-scoped call.
@@ -30,7 +30,7 @@ _VALID_TIERS = ("all", "rw", "ro")
 
 # (read, write, owner) for each tier. The ``all`` tier mints an owner key onto
 # a bucket whose owner slot is free - the claim-admin path for an adopted
-# bucket (BUCKETS-013), the first owner-grant-on-existing-bucket in the system.
+# bucket, the first owner-grant-on-existing-bucket in the system.
 # rw/ro remain non-owner tiered keys added to a bucket that already has one.
 _TIER_PERMS: dict[str, tuple[bool, bool, bool]] = {
     "all": (True, True, True),
@@ -125,7 +125,7 @@ async def run_provision_additional_key(
 
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
-        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        # Fail loud: a migrated operation never silently no-ops.
         return _failure(
             failure_reason="admin_api_unconfigured",
             step_failed=None,

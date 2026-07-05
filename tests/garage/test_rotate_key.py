@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.rotate_key.
+"""Tests for stormpulse.garage.jobs.rotate_key.
 
 Covers the four-step orchestrated key rotation (CreateKey, AllowBucketKey,
 AddBucketAlias on the new key, DeleteKey on the old):
@@ -24,7 +24,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.rotate_key import (
+from stormpulse.garage.jobs.rotate_key import (
     make_rotate_customer_key_handler,
     run_rotate_customer_key,
 )
@@ -152,7 +152,7 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
         "add_bucket_alias_local", "remove_bucket_alias_local", "delete_key",
     ):
         monkeypatch.setattr(
-            f"stormpulse.garage.rotate_key.admin_api.{name}", getattr(fake, name)
+            f"stormpulse.garage.jobs.rotate_key.admin_api.{name}", getattr(fake, name)
         )
     return fake
 

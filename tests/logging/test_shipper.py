@@ -223,7 +223,7 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# bucket_id stamping (ADR BUCKETS-015)
+# bucket_id stamping
 # ---------------------------------------------------------------------------
 
 from stormpulse.garage.state import GarageBucket, GarageKeyRef, GarageState  # noqa: E402

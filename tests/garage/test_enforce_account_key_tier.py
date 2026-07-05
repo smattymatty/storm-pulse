@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.enforce_account_key_tier (BUCKETS-016 Slice 4).
+"""Tests for stormpulse.garage.jobs.enforce_account_key_tier.
 
 Narrows an account key's over-tier grants down to its tier. All-or-nothing on
 stranding, idempotent when already enforced. We patch the admin_api reads/writes
@@ -14,7 +14,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.enforce_account_key_tier import (
+from stormpulse.garage.jobs.enforce_account_key_tier import (
     make_enforce_account_key_tier_handler,
     run_enforce_account_key_tier,
 )
@@ -83,7 +83,7 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
     fake = _FakeAdmin()
     for name in ("get_key_info", "get_bucket_info", "allow_bucket_key", "deny_bucket_key"):
         monkeypatch.setattr(
-            f"stormpulse.garage.enforce_account_key_tier.admin_api.{name}",
+            f"stormpulse.garage.jobs.enforce_account_key_tier.admin_api.{name}",
             getattr(fake, name),
         )
     return fake

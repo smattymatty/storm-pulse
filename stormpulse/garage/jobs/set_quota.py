@@ -1,6 +1,6 @@
 """Handler for ``garage_bucket_set_quota`` via the Garage admin HTTP API.
 
-The BUCKETS-006 Headroom wall. The website dispatches this with ``bucket_id``
+The Headroom wall. The website dispatches this with ``bucket_id``
 (the garage_bucket_id, never the local alias) and ``max_size`` in decimal bytes;
 the handler POSTs ``UpdateBucket`` to set the bucket's max-size quota.
 

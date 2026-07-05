@@ -1,6 +1,6 @@
-"""Tests for stormpulse.garage.attach_account_key.
+"""Tests for stormpulse.garage.jobs.attach_account_key.
 
-Attach grants an account key a chosen tier on an existing bucket (BUCKETS-014),
+Attach grants an account key a chosen tier on an existing bucket,
 the inverse of detach: AllowBucketKey + alias-add + grant-present read-back.
 """
 
@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.garage.attach_account_key import (
+from stormpulse.garage.jobs.attach_account_key import (
     make_attach_account_key_handler,
     run_attach_account_key,
 )
@@ -76,7 +76,7 @@ def _install(monkeypatch):
     fake = _FakeAdmin()
     for name in ("allow_bucket_key", "deny_bucket_key", "add_bucket_alias_local", "get_key_info"):
         monkeypatch.setattr(
-            f"stormpulse.garage.attach_account_key.admin_api.{name}",
+            f"stormpulse.garage.jobs.attach_account_key.admin_api.{name}",
             getattr(fake, name),
         )
     return fake

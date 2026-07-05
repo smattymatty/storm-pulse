@@ -1,6 +1,6 @@
 """Handler for ``garage_attach_account_key``.
 
-Grant an account key access to an existing dashboard bucket (BUCKETS-014): the
+Grant an account key access to an existing dashboard bucket: the
 literal inverse of ``garage_detach_account_key``. Where detach does
 ``DenyBucketKey`` + alias-remove + grant-absent read-back, attach does
 ``AllowBucketKey`` (at a chosen tier) + alias-add + grant-present read-back.
@@ -121,7 +121,7 @@ async def run_attach_account_key(
     # can NARROW (e.g. owner -> ro on a re-attach), deny every permission bit the
     # tier excludes. The owner tier excludes nothing, so it denies nothing. The
     # deny op's own positive result is the authoritative confirmation the bits
-    # were removed (BUCKETS-013 discipline). (BUCKETS-016 Slice 3.)
+    # were removed. (Slice 3.)
     if not (read and write and owner):
         ok, err = admin_api.deny_bucket_key(
             admin_url=admin_url, admin_token=admin_token,

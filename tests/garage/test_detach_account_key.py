@@ -1,6 +1,6 @@
-"""Tests for stormpulse.garage.detach_account_key.
+"""Tests for stormpulse.garage.jobs.detach_account_key.
 
-Detach one account key's grant from a single bucket (BUCKETS-013): deny
+Detach one account key's grant from a single bucket: deny
 read/write/owner, drop the local alias, then read the key back and confirm the
 bucket is gone from its grant list. The contract the website relay depends on:
 
@@ -22,7 +22,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.detach_account_key import (
+from stormpulse.garage.jobs.detach_account_key import (
     make_detach_account_key_handler,
     run_detach_account_key,
 )
@@ -73,7 +73,7 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
     fake = _FakeAdmin()
     for name in ("deny_bucket_key", "remove_bucket_alias_local", "get_key_info"):
         monkeypatch.setattr(
-            f"stormpulse.garage.detach_account_key.admin_api.{name}",
+            f"stormpulse.garage.jobs.detach_account_key.admin_api.{name}",
             getattr(fake, name),
         )
     return fake

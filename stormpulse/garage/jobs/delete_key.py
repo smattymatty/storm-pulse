@@ -1,11 +1,11 @@
 """Handler for ``garage_delete_key``.
 
-Deletes an access key via the admin HTTP API (ADR garage/001) and reports a
+Deletes an access key via the admin HTTP API and reports a
 *structured, confirmed* outcome. The earlier CLI approach
 (``garage key delete --yes``) could not distinguish an already-gone exit from
 a transient error; this handler does.
 
-The credential-kill tombstone sweep (website BUCKETS-013) needs exactly one
+The credential-kill tombstone sweep needs exactly one
 unambiguous signal: "this key is positively gone from Garage." Two results
 satisfy that and are reported as success:
 
@@ -67,7 +67,7 @@ async def run_delete_key(
     started_at = time.monotonic()
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
-        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        # Fail loud: a migrated operation never silently no-ops.
         return _failure(
             key_id=key_id,
             stderr=(

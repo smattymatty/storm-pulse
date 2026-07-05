@@ -1,6 +1,6 @@
-"""Tests for stormpulse.garage.get_bucket_owners.
+"""Tests for stormpulse.garage.jobs.get_bucket_owners.
 
-Read-only: which access keys own a bucket (BUCKETS-013 provenance). Storm
+Read-only: which access keys own a bucket. Storm
 matches the ids to AccountKey rows for the bucket-detail "created with account
 key X" line.
 """
@@ -14,7 +14,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.get_bucket_owners import (
+from stormpulse.garage.jobs.get_bucket_owners import (
     make_get_bucket_owners_handler,
     run_get_bucket_owners,
 )
@@ -48,7 +48,7 @@ class _FakeAdmin:
 def _install(monkeypatch, info):
     fake = _FakeAdmin(info)
     monkeypatch.setattr(
-        "stormpulse.garage.get_bucket_owners.admin_api.get_bucket_info",
+        "stormpulse.garage.jobs.get_bucket_owners.admin_api.get_bucket_info",
         fake.get_bucket_info,
     )
     return fake

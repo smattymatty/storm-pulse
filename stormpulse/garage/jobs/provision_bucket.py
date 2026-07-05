@@ -1,7 +1,7 @@
 """Handler for ``garage_provision_customer_bucket``.
 
-Creates a bucket and its admin key atomically via the admin HTTP API (ADR
-garage/001). ``CreateKey`` runs first (the bucket's local alias needs the key
+Creates a bucket and its admin key atomically via the admin HTTP API.
+``CreateKey`` runs first (the bucket's local alias needs the key
 id), then a single ``CreateBucket`` call binds the admin key's local alias and
 grants its read/write/owner permissions in one Garage transaction. The CLI
 throwaway-alias dance is gone: the admin API addresses the bucket by id and
@@ -80,7 +80,7 @@ async def run_provision_customer_bucket(
     started_at = time.monotonic()
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
-        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        # Fail loud: a migrated operation never silently no-ops.
         return _failure(
             failure_reason="admin_api_unconfigured",
             step_failed=None,

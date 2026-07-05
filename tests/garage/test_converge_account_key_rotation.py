@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.converge_account_key_rotation.
+"""Tests for stormpulse.garage.jobs.converge_account_key_rotation.
 
 One idempotent pass that grants the new account key owner + alias on every
 bucket the old key owns that the new key does not. The contract the Storm-side
@@ -19,7 +19,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.converge_account_key_rotation import (
+from stormpulse.garage.jobs.converge_account_key_rotation import (
     make_converge_account_key_rotation_handler,
     run_converge_account_key_rotation,
 )
@@ -86,7 +86,7 @@ def _install(monkeypatch):
     fake = _FakeAdmin()
     for name in ("get_key_info", "allow_bucket_key", "add_bucket_alias_local"):
         monkeypatch.setattr(
-            f"stormpulse.garage.converge_account_key_rotation.admin_api.{name}",
+            f"stormpulse.garage.jobs.converge_account_key_rotation.admin_api.{name}",
             getattr(fake, name),
         )
     return fake
@@ -127,7 +127,7 @@ def _graded(full_id, *, read, write, owner, aliases=()):
 
 @pytest.mark.asyncio
 async def test_transfers_non_owner_grant_at_its_tier(monkeypatch) -> None:
-    # BUCKETS-014: an rw attach (not owner) must transfer AS rw, not silently
+    # an rw attach (not owner) must transfer AS rw, not silently
     # die under the old owner-only filter, and not get upgraded to owner.
     fake = _install(monkeypatch)
     fake.key_info = {

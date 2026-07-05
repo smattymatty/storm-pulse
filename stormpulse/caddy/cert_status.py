@@ -6,7 +6,7 @@ HTTPS listener with SNI set to the domain, then letting the system trust store
 judge the presented certificate.
 
 This is the authoritative backstop for the custom-domain CERT_PENDING ->
-ACTIVE transition (website ADR BUCKETS-008). The primary path is certmagic
+ACTIVE transition. The primary path is certmagic
 cert-lifecycle log events; a dropped log line would otherwise strand the
 dashboard at "certificate pending" forever even though the site is serving.
 A handshake that verifies under the default context proves the cert is real

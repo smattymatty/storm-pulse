@@ -1,7 +1,7 @@
 """Tests for stormpulse.caddy.cert_status.
 
 Read-only backstop for the custom-domain CERT_PENDING -> ACTIVE transition
-(BUCKETS-008): a localhost TLS handshake decides whether Caddy serves a live,
+: a localhost TLS handshake decides whether Caddy serves a live,
 publicly-trusted cert for a domain. The real handshake is monkeypatched here so
 the unit tests stay offline; the verification semantics live in the default
 SSL context, not in our code.

@@ -106,7 +106,7 @@ class _Key:
 class FakeGarage:
     """Stateful semantic fake of the garage CLI.
 
-    Drop-in for ``stormpulse.garage.provision_bucket.run_garage``:
+    Drop-in for ``stormpulse.garage.jobs.provision_bucket.run_garage``:
     monkeypatch the module-level binding to ``fake.run_garage`` and
     every ``await run_garage(config, *args)`` call routes through the
     fake's dispatcher.

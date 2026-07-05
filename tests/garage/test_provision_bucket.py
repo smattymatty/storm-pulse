@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.provision_bucket.
+"""Tests for stormpulse.garage.jobs.provision_bucket.
 
 Provisions a bucket and its admin key atomically via the admin HTTP API (ADR
 garage/001), two calls:
@@ -21,7 +21,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.provision_bucket import (
+from stormpulse.garage.jobs.provision_bucket import (
     make_provision_customer_bucket_handler,
     run_provision_customer_bucket,
 )
@@ -100,7 +100,7 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
     fake = _FakeAdmin()
     for name in ("create_key", "create_bucket", "delete_key"):
         monkeypatch.setattr(
-            f"stormpulse.garage.provision_bucket.admin_api.{name}",
+            f"stormpulse.garage.jobs.provision_bucket.admin_api.{name}",
             getattr(fake, name),
         )
     return fake

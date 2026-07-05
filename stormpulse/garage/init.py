@@ -140,7 +140,7 @@ config_path = "{config_path}"
 """
 
 # Appended only when garage.toml's [admin] block is detected. Powers the
-# BUCKETS-006 quota write (UpdateBucket via the admin API). The token is a node
+# quota write (UpdateBucket via the admin API). The token is a node
 # secret, pointed at the same file Garage uses, never copied or sent over the wire.
 _GARAGE_ADMIN_LINES = """\
 admin_url = "{admin_url}"

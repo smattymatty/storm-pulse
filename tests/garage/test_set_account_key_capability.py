@@ -1,4 +1,4 @@
-"""Tests for the BUCKETS-012 count-backstop toggle: the handler + guards.
+"""Tests for the count-backstop toggle: the handler + guards.
 
 The admin-API ``update_key`` wire shape is covered in
 ``test_admin_api_writes``; here we pin the handler factory's param guards
@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from stormpulse.garage import admin_api
-from stormpulse.garage.set_account_key_capability import (
+from stormpulse.garage.jobs.set_account_key_capability import (
     make_set_account_key_capability_handler,
     run_set_account_key_capability,
 )

@@ -59,7 +59,7 @@ def _fresh_event_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
 def _garage_preconditions_pass_in_tests() -> Generator[None, None, None]:
     """Default Garage preconditions to PASS in every test.
 
-    Per ADR GARAGE-000, the bootstrap path runs substrate + version +
+    The bootstrap path runs substrate + version +
     auth checks before merging the garage command set. Those checks
     shell out to ``findmnt`` and ``docker``; they fail closed in the
     test environment, which would silently drop the garage command set

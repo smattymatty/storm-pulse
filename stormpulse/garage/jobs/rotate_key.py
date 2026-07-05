@@ -9,7 +9,7 @@ forced by the dashboard data model: ``CustomerKey.garage_key_id`` is a
 single field per ``(bucket, key_type)`` slot, so two live keys in one slot
 is unrepresentable.
 
-All Garage interaction is the admin HTTP API (ADR garage/001), never the CLI.
+All Garage interaction is the admin HTTP API, never the CLI.
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ async def run_rotate_customer_key(
 
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
-        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        # Fail loud: a migrated operation never silently no-ops.
         return _failure(
             failure_reason="admin_api_unconfigured",
             step_failed=None,

@@ -1,6 +1,6 @@
-"""Tests for stormpulse.garage.snapshot_and_reap_account_key.
+"""Tests for stormpulse.garage.jobs.snapshot_and_reap_account_key.
 
-Leak-rotate kill (BUCKETS-013): snapshot the old key's owned buckets, THEN
+Leak-rotate kill: snapshot the old key's owned buckets, THEN
 delete the key object. The contract Storm's leak flow depends on:
 
   - snapshot is captured BEFORE the delete (so it survives the kill)
@@ -19,7 +19,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.snapshot_and_reap_account_key import (
+from stormpulse.garage.jobs.snapshot_and_reap_account_key import (
     make_snapshot_and_reap_account_key_handler,
     run_snapshot_and_reap_account_key,
 )
@@ -71,7 +71,7 @@ def _install(monkeypatch):
     fake = _FakeAdmin()
     for name in ("get_key_info", "delete_key"):
         monkeypatch.setattr(
-            f"stormpulse.garage.snapshot_and_reap_account_key.admin_api.{name}",
+            f"stormpulse.garage.jobs.snapshot_and_reap_account_key.admin_api.{name}",
             getattr(fake, name),
         )
     return fake
@@ -93,7 +93,7 @@ async def test_snapshots_owned_then_reaps(monkeypatch):
     outcome = await _run(fake)
     assert outcome.success is True
     assert outcome.extras["reaped"] is True
-    # Per-tier (BUCKETS-014): the snapshot carries each grant's tier.
+    # Per-tier: the snapshot carries each grant's tier.
     assert outcome.extras["snapshot"] == [
         {"id": _B1, "alias": "vault", "perms": [True, True, True]},
     ]

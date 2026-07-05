@@ -1,7 +1,7 @@
 """Garage admin HTTP API client (default port 3903, ``/v2/`` operations).
 
 The agent's other Garage operations go through the CLI over RPC; this is the
-one typed HTTP path, used for the BUCKETS-006 quota write (``UpdateBucket``).
+one typed HTTP path, used for the quota write (``UpdateBucket``).
 
 The admin token is a node secret. Per ADR buckets/000 it lives on the cluster,
 in the agent's host environment by virtue of the agent running there, never in
@@ -288,7 +288,7 @@ def create_key(
     one-time ``secretAccessKey`` (returned only at creation), or ``(None,
     error)``. The secret is never logged here; the caller hands it to the
     operator via the JobOutcome. ``allow_create_bucket`` sets the key-level
-    S3 CreateBucket capability at mint (the BUCKETS-012 account key); the
+    S3 CreateBucket capability at mint (the account key); the
     default of off matches Garage.
     """
     payload: dict[str, Any] = {"name": name}
@@ -311,7 +311,7 @@ def update_key(
 
     Sends ``allow.createBucket`` when ``allow_create_bucket`` is True, else
     ``deny.createBucket`` (Garage's allow/deny block sets the key-level
-    ``allow_create_bucket`` flag). This is the BUCKETS-012 count-backstop
+    ``allow_create_bucket`` flag). This is the count-backstop
     lever: flipped off past the bucket-count rail, back on when room opens.
     Returns ``(success, error)``.
     """
