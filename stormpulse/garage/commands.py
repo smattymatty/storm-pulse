@@ -795,6 +795,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     default=None,
                     pattern=r".+",
                     description="Customer S3 secret. Held in agent process memory only for the job's lifetime.",
+                    secret=True,
                 ),
             },
         ),
@@ -837,6 +838,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     default=None,
                     pattern=r".+",
                     description="Customer S3 secret. In agent memory only for the job lifetime.",
+                    secret=True,
                 ),
                 "prefix": ParamDef(
                     placeholder="prefix",

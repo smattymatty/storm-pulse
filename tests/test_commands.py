@@ -17,6 +17,7 @@ from stormpulse.commands import (
     build_registry,
     execute_command,
     get_command,
+    non_secret_params,
     run_deploy_sequence,
     validate_params,
 )
@@ -907,3 +908,30 @@ def test_run_apply_block_rejects_verify_param_name() -> None:
     cmd = COMMAND_REGISTRY["run_apply_block"]
     with pytest.raises(ParamValidationError, match="Unknown params"):
         validate_params(cmd, {"verify_command": "echo ok"})
+
+
+def test_non_secret_params_drops_secret_flagged() -> None:
+    # A secret param reaches the handler but must never ride event/log context.
+    cmd = CommandSpec(
+        group="rclone",
+        command=["/rclone"],
+        timeout=60,
+        mode="job",
+        handler=lambda p: None,
+        params={
+            "bucket_id": ParamDef("bucket_id", default=None, pattern=r".+"),
+            "secret_access_key": ParamDef(
+                "secret_access_key", default=None, pattern=r".+", secret=True
+            ),
+        },
+    )
+    full = {"bucket_id": "abc", "secret_access_key": "wJalrXUtnFEMI"}
+    assert non_secret_params(cmd, full) == {"bucket_id": "abc"}
+
+
+def test_non_secret_params_passes_all_when_none_secret() -> None:
+    cmd = CommandSpec(
+        group="deploy", command=["/bin/git", "pull"], timeout=60,
+        params={"branch": ParamDef("branch", default=None, pattern=r".+")},
+    )
+    assert non_secret_params(cmd, {"branch": "main"}) == {"branch": "main"}

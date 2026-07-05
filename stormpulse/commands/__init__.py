@@ -10,6 +10,7 @@ from .registry import (
     build_registry,
     execute_command,
     get_command,
+    non_secret_params,
     validate_params,
 )
 
@@ -21,6 +22,7 @@ __all__ = [
     "build_registry",
     "execute_command",
     "get_command",
+    "non_secret_params",
     "run_deploy_sequence",
     "validate_params",
 ]
