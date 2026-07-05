@@ -61,13 +61,8 @@ BuildLogEnricher = Callable[[Any], LogEnricher]
 
 @dataclass(frozen=True, slots=True)
 class Detector:
-    """A fast new-resource detector and its cadence, as one capability.
-
-    Bundled so "a detector always has a cadence" is structural, not prose: an
-    Integration cannot declare detection without its interval, and the loop never
-    has to defend a half-declared pair. One seam, not two - the same reason
-    CORE-005 collapsed the command CommandDef/factory split.
-    """
+    """A fast new-resource detector and its cadence as one capability: a detector
+    cannot be declared without its interval (structural, never a half-declared pair)."""
 
     run: Detect
     interval: DetectInterval
@@ -75,17 +70,9 @@ class Detector:
 
 @dataclass(frozen=True, slots=True)
 class Integration:
-    """A registered Integration contract (CORE-005 decision 2).
-
-    Required core: ``id``, ``parse_config``, ``enabled``. Everything else is an
-    opt-in capability declared only when present, so caddy (no discovery, no
-    loop) and a future read-only monitor (no commands) are both legal with no
-    empty stubs. The ADR also lists ``cli`` and ``init_step``; both are deferred
-    here. ``init_step`` already has its own inversion (``init/registry.py``) and
-    folding it in would need a Framework sibling import; the ``cli`` seam is
-    outside this diff's bootstrap/reconnect/register/loops scope. Adding either
-    is a later, additive change to this descriptor.
-    """
+    """A registered Integration contract (CORE-005 decision 2): required core is
+    ``id``, ``parse_config``, ``enabled``; every other capability is opt-in, no
+    empty stubs. ``cli`` and ``init_step`` stay deferred (init has its own inversion)."""
 
     id: str
     parse_config: ParseConfig

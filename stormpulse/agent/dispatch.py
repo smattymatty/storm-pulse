@@ -267,17 +267,8 @@ def post_success_hook(
     command: str,
     params: Mapping[str, str],
 ) -> Callable[[], Awaitable[None]] | None:
-    """Build the after-success callback (targeted re-read + push) for a mutating integration command, or ``None``.
-
-    Generic over the contract: the owning Integration resolves via
-    ``cmd_def.group`` (group == id, enforced at bootstrap) and the hook fires
-    only if it declares ``read_affected``. Returns None for read-only
-    long-runners (they mutate nothing, so a push would only flood the dashboard)
-    and self-reconciling commands (dispatched repeatedly by a reconciliation
-    loop, so no single success is the "did it land" moment a push would serve -
-    the periodic walk reflects them). Both gates read a ``CommandSpec`` flag set
-    at the spec, so this layer never hardcodes command names.
-    """
+    """Build the after-success callback (targeted re-read, merge, push) for a mutating
+    integration command, or ``None``. Owner resolves via group == id (CORE-005 d11/12)."""
     runtime = agent.integrations.get(cmd_def.group)
     if runtime is None or runtime.status != STATUS_LIVE:
         return None
@@ -285,6 +276,8 @@ def post_success_hook(
     if read_affected is None:
         return None
     if cmd_def.read_only or cmd_def.self_reconciling:
+        # Read-only mutates nothing; self-reconciling re-dispatches on a loop, so
+        # no single success is the "did it land" moment a push would serve.
         return None
 
     async def refresh_and_push() -> None:

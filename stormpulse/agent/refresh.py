@@ -1,10 +1,5 @@
-"""Generic on-demand integration refresh: the agent-owned heir of garage_refresh.
-
-A ``mode="refresh"`` command (synthesized as ``{id}_refresh`` for any Integration
-declaring ``collect_state``) runs that integration's state collection now and
-pushes fresh metrics. One routine serves every integration, so garage gets no
-bespoke agent-coupled handler that a third-party integration couldn't also use.
-"""
+"""Generic on-demand refresh: the ``{id}_refresh`` command (synthesized for any
+Integration declaring ``collect_state``) collects now and pushes fresh metrics."""
 
 from __future__ import annotations
 
@@ -31,12 +26,7 @@ async def collect_refresh_result(
     integ_id: str,
 ) -> CommandResultPayload:
     """Collect a fresh snapshot for the command's integration and store it; no wire IO.
-
-    Generic over the Integration contract: it calls ``descriptor.collect_state``
-    rather than any one integration's collector, so the routine names no
-    integration. ``integ_id`` is the spec's ``group`` (group == id,
-    bootstrap-enforced), resolved once at dispatch.
-    """
+    ``integ_id`` is the spec's group (== id, boot-enforced), resolved once at dispatch."""
     runtime = agent.integrations.get(integ_id)
     if runtime is None or runtime.status != "live" or runtime.descriptor.collect_state is None:
         return CommandResultPayload(
