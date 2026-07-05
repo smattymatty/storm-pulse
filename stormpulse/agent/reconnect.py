@@ -106,21 +106,16 @@ async def run_with_backoff(agent: Agent) -> None:
 def log_enricher_provider(
     agent: Agent, parser: str
 ) -> Callable[[], LogEnricher | None]:
-    """Build one log group's tick-fresh enricher provider from the contract.
-
-    The provider is re-invoked per batch and builds from the declaring
-    Integration's CURRENT state (BUCKETS-015 tick-freshness); a declarer with no
-    state yet builds from ``None``, keeping the wire shape constant. A parser no
-    Integration declares always yields ``None`` (the parser skips stamping).
-    Parser keys are disjoint across Integrations (fitness-checked), so the first
-    declarer is the only declarer.
-    """
+    """Build one log group's tick-fresh enricher provider from the contract's
+    ``log_enrichers`` (BUCKETS-015); an undeclared parser always yields ``None``."""
     for integ in registered_integrations():
         build = (integ.log_enrichers or {}).get(parser)
         if build is not None:
             integ_id = integ.id
 
             def provider() -> LogEnricher | None:
+                # Rebuilt per batch from the declarer's CURRENT state; a None state
+                # builds the honest empty enricher, keeping the wire shape constant.
                 runtime = agent.integrations.get(integ_id)
                 return build(runtime.state if runtime is not None else None)
 

@@ -1,12 +1,6 @@
-"""Function 6: the merge-primitive fence (CORE-005 decision 11).
-
-Every targeted state merge flows through ``merge_items_into_runtime``, the one
-home of the race discipline. No module in ``stormpulse/`` other than
-``agent/integrations_runtime.py`` may call ``.with_items(...)``; a bypass merge
-would reintroduce the lost-update-across-await bug the primitive exists to
-prevent. Definitions (``def with_items``) are exempt by construction: state
-types define the method, exactly one primitive calls it.
-"""
+"""Function 6: the merge-primitive fence (CORE-005 decision 11). ``with_items`` is
+defined by many state types, CALLED by one module (agent/integrations_runtime.py);
+a bypass merge is the silent lost-update bug, so it fails CI instead."""
 
 from __future__ import annotations
 

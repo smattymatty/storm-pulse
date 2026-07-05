@@ -182,6 +182,32 @@ def test_duplicate_log_enricher_parser_is_a_contract_violation(
     assert any("garage_s3" in v and "disjoint" in v for v in violations)
 
 
+def test_duplicate_enricher_parser_soft_disables_later_declarer(
+    tmp_path: Path, isolated_registry: None
+) -> None:
+    """Boot-time twin of the fitness disjointness check: the fork path where CI never ran.
+
+    First-registered declarer (garage) stands; a later CONFIGURED declarer boots
+    disabled_error with the collision named, instead of silently losing first-wins.
+    """
+    register_integration(
+        Integration(
+            id="rival",
+            parse_config=lambda raw: raw,
+            enabled=lambda c: True,
+            log_enrichers={"garage_s3": lambda state: lambda key_id, name: ""},
+        )
+    )
+    cfg = build_config(tmp_path, integrations={"rival": {}})
+    deps = build_agent_dependencies(
+        cfg, signoff_sealed=False, log_position_store=None
+    )
+    rival = deps.integrations["rival"]
+    assert rival.status == "disabled_error"
+    assert rival.disabled_reason is not None
+    assert "garage_s3" in rival.disabled_reason
+
+
 def test_absent_integration_not_reported(tmp_path: Path) -> None:
     # garage/caddy are registered but absent from this config: they must not
     # appear in the runtime set (spec: absent from config => not on the wire).

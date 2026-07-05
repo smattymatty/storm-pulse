@@ -67,15 +67,9 @@ def _resolve_integration(
     raw: dict[str, object],
     commands: dict[str, CommandSpec],
 ) -> IntegrationRuntime:
-    """Parse, gate, and (if live) register one Integration's commands.
-
-    The fatal/soft line lives here (CORE-005 decision 5): a config error, a
-    disabled flag, a failed precondition, OR a command surface that won't build
-    disables this one Integration with a status the wire reports; the core agent
-    and every sibling stay up. A spec that trips the load-time guard soft-disables
-    its integration identically whether it is in-repo or third-party - garage gets
-    no privilege a third party wouldn't.
-    """
+    """Parse, gate, and (if live) register one Integration's commands. Every failure
+    here soft-disables THIS integration with a wire-visible reason; the agent and
+    all siblings stay up (CORE-005 decision 5, the fatal/soft line)."""
     try:
         parsed = integ.parse_config(raw)
     except ConfigError as exc:
@@ -119,20 +113,37 @@ def build_agent_dependencies(
     signoff_sealed: bool,
     log_position_store: LogPositionStore | None,
 ) -> AgentDependencies:
-    """Assemble the registry, factories, log shippers, and Integration runtimes an Agent will use.
-
-    Loops the registered Integrations instead of hand-wiring each by name. An
-    Integration absent from config does not appear; a present one resolves to a
-    live / disabled_error / disabled_choice runtime. No Integration failure
-    aborts boot (CORE-005 decision 5).
-    """
+    """Assemble the registry, log shippers, and one runtime per configured
+    Integration - a loop over the registered set, never by name (CORE-005)."""
     commands = dict(config.commands)
     integrations: dict[str, IntegrationRuntime] = {}
+    # First declarer of an enricher parser wins (registration order); a later
+    # CONFIGURED declarer is refused at boot - the fork path where CI never ran.
+    enricher_losers: dict[str, str] = {}
+    parser_owners: dict[str, str] = {}
+    for integ in registered_integrations():
+        for parser in integ.log_enrichers or {}:
+            owner = parser_owners.setdefault(parser, integ.id)
+            if owner != integ.id:
+                enricher_losers[integ.id] = (
+                    f"log enricher for parser {parser!r} is already declared by "
+                    f"{owner!r} (CORE-005 decision 13: parser keys are disjoint)"
+                )
     for integ in registered_integrations():
         raw = config.integrations.get(integ.id)
         if raw is None:
+            if integ.id in enricher_losers:
+                logger.warning(
+                    "Integration %r: %s. Not configured here; first declarer wins.",
+                    integ.id, enricher_losers[integ.id],
+                )
             continue
-        runtime = _resolve_integration(integ, raw, commands)
+        reason = enricher_losers.get(integ.id)
+        runtime = (
+            IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, None, integ)
+            if reason is not None
+            else _resolve_integration(integ, raw, commands)
+        )
         integrations[integ.id] = runtime
         if runtime.status == STATUS_DISABLED_ERROR:
             logger.warning(

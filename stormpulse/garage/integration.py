@@ -1,10 +1,5 @@
-"""Garage as the reference Integration (CORE-005, GARAGE-001).
-
-Wires garage's existing capability functions into one ``Integration`` contract
-and registers it. Importing this module is what puts Garage on the registry;
-the Entry-layer manifest does that import, the sibling of how ``cli/init.py``
-imports ``garage.init`` to fire its init-step registration.
-"""
+"""Garage as the reference Integration (CORE-005, GARAGE-001): wires garage's
+capability functions into one registered contract; the manifest import fires it."""
 
 from __future__ import annotations
 
@@ -25,9 +20,8 @@ def _enabled(config: GarageConfig) -> bool:
 
 
 def _preconditions(config: GarageConfig) -> str | None:
-    # Resolve via this module's own ``run_preconditions`` global at call time, so
-    # tests patch the bootstrap seam (stormpulse.garage.integration.run_preconditions)
-    # without clobbering the real orchestrator that preconditions' own tests call.
+    # Resolved via this module's global at call time, so tests patch the bootstrap
+    # seam without clobbering the real orchestrator.
     return run_preconditions(config)
 
 
@@ -66,11 +60,8 @@ def _read_affected(
 
 
 def _log_enricher(state: object) -> BucketIdResolver:
-    """Tick-fresh ``(key_id, name) -> bucket_id`` map for ``garage_s3`` lines (BUCKETS-015).
-
-    A ``None`` / foreign state builds the empty resolver: every lookup returns
-    ``""``, the honest "no enrichment available" the wire shape already carries.
-    """
+    """Tick-fresh ``(key_id, name) -> bucket_id`` map for ``garage_s3`` lines
+    (BUCKETS-015); a None/foreign state builds the honest empty resolver."""
     return BucketIdResolver.from_state(state if isinstance(state, GarageState) else None)
 
 

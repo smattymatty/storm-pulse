@@ -200,7 +200,9 @@ that command-contributing Integrations are first-party (in `stormpulse/`), and t
 log-enricher parser keys are disjoint (decision 13). A second fitness function
 fences the merge primitive itself: `.with_items()` is callable only from
 `agent/integrations_runtime.py`, so a bypass merge is machine-caught, not
-review-caught. Bootstrap enforces decision 12 (group == id) and the merge site
+review-caught. Bootstrap additionally refuses a later configured declarer of an
+already-claimed enricher parser (first registered wins), so a fork that never
+runs the fitness suite still hears about the collision at startup. Bootstrap enforces decision 12 (group == id) and the merge site
 enforces decision 11's `MergeableState` requirement, both loudly. The command-registry fence stays manual-review plus the
 future-ADR gate of decision 8. A future ADR is required to: add a third-party
 loader; let external code contribute commands; or relax the runtime dependency

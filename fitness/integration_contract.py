@@ -1,14 +1,6 @@
-"""Function 5: the Integration contract (CORE-005 governance).
-
-Asserts every registered Integration satisfies the required core (a non-empty
-id, a parse_config, an enabled predicate), that any Integration contributing
-whitelisted commands is first-party - its command builder lives under
-``stormpulse/`` - and that log-enricher parser keys are disjoint across
-Integrations (CORE-005 decision 13). CORE-005 decision 8: registration is
-loader-ready, but only in-tree code may touch the command surface until a
-future loader ADR grants a trust boundary. This is the runtime sibling of
-Fn4's static dependency fence.
-"""
+"""Function 5: the Integration contract (CORE-005 governance): required core
+fields, first-party command contribution (decision 8), and disjoint log-enricher
+parser keys (decision 13). The runtime sibling of Fn4's static dependency fence."""
 
 from __future__ import annotations
 

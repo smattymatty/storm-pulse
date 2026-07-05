@@ -267,6 +267,8 @@ def affected_bucket_ids(params: Mapping[str, str], state: GarageState) -> list[s
 
     The read-planning half of the post-mutation targeted re-read (garage's
     ``read_affected`` capability feeds the result to ``read_buckets_by_id``).
+    A create resolves to nothing here - a brand-new bucket has no id in the
+    snapshot - so creates always arrive via the detector/walk, never this hook.
     Precedence, not per-command branching:
 
     1. A command that names a bucket by id (``bucket_id``) affects exactly that

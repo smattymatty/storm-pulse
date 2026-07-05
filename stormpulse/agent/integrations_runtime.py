@@ -1,5 +1,9 @@
 """Per-Integration runtime state, the shared targeted merge, and the one
-metrics-envelope builder (CORE-005; heir of the named garage_live/garage_state pair)."""
+metrics-envelope builder (CORE-005; heir of the named garage_live/garage_state pair).
+
+Three writers touch ``runtime.state``: the periodic walk REPLACES the world on a
+beat, the detector PATCHES in newcomers fast (ours or out-of-band alike), and the
+post-mutation hook PATCHES changes to already-known resources instantly."""
 
 from __future__ import annotations
 
