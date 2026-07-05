@@ -6,7 +6,7 @@ Two modes, selected by the param shape:
 - Customer-secret mode (the dashboard clear): the customer's admin secret
   rides in dispatch params, lives in process memory for the job's lifetime
   only, and is never persisted or logged.
-- Credential-less mode (the ADR BUCKETS-010 purge clear): no secret in the
+- Credential-less mode (the purge clear): no secret in the
   envelope, just the 16-char ``bucket_id``. The agent self-mints a temporary
   key via the admin API, grants it on the bucket, attaches a throwaway local
   alias to it, clears via that alias, and destroys the key. The alias step is
@@ -142,7 +142,7 @@ async def run_clear_bucket_credential_less(
 ) -> JobOutcome:
     """Mint a temporary key, alias it onto the bucket, clear, destroy the key.
 
-    The purge path (ADR BUCKETS-010): at purge time there is no customer
+    The purge path: at purge time there is no customer
     session, so no customer secret can ride in the envelope. The key is
     minted first; everything after runs under a finally that deletes it, so
     no failure path leaks a live key. Deleting the key drops its local

@@ -94,7 +94,7 @@ class TestCreateKey:
     def test_allow_create_bucket_adds_allow_block(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # BUCKETS-012: an account key is minted with the key-level
+        # an account key is minted with the key-level
         # createBucket capability set; the per-bucket keys leave it off.
         calls = _install(
             monkeypatch,

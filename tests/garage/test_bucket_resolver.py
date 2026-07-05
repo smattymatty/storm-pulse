@@ -1,4 +1,4 @@
-"""Tests for BucketIdResolver (ADR BUCKETS-015).
+"""Tests for BucketIdResolver.
 
 The resolver turns a GarageState snapshot into a frozen
 ``(key_id, name) -> bucket_id`` lookup. The invariant it must hold: a name
@@ -57,7 +57,7 @@ def test_global_alias_fallback_resolves() -> None:
 def test_same_name_two_buckets_disambiguated_by_key() -> None:
     """Two of one account's buckets share the display name 'media' as a
     local alias under different keys. Each (key, name) must land its own id,
-    never the sibling's. This is the within-account misfile BUCKETS-015 makes
+    never the sibling's. This is the within-account misfile makes
     structurally impossible.
     """
     state = _state([

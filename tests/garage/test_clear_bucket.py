@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.clear_bucket.run_clear_bucket.
+"""Tests for stormpulse.garage.jobs.clear_bucket.run_clear_bucket.
 
 Drives the handler with a fake S3 client. Covers the five branches the
 spec calls out:
@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 
 from stormpulse.commands.jobs import JobOutcome
-from stormpulse.garage.clear_bucket import (
+from stormpulse.garage.jobs.clear_bucket import (
     make_clear_bucket_handler,
     run_clear_bucket,
     run_clear_bucket_credential_less,
@@ -386,7 +386,7 @@ def test_handler_factory_returns_credential_less_handler() -> None:
 
 
 # ---------------------------------------------------------------------------
-# credential-less purge clear (ADR BUCKETS-010)
+# credential-less purge clear
 # ---------------------------------------------------------------------------
 
 
@@ -461,7 +461,7 @@ def _patch_admin(monkeypatch: pytest.MonkeyPatch, fake: _FakeAdmin) -> None:
         "delete_key",
     ):
         monkeypatch.setattr(
-            f"stormpulse.garage.clear_bucket.admin_api.{fn}",
+            f"stormpulse.garage.jobs.clear_bucket.admin_api.{fn}",
             getattr(fake, fn),
         )
 
@@ -482,7 +482,7 @@ def _patch_s3_client(
         return client
 
     monkeypatch.setattr(
-        "stormpulse.garage.clear_bucket.GarageS3Client", fake_ctor,
+        "stormpulse.garage.jobs.clear_bucket.GarageS3Client", fake_ctor,
     )
     return seen
 

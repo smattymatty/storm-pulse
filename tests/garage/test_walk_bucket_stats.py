@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.walk_bucket_stats.run_walk_bucket_stats.
+"""Tests for stormpulse.garage.jobs.walk_bucket_stats.run_walk_bucket_stats.
 
 Drives the handler with a fake S3 client. Covers:
 
@@ -23,7 +23,7 @@ from stormpulse.garage.s3 import (
     S3Error,
     S3ObjectEntry,
 )
-from stormpulse.garage.walk_bucket_stats import (
+from stormpulse.garage.jobs.walk_bucket_stats import (
     make_walk_bucket_stats_handler,
     run_walk_bucket_stats,
 )

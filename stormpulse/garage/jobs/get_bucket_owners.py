@@ -1,7 +1,7 @@
 """Handler for ``garage_get_bucket_owners``.
 
 Read-only: return the access keys that own a bucket (via ``GetBucketInfo``), so
-Storm can tell which account key is linked to a dashboard bucket (BUCKETS-013).
+Storm can tell which account key is linked to a dashboard bucket.
 The inverse of ``garage_get_key_buckets``: Storm matches the returned key ids
 against ``AccountKey`` rows for the bucket-detail provenance line ("created with
 account key X"). No mutation; a missing bucket (404) returns an empty list.
@@ -72,7 +72,7 @@ async def run_get_bucket_owners(
         )
 
     owner_key_ids: list[str] = []
-    # BUCKETS-016 Slice 5: carry every key's actual grant tier on the bucket, so
+    # Slice 5: carry every key's actual grant tier on the bucket, so
     # the provenance line can show "linked at Read-Write", not just "owner".
     key_grants: list[dict[str, Any]] = []
     for entry in info.get("keys") or []:

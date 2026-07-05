@@ -87,7 +87,7 @@ async def test_run_handles_unexpected_exception(
 def test_log_enricher_provider_is_tick_fresh(
     agent_with_garage,
 ) -> None:
-    """The provider rebuilds from the declarer's CURRENT state on every call (BUCKETS-015)."""
+    """The provider rebuilds from the declarer's CURRENT state on every call."""
     from stormpulse.agent.reconnect import log_enricher_provider
     from tests.helpers import make_fake_garage_state, make_garage_bucket, set_garage_state
 

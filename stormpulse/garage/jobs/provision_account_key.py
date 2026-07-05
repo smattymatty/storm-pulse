@@ -1,6 +1,6 @@
 """Handler for ``garage_provision_account_key``.
 
-Mints a BUCKETS-012 account key: one ``CreateKey`` with the key-level
+Mints a account key: one ``CreateKey`` with the key-level
 ``allow_create_bucket`` capability set, so the customer's own S3 tooling
 (aws cli, terraform, rclone) can create, own, use, and delete buckets over
 the public S3 endpoint. The one-time secret rides back in the JobOutcome and
@@ -12,7 +12,7 @@ this touches no bucket and grants no per-bucket permission - an account key
 owns no bucket until the customer creates one over S3, at which point Garage
 grants it ALL_PERMISSIONS on what it made (the lifecycle the single flag buys).
 
-All Garage interaction is the admin HTTP API (ADR garage/001), never the CLI.
+All Garage interaction is the admin HTTP API, never the CLI.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def make_provision_account_key_handler(
         logger.error("garage_provision_account_key missing required param: new_key_name")
         return None
 
-    # BUCKETS-016: the account-key tier governs create capability. An Admin key
+    # the account-key tier governs create capability. An Admin key
     # is minted with create enabled (the website sends 'true'); a Read-Write /
     # Read-Only key with 'false'. FAIL CLOSED: an absent or unrecognized signal
     # yields a powerless key, never a root one, so deploy skew can never silently
@@ -65,7 +65,7 @@ def _coerce_bool(value: Any) -> bool:
     """Params cross the wire as JSON; accept a real bool or a "true"/"false"
     string. FAIL CLOSED: only an explicit truthy value grants the capability;
     a missing/None/unrecognized value is False, so create is never granted by
-    accident (BUCKETS-016)."""
+    accident."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -80,7 +80,7 @@ async def run_provision_account_key(
     allow_create_bucket: bool = True,
 ) -> JobOutcome:
     """Create one account key, return its one-time secret. Single step, no
-    rollback. ``allow_create_bucket`` is the BUCKETS-016 tier gate: True for an
+    rollback. ``allow_create_bucket`` is the tier gate: True for an
     Admin key (the lifecycle credential), False for a Read-Write / Read-Only key
     that reaches buckets only through attach and can never create one.
     """
@@ -88,7 +88,7 @@ async def run_provision_account_key(
 
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
-        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        # Fail loud: a migrated operation never silently no-ops.
         return _failure(
             failure_reason="admin_api_unconfigured",
             new_key_id=None,

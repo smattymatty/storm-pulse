@@ -1,4 +1,4 @@
-"""Garage as the reference Integration (CORE-005, GARAGE-001): wires garage's
+"""Garage as the reference Integration (CORE-005): wires garage's
 capability functions into one registered contract; the manifest import fires it."""
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _read_affected(
 
 def _log_enricher(state: object) -> BucketIdResolver:
     """Tick-fresh ``(key_id, name) -> bucket_id`` map for ``garage_s3`` lines
-    (BUCKETS-015); a None/foreign state builds the honest empty resolver."""
+   ; a None/foreign state builds the honest empty resolver."""
     return BucketIdResolver.from_state(state if isinstance(state, GarageState) else None)
 
 

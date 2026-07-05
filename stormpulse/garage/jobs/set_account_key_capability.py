@@ -1,6 +1,6 @@
 """Handler for ``garage_set_account_key_create_bucket`` via the admin HTTP API.
 
-The BUCKETS-012 count-backstop lever. The website dispatches this with an
+The count-backstop lever. The website dispatches this with an
 account key's ``access_key_id`` and ``enable`` (``true``/``false``); the handler
 POSTs ``UpdateKey`` to set or clear the key-level ``allow_create_bucket`` flag.
 Off past the per-account bucket-count rail, back on when room opens.

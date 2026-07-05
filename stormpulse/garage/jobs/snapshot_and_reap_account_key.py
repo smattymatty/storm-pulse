@@ -1,6 +1,6 @@
 """Handler for ``garage_snapshot_and_reap_account_key``.
 
-Leak-rotate steps 1+2 (BUCKETS-013): snapshot the old key's owned buckets,
+Leak-rotate steps 1+2: snapshot the old key's owned buckets,
 then delete the key object outright. Order is the whole point:
 
   1. **Snapshot first** (GetKeyInfo) - capture the owned-bucket list BEFORE
@@ -54,7 +54,7 @@ def _owned_snapshot(kinfo: dict[str, Any]) -> list[dict[str, Any]]:
     """``[{"id", "alias", "perms": [read, write, owner]}]`` for every bucket the
     key has any grant on.
 
-    Per-tier (BUCKETS-014): a leak-rotate must carry the compromised key's
+    Per-tier: a leak-rotate must carry the compromised key's
     rw/ro attaches to the replacement, not only the buckets it owns, so the
     snapshot captures every grant and its tier (the convergence pass grants at
     that tier).

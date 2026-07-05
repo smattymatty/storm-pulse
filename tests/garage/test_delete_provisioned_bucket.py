@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.delete_provisioned_bucket.
+"""Tests for stormpulse.garage.jobs.delete_provisioned_bucket.
 
 Deletes an empty bucket via the admin HTTP API (ADR garage/001):
 
@@ -20,7 +20,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.delete_provisioned_bucket import (
+from stormpulse.garage.jobs.delete_provisioned_bucket import (
     make_delete_provisioned_bucket_handler,
     run_delete_provisioned_bucket,
 )
@@ -99,7 +99,7 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
     fake = _FakeAdmin()
     for name in ("get_bucket_info", "delete_bucket", "get_key_info", "delete_key"):
         monkeypatch.setattr(
-            f"stormpulse.garage.delete_provisioned_bucket.admin_api.{name}",
+            f"stormpulse.garage.jobs.delete_provisioned_bucket.admin_api.{name}",
             getattr(fake, name),
         )
     return fake

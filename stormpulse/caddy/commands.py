@@ -101,7 +101,7 @@ def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
             description=(
                 "Probe Caddy's localhost HTTPS listener for a live, publicly-"
                 "trusted TLS cert for a domain. The custom-domain "
-                "CERT_PENDING -> ACTIVE reconcile backstop (BUCKETS-008): a "
+                "CERT_PENDING -> ACTIVE reconcile backstop: a "
                 "clean handshake under the system trust store confirms the "
                 "cert is real, in date, and covers the domain. Read-only, one "
                 "outbound loopback handshake."

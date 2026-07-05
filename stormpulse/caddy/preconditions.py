@@ -3,8 +3,8 @@
 The drop-in import check used to raise ``ConfigError`` and abort agent boot -
 the bug CORE-005 names. It is now a soft-disable: a failure returns a named
 reason that publishes as the Integration's ``disabled_error`` status, and the
-agent plus every sibling Integration stay up. This adopts the GARAGE-000
-self-disable semantics caddy was missing.
+agent plus every sibling Integration stay up: the self-disable semantics
+garage already had and caddy was missing.
 """
 
 from __future__ import annotations

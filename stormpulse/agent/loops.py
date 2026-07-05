@@ -140,7 +140,7 @@ async def log_loop(
             agent.pending_batches.prune_stale()
 
             started = time.monotonic()
-            # Tick-fresh enrichment map (BUCKETS-015); state is reassigned
+            # Tick-fresh enrichment map; state is reassigned
             # atomically, so each tick sees a consistent view.
             resolver = resolver_provider()
             batch = await asyncio.to_thread(shipper.collect_batch, resolver)

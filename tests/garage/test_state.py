@@ -216,7 +216,7 @@ class TestCollectGarageState:
     def test_s3_created_bucket_surfaces_owner_local_alias(
         self, tmp_path: Path,
     ) -> None:
-        """A BUCKETS-012 bucket created over S3 has no global alias; its name
+        """A bucket created over S3 has no global alias; its name
         lives in the owning account key's local aliases, which the manifest
         must carry so the website's adopt branch can name it."""
         cfg = _make_config(tmp_path)

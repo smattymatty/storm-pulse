@@ -1,6 +1,6 @@
 """Handler for ``garage_converge_account_key_rotation``.
 
-One idempotent convergence pass of an account-key rotation (BUCKETS-013):
+One idempotent convergence pass of an account-key rotation:
 grant the NEW account key owner + local alias on every bucket the OLD key
 still owns that the new key does not yet own. Run via the admin token, so the
 old key's (possibly lost) secret is never needed.
@@ -51,7 +51,7 @@ def make_converge_account_key_rotation_handler(
     old_key_id = params["old_key_id"]
     new_key_id = params["new_key_id"]
 
-    # Leak path (BUCKETS-013): an explicit owned-bucket snapshot, captured
+    # Leak path: an explicit owned-bucket snapshot, captured
     # before the old key was reaped, fed in as JSON. When present, converge
     # from it instead of reading the (now-dead) old key.
     bucket_snapshot = None
@@ -85,7 +85,7 @@ def _owned(kinfo: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Map ``full bucket id -> {"perms": (read, write, owner), "aliases": [...]}``
     for every bucket this key has any grant on.
 
-    Per-tier, not owner-only (BUCKETS-014): a rotation must carry each grant at
+    Per-tier, not owner-only: a rotation must carry each grant at
     its actual tier so an rw/ro attach survives instead of silently dying. This
     also makes rotate strictly more correct, the new key inherits exactly what
     the old key could do, no more, no less.
@@ -147,7 +147,7 @@ async def run_converge_account_key_rotation(
     await progress("starting", 0, _TOTAL_STEPS, "Reading rotation state")
     if bucket_snapshot is not None:
         # Leak path: old key already reaped; use the captured snapshot. Each
-        # entry may carry its tier (BUCKETS-014); default owner for snapshots
+        # entry may carry its tier; default owner for snapshots
         # that predate per-tier capture.
         old_owned: dict[str, dict[str, Any]] = {}
         for e in bucket_snapshot:
@@ -188,7 +188,7 @@ async def run_converge_account_key_rotation(
 
     new_owned = _owned(new_info)
     # A bucket needs a transfer until the new key covers every tier the old key
-    # held on it (tier-aware, BUCKETS-014). Re-granting an existing grant is a
+    # held on it (tier-aware). Re-granting an existing grant is a
     # no-op, so passes stay idempotent.
     to_transfer = [
         bid for bid, v in old_owned.items()

@@ -1,4 +1,4 @@
-"""Tests for stormpulse.garage.provision_additional_key.
+"""Tests for stormpulse.garage.jobs.provision_additional_key.
 
 Adds a new tiered key (rw or ro) to an existing bucket. Three admin-API steps
 with atomic rollback; the bucket itself is never touched by rollback.
@@ -21,7 +21,7 @@ import pytest
 
 from stormpulse.commands.jobs import JobOutcome
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.provision_additional_key import (
+from stormpulse.garage.jobs.provision_additional_key import (
     make_provision_additional_key_handler,
     run_provision_additional_key,
 )
@@ -134,7 +134,7 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
         "add_bucket_alias_local", "delete_key",
     ):
         monkeypatch.setattr(
-            f"stormpulse.garage.provision_additional_key.admin_api.{name}",
+            f"stormpulse.garage.jobs.provision_additional_key.admin_api.{name}",
             getattr(fake, name),
         )
     return fake
@@ -195,7 +195,7 @@ async def test_happy_path_rw_tier(monkeypatch: pytest.MonkeyPatch) -> None:
 async def test_happy_path_all_tier_grants_owner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Claim-admin (BUCKETS-013): the 'all' tier mints the owner key onto an
+    # Claim-admin: the 'all' tier mints the owner key onto an
     # adopted bucket whose owner slot is free. This is the only tier that
     # grants owner through this handler.
     fake = _install(monkeypatch)

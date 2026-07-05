@@ -120,43 +120,43 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     # Lazy handler imports: loaded only when a live garage integration builds
     # its specs, so a garage-less host never imports handler code. Each thunk
     # fires at dispatch, when validated params exist.
-    from stormpulse.garage.attach_account_key import (
+    from stormpulse.garage.jobs.attach_account_key import (
         make_attach_account_key_handler,
     )
-    from stormpulse.garage.clear_bucket import make_clear_bucket_handler
-    from stormpulse.garage.converge_account_key_rotation import (
+    from stormpulse.garage.jobs.clear_bucket import make_clear_bucket_handler
+    from stormpulse.garage.jobs.converge_account_key_rotation import (
         make_converge_account_key_rotation_handler,
     )
-    from stormpulse.garage.delete_key import make_delete_key_handler
-    from stormpulse.garage.delete_provisioned_bucket import (
+    from stormpulse.garage.jobs.delete_key import make_delete_key_handler
+    from stormpulse.garage.jobs.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
     )
-    from stormpulse.garage.detach_account_key import (
+    from stormpulse.garage.jobs.detach_account_key import (
         make_detach_account_key_handler,
     )
-    from stormpulse.garage.enforce_account_key_tier import (
+    from stormpulse.garage.jobs.enforce_account_key_tier import (
         make_enforce_account_key_tier_handler,
     )
-    from stormpulse.garage.get_bucket_owners import make_get_bucket_owners_handler
-    from stormpulse.garage.get_key_buckets import make_get_key_buckets_handler
-    from stormpulse.garage.provision_account_key import (
+    from stormpulse.garage.jobs.get_bucket_owners import make_get_bucket_owners_handler
+    from stormpulse.garage.jobs.get_key_buckets import make_get_key_buckets_handler
+    from stormpulse.garage.jobs.provision_account_key import (
         make_provision_account_key_handler,
     )
-    from stormpulse.garage.provision_additional_key import (
+    from stormpulse.garage.jobs.provision_additional_key import (
         make_provision_additional_key_handler,
     )
-    from stormpulse.garage.provision_bucket import (
+    from stormpulse.garage.jobs.provision_bucket import (
         make_provision_customer_bucket_handler,
     )
-    from stormpulse.garage.rotate_key import make_rotate_customer_key_handler
-    from stormpulse.garage.set_account_key_capability import (
+    from stormpulse.garage.jobs.rotate_key import make_rotate_customer_key_handler
+    from stormpulse.garage.jobs.set_account_key_capability import (
         make_set_account_key_capability_handler,
     )
-    from stormpulse.garage.set_quota import make_set_quota_handler
-    from stormpulse.garage.snapshot_and_reap_account_key import (
+    from stormpulse.garage.jobs.set_quota import make_set_quota_handler
+    from stormpulse.garage.jobs.snapshot_and_reap_account_key import (
         make_snapshot_and_reap_account_key_handler,
     )
-    from stormpulse.garage.walk_bucket_stats import make_walk_bucket_stats_handler
+    from stormpulse.garage.jobs.walk_bucket_stats import make_walk_bucket_stats_handler
 
     return {
         # ----- Read-only -----
@@ -207,7 +207,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             description="Delete a bucket",
             params={"bucket_name": _bucket_name("Bucket to delete")},
         ),
-        # The BUCKETS-006 Headroom wall, applied via the Garage admin HTTP API
+        # The Headroom wall, applied via the Garage admin HTTP API
         # (UpdateBucket), not the CLI: a typed call instead of scraping CLI text,
         # addressing the bucket by id (garage_bucket_id, never the local alias).
         # Handled by the JobManager, see garage/set_quota.py. The website's
@@ -217,7 +217,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             group="garage",
             command=["garage_bucket_set_quota"],  # internal - handled by JobManager
             timeout=30,  # single admin API call; long_running ignores this for duration
-            description="Set the max-size Headroom quota on a bucket via the Garage admin API (BUCKETS-006)",
+            description="Set the max-size Headroom quota on a bucket via the Garage admin API",
             mode="job",
             # The recompute's OWN action: a post-success push would re-enter the
             # recompute and dispatch more set_quotas (a feedback loop), and a quota
@@ -242,7 +242,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             group="garage",
             command=["garage_set_account_key_create_bucket"],  # internal - handled by JobManager
             timeout=30,  # single admin API call; long_running ignores this for duration
-            description="Set or clear an account key's allow_create_bucket capability via the Garage admin API (BUCKETS-012 count backstop).",
+            description="Set or clear an account key's allow_create_bucket capability via the Garage admin API.",
             mode="job",
             handler=lambda params: make_set_account_key_capability_handler(
                 params, admin_url=config.admin_url, admin_token=config.admin_token,
@@ -481,7 +481,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     placeholder="key_tier",
                     default=None,
                     pattern=r"(?:all|rw|ro)",
-                    description="Permission tier: 'rw'/'ro' add a tiered key to a bucket that already has an owner; 'all' mints the owner key onto an adopted bucket whose owner slot is free (claim-admin, BUCKETS-013).",
+                    description="Permission tier: 'rw'/'ro' add a tiered key to a bucket that already has an owner; 'all' mints the owner key onto an adopted bucket whose owner slot is free (claim-admin).",
                 ),
             },
         ),
@@ -489,7 +489,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             group="garage",
             command=["garage_provision_account_key"],  # internal - handled by JobManager
             timeout=60,
-            description="Orchestrated provisioning of an account key for customer aws cli / terraform bucket lifecycle. The tier governs create capability (BUCKETS-016): an Admin key is minted with key-level allow_create_bucket, a Read-Write/Read-Only key with create disabled. One step, no rollback - owns no bucket until the customer creates one over S3.",
+            description="Orchestrated provisioning of an account key for customer aws cli / terraform bucket lifecycle. The tier governs create capability: an Admin key is minted with key-level allow_create_bucket, a Read-Write/Read-Only key with create disabled. One step, no rollback - owns no bucket until the customer creates one over S3.",
             sensitive_output=True,  # the one-time secret rides in stdout/extras
             mode="job",
             handler=lambda params: make_provision_account_key_handler(config, params),
@@ -504,7 +504,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     placeholder="allow_create_bucket",
                     default="false",
                     pattern=r"(?:true|false)",
-                    description="BUCKETS-016 tier gate: 'true' mints an Admin key (key-level allow_create_bucket); 'false' mints a Read-Write/Read-Only key that cannot create buckets and reaches buckets only through attach. Defaults 'false' (FAIL CLOSED): a capability gate must never grant create on an absent signal. An Admin mint always sends 'true' explicitly; a mint that fails to send the flag yields a powerless key, not a root one.",
+                    description="tier gate: 'true' mints an Admin key (key-level allow_create_bucket); 'false' mints a Read-Write/Read-Only key that cannot create buckets and reaches buckets only through attach. Defaults 'false' (FAIL CLOSED): a capability gate must never grant create on an absent signal. An Admin mint always sends 'true' explicitly; a mint that fails to send the flag yields a powerless key, not a root one.",
                 ),
             },
         ),
@@ -551,7 +551,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             description=(
                 "Admin-API key delete reporting a structured confirmed-gone "
                 "outcome (deleted / already_absent). Backs the credential-kill "
-                "tombstone sweep (BUCKETS-013): a positive 404 is success, a "
+                "tombstone sweep: a positive 404 is success, a "
                 "transient error is not, so a still-live key is never certified "
                 "dead."
             ),
@@ -568,7 +568,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             requires_confirmation=True,
             description=(
                 "Detach one account key's grant from a single bucket "
-                "(BUCKETS-013): deny read/write/owner, drop the key's local "
+                ": deny read/write/owner, drop the key's local "
                 "alias, then read the key back and confirm the bucket is gone "
                 "from its grant list. Grant-removal, not key-destruction: the "
                 "key survives. Confirmed by the deny op's own result, never a 404."
@@ -594,7 +594,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             timeout=30,
             requires_confirmation=True,
             description=(
-                "Attach an account key to an existing bucket (BUCKETS-014): "
+                "Attach an account key to an existing bucket: "
                 "the inverse of detach. Grant the key the chosen tier "
                 "(ro/rw/owner), add its local alias, then read the key back and "
                 "confirm the grant landed. A deliberate, password-gated "
@@ -627,7 +627,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             timeout=120,
             description=(
                 "Enforce that an account key's per-bucket grants never exceed "
-                "its tier (BUCKETS-016): narrow every over-tier grant down to "
+                "its tier: narrow every over-tier grant down to "
                 "the tier via a precise set. All-or-nothing on stranding (abort "
                 "if removing an owner grant would leave a bucket ownerless); "
                 "idempotent when already enforced."
@@ -658,7 +658,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             timeout=120,
             description=(
                 "One idempotent convergence pass of an account-key rotation "
-                "(BUCKETS-013): grant the new key owner + alias on every bucket "
+                ": grant the new key owner + alias on every bucket "
                 "the old key owns that the new key does not, via the admin "
                 "token. Re-dispatched each tick until it reports converged. "
                 "Additive only (4a); the old key keeps its access until 4b."
@@ -701,7 +701,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             timeout=60,
             requires_confirmation=True,
             description=(
-                "Leak-rotate kill (BUCKETS-013): snapshot the old key's owned "
+                "Leak-rotate kill: snapshot the old key's owned "
                 "buckets via GetKeyInfo, THEN delete the key object outright. "
                 "Snapshot-before-kill so the list survives; deletes the object "
                 "(not per-bucket deny) so a live key can't keep spawning "
@@ -724,7 +724,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             read_only=True,
             timeout=30,
             description=(
-                "Read-only (BUCKETS-013): return the buckets an account key "
+                "Read-only: return the buckets an account key "
                 "owns via GetKeyInfo. Storm does not store the key->bucket "
                 "link, so the dashboard's per-key bucket list and revoke "
                 "at-risk split come from this live read."
@@ -741,7 +741,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             read_only=True,
             timeout=30,
             description=(
-                "Read-only (BUCKETS-013): return the access keys that own a "
+                "Read-only: return the access keys that own a "
                 "bucket via GetBucketInfo. Inverse of garage_get_key_buckets; "
                 "Storm matches the ids to AccountKey rows for the bucket-detail "
                 "provenance line."
@@ -760,8 +760,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "Bulk-delete every object in a bucket via the local Garage "
                 "S3 endpoint. Two modes: customer-secret (bucket_name + "
                 "credentials) or credential-less purge (bucket_id, no "
-                "credentials; the agent self-mints a temporary key, ADR "
-                "BUCKETS-010)"
+                "credentials; the agent self-mints a temporary key)"
             ),
             requires_confirmation=True,
             sensitive_output=True,  # the secret arrives in params; never log them

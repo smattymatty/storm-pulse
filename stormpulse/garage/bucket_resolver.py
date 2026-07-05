@@ -1,6 +1,6 @@
 """Resolve a Garage S3 access-log line to its globally-unique bucket id.
 
-ADR BUCKETS-015. A Garage S3 access-log line carries only ``(key_id, name)``,
+A Garage S3 access-log line carries only ``(key_id, name)``,
 where ``name`` is the first path segment: the bucket's local alias scoped to
 the requesting key, or its global alias. Neither is globally unique on its own
 (an account's two buckets may share a display name), so the website cannot
@@ -30,7 +30,7 @@ class BucketIdResolver:
 
     - ``_key_scoped`` keys on ``(key_id, local_alias)``. A key's local alias is
       the name namespace private to that key, so this is the exact, unambiguous
-      handle for an S3-created (BUCKETS-012) bucket addressed by its owning key.
+      handle for an S3-created bucket addressed by its owning key.
     - ``_global_alias`` keys on the bucket's global alias alone. Dashboard-
       provisioned buckets carry a global alias and their owning key holds no
       local alias, so a global-alias hit is the fallback for those rows. Global

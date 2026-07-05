@@ -1,6 +1,6 @@
 """Handler for ``garage_detach_account_key``.
 
-Removes one account key's grant on a single bucket (BUCKETS-013 detach):
+Removes one account key's grant on a single bucket:
 
   1. DenyBucketKey - revoke the key's read/write/owner on the bucket.
   2. RemoveBucketAlias (local) - drop the key's name alias for the bucket;
@@ -9,7 +9,7 @@ Removes one account key's grant on a single bucket (BUCKETS-013 detach):
      grant list.
 
 This is grant-removal, NOT key-destruction: the account key survives and
-keeps its other buckets. Per the BUCKETS-013 Q1 amendment, detach is
+keeps its other buckets. Per a later amendment, detach is
 confirmed by the deny op's own positive result plus a grant-absent read-back
 inside this same operation, never by a 404 and never by a reconcile snapshot.
 
@@ -78,7 +78,7 @@ async def run_detach_account_key(
     started_at = time.monotonic()
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
-        # Fail loud: a migrated operation never silently no-ops (ADR garage/001).
+        # Fail loud: a migrated operation never silently no-ops.
         return _failure(
             failure_reason="admin_api_unconfigured",
             bucket_id=bucket_id,

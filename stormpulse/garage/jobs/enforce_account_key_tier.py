@@ -1,4 +1,4 @@
-"""Handler for ``garage_enforce_account_key_tier`` (BUCKETS-016 Slice 4).
+"""Handler for ``garage_enforce_account_key_tier``.
 
 Enforce the invariant "an account key's per-bucket grants never exceed its
 tier." Reads the key's actual grants from Garage, and for every bucket where
@@ -17,7 +17,7 @@ Two disciplines make this safe to run on demand and from a cron backstop:
   a no-op, so the eager dispatch (on a tier change) and the cron backstop call
   the same handler against the same target (the tier) without drift.
 
-All Garage interaction is the admin HTTP API (ADR garage/001), never the CLI.
+All Garage interaction is the admin HTTP API, never the CLI.
 """
 
 from __future__ import annotations

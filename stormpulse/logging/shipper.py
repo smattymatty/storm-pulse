@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 # A ``(key_id, bucket-name) -> bucket_id`` lookup. Typed as a bare callable so
 # the logging layer stays free of any garage-layer dependency (the four-layer
 # topology forbids logging from importing garage); the agent layer builds the
-# concrete resolver and passes it in (ADR BUCKETS-015).
+# concrete resolver and passes it in.
 BucketIdResolver = Callable[[str, str], str]
 
 # Only this parser's lines carry the (key_id, bucket-name) pair the resolver
-# needs; other parsers leave the field off the wire entirely (BUCKETS-015).
+# needs; other parsers leave the field off the wire entirely.
 _BUCKET_ID_PARSER = "garage_s3"
 
 
@@ -79,7 +79,7 @@ class LogShipper:
         to detect a source producing unparseable output.
 
         ``bucket_id_resolver`` is the tick-fresh ``(key_id, name) -> bucket_id``
-        map (BUCKETS-015). When supplied for a ``garage_s3`` group, every parsed
+        map. When supplied for a ``garage_s3`` group, every parsed
         line gets a ``bucket_id`` field (``''`` when the bucket is not in the
         last Garage-state snapshot). Other groups ignore it: their lines carry
         no bucket name and the website never reads the field for them.

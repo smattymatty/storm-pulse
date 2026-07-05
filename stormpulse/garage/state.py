@@ -40,7 +40,7 @@ class GarageKeyRef:
     aliases for this bucket, never the secret.
 
     ``bucket_local_aliases`` is the bucket-name namespace private to this key.
-    An S3-created (BUCKETS-012) bucket has no global alias, so its name lives
+    An S3-created bucket has no global alias, so its name lives
     here under the owning key; the website's adopt branch reads it to name the
     bucket. Empty for the top-level key inventory and for dashboard-provisioned
     buckets that carry a global alias.
@@ -130,7 +130,7 @@ class GarageState:
     def with_items(self, buckets: Iterable[GarageBucket]) -> GarageState:
         """Upsert *buckets* by id into a new, order-stable state - the shared merge
         primitive (CORE-005 decision 11). Always the FULL set, never a partial
-        (BUCKETS-006 invariant 4: manifest alarms, never acts); falsy ids ignored."""
+        (manifest alarms, never acts); falsy ids ignored."""
         incoming = {b.id: b for b in buckets if b.id}
         if not incoming:
             return self
@@ -281,7 +281,7 @@ def affected_bucket_ids(params: Mapping[str, str], state: GarageState) -> list[s
     3. A command that names ONLY a key (delete_key, reap: no bucket param at all)
        affects the buckets that key currently touches, resolved by an in-memory
        filter over the snapshot's recorded grants - never a live key read, never
-       the BUCKETS-015 ``BucketIdResolver`` (a name-attribution map, the wrong
+       the ``BucketIdResolver`` (a name-attribution map, the wrong
        tool). New-bucket ops (create/provision) name no existing id and resolve to
        nothing: the detector owns newcomers.
     """
@@ -306,7 +306,7 @@ def _collect_buckets_via_admin(config: GarageConfig) -> list[GarageBucket] | Non
     Returns the bucket list, or **None** when the cluster can't be enumerated
     (``ListBuckets`` unreachable). The caller treats None as "skip this tick":
     pushing an empty set would read downstream as "every bucket vanished"
-    (BUCKETS-006 invariant 4 - no fresh read, no action). A single bucket whose
+    (no fresh read, no action). A single bucket whose
     ``GetBucketInfo`` fails is skipped and logged, never crashing the tick.
     """
     admin_url, admin_token = config.admin_url, config.admin_token
@@ -382,7 +382,7 @@ def _collect_topology(config: GarageConfig) -> _Topology | None:
 
 def _walk_and_compose(config: GarageConfig, topology: _Topology) -> GarageState | None:
     """Walk every bucket and fold with *topology* into one wire ``GarageState``; None
-    when enumeration fails (never push an empty set: BUCKETS-006 invariant 4)."""
+    when enumeration fails (never push an empty set: invariant 4)."""
     buckets = _collect_buckets_via_admin(config)
     if buckets is None:
         logger.warning("Bucket state unavailable this tick; skipping state push")
