@@ -12,3 +12,4 @@ from __future__ import annotations
 
 import stormpulse.caddy.integration  # noqa: F401
 import stormpulse.garage.integration  # noqa: F401
+import stormpulse.rclone.integration  # noqa: F401
