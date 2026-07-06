@@ -217,6 +217,11 @@ def main() -> None:
 
     add_caddy_subparser(subparsers)
 
+    # --- rclone subcommand group ---
+    from stormpulse.cli.rclone import add_rclone_subparser
+
+    add_rclone_subparser(subparsers)
+
     # --- logging subcommand group ---
     from stormpulse.cli.log import add_logging_subparser
 
@@ -300,6 +305,19 @@ def main() -> None:
             print("Usage: stormpulse caddy <subcommand>\n", file=sys.stderr)
             print("Subcommands:", file=sys.stderr)
             print("  init     Detect and configure Caddy integration", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "rclone":
+        if getattr(args, "rclone_command", None) == "init":
+            from stormpulse.cli.rclone import cmd_rclone_init
+
+            cmd_rclone_init(args)
+        else:
+            print("Usage: stormpulse rclone <subcommand>\n", file=sys.stderr)
+            print("Subcommands:", file=sys.stderr)
+            print(
+                "  init     Detect rclone and configure this box as a backup Runner",
+                file=sys.stderr,
+            )
             sys.exit(1)
     elif args.command == "logging":
         if getattr(args, "logging_command", None) == "init":
