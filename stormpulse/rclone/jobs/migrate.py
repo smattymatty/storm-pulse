@@ -117,6 +117,13 @@ async def run_migrate(
             "--use-json-log",
             "--stats",
             _STATS_INTERVAL,
+            # rclone emits its periodic stats lines at INFO; its default
+            # level is NOTICE, which suppresses them entirely. Without this
+            # flag the whole stats stream is silent: no live progress, and
+            # the final byte/object totals report as zero (found on the
+            # first real production transfer, 2026-07-09).
+            "--log-level",
+            "INFO",
             env=env,
             on_stats=on_stats,
         )
