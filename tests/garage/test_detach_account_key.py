@@ -44,7 +44,7 @@ def _make_config(*, configured: bool = True) -> GarageConfig:
 
 
 class _ProgressRecorder:
-    async def __call__(self, stage, current, total, message) -> None:
+    async def __call__(self, *a: Any, **k: Any) -> None:
         return None
 
 

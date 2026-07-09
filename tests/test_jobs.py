@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from stormpulse.commands.jobs import JobManager, JobOutcome, ProgressCallback
-from stormpulse.protocol import Envelope, MessageType
+from stormpulse.protocol import Envelope, MessageType, TransferStats
 
 
 class _FakeWire:
@@ -25,6 +25,66 @@ class _FakeWire:
         if self.raise_on_send is not None:
             raise self.raise_on_send
         self.sent.append(envelope)
+
+
+# ---------------------------------------------------------------------------
+# The wire shape of command.progress
+#
+# These assert what the agent ACTUALLY puts on the socket, rather than what a
+# stand-in was told to produce. A consumer can be written against a simulated
+# agent, and a simulator can emit a field this agent has no way to send; both
+# sides then pass their own tests while nothing crosses the wire. Only a test
+# that inspects the emitted envelope closes that gap.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_progress_envelope_carries_the_structured_transfer_fields() -> None:
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        await progress(
+            "running", 2048, 4096, "1 of 2 objects",
+            transfer=TransferStats(
+                rate_bytes_per_sec=1024,
+                objects_current=1,
+                objects_total=2,
+                eta_seconds=30,
+            ),
+        )
+        return JobOutcome(success=True, exit_code=0, stdout="ok")
+
+    mgr.start("req-1", "rclone_migrate", "buckets", handler)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+
+    payload = wire.sent[0].payload
+    # Flat on the wire, exactly as the Protocol Specification declares them.
+    assert payload["rate_bytes_per_sec"] == 1024
+    assert payload["eta_seconds"] == 30
+    assert payload["objects_current"] == 1
+    assert payload["objects_total"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_non_transfer_job_leaves_the_transfer_fields_absent() -> None:
+    """cert_status and friends call progress with four positional args and
+    must be entirely unaffected by the transfer fields existing."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        await progress("starting", 0, 1, "Checking certificate")
+        return JobOutcome(success=True, exit_code=0, stdout="ok")
+
+    mgr.start("req-1", "caddy_cert_status", "caddy", handler)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+
+    payload = wire.sent[0].payload
+    for key in (
+        "rate_bytes_per_sec", "eta_seconds", "objects_current", "objects_total",
+    ):
+        assert payload[key] is None
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ SSL context, not in our code.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -33,7 +34,7 @@ def _make_config() -> CaddyConfig:
 
 
 class _Progress:
-    async def __call__(self, *a) -> None:
+    async def __call__(self, *a: Any, **k: Any) -> None:
         return None
 
 

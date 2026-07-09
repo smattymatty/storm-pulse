@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from stormpulse.protocol import TransferStats
 from stormpulse.rclone.config import RcloneConfig
 from stormpulse.rclone.runner import S3Remote
 
@@ -32,10 +33,17 @@ DST_PARAMS = {
 
 
 class ProgressRecorder:
-    """Captures progress callback invocations for assertion."""
+    """Captures progress callback invocations for assertion.
+
+    Mirrors the real ``ProgressCallback`` protocol exactly, ``transfer``
+    keyword included. A recorder that quietly accepted fewer arguments than
+    the thing it stands in for would let a job emit telemetry no test could
+    see, which is how the structured transfer fields went unshipped once.
+    """
 
     def __init__(self) -> None:
         self.events: list[tuple[str, int, int | None, str]] = []
+        self.transfers: list[TransferStats | None] = []
 
     async def __call__(
         self,
@@ -43,8 +51,11 @@ class ProgressRecorder:
         current: int,
         total: int | None,
         message: str,
+        *,
+        transfer: TransferStats | None = None,
     ) -> None:
         self.events.append((stage, current, total, message))
+        self.transfers.append(transfer)
 
 
 class FakeRclone:

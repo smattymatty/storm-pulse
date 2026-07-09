@@ -169,12 +169,45 @@ class CommandResultPayload:
 
 
 @dataclass(frozen=True, slots=True)
+class TransferStats:
+    """Structured telemetry for a job that moves bytes (today: rclone).
+
+    These travel together or not at all, which is why they are one value
+    rather than four loose optionals on the callback: a transfer job always
+    knows its rate and object counts, and a non-transfer job (a cert check,
+    a verify block) never will. Bundling them makes "rate but no object
+    count" unrepresentable instead of merely unlikely.
+
+    ``eta_seconds`` is the exception and is optional *within* a transfer:
+    rclone reports a null ETA until it has enough samples to estimate one.
+
+    Aggregates only. Never a filename, never a per-object record: rclone's
+    stats object carries a ``transferring`` array naming in-flight files,
+    and that must not leave the agent (tests/rclone/test_migrate.py holds
+    this line).
+    """
+
+    rate_bytes_per_sec: int
+    objects_current: int
+    objects_total: int
+    eta_seconds: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CommandProgressPayload:
     """Payload for command.progress (agent -> dashboard).
 
     Long-running commands emit one or more of these between the originating
     command.request and the terminal command.result. The first event always
     has stage="starting"; the terminal command.result still closes the job.
+
+    The four transfer fields are optional and flat on the wire (see the
+    Protocol Specification wiki page), even though the agent passes them
+    around as a ``TransferStats``. They are absent on every non-transfer
+    command. Adding them needed no protocol version bump: ``command.progress``
+    only ever flows agent -> dashboard, unknown keys are dropped by
+    ``_payload_from_dict``, and a dashboard reads each one tolerantly. An old
+    agent talking to a new dashboard, or the reverse, both work.
     """
 
     request_id: str
@@ -184,6 +217,10 @@ class CommandProgressPayload:
     current: int
     total: int | None = None
     message: str = ""
+    rate_bytes_per_sec: int | None = None
+    eta_seconds: int | None = None
+    objects_current: int | None = None
+    objects_total: int | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
