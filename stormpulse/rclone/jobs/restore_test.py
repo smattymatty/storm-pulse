@@ -1,6 +1,17 @@
 """Handler for ``rclone_restore_test``: prove data comes back from Storm.
-Copy the first non-empty object to a scratch prefix in the same bucket,
-verify with ``rclone check --download``, delete the prefix in a ``finally``."""
+
+Builds a manifest (``rclone lsjson``), selects a segmented sample - the
+largest object, the smallest non-empty object, and one object per
+top-level folder, capped at a fixed total - copies each to a scratch
+prefix in the same bucket, verifies the whole set with ``rclone check
+--download``, and deletes the prefix in a ``finally``.
+
+The segments cover the two failure modes that actually differ: the
+largest object exercises size-related transfer handling (multipart,
+large-object paths), and one object per folder catches structural bugs
+(a dropped or mis-pathed folder), without the sample count scaling
+unboundedly on a bucket with thousands of folders.
+"""
 
 from __future__ import annotations
 
@@ -26,6 +37,10 @@ logger = logging.getLogger(__name__)
 
 # Reserved scratch prefix; sample selection skips it, cleanup purges it.
 SCRATCH_PREFIX = ".storm-restore-test"
+
+# Ceiling on how many objects one restore test round-trips, regardless of
+# bucket size. Largest + smallest always fit; folder samples fill the rest.
+MAX_SAMPLES = 10
 
 _STEP_TIMEOUT_SECONDS = 600
 # rclone purge exit 3 = directory not found: nothing was written, clean.
@@ -68,15 +83,21 @@ async def run_restore_test(
     started_at = time.monotonic()
     env = build_env(dst=dest)
 
-    await progress("starting", 0, None, "Selecting sample object")
-    sample = await _select_sample(config, env, bucket)
-    if isinstance(sample, JobOutcome):
-        return sample
-    sample_path, sample_bytes = sample
+    await progress("starting", 0, None, "Building bucket manifest")
+    listed = await _list_bucket(config, env, bucket)
+    if isinstance(listed, JobOutcome):
+        return listed
+    samples = select_samples(listed)
+    if not samples:
+        return failure_outcome(
+            "no_sample_object",
+            "Bucket has no non-empty object outside the scratch prefix; "
+            "nothing to verify.",
+        )
 
     try:
         outcome = await _round_trip(
-            progress, config, env, bucket, sample_path, sample_bytes, started_at
+            progress, config, env, bucket, samples, started_at
         )
     finally:
         cleanup_ok = await _purge_scratch(config, env, bucket)
@@ -94,13 +115,12 @@ async def run_restore_test(
     return outcome
 
 
-async def _select_sample(
+async def _list_bucket(
     config: RcloneConfig,
     env: dict[str, str],
     bucket: str,
-) -> tuple[str, int] | JobOutcome:
-    """First non-empty object outside the scratch prefix, or a failure
-    outcome. Non-empty because a zero-byte marker proves nothing."""
+) -> list[dict[str, Any]] | JobOutcome:
+    """The bucket's file listing, or a failure outcome."""
     try:
         code, stdout, stderr = await run_rclone(
             config,
@@ -121,16 +141,59 @@ async def _select_sample(
         entries: list[dict[str, Any]] = json.loads(stdout)
     except ValueError:
         return failure_outcome("unparseable_output", "rclone lsjson returned unparseable JSON")
+    return entries
+
+
+def select_samples(entries: list[dict[str, Any]]) -> list[tuple[str, int, str]]:
+    """Segmented sample selection over a parsed listing: ``(path, bytes,
+    reason)`` triples, deduplicated, capped at ``MAX_SAMPLES``.
+
+    Picks the largest object, the smallest non-empty object, then the
+    smallest non-empty object in each top-level folder (cheapest probe
+    that still proves the folder's objects exist and read back). Empty
+    objects prove nothing and the scratch prefix is never sampled. Pure
+    selection, no rclone - testable on its own.
+    """
+    eligible: list[tuple[str, int]] = []
     for entry in entries:
         path = str(entry.get("Path", ""))
         size = int(entry.get("Size") or 0)
         if size > 0 and path and not path.startswith(f"{SCRATCH_PREFIX}/"):
-            return (path, size)
-    return failure_outcome(
-        "no_sample_object",
-        "Bucket has no non-empty object outside the scratch prefix; "
-        "nothing to verify.",
-    )
+            eligible.append((path, size))
+    if not eligible:
+        return []
+
+    picks: list[tuple[str, int, str]] = []
+    chosen: set[str] = set()
+
+    def pick(path: str, size: int, reason: str) -> None:
+        # First reason wins: the largest object in a one-folder bucket is
+        # reported as "largest", not re-listed as that folder's sample.
+        if path in chosen:
+            return
+        chosen.add(path)
+        picks.append((path, size, reason))
+
+    largest = max(eligible, key=lambda e: (e[1], e[0]))
+    pick(largest[0], largest[1], "largest")
+    smallest = min(eligible, key=lambda e: (e[1], e[0]))
+    pick(smallest[0], smallest[1], "smallest")
+
+    by_folder: dict[str, tuple[str, int]] = {}
+    for path, size in eligible:
+        if "/" not in path:
+            continue  # root objects have no folder; largest/smallest cover them
+        folder = path.split("/", 1)[0]
+        best = by_folder.get(folder)
+        if best is None or (size, path) < (best[1], best[0]):
+            by_folder[folder] = (path, size)
+    for folder in sorted(by_folder):
+        if len(picks) >= MAX_SAMPLES:
+            break
+        path, size = by_folder[folder]
+        pick(path, size, "prefix_sample")
+
+    return picks
 
 
 async def _round_trip(
@@ -138,37 +201,48 @@ async def _round_trip(
     config: RcloneConfig,
     env: dict[str, str],
     bucket: str,
-    sample_path: str,
-    sample_bytes: int,
+    samples: list[tuple[str, int, str]],
     started_at: float,
 ) -> JobOutcome:
-    """Copy the sample to the scratch prefix, then verify byte-for-byte."""
-    await progress("running", 1, 3, "Copying sample to scratch prefix")
-    try:
-        code, _, stderr = await run_rclone(
-            config,
-            "copyto",
-            f"{DST_REMOTE}:{bucket}/{sample_path}",
-            f"{DST_REMOTE}:{bucket}/{SCRATCH_PREFIX}/{sample_path}",
-            env=env,
-            timeout=_STEP_TIMEOUT_SECONDS,
-        )
-    except TimeoutError:
-        return failure_outcome("timeout", f"copy timed out after {_STEP_TIMEOUT_SECONDS}s")
-    except OSError as exc:
-        return failure_outcome("os_error", str(exc))
-    if code != 0:
-        return failure_outcome(reason_for_exit(code), tail_capped(stderr), exit_code=code)
+    """Copy every sample to the scratch prefix, then verify the whole set
+    byte-for-byte with one ``rclone check --download``."""
+    total_steps = len(samples) + 2
 
-    await progress("running", 2, 3, "Verifying restored copy against the Storm copy")
+    for i, (path, _size, _reason) in enumerate(samples, start=1):
+        await progress(
+            "running", i, total_steps,
+            f"Copying sample {i}/{len(samples)} to scratch prefix",
+        )
+        try:
+            code, _, stderr = await run_rclone(
+                config,
+                "copyto",
+                f"{DST_REMOTE}:{bucket}/{path}",
+                f"{DST_REMOTE}:{bucket}/{SCRATCH_PREFIX}/{path}",
+                env=env,
+                timeout=_STEP_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            return failure_outcome("timeout", f"copy timed out after {_STEP_TIMEOUT_SECONDS}s")
+        except OSError as exc:
+            return failure_outcome("os_error", str(exc))
+        if code != 0:
+            return failure_outcome(reason_for_exit(code), tail_capped(stderr), exit_code=code)
+
+    await progress(
+        "running", len(samples) + 1, total_steps,
+        "Verifying restored copies against the Storm copies",
+    )
+    include_filters: list[str] = []
+    for path, _size, _reason in samples:
+        include_filters.extend(("--include", "/" + _escape_filter(path)))
     try:
         code, _, stderr = await run_rclone(
             config,
             "check",
             f"{DST_REMOTE}:{bucket}",
             f"{DST_REMOTE}:{bucket}/{SCRATCH_PREFIX}",
-            "--include",
-            "/" + _escape_filter(sample_path),
+            *include_filters,
             "--download",
             "--one-way",
             env=env,
@@ -186,14 +260,27 @@ async def _round_trip(
         )
         return failure_outcome(reason, tail_capped(stderr), exit_code=code)
 
-    await progress("finalizing", 3, 3, "Cleaning up scratch prefix")
+    await progress("finalizing", total_steps, total_steps, "Cleaning up scratch prefix")
+    total_bytes = sum(size for _path, size, _reason in samples)
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=f"Restored and verified {sample_path} ({sample_bytes} bytes)",
+        stdout=(
+            f"Restored and verified {len(samples)} object(s), "
+            f"{total_bytes} bytes"
+        ),
         extras={
-            "sample_object": sample_path,
-            "sample_bytes": sample_bytes,
+            # The full receipt: which objects, how big, and why each was
+            # selected - so the dashboard can state exactly what this test
+            # checked, never a bare pass/fail.
+            "samples": [
+                {"key": path, "bytes": size, "reason": reason}
+                for path, size, reason in samples
+            ],
+            # Older dashboards read the single-object shape; keep it
+            # pointed at the first sample so they stay correct.
+            "sample_object": samples[0][0],
+            "sample_bytes": samples[0][1],
             "duration_seconds": round(time.monotonic() - started_at, 3),
         },
     )
@@ -216,4 +303,3 @@ async def _purge_scratch(
     except (TimeoutError, OSError):
         return False
     return code in _PURGE_CLEAN_EXITS
-
