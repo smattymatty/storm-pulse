@@ -41,7 +41,7 @@ def _make_config(*, configured: bool = True) -> GarageConfig:
 
 
 class _Progress:
-    async def __call__(self, *a) -> None:
+    async def __call__(self, *a: Any, **k: Any) -> None:
         return None
 
 

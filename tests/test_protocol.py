@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import UTC
 from typing import Any
 
@@ -21,6 +21,7 @@ from stormpulse.protocol import (
     MetricsPayload,
     ProtocolError,
     RegisterPayload,
+    TransferStats,
     make_command_progress,
     make_command_result,
     make_heartbeat,
@@ -453,6 +454,56 @@ def test_command_progress_payload_from_dict() -> None:
     assert payload.stage == "running"
     assert payload.current == 1000
     assert payload.total == 5000
+
+
+def test_transfer_stats_fields_match_the_progress_payload() -> None:
+    """A fitness function, not a nicety. ``_make_progress_callback`` flattens
+    a TransferStats onto the payload with ``**asdict(transfer)``, which is
+    only safe while every TransferStats field name is also a payload field
+    name. Rename one without the other and this fails here, loudly, instead
+    of raising TypeError inside a live transfer.
+    """
+    transfer_fields = {f.name for f in fields(TransferStats)}
+    payload_fields = {f.name for f in fields(CommandProgressPayload)}
+    assert transfer_fields <= payload_fields
+    # And they are the four the wire contract declares.
+    assert transfer_fields == {
+        "rate_bytes_per_sec", "eta_seconds", "objects_current", "objects_total",
+    }
+
+
+def test_command_progress_payload_transfer_fields_default_absent() -> None:
+    """Every non-transfer command emits progress without them. They are
+    optional by construction (a default), never by convention."""
+    payload = CommandProgressPayload(
+        request_id="req-9", command="caddy_cert_status", group="caddy",
+        stage="starting", current=0,
+    )
+    assert payload.rate_bytes_per_sec is None
+    assert payload.eta_seconds is None
+    assert payload.objects_current is None
+    assert payload.objects_total is None
+
+
+def test_command_progress_payload_from_an_older_agents_dict() -> None:
+    """A payload dict predating the transfer fields still deserializes. This
+    is why adding them needed no protocol version bump."""
+    payload = CommandProgressPayload.from_dict({
+        "request_id": "req-9", "command": "rclone_migrate", "group": "buckets",
+        "stage": "running", "current": 1000, "total": 5000, "message": "x",
+    })
+    assert payload.rate_bytes_per_sec is None
+    assert payload.eta_seconds is None
+
+
+def test_command_progress_payload_ignores_unknown_keys() -> None:
+    """Forward compatibility in the other direction: a newer peer may send
+    fields this build has never heard of, and they are dropped, not fatal."""
+    payload = CommandProgressPayload.from_dict({
+        "request_id": "req-9", "command": "rclone_migrate", "group": "buckets",
+        "stage": "running", "current": 1, "a_field_from_the_future": 42,
+    })
+    assert payload.current == 1
 
 
 def test_command_progress_payload_missing_required_raises() -> None:

@@ -19,6 +19,7 @@ _STATS = {
     "transfers": 1,
     "totalTransfers": 2,
     "eta": 30,
+    "speed": 1024.5,
     "transferring": [{"name": "clients/jane-doe-tax.pdf", "bytes": 1024}],
 }
 
@@ -74,6 +75,61 @@ async def test_progress_carries_no_object_names(
     for _, _, _, message in progress.events:
         assert "jane-doe" not in message
         assert ".pdf" not in message
+    # The structured channel must not become a second leak path. TransferStats
+    # is aggregates-only by construction; assert nothing named slipped in.
+    for transfer in progress.transfers:
+        assert "jane-doe" not in repr(transfer)
+        assert ".pdf" not in repr(transfer)
+
+
+@pytest.mark.asyncio
+async def test_running_progress_carries_structured_transfer_stats(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A consumer's live readout (rate, ETA, object counts) is fed from these
+    structured fields, never parsed back out of the ``message`` string."""
+    fake = FakeStreaming([_STATS], code=0, tail="")
+    _, progress = await _run(fake, monkeypatch)
+
+    running = [t for (stage, *_), t in zip(progress.events, progress.transfers) if stage == "running"]
+    assert len(running) == 1
+    transfer = running[0]
+    assert transfer is not None
+    assert transfer.rate_bytes_per_sec == 1024  # float speed coerced down
+    assert transfer.objects_current == 1
+    assert transfer.objects_total == 2
+    assert transfer.eta_seconds == 30
+
+
+@pytest.mark.asyncio
+async def test_the_starting_frame_has_no_transfer_stats_yet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = FakeStreaming([_STATS], code=0, tail="")
+    _, progress = await _run(fake, monkeypatch)
+    starting = next(
+        t for (stage, *_), t in zip(progress.events, progress.transfers)
+        if stage == "starting"
+    )
+    assert starting is None
+
+
+@pytest.mark.asyncio
+async def test_missing_speed_and_null_eta_degrade_rather_than_raise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """rclone omits ``speed`` and reports a null ``eta`` until it has samples.
+    A stats line must never be able to abort a transfer in progress."""
+    stats = {**_STATS, "eta": None}
+    del stats["speed"]
+    fake = FakeStreaming([stats], code=0, tail="")
+    outcome, progress = await _run(fake, monkeypatch)
+
+    assert outcome.success is True
+    transfer = progress.transfers[-1]
+    assert transfer is not None
+    assert transfer.rate_bytes_per_sec == 0
+    assert transfer.eta_seconds is None
 
 
 @pytest.mark.asyncio

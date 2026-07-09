@@ -13,14 +13,15 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from typing import Any, Protocol
 
 from stormpulse import events
 from stormpulse.protocol import (
     CommandProgressPayload,
     CommandResultPayload,
     Envelope,
+    TransferStats,
     make_command_progress,
     make_command_result,
 )
@@ -28,12 +29,28 @@ from stormpulse.protocol import (
 logger = logging.getLogger(__name__)
 
 
-ProgressCallback = Callable[[str, int, int | None, str], Awaitable[None]]
-"""(stage, current, total, message) -> awaitable.
+class ProgressCallback(Protocol):
+    """(stage, current, total, message, *, transfer=None) -> awaitable.
 
-Stage is one of ``"starting"``, ``"running"``, ``"finalizing"``. The first
-call from a handler must use ``"starting"`` with ``current=0``.
-"""
+    Stage is one of ``"starting"``, ``"running"``, ``"finalizing"``. The first
+    call from a handler must use ``"starting"`` with ``current=0``.
+
+    ``transfer`` is keyword-only and defaults to None, so every existing
+    handler keeps calling this with four positional arguments and is
+    unaffected. Only a job that actually moves bytes passes it. This is a
+    Protocol rather than the ``Callable`` alias it used to be for exactly
+    that reason: ``Callable[...]`` cannot express a keyword-only parameter.
+    """
+
+    async def __call__(
+        self,
+        stage: str,
+        current: int,
+        total: int | None,
+        message: str,
+        *,
+        transfer: TransferStats | None = None,
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,7 +411,16 @@ class JobManager:
             current: int,
             total: int | None,
             message: str,
+            *,
+            transfer: TransferStats | None = None,
         ) -> None:
+            # The one place TransferStats is flattened onto the wire. Jobs hand
+            # up a cohesive value; the payload keeps the flat optional fields
+            # the wire contract declares. TransferStats' field names ARE the
+            # wire names, so this spreads rather than restating them four
+            # times (test_transfer_stats_fields_match_the_progress_payload
+            # keeps the two from drifting). No transfer means the payload's
+            # own None defaults stand, which is every non-transfer command.
             payload = CommandProgressPayload(
                 request_id=request_id,
                 command=command,
@@ -403,6 +429,7 @@ class JobManager:
                 current=current,
                 total=total,
                 message=message,
+                **(asdict(transfer) if transfer else {}),
             )
             envelope = make_command_progress(self._agent_id, payload)
             try:

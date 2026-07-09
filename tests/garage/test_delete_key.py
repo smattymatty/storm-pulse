@@ -46,6 +46,8 @@ class _ProgressRecorder:
 
     async def __call__(
         self, stage: str, current: int, total: int | None, message: str,
+        *,
+        transfer: object | None = None,
     ) -> None:
         self.events.append((stage, current, total, message))
 
