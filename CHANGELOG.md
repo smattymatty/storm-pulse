@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-09
+
+The agent learns to move data, not just manage it. This release cuts the rclone Integration: S3-to-S3 migration as agent jobs, with credentials that never touch disk and a restore test that proves the data comes back. It is the agent half of a control-plane-orchestrated import: the agent measures, transfers, and verifies; every decision about capacity and sequencing stays server-side.
+
 ### Added
 
-- **rclone Integration: S3-to-S3 migration jobs** (`stormpulse/rclone/`). The third Integration and the first stateless one: config, preconditions, and three job commands, registered with one manifest import and zero kernel edits. `rclone_estimate` measures a source bucket (bytes + objects; any capacity decision happens control-plane-side), `rclone_migrate` pulls it (aggregate-only progress from rclone's JSON stats, per-object names dropped on the agent; re-dispatch to resume, skip-existing makes it idempotent), `rclone_restore_test` proves data comes back (first non-empty object round-tripped through a scratch prefix in the same bucket, verified with `check --download`, scratch deleted on every path). Credentials arrive as secret-flagged params and reach the subprocess as env vars under `RCLONE_CONFIG=/dev/null`: never argv, never a file on disk, redacted from events and logs. The subprocess env is built minimal from scratch (nothing inherits from the agent's env), endpoints are https-only, and shutdown is SIGTERM-with-grace so rclone can abort in-flight multipart uploads before dying. `stormpulse rclone init` detects the binary and writes the `[rclone]` section, so configuring a Runner box does not mean hand-editing TOML (mirrors `garage init` / `caddy init`).
+- **rclone Integration: S3-to-S3 migration jobs** (`stormpulse/rclone/`). The third Integration and the first stateless one: config, preconditions, and three job commands, registered with one manifest import and zero kernel edits. `rclone_estimate` measures a source bucket (bytes + objects; any capacity decision happens control-plane-side), `rclone_migrate` pulls it (aggregate-only progress from rclone's JSON stats, per-object names dropped on the agent; re-dispatch to resume, skip-existing makes it idempotent), `rclone_restore_test` proves data comes back (a segmented sample - the largest object, the smallest, and one per folder - round-tripped through a scratch prefix in the same bucket, verified with `check --download`, scratch deleted on every path). Credentials arrive as secret-flagged params and reach the subprocess as env vars under `RCLONE_CONFIG=/dev/null`: never argv, never a file on disk, redacted from events and logs. The subprocess env is built minimal from scratch (nothing inherits from the agent's env), endpoints are https-only, and shutdown is SIGTERM-with-grace so rclone can abort in-flight multipart uploads before dying. `stormpulse rclone init` detects the binary and writes the `[rclone]` section, so configuring a Runner box does not mean hand-editing TOML (mirrors `garage init` / `caddy init`).
+- **Migration progress carries transfer stats.** `rclone_migrate` progress frames report transfer rate, ETA, and object counts alongside bytes (rclone's log level raised to INFO so its JSON stats actually emit).
 - **Job results carry their command's context.** The target `bucket_id` rides as a typed event field and the job's other small params (e.g. `max_size` on a quota set) ride the attrs long tail, so a quota event says which bucket it capped and at what value. Oversized params (a caddy tenants manifest) stay off the wire.
 
 ## [0.2.1] - 2026-07-04
@@ -186,7 +191,10 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* - current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.9...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.3.0...HEAD
+[0.3.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.2.1...v0.3.0
+[0.2.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.2.0...v0.2.1
+[0.2.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.6...v0.2.0
 [0.1.9]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.8...v0.1.9
 [0.1.6]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.5...v0.1.6
 [0.1.5]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.4...v0.1.5
