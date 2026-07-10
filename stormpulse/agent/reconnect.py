@@ -35,6 +35,7 @@ async def run_with_backoff(agent: Agent) -> None:
     first_failure_at: float | None = None
 
     while not agent.shutdown.is_set():
+        session_start: float | None = None
         try:
             attempts += 1
             if attempts == 1:
@@ -59,6 +60,7 @@ async def run_with_backoff(agent: Agent) -> None:
                 ping_timeout=20,
                 compression=None,
             ) as ws:
+                session_start = time.monotonic()
                 await _run_session(agent, ws, url)
                 # Clean return = registered at least once; reset attempt tracking.
                 attempts = 0
@@ -95,6 +97,23 @@ async def run_with_backoff(agent: Agent) -> None:
 
         if agent.shutdown.is_set():
             break
+
+        # A session that outlived the max backoff was a real, stable
+        # connection: its drop opens a NEW failure era. Real sessions
+        # always end via ConnectionClosed, so the clean-return reset
+        # above never ran and every blip paid the fully-clamped delay
+        # ("attempt 51, 445246s since first failure" - the 2026-07-09
+        # deploy-blackout incident, where each ~10s daphne restart cost
+        # a 60-75s command blackout). Gated on session length, not mere
+        # registration, so a connect-register-drop loop still backs off.
+        if (
+            session_start is not None
+            and time.monotonic() - session_start
+            >= agent.config.dashboard.reconnect_max_seconds
+        ):
+            attempts = 0
+            first_failure_at = time.monotonic()
+            delay = agent.config.dashboard.reconnect_min_seconds
 
         delay = await _sleep_with_jitter(agent, delay)
 
