@@ -528,7 +528,10 @@ async def test_load_reports_pending_and_caps_running_at_the_semaphore() -> None:
     """load() is the #3 queue-depth signal: running pins at the cap, pending climbs."""
     wire = _FakeWire()
     mgr = JobManager("agent-1", wire.send)
-    assert mgr.load() == {"pending": 0, "running": 0}
+    assert mgr.load() == {
+        "pending": 0, "running": 0,
+        "quota_pending": 0, "quota_running": 0, "quota_rejected": 0,
+    }
 
     barrier = asyncio.Event()
 
@@ -550,10 +553,16 @@ async def test_load_reports_pending_and_caps_running_at_the_semaphore() -> None:
     assert load["running"] == JobManager.MAX_CONCURRENT_JOBS  # capped, not stampeding
     assert load["pending"] == n                               # all accepted, none done
     assert load["pending"] - load["running"] == 2             # parked on the semaphore
+    # These were non-quota jobs, so the quota-specific gauges stay at zero.
+    assert load["quota_pending"] == 0
+    assert load["quota_running"] == 0
 
     barrier.set()
     await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
-    assert mgr.load() == {"pending": 0, "running": 0}          # permits + tasks released
+    assert mgr.load() == {                                     # permits + tasks released
+        "pending": 0, "running": 0,
+        "quota_pending": 0, "quota_running": 0, "quota_rejected": 0,
+    }
 
 
 class TestParamContext:
@@ -576,3 +585,226 @@ class TestParamContext:
         from stormpulse.commands.jobs import _param_context
 
         assert _param_context(None) == {}
+
+
+# ---------------------------------------------------------------------------
+# Quota admission ceiling (containment B: bound ACCEPTANCE of set_quota, not
+# just execution). A Headroom metrics-tick storm re-dispatches the same
+# set_quota mismatches every ~5s; past one execution wave the manager sheds
+# them as agent_overloaded rather than growing an unbounded queued backlog.
+# ---------------------------------------------------------------------------
+
+QUOTA = JobManager.QUOTA_COMMAND
+
+
+async def _parked(progress: ProgressCallback) -> JobOutcome:
+    # A handler that holds its permit until the test cancels it, so accepted
+    # jobs stay "in flight" while admission is probed.
+    await asyncio.sleep(60)
+    return JobOutcome(success=True)
+
+
+@pytest.mark.asyncio
+async def test_quota_admission_open_until_the_ceiling() -> None:
+    """Six set_quota jobs are accepted; the seventh closes admission. A
+    non-quota command is never shed by the quota ceiling."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    for i in range(JobManager.MAX_CONCURRENT_JOBS):
+        assert mgr.quota_admission_open() is True   # room before this accept
+        mgr.start(f"q-{i}", QUOTA, "buckets", _parked)
+
+    assert mgr.quota_admission_open() is False       # six accepted -> shut
+    assert mgr.should_shed_quota(QUOTA) is True
+    assert mgr.should_shed_quota("rclone_migrate") is False  # non-quota unaffected
+
+    await mgr.shutdown_all()
+    assert mgr.quota_admission_open() is True         # reopens after drain
+
+
+@pytest.mark.asyncio
+async def test_seventh_quota_job_is_shed_and_its_handler_never_runs() -> None:
+    """Drive the EXACT dispatch gate (should_shed_quota ? reject : start): six
+    handlers run, the seventh is shed with an agent_overloaded result and its
+    handler never executes."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    barrier = asyncio.Event()
+    ran: list[str] = []
+
+    def make_handler(rid: str):
+        async def handler(progress: ProgressCallback) -> JobOutcome:
+            ran.append(rid)
+            await barrier.wait()
+            return JobOutcome(success=True)
+        return handler
+
+    admitted: list[str] = []
+    for i in range(JobManager.MAX_CONCURRENT_JOBS + 1):
+        rid = f"q-{i}"
+        # This is byte-for-byte the branch dispatch_long_running takes.
+        if mgr.should_shed_quota(QUOTA):
+            await mgr.reject_quota_overloaded(
+                rid, QUOTA, "buckets",
+                params={"bucket_id": f"bkt-{i}", "max_size": "5000000000"},
+            )
+        else:
+            mgr.start(rid, QUOTA, "buckets", make_handler(rid))
+            admitted.append(rid)
+
+    assert len(admitted) == JobManager.MAX_CONCURRENT_JOBS
+
+    for _ in range(1000):
+        if len(ran) >= JobManager.MAX_CONCURRENT_JOBS:
+            break
+        await asyncio.sleep(0)
+    assert sorted(ran) == sorted(admitted)   # the shed 7th never ran
+    assert "q-6" not in ran
+
+    shed = [e for e in wire.sent if e.payload.get("request_id") == "q-6"]
+    assert len(shed) == 1
+    assert shed[0].type == MessageType.COMMAND_RESULT
+    assert shed[0].payload["success"] is False
+    assert shed[0].payload["failure_reason"] == "agent_overloaded"
+
+    barrier.set()
+    await mgr.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_reject_emits_a_queryable_job_result_event_with_pressure() -> None:
+    """The shed is a durable wide event an investigator queries later: which
+    bucket, the requested quota, and the live pressure gauges."""
+    from stormpulse import events
+
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    events.buffer().drain("flush-before")  # clear anything from earlier tests
+
+    await mgr.reject_quota_overloaded(
+        "q-x", QUOTA, "buckets",
+        params={"bucket_id": "bkt", "max_size": "9000000000"},
+    )
+
+    batch = events.buffer().drain("capture")
+    rejected = [
+        e for e in batch
+        if e.get("kind") == "job_result" and e.get("status") == "rejected"
+    ]
+    assert len(rejected) == 1
+    ev = rejected[0]
+    assert ev["command"] == QUOTA
+    assert ev["command_ref"] == "q-x"
+    assert ev["failure_reason"] == "agent_overloaded"
+    assert ev["bucket_id"] == "bkt"
+    assert ev["max_size"] == "9000000000"    # the requested quota rode as context
+    assert ev["quota_rejected"] == 1          # cumulative pressure gauge
+
+
+@pytest.mark.asyncio
+async def test_non_quota_jobs_admit_while_quota_is_full() -> None:
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    for i in range(JobManager.MAX_CONCURRENT_JOBS):
+        mgr.start(f"q-{i}", QUOTA, "buckets", _parked)
+    assert mgr.should_shed_quota(QUOTA) is True
+
+    # A non-quota command is admitted normally even with the quota lane full.
+    mgr.start("other", "rclone_migrate", "buckets", _parked)
+    assert "other" in mgr._jobs
+
+    await mgr.shutdown_all()
+
+
+@pytest.mark.asyncio
+async def test_quota_running_caps_at_six_and_pending_drains() -> None:
+    """Even a burst that beats the gate (direct start) still has EXECUTION
+    capped at six by the semaphore; quota_pending shows the queued overflow and
+    both drain to zero."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    barrier = asyncio.Event()
+
+    async def parked(progress: ProgressCallback) -> JobOutcome:
+        await barrier.wait()
+        return JobOutcome(success=True)
+
+    n = JobManager.MAX_CONCURRENT_JOBS + 3
+    for i in range(n):
+        mgr.start(f"q-{i}", QUOTA, "buckets", parked)
+
+    for _ in range(1000):
+        await asyncio.sleep(0)
+        if mgr.load()["quota_running"] >= JobManager.MAX_CONCURRENT_JOBS:
+            break
+
+    load = mgr.load()
+    assert load["quota_running"] == JobManager.MAX_CONCURRENT_JOBS   # capped
+    assert load["quota_pending"] == n                               # overflow queued
+
+    barrier.set()
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    load = mgr.load()
+    assert load["quota_running"] == 0
+    assert load["quota_pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_quota_rejected_is_cumulative_and_survives_drain() -> None:
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    await mgr.reject_quota_overloaded("r1", QUOTA, "buckets", params={"bucket_id": "b1"})
+    await mgr.reject_quota_overloaded("r2", QUOTA, "buckets", params={"bucket_id": "b2"})
+
+    load = mgr.load()
+    assert load["quota_rejected"] == 2   # cumulative
+    assert load["quota_pending"] == 0    # nothing queued
+    assert load["quota_running"] == 0    # nothing running
+
+
+@pytest.mark.asyncio
+async def test_quota_counters_stay_correct_when_queued_jobs_are_cancelled() -> None:
+    """Two quota jobs park on the semaphore (never acquire a permit); shutdown
+    cancels running AND waiting. quota_running never exceeds six and both gauges
+    return to zero - the waiting jobs never touched the running counter."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    n = JobManager.MAX_CONCURRENT_JOBS + 2   # 2 wait on the semaphore
+    for i in range(n):
+        mgr.start(f"q-{i}", QUOTA, "buckets", _parked)
+
+    for _ in range(1000):
+        await asyncio.sleep(0)
+        if mgr.load()["quota_running"] >= JobManager.MAX_CONCURRENT_JOBS:
+            break
+    assert mgr.load()["quota_running"] == JobManager.MAX_CONCURRENT_JOBS  # never exceeds
+    assert mgr.load()["quota_pending"] == n
+
+    await mgr.shutdown_all()
+    load = mgr.load()
+    assert load["quota_running"] == 0
+    assert load["quota_pending"] == 0
+    assert mgr._job_command == {}            # command map fully reaped
+
+
+@pytest.mark.asyncio
+async def test_expanded_jobs_block_rides_the_metrics_envelope() -> None:
+    """The wider load() survives protocol serialization and metrics-envelope
+    construction (the wire is what a consumer actually reads)."""
+    from stormpulse.protocol import Envelope, make_metrics_push
+    from tests.helpers import FAKE_METRICS
+
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    await mgr.reject_quota_overloaded("r1", QUOTA, "buckets", params={"bucket_id": "b1"})
+
+    job_load = mgr.load()
+    envelope = make_metrics_push("agent-1", FAKE_METRICS, job_load=job_load)
+    round_tripped = Envelope.from_json(envelope.to_json())
+
+    assert round_tripped.payload["jobs"] == job_load
+    assert round_tripped.payload["jobs"]["quota_rejected"] == 1
