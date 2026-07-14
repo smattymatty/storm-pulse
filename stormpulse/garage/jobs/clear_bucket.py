@@ -16,9 +16,11 @@ Two modes, selected by the param shape:
   destroyed here; it never leaves the node and never appears in logs or the
   command result.
 
-HeadBucket validates credentials before any delete; per-object errors
-from DeleteObjects fail the whole job (the bug class the Django path
-got wrong - 200 OK with non-empty Errors silently treated as success).
+The first ListObjectsV2 page validates credentials before any delete (it
+is itself a signed request, so a wrong key raises S3AuthError there);
+per-object errors from DeleteObjects fail the whole job (the bug class the
+Django path got wrong - 200 OK with non-empty Errors silently treated as
+success).
 
 Failure reasons: ``auth_failed``, ``partial_failure``, ``os_error``, and in
 credential-less mode ``admin_api_unconfigured``, ``purge_key_mint_failed``,
@@ -309,40 +311,15 @@ async def run_clear_bucket(
     """
     started_at = time.monotonic()
 
-    # ---- Phase 0: credential pre-flight ----
-    await progress("starting", 0, None, "Validating credentials")
-    try:
-        await asyncio.to_thread(client.head_bucket, bucket)
-    except S3AuthError as exc:
-        return JobOutcome(
-            success=False,
-            exit_code=-1,
-            stderr=f"Authentication failed: {exc}",
-            failure_reason="auth_failed",
-            extras={
-                "deleted_count": 0,
-                "failed_count": 0,
-                "errors": [],
-                "duration_seconds": _elapsed(started_at),
-                "error": "Could not authenticate. Check your Admin secret key.",
-            },
-        )
-    except S3Error as exc:
-        return JobOutcome(
-            success=False,
-            exit_code=-1,
-            stderr=f"Bucket pre-flight failed: {exc}",
-            failure_reason="os_error",
-            extras={
-                "deleted_count": 0,
-                "failed_count": 0,
-                "errors": [],
-                "duration_seconds": _elapsed(started_at),
-                "error": str(exc),
-            },
-        )
-
     # ---- Phase 1: paginate the bucket to compute total ----
+    # ListObjectsV2 is a signed, authenticated request, so the first page
+    # IS the credential proof: a wrong key raises S3AuthError here, exactly
+    # as a standalone HeadBucket pre-flight would have. Skipping that extra
+    # pre-flight removes one authenticated round-trip per clear. The auth
+    # branch must be caught BEFORE the generic S3Error (S3AuthError is a
+    # subclass): downstream consumers distinguish a wrong-credential result
+    # from an operational failure by failure_reason, so an auth failure
+    # collapsed into os_error would silently lose that signal.
     await progress("starting", 0, None, "Listing objects")
     all_keys: list[str] = []
     continuation: str | None = None
@@ -352,6 +329,20 @@ async def run_clear_bucket(
                 client.list_objects_v2,
                 bucket,
                 continuation,
+            )
+        except S3AuthError as exc:
+            return JobOutcome(
+                success=False,
+                exit_code=-1,
+                stderr=f"Authentication failed: {exc}",
+                failure_reason="auth_failed",
+                extras={
+                    "deleted_count": 0,
+                    "failed_count": 0,
+                    "errors": [],
+                    "duration_seconds": _elapsed(started_at),
+                    "error": "Could not authenticate. Check your Admin secret key.",
+                },
             )
         except S3Error as exc:
             return JobOutcome(
