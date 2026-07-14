@@ -99,7 +99,7 @@ SendCallback = Callable[[Envelope], Awaitable[None]]
 _RESERVED_EVENT_FIELDS = frozenset({
     "ts", "source", "kind", "trigger", "status", "failure_reason",
     "error", "duration_ms", "command", "command_ref", "concurrent",
-    "bucket_id",
+    "bucket_id", "quota_pending", "quota_running", "quota_rejected",
 })
 _PARAM_CONTEXT_MAX_CHARS = 100
 
@@ -137,15 +137,33 @@ class JobManager:
     # execution is capped (see ``_run``).
     MAX_CONCURRENT_JOBS = 6
 
+    # The one command whose ACCEPTANCE is bounded, not just its execution
+    # (estate-map: capacity-ledger-headroom, containment B). The Headroom loop
+    # re-dispatches the same set_quota mismatches every metrics tick (~5s) until
+    # Garage's observed cap catches up; without an admission ceiling that backlog
+    # queues without bound behind the six execution permits. One full wave
+    # (MAX_CONCURRENT_JOBS accepted quota jobs) is allowed; the next is shed as
+    # agent_overloaded so the website stops spinning and the mismatch is retried
+    # on a later tick. Quota-only: no other command's acceptance is touched.
+    QUOTA_COMMAND = "garage_bucket_set_quota"
+
     def __init__(self, agent_id: str, send: SendCallback) -> None:
         self._agent_id = agent_id
         self._send = send
         self._jobs: dict[str, asyncio.Task[None]] = {}
+        # request_id -> command, so quota jobs can be counted without parsing
+        # task names. Cleaned up wherever ``_jobs`` is (both pop sites + clear).
+        self._job_command: dict[str, str] = {}
         self._sem = asyncio.Semaphore(self.MAX_CONCURRENT_JOBS)
         # Jobs currently holding an execution permit (running the handler/hook),
         # distinct from accepted-but-queued. The gap between this and
         # ``active_count()`` is queue pressure; both ride the metrics push (#3).
         self._running = 0
+        # Quota-specific pressure for the metrics jobs block. ``_quota_running``
+        # mirrors ``_running`` but only for set_quota jobs; ``_quota_rejected``
+        # is cumulative (never reset) so a shed wave stays visible after drain.
+        self._quota_running = 0
+        self._quota_rejected = 0
 
     def start(
         self,
@@ -182,6 +200,7 @@ class JobManager:
             name=f"job:{command}:{request_id}",
         )
         self._jobs[request_id] = task
+        self._job_command[request_id] = command
 
     def is_running(self, request_id: str) -> bool:
         """Return True if a task for ``request_id`` exists and isn't done."""
@@ -219,7 +238,91 @@ class JobManager:
         observable: under a burst ``running`` pins at the cap while ``pending``
         climbs past it, instead of the old unbounded stampede.
         """
-        return {"pending": self.active_count(), "running": self._running}
+        return {
+            "pending": self.active_count(),
+            "running": self._running,
+            "quota_pending": self._quota_pending(),
+            "quota_running": self._quota_running,
+            "quota_rejected": self._quota_rejected,
+        }
+
+    def _quota_pending(self) -> int:
+        """Accepted, not-yet-done set_quota jobs (running + queued for a permit).
+
+        Gated on ``not task.done()`` (the same done-ness ``active_count`` uses),
+        so a quota job cancelled while parked on the semaphore drops out here the
+        instant its task is done, even before its stale ``_job_command`` entry is
+        reaped - the count never inflates.
+        """
+        return sum(
+            1 for rid, task in self._jobs.items()
+            if not task.done() and self._job_command.get(rid) == self.QUOTA_COMMAND
+        )
+
+    def quota_admission_open(self) -> bool:
+        """Whether another ``garage_bucket_set_quota`` job may be accepted.
+
+        The ceiling is one full execution wave (``MAX_CONCURRENT_JOBS``). Past
+        it, quota jobs are shed rather than queued (see ``QUOTA_COMMAND``).
+        Execution is already capped by the semaphore; this caps ACCEPTANCE,
+        quota-only.
+        """
+        return self._quota_pending() < self.MAX_CONCURRENT_JOBS
+
+    def should_shed_quota(self, command: str) -> bool:
+        """True when ``command`` is a quota job and the ceiling is reached.
+
+        The whole quota-identity + ceiling decision lives here so the dispatch
+        path stays ignorant of both; it just asks and, on True, calls
+        ``reject_quota_overloaded``.
+        """
+        return command == self.QUOTA_COMMAND and not self.quota_admission_open()
+
+    async def reject_quota_overloaded(
+        self,
+        request_id: str,
+        command: str,
+        group: str,
+        params: dict[str, str] | None = None,
+    ) -> None:
+        """Shed a quota job past the admission ceiling.
+
+        Bumps the cumulative rejected counter, emits a queryable ``job_result``
+        event carrying current quota pressure (the story an investigator reads a
+        week later), and sends the terminal ``agent_overloaded``
+        ``command.result`` so the website's dispatch fails fast instead of
+        waiting on a job that was never accepted. Runs no handler and mutates no
+        Garage/quota state - the mismatch is left for a later tick to retry.
+        """
+        self._quota_rejected += 1
+        events.emit(
+            "job_result",
+            source="jobs",
+            command=command,
+            command_ref=request_id,
+            status="rejected",
+            failure_reason="agent_overloaded",
+            error="quota admission ceiling reached",
+            duration_ms=0,
+            concurrent=len(self._jobs),
+            bucket_id=(params or {}).get("bucket_id", ""),
+            quota_pending=self._quota_pending(),
+            quota_running=self._quota_running,
+            quota_rejected=self._quota_rejected,
+            **_param_context(params),
+        )
+        result = CommandResultPayload(
+            request_id=request_id,
+            command=command,
+            group=group,
+            success=False,
+            exit_code=-1,
+            stdout="",
+            stderr="Agent quota admission ceiling reached; retry next tick.",
+            duration_ms=0,
+            failure_reason="agent_overloaded",
+        )
+        await self.send_now(make_command_result(self._agent_id, result))
 
     async def shutdown_all(self) -> None:
         """Cancel every in-flight job and wait for them to finish.
@@ -231,6 +334,7 @@ class JobManager:
         active = [t for t in self._jobs.values() if not t.done()]
         if not active:
             self._jobs.clear()
+            self._job_command.clear()
             return
         logger.info("Cancelling %d in-flight long-running job(s)", len(active))
         for task in active:
@@ -239,6 +343,7 @@ class JobManager:
         # CancelledErrors so gather doesn't propagate them.
         await asyncio.gather(*active, return_exceptions=True)
         self._jobs.clear()
+        self._job_command.clear()
 
     # ------------------------------------------------------------------
     # Internals
@@ -270,10 +375,20 @@ class JobManager:
         events.command_ref_var.set(request_id)
         async with self._sem:
             self._running += 1
+            # Mirror the general permit accounting for quota jobs only. Both
+            # increments happen AFTER the semaphore is acquired, so a quota job
+            # cancelled while parked never touches these counters; the finally
+            # runs on normal exit, crash, and cancel-while-running alike, so
+            # neither counter can leak (same guarantee as ``_running``).
+            is_quota = command == self.QUOTA_COMMAND
+            if is_quota:
+                self._quota_running += 1
             try:
                 await self._execute(request_id, command, group, handler, on_success, params)
             finally:
                 self._running -= 1
+                if is_quota:
+                    self._quota_running -= 1
 
     async def _execute(
         self,
@@ -305,6 +420,7 @@ class JobManager:
             # Agent disconnect or explicit shutdown. Do NOT emit a terminal
             # result - the dashboard infers failure from the disconnect.
             self._jobs.pop(request_id, None)
+            self._job_command.pop(request_id, None)
             raise
         except Exception as exc:
             # Use logger.error with exc_info=False (NOT logger.exception) so
@@ -331,6 +447,7 @@ class JobManager:
             )
 
         self._jobs.pop(request_id, None)
+        self._job_command.pop(request_id, None)
 
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(

@@ -358,6 +358,26 @@ async def dispatch_long_running(
         )
         return
 
+    # Quota admission ceiling (estate-map: capacity-ledger-headroom, containment
+    # B). A Headroom metrics-tick storm re-dispatches the same set_quota
+    # mismatches every ~5s; past one execution wave the JobManager sheds them as
+    # agent_overloaded rather than growing an unbounded accepted-but-queued
+    # backlog. The manager owns the quota-command identity and the ceiling; this
+    # path just asks. Runs no handler and mutates no state on rejection.
+    if agent.job_manager.should_shed_quota(payload.command):
+        logger.warning(
+            "Shedding %r (request %s): quota admission ceiling reached",
+            payload.command,
+            request_id,
+        )
+        await agent.job_manager.reject_quota_overloaded(
+            request_id,
+            payload.command,
+            cmd_def.group,
+            params=non_secret_params(cmd_def, validated_params),
+        )
+        return
+
     on_success = post_success_hook(agent, cmd_def, payload.command, validated_params)
     # The handler (above) closed over the full params; the JobManager copy is only
     # event/log context, so secret-flagged params are dropped before it ever sees them.
