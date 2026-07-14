@@ -133,7 +133,11 @@ def _make_page(
 
 @pytest.mark.asyncio
 async def test_auth_failure_returns_auth_failed_outcome() -> None:
-    client = _FakeS3Client(head_raises=S3AuthError("403 Forbidden", status=403))
+    # The list is the credential proof now (no separate HeadBucket
+    # pre-flight): a wrong key raises S3AuthError from ListObjectsV2, and
+    # the ordered catch must keep it classified as auth_failed rather than
+    # collapsing it into os_error.
+    client = _FakeS3Client(list_raises=S3AuthError("403 Forbidden", status=403))
     progress = _ProgressRecorder()
 
     outcome = await run_clear_bucket(progress, client, "test-bucket")  # type: ignore[arg-type]
@@ -145,7 +149,7 @@ async def test_auth_failure_returns_auth_failed_outcome() -> None:
     assert "Admin secret" in outcome.extras["error"]
     # No deletes attempted
     assert client.delete_calls == []
-    # First progress emitted is the credential pre-flight
+    # First progress emitted is the listing pass (which doubles as the proof)
     assert progress.events[0][0] == "starting"
 
 
@@ -612,8 +616,10 @@ async def test_credential_less_clear_failure_still_destroys_key(
 ) -> None:
     fake = _FakeAdmin()
     _patch_admin(monkeypatch, fake)
+    # Auth failure surfaces from the list (the credential proof), not a
+    # separate HeadBucket; the temp key must still be destroyed after.
     client = _FakeS3Client(
-        head_raises=S3AuthError("403 Forbidden", status=403),
+        list_raises=S3AuthError("403 Forbidden", status=403),
     )
     _patch_s3_client(monkeypatch, client)
 
