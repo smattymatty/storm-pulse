@@ -276,9 +276,11 @@ async def test_clean_success_across_two_pages() -> None:
     assert outcome.extras["failed_count"] == 0
     # All 80 keys delivered to delete_objects (one batch, since 80 < 1000)
     assert sum(len(c) for c in client.delete_calls) == 80
-    # Progress events: starting (creds) + starting (listing) + running (one batch) + finalizing
+    # Progress events: starting (listing, which is also the credential
+    # proof) + running (one batch) + finalizing. There is no separate creds
+    # pre-flight event anymore - the first list page does that work.
     stages = [e[0] for e in progress.events]
-    assert stages.count("starting") >= 2
+    assert stages.count("starting") >= 1
     assert "running" in stages
     assert stages[-1] == "finalizing"
 
