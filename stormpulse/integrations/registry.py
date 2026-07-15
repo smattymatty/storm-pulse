@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from stormpulse.config import CommandSpec
+from stormpulse.sdk import Capability, CapabilityStatus
 
 
 class StateBlob(Protocol):
@@ -57,6 +58,13 @@ ReadAffected = Callable[[Any, Any, Mapping[str, str]], list[Any]]
 # integration's current state blob; must accept None (no state yet) and stay honest.
 LogEnricher = Callable[[str, str], str]
 BuildLogEnricher = Callable[[Any], LogEnricher]
+# Optional host-touching readiness probe (P2): given the parsed config, report
+# the live status of each declared capability. Distinct from ``preconditions``
+# (the boot gate) but single-sourced with it - the baseline "is this live"
+# derives from ``preconditions``; this probe only adds per-capability detail.
+# Runs on the doctor/readiness/init path, NEVER under ``config check`` (CORE-000
+# side-effect-free rule; ADR CORE-007 readiness graph).
+ReadinessProbe = Callable[[Any], tuple[CapabilityStatus, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +98,13 @@ class Integration:
     # Optional log enrichers keyed by parser name: "my state can enrich lines of
     # this parser". Parser keys are disjoint across Integrations (fitness-checked).
     log_enrichers: Mapping[str, BuildLogEnricher] | None = None
+    # Optional versioned capabilities this Integration provides (P2 readiness
+    # graph). A capability token has exactly one provider among built-ins; a
+    # duplicate is a boot refusal (mirrors the enricher-parser disjointness rule).
+    capabilities: tuple[Capability, ...] | None = None
+    # Optional host-touching readiness probe. When absent, each declared
+    # capability's liveness is derived from ``preconditions`` (single-sourced).
+    readiness: ReadinessProbe | None = None
 
 
 _integrations: list[Integration] = []

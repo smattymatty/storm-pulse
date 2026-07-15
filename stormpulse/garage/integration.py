@@ -13,6 +13,7 @@ from stormpulse.garage.config import GarageConfig, parse_garage_config
 from stormpulse.garage.preconditions import run_preconditions
 from stormpulse.garage.state import GarageBucket, GarageState
 from stormpulse.integrations import Detector, Integration, register_integration
+from stormpulse.sdk import Capability
 
 
 def _enabled(config: GarageConfig) -> bool:
@@ -76,6 +77,7 @@ GARAGE_INTEGRATION = Integration(
     detect=Detector(run=_detect, interval=_detect_interval),
     read_affected=_read_affected,
     log_enrichers={"garage_s3": _log_enricher},
+    capabilities=(Capability("garage.admin.v1", "garage"),),
 )
 
 register_integration(GARAGE_INTEGRATION)
