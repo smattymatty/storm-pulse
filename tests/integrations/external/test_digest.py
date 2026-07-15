@@ -27,7 +27,7 @@ def _write_tree(root: Path, files: dict[str, bytes]) -> Path:
 
 
 def _reference_digest(included: dict[str, bytes]) -> str:
-    """Independent re-implementation of the §10 formula (sig already excluded)."""
+    """Independent re-implementation of the digest formula (sig already excluded)."""
     hasher = hashlib.sha256()
     hasher.update(b"stormpulse-package-v1\x00")
     for rel in sorted(included, key=lambda r: r.encode("utf-8")):
@@ -162,6 +162,22 @@ def test_t07_depth_boundary(tmp_path: Path) -> None:
     with pytest.raises(PackageError) as excinfo:
         d.scan_and_hash(over)
     assert excinfo.value.code is FailureCode.F2
+
+
+def test_t07_signature_size_boundary(tmp_path: Path) -> None:
+    # The signature is excluded from the digest but still size-checked on read.
+    at_limit = _write_tree(
+        tmp_path / "ok",
+        {d.MANIFEST_NAME: _MANIFEST, d.SIGNATURE_NAME: b"s" * d.MAX_SIGNATURE_BYTES},
+    )
+    assert d.scan_and_hash(at_limit).signature_bytes == b"s" * d.MAX_SIGNATURE_BYTES
+    over = _write_tree(
+        tmp_path / "over",
+        {d.MANIFEST_NAME: _MANIFEST, d.SIGNATURE_NAME: b"s" * (d.MAX_SIGNATURE_BYTES + 1)},
+    )
+    with pytest.raises(PackageError) as excinfo:
+        d.scan_and_hash(over)
+    assert excinfo.value.code is FailureCode.F3
 
 
 def test_missing_source_is_f1(tmp_path: Path) -> None:
