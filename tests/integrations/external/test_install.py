@@ -105,45 +105,31 @@ def test_t22_corrupt_target_is_f10(tmp_path: Path) -> None:
     assert excinfo.value.code is FailureCode.F10
 
 
-def test_crash_before_rename_leaves_no_install(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_t21_raced_source_yields_no_committed_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The destination re-hash is the sole install authority, so a source that
+    # "wins a race" and lands different bytes than were signed cannot be blessed.
+    # Simulate the race by having the copy deposit an extra, unsigned file: the
+    # destination then hashes to something the signature does not cover.
     private, fingerprint = _keypair()
     state = _state(tmp_path)
     _approve(state, tmp_path, private)
     src = tmp_path / "src"
     _make_package(src, private, fingerprint)
 
-    def boom(*_args: object, **_kwargs: object) -> None:
-        raise OSError("crash before rename")
+    real_copy = digest.copy_tree
 
-    monkeypatch.setattr(os, "replace", boom)
-    with pytest.raises(OSError):
+    def racing_copy(source: Path, dest: Path) -> None:
+        real_copy(source, dest)
+        (dest / "smuggled.py").write_bytes(b"attacker\n")  # source raced to other bytes
+
+    monkeypatch.setattr(digest, "copy_tree", racing_copy)
+    with pytest.raises(PackageError) as excinfo:
         install.commit_install(src, state_dir=state, agent_id="a")
-    # No blessed package, no receipt (a leftover tmp is allowed; doctor reports it).
+    assert excinfo.value.code is FailureCode.F6  # dest digest is not the signed digest
+    assert ledger.list_receipts(state) == []
     assert list(layout.packages_dir(state).iterdir()) == []
-    assert ledger.list_receipts(state) == []
-
-
-def test_crash_after_rename_before_receipt_recovers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    private, fingerprint = _keypair()
-    state = _state(tmp_path)
-    _approve(state, tmp_path, private)
-    src = tmp_path / "src"
-    package_digest = _make_package(src, private, fingerprint)
-
-    def boom(*_args: object, **_kwargs: object) -> None:
-        raise OSError("crash before receipt")
-
-    monkeypatch.setattr(ledger, "write_receipt", boom)
-    with pytest.raises(OSError):
-        install.commit_install(src, state_dir=state, agent_id="a")
-    # Orphan package present, no receipt yet.
-    assert _installed_dir(state, package_digest).is_dir()
-    assert ledger.list_receipts(state) == []
-
-    monkeypatch.undo()  # retry completes idempotently over the orphan package
-    receipt = install.commit_install(src, state_dir=state, agent_id="a")
-    assert receipt.package_digest == package_digest
-    assert [r.package_digest for r in ledger.list_receipts(state)] == [package_digest]
 
 
 def test_installed_tree_is_read_only_including_subdirs(tmp_path: Path) -> None:
