@@ -1,0 +1,300 @@
+"""Deterministic package digest and safe copy over a validated source tree.
+
+The digest is an identity over included relative paths and file bytes only:
+source metadata (mtime, uid, gid, mode, traversal order) never contributes, so
+byte-identical trees hash identically and any byte change is detected.
+
+One traversal serves both hashing and copying. It is directory-fd-relative and
+opens every component ``O_NOFOLLOW``, so neither a leaf nor an intermediate
+directory can be swapped for a symlink to redirect a read or escape the tree; a
+swap detected mid-scan fails as F14. Files are consumed as they are visited,
+bounded by a per-file limit and a running total budget, so an appended or swapped
+oversized file is refused mid-read instead of ingested whole. Leading-dot names
+are rejected for reproducibility. Per-file hashes are combined in sorted path
+order at the end.
+
+The root ``stormpulse.integration.sig`` is excluded from the digest (it signs the
+digest) but is size-checked and its bytes returned. The manifest is included and
+its bytes retained, so parsing needs no second read.
+
+POSIX only: relies on ``O_NOFOLLOW``, ``O_DIRECTORY``, and openat via ``dir_fd``.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from stormpulse.integrations.external.model import FailureCode, PackageError
+
+MANIFEST_NAME = "stormpulse.integration.toml"
+SIGNATURE_NAME = "stormpulse.integration.sig"
+
+_DIGEST_DOMAIN = b"stormpulse-package-v1\x00"
+_CHUNK = 1024 * 1024
+
+# Traversal limits. Enforced during the walk, before any unbounded read.
+MAX_FILES = 4096
+MAX_TOTAL_BYTES = 32 * 1024 * 1024
+MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_PATH_BYTES = 240
+MAX_DEPTH = 16
+MAX_MANIFEST_BYTES = 64 * 1024
+MAX_SIGNATURE_BYTES = 16 * 1024
+
+INSTALLED_FILE_MODE = 0o444
+INSTALLED_DIR_MODE = 0o555
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ScanResult:
+    package_digest: str
+    file_count: int
+    total_bytes: int
+    manifest_bytes: bytes | None
+    signature_bytes: bytes | None
+
+
+def scan_and_hash(source: Path) -> ScanResult:
+    """Validate ``source`` and compute its package digest (F1/F2/F3/F14)."""
+    state = _ScanState()
+    _traverse(source, _noop_dir, lambda dir_fd, name, rel: _ingest_file(dir_fd, name, rel, state))
+
+    state.entries.sort(key=lambda item: item[0].encode("utf-8"))
+    hasher = hashlib.sha256()
+    hasher.update(_DIGEST_DOMAIN)
+    for rel, size, file_hash in state.entries:
+        rel_bytes = rel.encode("utf-8")
+        hasher.update(len(rel_bytes).to_bytes(4, "big"))
+        hasher.update(rel_bytes)
+        hasher.update(size.to_bytes(8, "big"))
+        hasher.update(file_hash)
+
+    return ScanResult(
+        package_digest="sha256:" + hasher.hexdigest(),
+        file_count=len(state.entries),
+        total_bytes=state.total_bytes,
+        manifest_bytes=state.manifest_bytes,
+        signature_bytes=state.signature_bytes,
+    )
+
+
+def copy_tree(source: Path, dest: Path) -> None:
+    """Copy every validated regular file from ``source`` into ``dest``.
+
+    Same validation as the hash walk (symlinks/irregular rejected, limits
+    enforced), so the destination can then be re-hashed as the sole authority.
+    """
+    dest.mkdir(parents=True, exist_ok=True)
+    budget = _CopyBudget()
+    _traverse(
+        source,
+        lambda rel: _make_dir(dest, rel),
+        lambda dir_fd, name, rel: _copy_file(dir_fd, name, rel, dest, budget),
+    )
+
+
+@dataclass(slots=True)
+class _ScanState:
+    entries: list[tuple[str, int, bytes]] = field(default_factory=list)
+    total_bytes: int = 0
+    manifest_bytes: bytes | None = None
+    signature_bytes: bytes | None = None
+
+
+@dataclass(slots=True)
+class _CopyBudget:
+    files: int = 0
+    total_bytes: int = 0
+
+
+def _traverse(
+    source: Path,
+    on_dir: Callable[[str], None],
+    on_file: Callable[[int, str, str], None],
+) -> None:
+    try:
+        root_fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        raise PackageError(FailureCode.F1, "source is not a directory") from None
+    try:
+        _walk(root_fd, "", 0, on_dir, on_file)
+    finally:
+        os.close(root_fd)
+
+
+def _walk(
+    dir_fd: int,
+    prefix: str,
+    depth: int,
+    on_dir: Callable[[str], None],
+    on_file: Callable[[int, str, str], None],
+) -> None:
+    if depth > MAX_DEPTH:
+        raise PackageError(FailureCode.F2, "directory depth exceeds limit", path=prefix or ".")
+    with os.scandir(dir_fd) as scan:
+        for entry in scan:
+            name = entry.name
+            _validate_name(name)
+            rel = name if not prefix else f"{prefix}/{name}"
+            if len(rel.encode("utf-8")) > MAX_PATH_BYTES:
+                raise PackageError(FailureCode.F2, "relative path exceeds byte limit", path=rel)
+            if entry.is_symlink():
+                raise PackageError(FailureCode.F2, "symlink is not allowed", path=rel)
+            if entry.is_dir(follow_symlinks=False):
+                try:
+                    child_fd = os.open(
+                        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_DIRECTORY, dir_fd=dir_fd
+                    )
+                except OSError:
+                    raise PackageError(FailureCode.F14, "source changed during scan", path=rel) from None
+                try:
+                    on_dir(rel)
+                    _walk(child_fd, rel, depth + 1, on_dir, on_file)
+                finally:
+                    os.close(child_fd)
+            elif entry.is_file(follow_symlinks=False):
+                on_file(dir_fd, name, rel)
+            else:
+                raise PackageError(FailureCode.F2, "irregular file type is not allowed", path=rel)
+
+
+def _noop_dir(rel: str) -> None:
+    return None
+
+
+def _make_dir(dest: Path, rel: str) -> None:
+    (dest / rel).mkdir(mode=0o700, parents=True, exist_ok=True)
+
+
+def _ingest_file(dir_fd: int, name: str, rel: str, state: _ScanState) -> None:
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError:
+        raise PackageError(FailureCode.F14, "source changed during scan", path=rel) from None
+    try:
+        if rel == SIGNATURE_NAME:
+            state.signature_bytes = _read_capped(fd, MAX_SIGNATURE_BYTES, rel)
+            return  # excluded from the digest
+        if len(state.entries) >= MAX_FILES:
+            raise PackageError(FailureCode.F3, "included file count exceeds limit", path=rel)
+        if rel == MANIFEST_NAME:
+            data = _read_capped(fd, MAX_MANIFEST_BYTES, rel)
+            state.manifest_bytes = data
+            file_hash = hashlib.sha256(data).digest()
+            size = len(data)
+            if state.total_bytes + size > MAX_TOTAL_BYTES:
+                raise PackageError(FailureCode.F3, "total included bytes exceed limit", path=rel)
+        else:
+            file_hash, size = _hash_capped(fd, rel, state.total_bytes)
+        state.total_bytes += size
+        state.entries.append((rel, size, file_hash))
+    finally:
+        os.close(fd)
+
+
+def _copy_file(dir_fd: int, name: str, rel: str, dest: Path, budget: _CopyBudget) -> None:
+    budget.files += 1
+    if budget.files > MAX_FILES + 1:  # +1 admits the digest-excluded signature file
+        raise PackageError(FailureCode.F3, "included file count exceeds limit", path=rel)
+    if rel == MANIFEST_NAME:
+        cap = MAX_MANIFEST_BYTES
+    elif rel == SIGNATURE_NAME:
+        cap = MAX_SIGNATURE_BYTES
+    else:
+        cap = MAX_FILE_BYTES
+    try:
+        src_fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError:
+        raise PackageError(FailureCode.F14, "source changed during scan", path=rel) from None
+    try:
+        dest_fd = os.open(dest / rel, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with open(dest_fd, "wb") as out:
+            copied = 0
+            while True:
+                chunk = os.read(src_fd, _CHUNK)
+                if not chunk:
+                    break
+                copied += len(chunk)
+                if copied > cap:
+                    raise PackageError(FailureCode.F3, "file exceeds size limit", path=rel)
+                budget.total_bytes += len(chunk)
+                if budget.total_bytes > MAX_TOTAL_BYTES:
+                    raise PackageError(FailureCode.F3, "total bytes exceed limit", path=rel)
+                out.write(chunk)
+    finally:
+        os.close(src_fd)
+
+
+def _read_capped(fd: int, limit: int, rel: str) -> bytes:
+    chunks: list[bytes] = []
+    read = 0
+    while read <= limit:
+        chunk = os.read(fd, min(_CHUNK, limit + 1 - read))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        read += len(chunk)
+    if read > limit:
+        raise PackageError(FailureCode.F3, f"{rel} exceeds size limit", path=rel)
+    return b"".join(chunks)
+
+
+def _hash_capped(fd: int, rel: str, already_total: int) -> tuple[bytes, int]:
+    hasher = hashlib.sha256()
+    size = 0
+    total_budget = MAX_TOTAL_BYTES - already_total
+    while True:
+        chunk = os.read(fd, _CHUNK)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > MAX_FILE_BYTES:
+            raise PackageError(FailureCode.F3, "file exceeds size limit", path=rel)
+        if size > total_budget:
+            raise PackageError(FailureCode.F3, "total included bytes exceed limit", path=rel)
+        hasher.update(chunk)
+    return hasher.digest(), size
+
+
+def seal_contents(root: Path) -> None:
+    """Make a staged tree's contents durable and read-only before a rename.
+
+    Files are fsynced (data durable) then set 0444; subdirectories are fsynced
+    then set 0555; the root is fsynced but left **writable** so it can still be
+    reparented by ``rename`` (moving a directory to a new parent updates its
+    ``..`` entry, which needs write on that directory). The caller finalizes the
+    root's mode after the rename.
+    """
+    for dirpath, _dirnames, filenames in os.walk(root, topdown=False):
+        for filename in filenames:
+            file_path = os.path.join(dirpath, filename)
+            _fsync_path(file_path)  # fsync data before making it read-only
+            os.chmod(file_path, INSTALLED_FILE_MODE)
+        _fsync_path(dirpath)
+        if not os.path.samefile(dirpath, root):
+            os.chmod(dirpath, INSTALLED_DIR_MODE)
+
+
+def _fsync_path(path: str) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _validate_name(name: str) -> None:
+    if name.startswith("."):
+        # Rejects ".", "..", and stray dotfiles (e.g. .DS_Store) so a package's
+        # identity is reproducible across packaging environments.
+        raise PackageError(FailureCode.F2, "leading-dot name is not allowed", path=name)
+    if "\x00" in name or "\\" in name or "/" in name:
+        raise PackageError(FailureCode.F2, "illegal character in name", path=name)
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        raise PackageError(FailureCode.F2, "non-utf-8 name", path=name) from None

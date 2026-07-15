@@ -232,6 +232,11 @@ def main() -> None:
 
     add_signoff_subparser(subparsers)
 
+    # --- integration subcommand group ---
+    from stormpulse.cli.integration import add_integration_subparser
+
+    add_integration_subparser(subparsers)
+
     args = parser.parse_args()
 
     log_level = os.environ.get("STORMPULSE_LOG_LEVEL", "INFO").upper()
@@ -362,6 +367,10 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+    elif args.command == "integration":
+        from stormpulse.cli.integration import cmd_integration
+
+        cmd_integration(args)
     elif args.command is None:
         # Detect old syntax: stormpulse /path/to/config
         if len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
