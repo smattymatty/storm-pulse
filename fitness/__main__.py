@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from fitness.dependency_allowlist import check_dependencies
+from fitness.external_loader_p1 import check_external_loader_no_execution
 from fitness.integration_contract import check_integration_contract
 from fitness.merge_fence import check_merge_fence
 from fitness.no_shell import check_no_shell
@@ -47,6 +48,7 @@ def main() -> int:
         ("Function 4 - runtime dependency allowlist", check_dependencies),
         ("Function 5 - integration contract", check_integration_contract),
         ("Function 6 - merge-primitive fence", check_merge_fence),
+        ("Function 7 - external loader no-execution", check_external_loader_no_execution),
     ]:
         violations = [v for v in check() if v not in baseline]
         findings.append((label, violations))
