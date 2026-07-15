@@ -13,6 +13,7 @@ from stormpulse.caddy.commands import build_caddy_specs
 from stormpulse.caddy.config import CaddyConfig, parse_caddy_config
 from stormpulse.caddy.preconditions import run_preconditions
 from stormpulse.integrations import Integration, register_integration
+from stormpulse.sdk import Capability
 
 
 def _enabled(config: CaddyConfig) -> bool:
@@ -25,6 +26,7 @@ CADDY_INTEGRATION = Integration(
     enabled=_enabled,
     preconditions=run_preconditions,
     specs=build_caddy_specs,
+    capabilities=(Capability("caddy.drop_in.v1", "caddy"),),
 )
 
 register_integration(CADDY_INTEGRATION)

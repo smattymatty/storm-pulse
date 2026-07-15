@@ -24,6 +24,7 @@ from fitness.integration_contract import check_integration_contract
 from fitness.merge_fence import check_merge_fence
 from fitness.no_shell import check_no_shell
 from fitness.private_imports import check_private_imports
+from fitness.wizard_sdk_p2 import check_wizard_sdk
 
 BASELINE_PATH = Path(__file__).resolve().parent / "baseline.txt"
 
@@ -49,6 +50,7 @@ def main() -> int:
         ("Function 5 - integration contract", check_integration_contract),
         ("Function 6 - merge-primitive fence", check_merge_fence),
         ("Function 7 - external loader no-execution", check_external_loader_no_execution),
+        ("Function 8 - wizard SDK purity and topology", check_wizard_sdk),
     ]:
         violations = [v for v in check() if v not in baseline]
         findings.append((label, violations))

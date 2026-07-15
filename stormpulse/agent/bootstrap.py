@@ -15,6 +15,7 @@ from stormpulse.agent.integrations_runtime import (
 from stormpulse.commands import build_registry
 from stormpulse.config import CommandSpec, Config, ConfigError
 from stormpulse.integrations import Integration, registered_integrations
+from stormpulse.integrations.readiness import capability_provider_conflicts
 from stormpulse.logging import (
     DockerTailer,
     LogPositionStore,
@@ -129,6 +130,9 @@ def build_agent_dependencies(
                     f"log enricher for parser {parser!r} is already declared by "
                     f"{owner!r} (CORE-005 decision 13: parser keys are disjoint)"
                 )
+    # One provider per capability token: a later declarer of a token a built-in
+    # already provides is a boot refusal (P2 readiness graph, CORE-007).
+    capability_losers = capability_provider_conflicts()
     for integ in registered_integrations():
         raw = config.integrations.get(integ.id)
         if raw is None:
@@ -138,7 +142,7 @@ def build_agent_dependencies(
                     integ.id, enricher_losers[integ.id],
                 )
             continue
-        reason = enricher_losers.get(integ.id)
+        reason = enricher_losers.get(integ.id) or capability_losers.get(integ.id)
         runtime = (
             IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, None, integ)
             if reason is not None
