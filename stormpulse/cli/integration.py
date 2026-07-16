@@ -62,6 +62,19 @@ def add_integration_subparser(subparsers: Any) -> None:
     doctor_parser.add_argument("integration_id", nargs="?")
     _add_common(doctor_parser)
 
+    # P2 readiness graph: distinct from `doctor` (which diagnoses installed P1
+    # package integrity). This reports each integration's available/configured/
+    # enabled/ready state and live capabilities (host probes run here, never under
+    # `config check`), and reports/recovers an interrupted wizard apply.
+    readiness_parser = sub.add_parser(
+        "readiness", help="report integration readiness and recover an interrupted apply"
+    )
+    readiness_parser.add_argument("integration_id", nargs="?")
+    readiness_parser.add_argument(
+        "--recover", action="store_true", help="recover an interrupted wizard apply from its journal"
+    )
+    _add_common(readiness_parser)
+
     publisher_parser = sub.add_parser("publisher", help="manage approved publisher keys")
     publisher_sub = publisher_parser.add_subparsers(dest="publisher_command")
 
@@ -97,13 +110,26 @@ def cmd_integration(args: argparse.Namespace) -> None:
     except ConfigError as exc:
         print(f"config invalid: {exc}", file=sys.stderr)
         sys.exit(1)
-    sys.exit(run(args, state_dir=config.storage.db_path.parent, agent_id=config.agent.id))
+    sys.exit(
+        run(
+            args,
+            state_dir=config.storage.db_path.parent,
+            agent_id=config.agent.id,
+            integrations_config=config.integrations,
+        )
+    )
 
 
-def run(args: argparse.Namespace, *, state_dir: Path, agent_id: str) -> int:
+def run(
+    args: argparse.Namespace,
+    *,
+    state_dir: Path,
+    agent_id: str,
+    integrations_config: dict[str, dict[str, object]] | None = None,
+) -> int:
     """Execute the operation and return the process exit code (never raises)."""
     try:
-        return _dispatch(args, state_dir, agent_id)
+        return _dispatch(args, state_dir, agent_id, integrations_config or {})
     except PackageError as exc:
         _emit_error(args, exc)
         return _EXIT_BY_CODE.get(exc.code, 1)
@@ -111,7 +137,12 @@ def run(args: argparse.Namespace, *, state_dir: Path, agent_id: str) -> int:
         return 0
 
 
-def _dispatch(args: argparse.Namespace, state_dir: Path, agent_id: str) -> int:
+def _dispatch(
+    args: argparse.Namespace,
+    state_dir: Path,
+    agent_id: str,
+    integrations_config: dict[str, dict[str, object]],
+) -> int:
     command = args.integration_command
     if command == "inspect":
         report = inspection.inspect_package(Path(args.source), state_dir)
@@ -129,10 +160,82 @@ def _dispatch(args: argparse.Namespace, state_dir: Path, agent_id: str) -> int:
         findings = doctor.doctor_packages(state_dir, args.integration_id)
         _emit(args, "doctor", None, findings)
         return 5 if any(f.severity is Severity.ERROR for f in findings) else 0
+    if command == "readiness":
+        return _readiness(args, state_dir, integrations_config)
     if command == "publisher":
         return _publisher(args, state_dir)
     _usage()
     return 2
+
+
+def _readiness(
+    args: argparse.Namespace,
+    state_dir: Path,
+    integrations_config: dict[str, dict[str, object]],
+) -> int:
+    """Report the P2 readiness graph and, with --recover, recover an interrupted
+    wizard apply from its durable journal."""
+    import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
+    from stormpulse.integrations.readiness import resolve_all
+    from stormpulse.sdk import ReadinessState
+    from stormpulse.wizard import read_pending, recover
+
+    reports = resolve_all(integrations_config, run_probe=True)
+    if args.integration_id is not None:
+        reports = {k: v for k, v in reports.items() if k == args.integration_id}
+
+    pending = read_pending(state_dir)
+    recovery = recover(state_dir) if getattr(args, "recover", False) else None
+
+    _emit_readiness(args, reports, pending, recovery)
+    # Exit 4 if anything the operator enabled is not yet ready; else 0.
+    not_ready = any(r.state is ReadinessState.ENABLED for r in reports.values())
+    return 4 if not_ready else 0
+
+
+def _emit_readiness(
+    args: argparse.Namespace,
+    reports: dict[str, Any],
+    pending: list[Any] | None,
+    recovery: Any,
+) -> None:
+    if getattr(args, "json", False):
+        result: dict[str, object] = {
+            "readiness": {
+                integ_id: {
+                    "state": report.state.name.lower(),
+                    "reason": report.reason,
+                    "capabilities": [
+                        {"token": c.token, "liveness": c.liveness.value, "reason": c.reason}
+                        for c in report.capabilities
+                    ],
+                }
+                for integ_id, report in sorted(reports.items())
+            },
+            "journal_pending": len(pending) if pending is not None else 0,
+            "recovered": list(recovery.recovered) if recovery is not None else None,
+            "manual": list(recovery.manual) if recovery is not None else None,
+        }
+        payload = {"ok": True, "operation": "readiness", "schema_version": 1, "result": result, "findings": []}
+        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        return
+    print("readiness:")
+    for integ_id, report in sorted(reports.items()):
+        suffix = f" - {report.reason}" if report.reason else ""
+        print(f"  [{report.state.name.lower()}] {integ_id}{suffix}")
+        for cap in report.capabilities:
+            cap_suffix = f" - {cap.reason}" if cap.reason else ""
+            print(f"      {cap.token}: {cap.liveness.value}{cap_suffix}")
+    if pending is not None:
+        print(
+            f"  wizard journal: an interrupted apply is pending ({len(pending)} step(s)); "
+            "re-run with --recover to restore the pre-apply state",
+            file=sys.stderr,
+        )
+    if recovery is not None:
+        print(f"  recovered: {', '.join(recovery.recovered) or 'nothing'}", file=sys.stderr)
+        if recovery.manual:
+            print(f"  needs manual review: {', '.join(recovery.manual)}", file=sys.stderr)
 
 
 def _publisher(args: argparse.Namespace, state_dir: Path) -> int:
