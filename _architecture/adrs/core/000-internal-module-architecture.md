@@ -25,13 +25,13 @@ The `stormpulse/` package is organized into four layers. Every module and subpac
 
 | Layer | Members | May import |
 |-------|---------|------------|
-| **Foundation** | `protocol.py`, `config.py` | nothing intra-package |
-| **Framework** | `commands/`, `init/`, `auth.py`, `integrations/` | Foundation |
+| **Foundation** | `protocol.py`, `config.py`, `sdk/` | nothing intra-package |
+| **Framework** | `commands/`, `init/`, `auth.py`, `integrations/`, `wizard/` | Foundation |
 | **Features** | `garage/`, `caddy/`, `logging/`, `signoff/`, `metrics.py`, `enroll.py`, `status.py`, `system_inventory.py` | Foundation, Framework; not sibling Features |
 | **Entry** | `agent/`, `cli/`, `__main__.py` | any layer |
 
-- **Foundation** is the wire-format and config substrate. `protocol.py` carries the message envelope and payload contracts; `config.py` carries the TOML-backed dataclasses. Foundation imports nothing intra-package.
-- **Framework** is shared infrastructure: `commands/` is the runtime command registry and job runner, `init/` is the install-time setup framework, `auth.py` is HMAC and nonce verification, `integrations/` is the Integration contract registry ([CORE-005](005-integration-contract.md)).
+- **Foundation** is the wire-format, config, and integration-contract substrate. `protocol.py` carries the message envelope and payload contracts; `config.py` carries the TOML-backed dataclasses; `sdk/` carries the versioned integration-wizard contract, the typed `Question`/`Finding`/`InitPlan` data a private integration is written against ([CORE-007](007-external-integration-loader-and-command-contributor-grant.md)). Foundation imports nothing intra-package, so `sdk/` stays pure enough for external plugin code to depend on it.
+- **Framework** is shared infrastructure: `commands/` is the runtime command registry and job runner, `init/` is the install-time setup framework, `auth.py` is HMAC and nonce verification, `integrations/` is the Integration contract registry ([CORE-005](005-integration-contract.md)), and `wizard/` is the transactional mutation engine that applies an integration's typed `InitPlan` with preview, per-step verify, receipt, and a journalled crash-recoverable reverse-order rollback ([CORE-007](007-external-integration-loader-and-command-contributor-grant.md)).
 - **Features** are capability surfaces. Size is not the criterion: `metrics.py` is a one-module Feature, `garage/` is a fifteen-module Feature, and the same rule binds both. Placement comes from the capability test, not the import shape.
 - **Entry** is composition. `agent/` wires the running agent; `cli/` and `__main__.py` are the command-line surface. Nothing imports Entry.
 
@@ -61,7 +61,7 @@ This ADR governs imports *between* modules. The internal sublayering of any sing
 
 - A helper that genuinely serves two Features must be hoisted into Framework even when that feels premature (the `prompt_confirm` / `restart_or_hint` case). Forcing the question "what layer does this really belong to?" the moment a second consumer appears is the feature, not a bug, but the friction is real.
 - Rule 2 is stricter than the sibling django repo's CORE-001, which constrains topology but not name-level privacy. A reader moving between the two repos holds one extra rule for storm-pulse. The strictness buys binary checkability; the extra rule is the cost.
-- Coupling that isn't a static `import` - dynamic imports by string, registry lookups by name, dotted-path references - is invisible to both rules and to CORE-001's checks. It stays a code-review concern.
+- Coupling that isn't a static `import` - dynamic imports by string, registry lookups by name, dotted-path references - is invisible to both rules and to CORE-001's topology checks. It stays a code-review concern, with one machine-checked exception: the `wizard/` engine reaches a Feature-owned capability (the Caddy drop-in) through a registry lookup by capability *token*, never an import, and CORE-001 Function 8 fences both that seam (the engine imports no Feature) and the `sdk/` Foundation purity that lets the token dispatch be trusted.
 - 23 violations existed at adoption against an estimated 3. The cleanup is done, but [CORE-001](001-fitness-functions.md)'s baseline-mechanism choice (a plain list, no ratchet) was sized for the wrong number. That trade-off is flagged there for re-decision rather than quietly corrected.
 
 ## Governance
@@ -74,7 +74,7 @@ This ADR governs imports *between* modules. The internal sublayering of any sing
 
 - CORE-005 is enforced through the Integration contract in Framework (`integrations/`), which registers Features (`garage/`, `caddy/`) without Foundation or Entry coupling.
 
-**Manual review** covers what static checks miss: dynamic imports by string, registry lookups by name, dotted-path references. A feature-on-feature import is rejected in review; the resolution is always to hoist the shared code into Framework, never to grant an exception. A new module or subpackage is classified into the layer table above on the commit that adds it; the table is the current-state record and `.importlinter` is its enforced mirror, and they must not drift.
+**Manual review** covers what static checks miss: dynamic imports by string, registry lookups by name, dotted-path references (the `wizard/` capability-provider dispatch is the machine-checked exception, fenced by CORE-001 Function 8). A feature-on-feature import is rejected in review; the resolution is always to hoist the shared code into Framework, never to grant an exception. A new module or subpackage is classified into the layer table above on the commit that adds it; the table is the current-state record and `.importlinter` is its enforced mirror, and they must not drift.
 
 **Related ADRs:**
 

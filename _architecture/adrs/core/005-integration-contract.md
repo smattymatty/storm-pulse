@@ -202,11 +202,23 @@ fences the merge primitive itself: `.with_items()` is callable only from
 `agent/integrations_runtime.py`, so a bypass merge is machine-caught, not
 review-caught. Bootstrap additionally refuses a later configured declarer of an
 already-claimed enricher parser (first registered wins), so a fork that never
-runs the fitness suite still hears about the collision at startup. Bootstrap enforces decision 12 (group == id) and the merge site
-enforces decision 11's `MergeableState` requirement, both loudly. The command-registry fence stays manual-review plus the
-future-ADR gate of decision 8. A future ADR is required to: add a third-party
-loader; let external code contribute commands; or relax the runtime dependency
-allowlist for an Integration.
+runs the fitness suite still hears about the collision at startup. The same
+disjointness holds for the readiness-graph capability tokens an Integration
+provides: bootstrap refuses a later declarer of a capability another Integration
+already provides (one provider per token, the sibling of decision 13's
+enricher rule; [CORE-007](007-external-integration-loader-and-command-contributor-grant.md)).
+Bootstrap enforces decision 12 (group == id) and the merge site
+enforces decision 11's `MergeableState` requirement, both loudly.
+
+The command-registry fence stays manual-review plus decision 8's gate.
+[CORE-007](007-external-integration-loader-and-command-contributor-grant.md) is
+the ADR that gate named: it authorizes loading an operator-sealed, first-party
+private integration and adds the readiness graph and typed wizard SDK. Decision
+8 itself still holds - external code may not contribute *commands* until
+CORE-007's command-contributor seal lands (its later slice), so the
+first-party-only command fence is unchanged. Still gated behind a future
+decision: relaxing the runtime dependency allowlist for an Integration, and any
+untrusted (non-first-party) in-process loader.
 
 ## Change log
 

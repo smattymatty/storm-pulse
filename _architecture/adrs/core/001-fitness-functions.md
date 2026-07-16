@@ -25,7 +25,7 @@ The obvious move is to drop them in the pytest suite. The problem with that move
 
 ## Decision
 
-storm-pulse has four fitness functions: two enforce [CORE-000](000-internal-module-architecture.md), two enforce security invariants from the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture).
+The suite is extensible: a later ADR that mechanizes a new invariant adds a function, and `python -m fitness` runs them all. It currently holds eight - the four founding checks (two enforcing [CORE-000](000-internal-module-architecture.md), two enforcing [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) invariants) plus four contract-and-boundary checks added by the integration ADRs.
 
 | # | Function | Enforces | Mechanism |
 |---|----------|----------|-----------|
@@ -33,6 +33,10 @@ storm-pulse has four fitness functions: two enforce [CORE-000](000-internal-modu
 | 2 | No cross-boundary private imports | CORE-000 Rule 2 | `fitness/` runner |
 | 3 | No shell execution | Security Architecture, Layer 4 | `fitness/` runner |
 | 4 | Runtime dependency allowlist | Security Architecture, supply chain | `fitness/` runner |
+| 5 | Integration contract | CORE-005 (required core, first-party commands) | `fitness/` runner |
+| 6 | State-merge fence | CORE-005 (one merge call site) | `fitness/` runner |
+| 7 | External-loader no-execution | CORE-007 (P1 loader imports no package code) | `fitness/` runner |
+| 8 | Wizard SDK purity & topology | CORE-007 (`sdk/` pure Foundation, `wizard/` imports no Feature) | `fitness/` runner |
 
 **Function 1 - Layer topology.** `import-linter` contracts in `.importlinter` express CORE-000's four-layer model as layered contracts: Foundation below Framework below Features below Entry, with Features forbidden from importing sibling Features. Same tool the sibling django repo uses; shared tooling across the two Storm codebases is deliberate.
 
@@ -40,14 +44,16 @@ storm-pulse has four fitness functions: two enforce [CORE-000](000-internal-modu
 
 **Function 3 - No shell execution.** Asserts no `subprocess` call in `stormpulse/` passes `shell=True`. The 2026-05-22 scan found zero occurrences, so this function is a regression guard against future creep rather than a cleanup tool. Mechanizes the Security Architecture's Layer 4 commitment.
 
-**Function 4 - Runtime dependency allowlist.** Two assertions. (a) `[project.dependencies]` in `pyproject.toml` is a subset of `{websockets, psutil, cryptography}`. (b) No module in `stormpulse/` imports a third-party top-level package outside that set plus the standard library. Part (a) catches an undeclared dependency in the manifest; part (b) catches the bypass where a package is installed into the environment and imported without ever being declared.
+**Function 4 - Runtime dependency allowlist.** Two assertions. (a) `[project.dependencies]` in `pyproject.toml` is a subset of `{websockets, psutil, cryptography}`. (b) No module in `stormpulse/` imports a third-party top-level package outside that set plus the standard library. Part (a) catches an undeclared dependency in the manifest; part (b) catches the bypass where a package is installed into the environment and imported without ever being declared. The integration SDK and wizard engine add nothing to this line: they are standard-library plus the same three packages, and a private integration's wizard code is standard-library plus the versioned `stormpulse.sdk` only (CORE-007).
 
-A fifth candidate - asserting every command in the registry uses an absolute binary path - was left out. Most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
+**Functions 5-8 - contract and boundary checks added by the integration ADRs.** Function 5 (CORE-005) asserts every registered Integration satisfies the required core and that command-contributing Integrations are first-party (inside `stormpulse/`). Function 6 (CORE-005) fences the state-merge primitive to its one legal call site. Function 7 (CORE-007) asserts the external-package loader never imports or executes package code. Function 8 (CORE-007) asserts the wizard SDK's boundaries: `sdk/` stays pure Foundation (it imports no other `stormpulse` module and no host-mutation primitive, so external plugin code can trust it) and the `wizard/` engine imports only Foundation, never a Feature - which is what makes its capability-provider dispatch (a lookup by token, invisible to Function 1) safe. Each cites the ADR it mechanizes, per the governance rule below.
+
+One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**
 
 - Function 1 runs as `lint-imports`.
-- Functions 2, 3, and 4 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs all three.
+- Functions 2 through 8 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
 - The `fitness/` runner runs every check and reports every violation before exiting non-zero, never fail-fast. Stopping at the first violation would hide the rest; the cost of decoupling from pytest is hand-rolled reporting, and the reporting has to be honest.
 - `make fitness` runs the whole suite: `lint-imports && python -m fitness`.
 
@@ -58,7 +64,7 @@ A fifth candidate - asserting every command in the registry uses an absolute bin
 - A red `fitness` job is unambiguous: an invariant was crossed, not a behaviour changed.
 - The two CORE-000 rules and two Security Architecture commitments stop depending on whether the reviewer happened to know them.
 - The suite is gating from commit one; no warn-mode, no period where CI is green over a broken rule.
-- New fitness functions have a home. Adding a fifth check is a known-shape operation.
+- New fitness functions have a home. Adding a check as a later ADR mechanizes a new invariant is a known-shape operation - the suite has grown from the founding four to eight this way.
 
 **Negative:**
 
