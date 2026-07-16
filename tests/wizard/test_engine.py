@@ -46,7 +46,11 @@ def _env(tmp_path: Path, **kw: object) -> ApplyEnv:
     base.mkdir(exist_ok=True)
     units = tmp_path / "units"
     units.mkdir(exist_ok=True)
-    return ApplyEnv(config_path=cfg, base_dir=base, systemd_user_dir=units, **kw)  # type: ignore[arg-type]
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    return ApplyEnv(
+        config_path=cfg, base_dir=base, systemd_user_dir=units, state_dir=state, **kw  # type: ignore[arg-type]
+    )
 
 
 # --- unit tests on the rollback primitive: reverse order (I4) + loud (I5) ---
@@ -62,7 +66,10 @@ def _logging_step(name: str, log: list[str], *, fail: bool = False) -> Step:
         kind=MutationKind.VERIFY_PROBE,
         target=name,
         atomic=True,
+        pre_image=None,
         pre_image_digest=None,
+        recover_path=None,
+        recover_mode=0,
         forward=lambda: None,
         verify=lambda: True,
         compensate=compensate,
