@@ -28,6 +28,8 @@ Project-scoping limits the blast radius of a leaked credential to one package, b
 
 **Version is static, in `pyproject.toml`.** Single source of truth, one line to edit. `setuptools-scm` is not adopted: a build-time dep and a layer of indirection to save editing one line.
 
+**The wheel carries a second versioned surface: the SDK contract.** `stormpulse.sdk.SDK_API` is the integer version of the typed integration-wizard contract a private integration is built against ([CORE-007](007-external-integration-loader-and-command-contributor-grant.md)). It is distinct from `[project].version`: the package version moves every release, while the SDK contract version moves only when the wizard data types (`Question`/`Finding`/`InitPlan`) change incompatibly. A plan or manifest built against a newer `SDK_API` than the installed agent is refused at apply time. What `stormpulse update` does when an *installed* integration's SDK compatibility breaks - refuse the update, disable the integration and proceed, or hold the prior agent - is not yet defined: no external integration loads until the runtime loader lands (CORE-007's later slice), so there is nothing to break against yet, and that behaviour is specified there rather than pre-guessed here.
+
 **Token never on a server.** The PyPI API token is project-scoped to `storm-pulse-agent` and stored only on the maker's workstation (env var / keyring). Compromise scope: that one dev machine. Rotation: at the maker's discretion, no shared secret to coordinate.
 
 **Lockfile is hand-rolled.** `uv lock` is run when the maker bumps a dependency or wants to refresh, never on a schedule. The supply chain doesn't move without a deliberate local action.
