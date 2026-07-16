@@ -64,3 +64,7 @@ class ApplyEnv:
     health: Callable[[str], bool] | None = None
     probe: Callable[[str], bool] | None = None
     daemon_reload: Callable[[], None] | None = None
+    # Post-apply checks the caller injects (service health, dependency re-check).
+    # Returns a list of failure reasons; a non-empty list rolls the plan back. The
+    # engine always additionally re-parses the config (no host probe) itself.
+    post_check: Callable[[], list[str]] | None = None

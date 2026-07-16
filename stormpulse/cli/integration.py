@@ -58,22 +58,16 @@ def add_integration_subparser(subparsers: Any) -> None:
 
     _add_common(sub.add_parser("list", help="list install receipts"))
 
-    doctor_parser = sub.add_parser("doctor", help="diagnose installed state")
+    # `doctor` diagnoses installed P1 package integrity AND reports the P2 readiness
+    # graph (available/configured/enabled/ready + live capabilities; host probes run
+    # here, never under `config check`), plus any interrupted wizard apply. --recover
+    # restores the pre-apply state of an interrupted apply from its durable journal.
+    doctor_parser = sub.add_parser("doctor", help="diagnose installed and readiness state")
     doctor_parser.add_argument("integration_id", nargs="?")
-    _add_common(doctor_parser)
-
-    # P2 readiness graph: distinct from `doctor` (which diagnoses installed P1
-    # package integrity). This reports each integration's available/configured/
-    # enabled/ready state and live capabilities (host probes run here, never under
-    # `config check`), and reports/recovers an interrupted wizard apply.
-    readiness_parser = sub.add_parser(
-        "readiness", help="report integration readiness and recover an interrupted apply"
-    )
-    readiness_parser.add_argument("integration_id", nargs="?")
-    readiness_parser.add_argument(
+    doctor_parser.add_argument(
         "--recover", action="store_true", help="recover an interrupted wizard apply from its journal"
     )
-    _add_common(readiness_parser)
+    _add_common(doctor_parser)
 
     publisher_parser = sub.add_parser("publisher", help="manage approved publisher keys")
     publisher_sub = publisher_parser.add_subparsers(dest="publisher_command")
@@ -157,68 +151,78 @@ def _dispatch(
         _emit(args, "list", {"receipts": [ledger.to_dict(r) for r in receipts]}, [])
         return 0
     if command == "doctor":
-        findings = doctor.doctor_packages(state_dir, args.integration_id)
-        _emit(args, "doctor", None, findings)
-        return 5 if any(f.severity is Severity.ERROR for f in findings) else 0
-    if command == "readiness":
-        return _readiness(args, state_dir, integrations_config)
+        return _doctor(args, state_dir, integrations_config)
     if command == "publisher":
         return _publisher(args, state_dir)
     _usage()
     return 2
 
 
-def _readiness(
+def _doctor(
     args: argparse.Namespace,
     state_dir: Path,
     integrations_config: dict[str, dict[str, object]],
 ) -> int:
-    """Report the P2 readiness graph and, with --recover, recover an interrupted
-    wizard apply from its durable journal."""
+    """Diagnose installed P1 package integrity AND report the P2 readiness graph,
+    plus any interrupted wizard apply. With --recover, restore the pre-apply state
+    from the durable journal. Exit is the most severe of the two: 5 for a P1 package
+    error, 4 for an enabled-but-not-ready integration, else 0."""
     import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
     from stormpulse.integrations.readiness import resolve_all
     from stormpulse.sdk import ReadinessState
     from stormpulse.wizard import read_pending, recover
 
+    findings = doctor.doctor_packages(state_dir, args.integration_id)
     reports = resolve_all(integrations_config, run_probe=True)
     if args.integration_id is not None:
         reports = {k: v for k, v in reports.items() if k == args.integration_id}
-
     pending = read_pending(state_dir)
     recovery = recover(state_dir) if getattr(args, "recover", False) else None
 
-    _emit_readiness(args, reports, pending, recovery)
-    # Exit 4 if anything the operator enabled is not yet ready; else 0.
-    not_ready = any(r.state is ReadinessState.ENABLED for r in reports.values())
-    return 4 if not_ready else 0
+    _emit_doctor(args, findings, reports, pending, recovery)
+
+    p1_exit = 5 if any(f.severity is Severity.ERROR for f in findings) else 0
+    readiness_exit = 4 if any(r.state is ReadinessState.ENABLED for r in reports.values()) else 0
+    return max(p1_exit, readiness_exit)
 
 
-def _emit_readiness(
+def _emit_doctor(
     args: argparse.Namespace,
+    findings: list[Finding],
     reports: dict[str, Any],
     pending: list[Any] | None,
     recovery: Any,
 ) -> None:
+    readiness = {
+        integ_id: {
+            "state": report.state.name.lower(),
+            "reason": report.reason,
+            "capabilities": [
+                {"token": c.token, "liveness": c.liveness.value, "reason": c.reason}
+                for c in report.capabilities
+            ],
+        }
+        for integ_id, report in sorted(reports.items())
+    }
     if getattr(args, "json", False):
         result: dict[str, object] = {
-            "readiness": {
-                integ_id: {
-                    "state": report.state.name.lower(),
-                    "reason": report.reason,
-                    "capabilities": [
-                        {"token": c.token, "liveness": c.liveness.value, "reason": c.reason}
-                        for c in report.capabilities
-                    ],
-                }
-                for integ_id, report in sorted(reports.items())
-            },
+            "readiness": readiness,
             "journal_pending": len(pending) if pending is not None else 0,
             "recovered": list(recovery.recovered) if recovery is not None else None,
             "manual": list(recovery.manual) if recovery is not None else None,
         }
-        payload = {"ok": True, "operation": "readiness", "schema_version": 1, "result": result, "findings": []}
+        payload = {
+            "ok": True,
+            "operation": "doctor",
+            "schema_version": 1,
+            "result": result,
+            "findings": [_finding_dict(f) for f in findings],
+        }
         print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
         return
+    print("doctor: ok")
+    for finding in findings:
+        print(f"  [{finding.severity.value}] {finding.code}: {finding.message}", file=sys.stderr)
     print("readiness:")
     for integ_id, report in sorted(reports.items()):
         suffix = f" - {report.reason}" if report.reason else ""

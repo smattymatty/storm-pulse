@@ -10,7 +10,9 @@ are labeled in the preview.
 
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from stormpulse.sdk import SDK_API, InitPlan, Mutation, mutation_kind
 from stormpulse.wizard.env import ApplyEnv
@@ -24,6 +26,7 @@ from stormpulse.wizard.receipt import (
     AppliedMutation,
     MutationReceipt,
     applied,
+    persist_receipt,
 )
 
 # Best-effort kinds, for the preview's honesty label (I6). Kept in sync with the
@@ -86,6 +89,21 @@ class _Done:
     verified: bool
 
 
+def _post_apply_checks(env: ApplyEnv) -> list[str]:
+    """The normative post-apply checks (§12.3): re-parse the config with no host
+    probe, then run the caller-injected health + dependency re-check. A non-empty
+    result rolls the plan back."""
+    failures: list[str] = []
+    if env.config_path.is_file():
+        try:
+            tomllib.loads(env.config_path.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as exc:
+            failures.append(f"config no longer parses after apply: {exc}")
+    if env.post_check is not None:
+        failures.extend(env.post_check())
+    return failures
+
+
 def _rollback(done: list[_Done]) -> tuple[str, tuple[AppliedMutation, ...], list[str]]:
     """Compensate applied steps in reverse. A failed compensation is recorded and
     escalates the status to ``partial_rollback``; the loop does not abort (I5)."""
@@ -128,6 +146,7 @@ def apply_plan(plan: InitPlan, env: ApplyEnv, *, agent_id: str) -> MutationRecei
         raise WizardError("plan has no mutations")
 
     done: list[_Done] = []
+    applied_at = datetime.now(timezone.utc).isoformat()
 
     def rolled_back_receipt(failure: str) -> MutationReceipt:
         status, records, comp_failures = _rollback(done)
@@ -138,6 +157,7 @@ def apply_plan(plan: InitPlan, env: ApplyEnv, *, agent_id: str) -> MutationRecei
             sdk_api=plan.sdk_api,
             plan_summary=plan.summary,
             status=status,
+            applied_at=applied_at,
             applied=records,
             failure=full_failure,
         )
@@ -180,27 +200,38 @@ def apply_plan(plan: InitPlan, env: ApplyEnv, *, agent_id: str) -> MutationRecei
                 break
 
         if receipt is None:
-            records = tuple(
-                applied(
-                    entry.step.kind,
-                    entry.step.target,
-                    pre_image_digest=entry.step.pre_image_digest,
-                    verified=entry.verified,
+            # All mutations applied and verified; run the normative post-apply
+            # checks before committing. A failure here rolls the whole plan back.
+            post_failures = _post_apply_checks(env)
+            if post_failures:
+                receipt = rolled_back_receipt(
+                    "post-apply checks failed: " + "; ".join(post_failures)
                 )
-                for entry in done
-            )
-            receipt = MutationReceipt(
-                agent_id=agent_id,
-                integration_id=plan.integration_id,
-                sdk_api=plan.sdk_api,
-                plan_summary=plan.summary,
-                status=STATUS_COMMITTED,
-                applied=records,
-            )
+            else:
+                records = tuple(
+                    applied(
+                        entry.step.kind,
+                        entry.step.target,
+                        pre_image_digest=entry.step.pre_image_digest,
+                        verified=entry.verified,
+                    )
+                    for entry in done
+                )
+                receipt = MutationReceipt(
+                    agent_id=agent_id,
+                    integration_id=plan.integration_id,
+                    sdk_api=plan.sdk_api,
+                    plan_summary=plan.summary,
+                    status=STATUS_COMMITTED,
+                    applied_at=applied_at,
+                    applied=records,
+                )
 
         # A committed or fully-rolled-back apply is consistent: drop the journal.
         # A partial_rollback left inconsistent host state, so keep the journal so a
         # later ``doctor`` can recover the file-based steps out-of-process.
         if receipt.status != STATUS_PARTIAL_ROLLBACK:
             journal.finalize()
+        # Persist the outcome record atomically (audit trail; not a load grant).
+        persist_receipt(env.state_dir, receipt)
         return receipt
