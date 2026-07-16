@@ -52,6 +52,7 @@ def test_sdk_config_is_byte_identical_to_legacy(tmp_path: Path) -> None:
         config_path=sdk,
         base_dir=tmp_path / "base",
         systemd_user_dir=tmp_path / "units",
+        state_dir=tmp_path / "state",
         restart=lambda unit, action: None,
         health=lambda unit: True,
     )
@@ -70,6 +71,7 @@ def test_sdk_path_rolls_back_on_restart_failure(tmp_path: Path) -> None:
         config_path=cfg,
         base_dir=tmp_path / "base",
         systemd_user_dir=tmp_path / "units",
+        state_dir=tmp_path / "state",
         restart=lambda unit, action: None,
         health=lambda unit: False,  # restart verify fails -> rollback
     )

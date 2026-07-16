@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from stormpulse.sdk import SDK_API, InitPlan, Mutation, mutation_kind
 from stormpulse.wizard.env import ApplyEnv
 from stormpulse.wizard.errors import WizardError
+from stormpulse.wizard.journal import Journal, wizard_lock
 from stormpulse.wizard.mutations import Step, build_step
 from stormpulse.wizard.receipt import (
     STATUS_COMMITTED,
@@ -113,9 +114,11 @@ def _rollback(done: list[_Done]) -> tuple[str, tuple[AppliedMutation, ...], list
 
 
 def apply_plan(plan: InitPlan, env: ApplyEnv, *, agent_id: str) -> MutationReceipt:
-    """Apply a plan transactionally. Returns a receipt; raises ``WizardError`` only
-    for a pre-apply refusal (an SDK-version mismatch or an empty plan), before any
-    host change."""
+    """Apply a plan transactionally under the wizard-apply lock. Every mutation is
+    journaled and fsynced BEFORE its forward op, so a crash mid-apply leaves a
+    durable record ``doctor`` can report and recover from. Returns a receipt; raises
+    ``WizardError`` only for a pre-apply refusal (SDK-version mismatch or empty
+    plan), before any lock, journal, or host change."""
     if plan.sdk_api > SDK_API:
         raise WizardError(
             f"plan targets SDK {plan.sdk_api} but this host offers SDK {SDK_API} "
@@ -139,35 +142,65 @@ def apply_plan(plan: InitPlan, env: ApplyEnv, *, agent_id: str) -> MutationRecei
             failure=full_failure,
         )
 
-    for mutation in plan.mutations:
-        try:
-            step = build_step(mutation, env)
-        except WizardError as exc:
-            return rolled_back_receipt(f"build failed: {exc}")
-        entry = _Done(step=step, verified=False)
-        done.append(entry)
-        try:
-            step.forward()
-        except Exception as exc:  # noqa: BLE001 - any forward failure rolls the plan back
-            return rolled_back_receipt(f"forward failed on {step.kind.value}: {exc}")
-        entry.verified = step.verify()
-        if not entry.verified:
-            return rolled_back_receipt(f"verify failed on {step.kind.value}")
-
-    records = tuple(
-        applied(
-            entry.step.kind,
-            entry.step.target,
-            pre_image_digest=entry.step.pre_image_digest,
-            verified=entry.verified,
+    journal = Journal(env.state_dir)
+    with wizard_lock(env.state_dir):
+        journal.begin(
+            agent_id=agent_id,
+            integration_id=plan.integration_id,
+            sdk_api=plan.sdk_api,
+            summary=plan.summary,
         )
-        for entry in done
-    )
-    return MutationReceipt(
-        agent_id=agent_id,
-        integration_id=plan.integration_id,
-        sdk_api=plan.sdk_api,
-        plan_summary=plan.summary,
-        status=STATUS_COMMITTED,
-        applied=records,
-    )
+        receipt: MutationReceipt | None = None
+        for index, mutation in enumerate(plan.mutations):
+            try:
+                step = build_step(mutation, env)
+            except WizardError as exc:
+                receipt = rolled_back_receipt(f"build failed: {exc}")
+                break
+            # Durable-before-forward: the journal entry (with the captured
+            # pre-image) is fsynced here, before the host is touched.
+            journal.record(
+                index=index,
+                kind=step.kind.value,
+                target=step.target,
+                recover_path=step.recover_path,
+                pre_image=step.pre_image,
+                recover_mode=step.recover_mode,
+            )
+            entry = _Done(step=step, verified=False)
+            done.append(entry)
+            try:
+                step.forward()
+            except Exception as exc:  # noqa: BLE001 - any forward failure rolls the plan back
+                receipt = rolled_back_receipt(f"forward failed on {step.kind.value}: {exc}")
+                break
+            entry.verified = step.verify()
+            if not entry.verified:
+                receipt = rolled_back_receipt(f"verify failed on {step.kind.value}")
+                break
+
+        if receipt is None:
+            records = tuple(
+                applied(
+                    entry.step.kind,
+                    entry.step.target,
+                    pre_image_digest=entry.step.pre_image_digest,
+                    verified=entry.verified,
+                )
+                for entry in done
+            )
+            receipt = MutationReceipt(
+                agent_id=agent_id,
+                integration_id=plan.integration_id,
+                sdk_api=plan.sdk_api,
+                plan_summary=plan.summary,
+                status=STATUS_COMMITTED,
+                applied=records,
+            )
+
+        # A committed or fully-rolled-back apply is consistent: drop the journal.
+        # A partial_rollback left inconsistent host state, so keep the journal so a
+        # later ``doctor`` can recover the file-based steps out-of-process.
+        if receipt.status != STATUS_PARTIAL_ROLLBACK:
+            journal.finalize()
+        return receipt

@@ -4,6 +4,12 @@ Framework layer. Each mutation kind builds a ``Step`` whose pre-image is capture
 *before* any host change (I3). ``build_step`` never mutates the host; the returned
 closures do. Best-effort kinds (systemd, caddy, restart) are marked ``atomic=False``
 so the engine's preview can label them honestly (I6).
+
+Each step also carries the raw pre-image bytes and a ``recover_path``/``recover_mode``
+for the file-based kinds, so a fresh process (``doctor`` after a crash) can restore
+the pre-apply state from the durable journal without the original process's memory.
+File-based kinds are recoverable out-of-process; provider- and service-manager kinds
+(caddy, restart) are recorded but marked not auto-recoverable.
 """
 
 from __future__ import annotations
@@ -42,13 +48,20 @@ _CADDY_CAPABILITY = "caddy.drop_in.v1"
 
 @dataclass(slots=True)
 class Step:
-    """One built mutation step: its metadata plus captured closures. ``forward``,
-    ``verify``, and ``compensate`` close over the env and the captured pre-image."""
+    """One built mutation step: metadata, captured recovery state, and closures.
+
+    ``recover_path`` (with ``pre_image`` and ``recover_mode``) is set for the
+    file-based kinds a fresh process can restore out-of-band; it is ``None`` for
+    provider/service-manager kinds that need the original process or a provider.
+    """
 
     kind: MutationKind
     target: str
     atomic: bool
+    pre_image: bytes | None
     pre_image_digest: str | None
+    recover_path: str | None
+    recover_mode: int
     forward: Callable[[], None]
     verify: Callable[[], bool]
     compensate: Callable[[], None]
@@ -88,7 +101,10 @@ def _build_claim_toml(m: ClaimTomlSection, env: ApplyEnv) -> Step:
         kind=MutationKind.CLAIM_TOML_SECTION,
         target=m.section,
         atomic=True,
+        pre_image=pre,
         pre_image_digest=_sha256(pre) if pre is not None else None,
+        recover_path=str(env.config_path),
+        recover_mode=0o644,
         forward=forward,
         verify=verify,
         compensate=compensate,
@@ -125,7 +141,10 @@ def _build_install(
         kind=kind,
         target=m.rel_target,
         atomic=True,
+        pre_image=pre,
         pre_image_digest=_sha256(pre) if pre is not None else None,
+        recover_path=str(target),
+        recover_mode=mode,
         forward=forward,
         verify=verify,
         compensate=compensate,
@@ -157,7 +176,10 @@ def _build_systemd_unit(m: CreateSystemdUserUnit, env: ApplyEnv) -> Step:
         kind=MutationKind.CREATE_SYSTEMD_USER_UNIT,
         target=m.unit_name,
         atomic=False,  # daemon-reload is not transactional
+        pre_image=pre,
         pre_image_digest=_sha256(pre) if pre is not None else None,
+        recover_path=str(target),  # the unit file is restorable; a stale reload is not
+        recover_mode=0o644,
         forward=forward,
         verify=verify,
         compensate=compensate,
@@ -186,7 +208,10 @@ def _build_caddy_drop_in(m: CaddyDropIn, env: ApplyEnv) -> Step:
         kind=MutationKind.CADDY_DROP_IN,
         target=m.drop_in_name,
         atomic=False,  # proxy reload is not transactional
+        pre_image=pre,
         pre_image_digest=_sha256(pre) if pre is not None else None,
+        recover_path=None,  # provider-managed; a fresh process cannot compensate alone
+        recover_mode=0,
         forward=forward,
         verify=verify,
         compensate=compensate,
@@ -207,15 +232,18 @@ def _build_restart(m: RestartOrReload, env: ApplyEnv) -> Step:
 
     def compensate() -> None:
         # Best-effort: a service manager is not transactional and the prior active
-        # state is not captured. Nothing to restore; the failure (if any) surfaces
-        # loudly via the engine, it is not silently swallowed.
+        # state is not captured. Nothing to restore; a failure surfaces loudly via
+        # the engine, it is not silently swallowed.
         return None
 
     return Step(
         kind=MutationKind.RESTART_OR_RELOAD,
         target=m.unit,
         atomic=False,
+        pre_image=None,
         pre_image_digest=None,
+        recover_path=None,
+        recover_mode=0,
         forward=forward,
         verify=verify,
         compensate=compensate,
@@ -236,7 +264,10 @@ def _build_verify_probe(m: VerifyProbe, env: ApplyEnv) -> Step:
         kind=MutationKind.VERIFY_PROBE,
         target=m.capability,
         atomic=True,
+        pre_image=None,
         pre_image_digest=None,
+        recover_path=None,
+        recover_mode=0,
         forward=forward,
         verify=verify,
         compensate=compensate,

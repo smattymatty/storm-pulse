@@ -102,7 +102,13 @@ def _env(root: Path, **kw: object) -> ApplyEnv:
     cfg.write_text('[core]\nagent_id = "x"\n', encoding="utf-8")
     (root / "base").mkdir(exist_ok=True)
     (root / "units").mkdir(exist_ok=True)
-    return ApplyEnv(config_path=cfg, base_dir=root / "base", systemd_user_dir=root / "units", **kw)  # type: ignore[arg-type]
+    return ApplyEnv(
+        config_path=cfg,
+        base_dir=root / "base",
+        systemd_user_dir=root / "units",
+        state_dir=root / "state",
+        **kw,  # type: ignore[arg-type]
+    )
 
 
 class _FailingProvider:
@@ -168,6 +174,7 @@ def _check_rclone_equivalence(tmp: Path) -> None:
         config_path=sdk,
         base_dir=tmp / "base2",
         systemd_user_dir=tmp / "units2",
+        state_dir=tmp / "state2",
         restart=lambda u, a: None,
         health=lambda u: True,
     )

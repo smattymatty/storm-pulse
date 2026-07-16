@@ -54,6 +54,10 @@ class ApplyEnv:
     config_path: Path
     base_dir: Path
     systemd_user_dir: Path
+    # Where the durable apply journal and the wizard-apply lock live (crash
+    # recovery, CORE-007). A fresh ``doctor`` process reads the journal here to
+    # report or recover an interrupted apply.
+    state_dir: Path
     content_store: Mapping[str, bytes] = field(default_factory=dict)
     providers: Mapping[str, CapabilityProvider] = field(default_factory=dict)
     restart: Callable[[str, str], None] | None = None

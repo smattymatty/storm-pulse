@@ -16,6 +16,12 @@ from stormpulse.wizard.engine import (
 )
 from stormpulse.wizard.env import ApplyEnv, CapabilityProvider
 from stormpulse.wizard.errors import CompensationError, WizardError
+from stormpulse.wizard.journal import (
+    JournalEntry,
+    RecoveryResult,
+    read_pending,
+    recover,
+)
 from stormpulse.wizard.providers import (
     get_provider,
     register_capability_provider,
@@ -34,9 +40,11 @@ __all__ = [
     "AppliedMutation",
     "CapabilityProvider",
     "CompensationError",
+    "JournalEntry",
     "MutationReceipt",
     "PlanPreview",
     "PreviewStep",
+    "RecoveryResult",
     "STATUS_COMMITTED",
     "STATUS_PARTIAL_ROLLBACK",
     "STATUS_ROLLED_BACK",
@@ -44,6 +52,8 @@ __all__ = [
     "apply_plan",
     "get_provider",
     "preview_plan",
+    "read_pending",
+    "recover",
     "register_capability_provider",
     "registered_providers",
 ]
