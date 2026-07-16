@@ -8,10 +8,13 @@ separators, one trailing newline) without importing the P1 codec.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from stormpulse.sdk import MutationKind
+from stormpulse.wizard.toml_edit import atomic_write_bytes
 
 STATUS_COMMITTED = "committed"
 STATUS_ROLLED_BACK = "rolled_back"
@@ -38,6 +41,7 @@ class MutationReceipt:
     sdk_api: int
     plan_summary: str
     status: str
+    applied_at: str = ""
     applied: tuple[AppliedMutation, ...] = ()
     failure: str | None = None
     schema_version: int = 1
@@ -52,6 +56,25 @@ class MutationReceipt:
             json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
             + "\n"
         )
+
+
+def persist_receipt(state_dir: Path, receipt: MutationReceipt) -> Path:
+    """Atomically write a mutation receipt under the state area, content-addressed
+    by its canonical JSON (the same discipline as the P1 install receipts). Every
+    apply - committed, rolled back, or partially rolled back - leaves this record."""
+    data = receipt.to_canonical_json().encode("utf-8")
+    digest = hashlib.sha256(data).hexdigest()
+    directory = state_dir / "wizard" / "receipts" / receipt.integration_id
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{digest}.json"
+    atomic_write_bytes(path, data, 0o600)
+    return path
+
+
+def list_receipts(state_dir: Path) -> list[Path]:
+    """All persisted mutation-receipt paths under the state area (for audit/doctor)."""
+    root = state_dir / "wizard" / "receipts"
+    return sorted(root.rglob("*.json")) if root.is_dir() else []
 
 
 def applied(

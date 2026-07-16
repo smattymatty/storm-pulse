@@ -33,6 +33,8 @@ from stormpulse.wizard.receipt import (
     STATUS_ROLLED_BACK,
     AppliedMutation,
     MutationReceipt,
+    list_receipts,
+    persist_receipt,
 )
 
 __all__ = [
@@ -51,6 +53,8 @@ __all__ = [
     "WizardError",
     "apply_plan",
     "get_provider",
+    "list_receipts",
+    "persist_receipt",
     "preview_plan",
     "read_pending",
     "recover",

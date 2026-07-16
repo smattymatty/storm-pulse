@@ -393,6 +393,69 @@ def test_caddy_drop_in_without_provider_rolls_back(tmp_path: Path) -> None:
     assert receipt.failure is not None and "no provider" in receipt.failure
 
 
+def test_receipt_is_persisted_atomically(tmp_path: Path) -> None:
+    from stormpulse.wizard import list_receipts
+
+    env = _env(tmp_path)
+    plan = InitPlan(
+        sdk_api=SDK_API,
+        integration_id="demo",
+        mutations=(ClaimTomlSection("demo", {"enabled": True}),),
+        summary="persist me",
+    )
+    receipt = apply_plan(plan, env, agent_id="agent-x")
+    assert receipt.status == STATUS_COMMITTED
+    assert receipt.applied_at != ""  # stamped
+    persisted = list_receipts(env.state_dir)
+    assert len(persisted) == 1
+    import json
+
+    data = json.loads(persisted[0].read_text(encoding="utf-8"))
+    assert data["status"] == STATUS_COMMITTED
+    assert data["integration_id"] == "demo"
+
+
+def test_post_check_failure_rolls_back(tmp_path: Path) -> None:
+    original = None
+    env = _env(tmp_path, post_check=lambda: ["service unhealthy after apply"])
+    env.config_path.write_text('[core]\nagent_id = "x"\n', encoding="utf-8")
+    original = env.config_path.read_bytes()
+    plan = InitPlan(
+        sdk_api=SDK_API,
+        integration_id="demo",
+        mutations=(ClaimTomlSection("demo", {"enabled": True}),),
+        summary="claim then fail post-check",
+    )
+    receipt = apply_plan(plan, env, agent_id="a")
+    assert receipt.status == STATUS_ROLLED_BACK
+    assert receipt.failure is not None and "post-apply checks failed" in receipt.failure
+    assert env.config_path.read_bytes() == original  # mutation rolled back
+
+
+def test_post_apply_checks_detect_unparseable_config(tmp_path: Path) -> None:
+    from stormpulse.wizard.engine import _post_apply_checks
+
+    env = _env(tmp_path)
+    env.config_path.write_text("this is = = not valid toml [[[\n", encoding="utf-8")
+    failures = _post_apply_checks(env)
+    assert any("config no longer parses" in f for f in failures)
+
+
+def test_post_check_hook_and_config_parse_both_run(tmp_path: Path) -> None:
+    from stormpulse.wizard.engine import _post_apply_checks
+
+    calls: list[str] = []
+
+    def _hook() -> list[str]:
+        calls.append("hook")
+        return []
+
+    env = _env(tmp_path, post_check=_hook)
+    # valid config -> only the injected hook contributes (no failures)
+    assert _post_apply_checks(env) == []
+    assert calls == ["hook"]
+
+
 def test_receipt_canonical_json_roundtrips(tmp_path: Path) -> None:
     env = _env(tmp_path)
     plan = InitPlan(
