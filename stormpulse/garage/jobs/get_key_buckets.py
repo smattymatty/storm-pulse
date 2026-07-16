@@ -1,10 +1,16 @@
 """Handler for ``garage_get_key_buckets``.
 
-Read-only: return the buckets an account key owns, by reading the key over the
-admin API (``GetKeyInfo``). Storm does not store the account-key -> bucket link
-(ownership lives in Garage), so the dashboard's per-key bucket list and its
+Read-only: return the buckets an account key can reach, by reading the key over
+the admin API (``GetKeyInfo``). Storm does not store the account-key -> bucket
+link (grants live in Garage), so the dashboard's per-key bucket list and its
 revoke at-risk/safe split come from this live read. No mutation, no
-confirmation; an already-gone key (404) returns an empty list.
+confirmation; an already-gone key (404) returns empty lists.
+
+Two views of the same read (the ``get_bucket_owners`` idiom, mirrored):
+``owned_buckets`` keeps the original owner-only list, and ``bucket_grants``
+carries EVERY grant with its raw read/write/owner booleans, so the dashboard
+can split "owns" from "attached to" (an rw/ro attach is a grant, not
+ownership).
 """
 
 from __future__ import annotations
@@ -62,33 +68,48 @@ async def run_get_key_buckets(
     )
     if kinfo is None:
         if admin_api.is_not_found(err):
-            return _success(key_id, owned=[], started_at=started_at)
+            return _success(key_id, owned=[], grants=[], started_at=started_at)
         return _failure(
             failure_reason="key_read_failed",
             key_id=key_id, stderr=err, started_at=started_at,
         )
 
     owned: list[dict[str, str]] = []
+    grants: list[dict[str, object]] = []
     for entry in kinfo.get("buckets") or []:
         full_id = entry.get("id") or ""
-        perms = entry.get("permissions") or {}
-        if not (full_id and perms.get("owner")):
+        if not full_id:
             continue
+        perms = entry.get("permissions") or {}
         aliases = entry.get("localAliases") or []
-        owned.append({"id": full_id, "alias": aliases[0] if aliases else ""})
-    return _success(key_id, owned=owned, started_at=started_at)
+        alias = aliases[0] if aliases else ""
+        grants.append({
+            "id": full_id,
+            "alias": alias,
+            "read": bool(perms.get("read")),
+            "write": bool(perms.get("write")),
+            "owner": bool(perms.get("owner")),
+        })
+        if perms.get("owner"):
+            owned.append({"id": full_id, "alias": alias})
+    return _success(key_id, owned=owned, grants=grants, started_at=started_at)
 
 
 def _success(
-    key_id: str, *, owned: list[dict[str, str]], started_at: float,
+    key_id: str,
+    *,
+    owned: list[dict[str, str]],
+    grants: list[dict[str, object]],
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=f"Key {key_id} owns {len(owned)} bucket(s)",
+        stdout=f"Key {key_id} reaches {len(grants)} bucket(s), owns {len(owned)}",
         extras={
             "key_id": key_id,
             "owned_buckets": owned,
+            "bucket_grants": grants,
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
         },
@@ -107,6 +128,7 @@ def _failure(
         extras={
             "key_id": key_id,
             "owned_buckets": [],
+            "bucket_grants": [],
             "garage_stderr": stderr,
             "duration_seconds": _elapsed(started_at),
         },

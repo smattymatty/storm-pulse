@@ -39,10 +39,14 @@ class _Progress:
         return None
 
 
-def _bucket(full_id, *, owner, aliases=()):
+def _bucket(full_id, *, owner, read=None, write=None, aliases=()):
     return {
         "id": full_id,
-        "permissions": {"read": owner, "write": owner, "owner": owner},
+        "permissions": {
+            "read": owner if read is None else read,
+            "write": owner if write is None else write,
+            "owner": owner,
+        },
         "localAliases": list(aliases),
     }
 
@@ -74,11 +78,28 @@ async def _run(*, config=None) -> JobOutcome:
 async def test_returns_owned_buckets(monkeypatch):
     _install(monkeypatch, ({"buckets": [
         _bucket(_B1, owner=True, aliases=["vault"]),
-        _bucket(_B2, owner=False),  # not owned -> excluded
+        _bucket(_B2, owner=False),  # not owned -> excluded from owned_buckets
     ]}, ""))
     outcome = await _run()
     assert outcome.success is True
     assert outcome.extras["owned_buckets"] == [{"id": _B1, "alias": "vault"}]
+
+
+@pytest.mark.asyncio
+async def test_bucket_grants_carry_every_grant_with_permissions(monkeypatch):
+    # An rw attach (BUCKETS-014) is a grant, not ownership: absent from
+    # owned_buckets, present in bucket_grants with its raw booleans.
+    _install(monkeypatch, ({"buckets": [
+        _bucket(_B1, owner=True, aliases=["vault"]),
+        _bucket(_B2, owner=False, read=True, write=True, aliases=["storage"]),
+    ]}, ""))
+    outcome = await _run()
+    assert outcome.success is True
+    assert outcome.extras["owned_buckets"] == [{"id": _B1, "alias": "vault"}]
+    assert outcome.extras["bucket_grants"] == [
+        {"id": _B1, "alias": "vault", "read": True, "write": True, "owner": True},
+        {"id": _B2, "alias": "storage", "read": True, "write": True, "owner": False},
+    ]
 
 
 @pytest.mark.asyncio
@@ -87,6 +108,7 @@ async def test_key_gone_empty(monkeypatch):
     outcome = await _run()
     assert outcome.success is True
     assert outcome.extras["owned_buckets"] == []
+    assert outcome.extras["bucket_grants"] == []
 
 
 @pytest.mark.asyncio
