@@ -89,7 +89,6 @@ def test_idempotent_skip_when_already_present(cfg: Path) -> None:
         '[[log_groups]]\nname = "caddy"\nenabled = true\nsource_type = "file"\n'
         'path = "/var/log/caddy/access.log"\nparser = "caddy_json"\n'
         "ship_interval_seconds = 10\nmax_lines_per_batch = 200\n"
-        "retention_days = 90\n"
     )
     with (
         _patch_log_path_exists(True),
@@ -161,7 +160,7 @@ def test_events_idempotent_skip_when_already_present(cfg: Path) -> None:
         '[[log_groups]]\nname = "caddy-events"\nenabled = true\n'
         'source_type = "file"\nsource_path = "/var/log/caddy/events.log"\n'
         'parser = "caddy_json"\nship_interval_seconds = 10\n'
-        "max_lines_per_batch = 200\nretention_days = 90\n"
+        "max_lines_per_batch = 200\n"
     )
     with (
         _patch_log_path_exists(True),

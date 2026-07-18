@@ -206,7 +206,6 @@ class LogGroupConfig:
     parser: str
     ship_interval_seconds: float
     max_lines_per_batch: int
-    retention_days: int
     container_name: str = ""
     docker_binary: str = "/usr/bin/docker"
 
@@ -637,10 +636,12 @@ def _parse_one_log_group(
             f"'max_lines_per_batch' in {ctx} must be 1-200, got {batch_max}"
         )
 
-    retention = require_key(entry, "retention_days", int, ctx)
-    if not 1 <= retention <= 365:
-        raise ConfigError(
-            f"'retention_days' in {ctx} must be 1-365, got {retention}"
+    # Dead-knob removal: the agent tails and ships, it stores nothing, so it
+    # never enforced retention. A stale key from an older config warns, not fails.
+    if "retention_days" in entry:
+        logger.warning(
+            "'retention_days' in %s is deprecated and ignored; remove it "
+            "(the agent stores no logs to retain)", ctx,
         )
 
     filter_contains = optional_key(entry, "filter_contains", str, "", ctx)
@@ -654,7 +655,6 @@ def _parse_one_log_group(
         parser=parser,
         ship_interval_seconds=interval,
         max_lines_per_batch=batch_max,
-        retention_days=retention,
         container_name=container_name,
         docker_binary=docker_binary,
     )

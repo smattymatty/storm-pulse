@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`retention_days` is gone from `[[log_groups]]`.** The agent tails and ships; it stores no logs, so the knob enforced nothing (a dead knob under the CONTEXT.md "No dead knobs" rule). `stormpulse init` templates no longer emit it, and a stale key in an existing config logs a deprecation warning instead of failing, so deployed agents keep working. Log retention is a dashboard-side concern.
+
 ## [0.3.0] - 2026-07-09
 
 The agent learns to move data, not just manage it. This release cuts the rclone Integration: S3-to-S3 migration as agent jobs, with credentials that never touch disk and a restore test that proves the data comes back. It is the agent half of a control-plane-orchestrated import: the agent measures, transfers, and verifies; every decision about capacity and sequencing stays server-side.

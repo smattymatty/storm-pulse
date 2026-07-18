@@ -266,7 +266,6 @@ def test_disabled_log_groups_are_skipped(tmp_path: Path) -> None:
                     parser="raw",
                     ship_interval_seconds=5.0,
                     max_lines_per_batch=100,
-                    retention_days=7,
                 ),
             ],
         )

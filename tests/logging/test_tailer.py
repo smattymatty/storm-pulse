@@ -20,7 +20,6 @@ def _make_group(source_path: Path, name: str = "test") -> LogGroupConfig:
         parser="stormpulse",
         ship_interval_seconds=10.0,
         max_lines_per_batch=50,
-        retention_days=30,
     )
 
 

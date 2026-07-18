@@ -886,7 +886,6 @@ filter_contains = "garage_api_common"
 parser = "garage_s3"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
 
 
@@ -904,7 +903,6 @@ def test_log_groups_parsed(write_config: Callable[[str], Path]) -> None:
     assert g.parser == "garage_s3"
     assert g.ship_interval_seconds == 10.0
     assert g.max_lines_per_batch == 200
-    assert g.retention_days == 90
 
 
 # A malformed individual log group is SKIPPED with a warning, not fatal
@@ -939,7 +937,6 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -962,7 +959,6 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -985,7 +981,6 @@ source_path = "relative/path.log"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -1011,7 +1006,6 @@ path = "/var/log/caddy/access.log"
 parser = "caddy_json"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -1034,7 +1028,6 @@ source_path = "/var/log/x.log"
 parser = "made_up"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -1055,7 +1048,6 @@ source_type = "file"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
     cfg = load_config(write_config(MINIMAL_VALID + _VALID_LOG_GROUP + bad))
     assert [g.name for g in cfg.log_groups] == ["storage"]
@@ -1077,7 +1069,6 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 1
 max_lines_per_batch = 200
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -1102,7 +1093,6 @@ filter_contains = "garage_api_common"
 parser = "garage_s3"
 ship_interval_seconds = 2
 max_lines_per_batch = 200
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -1124,7 +1114,6 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 500
-retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
@@ -1132,9 +1121,10 @@ retention_days = 90
     assert "max_lines_per_batch" in caplog.text
 
 
-def test_log_groups_retention_out_of_range_skipped(
+def test_log_groups_stale_retention_days_warns_not_fails(
     write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """The removed dead knob is tolerated in deployed configs: warn, parse on."""
     caplog.set_level(logging.WARNING)
     toml = (
         MINIMAL_VALID
@@ -1147,12 +1137,13 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 0
+retention_days = 90
 """
     )
     cfg = load_config(write_config(toml))
-    assert cfg.log_groups == []
+    assert len(cfg.log_groups) == 1
     assert "retention_days" in caplog.text
+    assert "ignored" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -1305,7 +1296,6 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 100
-retention_days = 30
 filter_contains = 42
 """
     )
@@ -1328,7 +1318,6 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 10
 max_lines_per_batch = 100
-retention_days = 30
 """
     )
     cfg = load_config(write_config(toml))
@@ -1349,13 +1338,11 @@ source_path = "/var/log/x.log"
 parser = "stormpulse"
 ship_interval_seconds = 5
 max_lines_per_batch = 200
-retention_days = 365
 """
     )
     cfg = load_config(write_config(toml))
     assert cfg.log_groups[0].ship_interval_seconds == 5.0
     assert cfg.log_groups[0].max_lines_per_batch == 200
-    assert cfg.log_groups[0].retention_days == 365
 
 
 def test_custom_command_credential_param_requires_secret(

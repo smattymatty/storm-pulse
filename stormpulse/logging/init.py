@@ -32,7 +32,6 @@ filter_contains = "{filter_contains}"
 parser = "{parser}"
 ship_interval_seconds = {ship_interval_seconds}
 max_lines_per_batch = 200
-retention_days = 90
 """
 
 

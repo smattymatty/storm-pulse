@@ -26,7 +26,6 @@ def _make_docker_group(name: str = "web", container: str = "web") -> LogGroupCon
         parser="docker_raw",
         ship_interval_seconds=10.0,
         max_lines_per_batch=50,
-        retention_days=30,
         container_name=container,
         docker_binary="/usr/bin/docker",
     )

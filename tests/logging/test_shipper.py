@@ -31,7 +31,6 @@ def _make_group(
         parser=parser,
         ship_interval_seconds=10.0,
         max_lines_per_batch=max_batch,
-        retention_days=30,
     )
 
 
@@ -133,7 +132,6 @@ def test_unknown_parser_raises(tmp_path: Path) -> None:
         parser="not_a_parser",
         ship_interval_seconds=10.0,
         max_lines_per_batch=5,
-        retention_days=1,
     )
     with pytest.raises(ValueError):
         LogShipper(group, LogTailer(group, store))
@@ -194,7 +192,6 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
         parser="docker_raw",
         ship_interval_seconds=10.0,
         max_lines_per_batch=50,
-        retention_days=30,
         container_name="web",
         docker_binary="/usr/bin/docker",
     )

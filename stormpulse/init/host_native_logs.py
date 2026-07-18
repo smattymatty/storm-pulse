@@ -22,7 +22,6 @@ source_path = "{path}"
 parser = "caddy_json"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
 
 _CADDY_EVENTS_LOG_GROUP_TEMPLATE = """\
@@ -35,7 +34,6 @@ source_path = "{path}"
 parser = "caddy_json"
 ship_interval_seconds = 10
 max_lines_per_batch = 200
-retention_days = 90
 """
 
 
