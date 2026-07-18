@@ -200,19 +200,22 @@ async def run_clear_bucket_credential_less(
             admin_url=admin_url, admin_token=admin_token,
             access_key_id=access_key_id,
         )
+        if not key_deleted:
+            # A leaked purge key holds read/write on a customer bucket. Logged
+            # HERE so the trail survives even when the clear raised or was
+            # cancelled and no outcome ever reaches the wire.
+            logger.error(
+                "purge key %s could not be deleted after clear of bucket %s: %s; "
+                "delete it via the admin API (DeleteKey)",
+                access_key_id, bucket_id[:16], delete_err,
+            )
 
     outcome.extras["credential_less"] = True
     outcome.extras["purge_key_id"] = access_key_id
     if key_deleted:
         outcome.extras.setdefault("manual_cleanup_required", [])
     else:
-        # A leaked purge key holds read/write on a customer bucket. Loud,
-        # named, and on the wire so the operator sees it in the result.
-        logger.error(
-            "purge key %s could not be deleted after clear of bucket %s: %s; "
-            "delete it via the admin API (DeleteKey)",
-            access_key_id, bucket_id[:16], delete_err,
-        )
+        # Loud on the wire too, so the operator sees it in the result.
         outcome.extras["manual_cleanup_required"] = [
             {"type": "key", "id": access_key_id},
         ]

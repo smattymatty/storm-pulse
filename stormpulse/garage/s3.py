@@ -71,7 +71,7 @@ class DeleteResult:
 
 
 class S3Error(Exception):
-    """Raised when Garage returns an HTTP error for an S3 operation."""
+    """Raised when an S3 operation fails: a Garage HTTP error or a transport failure."""
 
     def __init__(
         self, message: str, status: int | None = None, code: str | None = None
@@ -313,6 +313,10 @@ class GarageS3Client:
             response = conn.getresponse()
             response_body = response.read()
             status = response.status
+        except (OSError, http.client.HTTPException) as exc:
+            # Transport failures join the S3Error taxonomy so callers' declared
+            # failure contracts hold; a raw OSError must never escape the client.
+            raise S3Error(f"{method} {path} -> transport error: {exc}") from exc
         finally:
             conn.close()
 

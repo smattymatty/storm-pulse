@@ -634,6 +634,26 @@ async def test_credential_less_clear_failure_still_destroys_key(
 
 
 @pytest.mark.asyncio
+async def test_credential_less_leak_logged_when_clear_raises(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The leaked-key trail must survive the raise path, not just the return path."""
+    fake = _FakeAdmin()
+    fake.delete_key_result = (False, "admin API down")
+    _patch_admin(monkeypatch, fake)
+    client = _FakeS3Client(list_raises=RuntimeError("mid-clear network blip"))
+    _patch_s3_client(monkeypatch, client)
+
+    with caplog.at_level("ERROR"), pytest.raises(RuntimeError):
+        await _run_credential_less(fake)
+
+    # Key delete was still attempted, and its failure is on the record.
+    assert fake.names()[-1] == "delete_key"
+    assert "GKPURGE" in caplog.text
+    assert "could not be deleted" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_credential_less_leaked_key_is_loud_in_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
