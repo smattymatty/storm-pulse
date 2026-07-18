@@ -1,122 +1,23 @@
-"""Garage-specific whitelisted commands, as single-source CommandSpecs.
-
-Most resolve to ``docker exec <container> /garage <subcommand>``, shell=False
-(``mode="subprocess"``). The admin-API / S3 orchestrations are ``mode="job"``:
-each carries its own lazy handler thunk, so there is no separate name->factory
-map to drift against.
-
-There is no ``garage_refresh`` here anymore: "refresh my state now" is a
-generic, agent-owned capability synthesized for any Integration that declares
-``collect_state`` (see ``stormpulse.agent.refresh``), so garage gets it for
-free the same way a third-party integration would.
-
-Two pieces of plumbing keep the whitelist scannable instead of a wall of
-copy-paste: ``garage_cli(...)`` writes the ``docker exec <container> /garage``
-prefix once, and the ``_bucket_name`` / ``_key_id`` / ``_bucket_id`` /
-``_local_alias`` factories below declare the four high-frequency params once.
-Declaring a validated param in one place is also the security win: a
-wrong-pattern bucket name is unconstructable rather than a copy that drifted.
-"""
+"""Orchestrated ``mode="job"`` specs: admin-API / S3 jobs carrying lazy
+handler thunks, including the read-only live reads (get/walk)."""
 
 from __future__ import annotations
 
-import logging
-
 from stormpulse.config import CommandSpec, ParamDef
+from stormpulse.garage.commands.params import (
+    BUCKET_NAME_PATTERN,
+    KEY_ID_PATTERN,
+    KEY_NAME_PATTERN,
+    bucket_id_param,
+    bucket_name_param,
+    key_id_param,
+    local_alias_param,
+)
 from stormpulse.garage.config import GarageConfig
 
-logger = logging.getLogger(__name__)
 
-# S3-strict bucket name (which Garage's bucket-create validator
-# enforces): 3-63 chars, lowercase alphanumeric + hyphens, must start
-# AND end alphanumeric. Garage CLI rejects names with leading
-# underscores, uppercase, or any underscore at all on S3-strict
-# deployments - see ``provision_bucket.py``'s throwaway-alias comment
-# for the empirical lesson.
-_BUCKET_NAME_PATTERN = r"[a-z0-9][a-z0-9-]{1,61}[a-z0-9]"
-# Garage internal bucket UUID. The full form is 64 lowercase hex chars;
-# the CLI displays a 16-char unique prefix and accepts either form as a
-# bucket reference. The ``garage_state`` snapshot pushed to Storm carries
-# the full 64-char form, so anywhere bucket_id rides as a parameter from
-# the dashboard, it arrives at full length. Match both.
-_BUCKET_ID_PATTERN = r"[a-f0-9]{16,64}"
-# Key names are not S3-bucket-shaped; Garage allows the broader set.
-# Storm provisions keys as ``usr-<pk>-<bucket>-<tier>`` which uses
-# hyphens only, but other ops paths may include underscores or mixed
-# case for descriptive names.
-_KEY_NAME_PATTERN = r"[a-zA-Z0-9_][a-zA-Z0-9_-]*"
-_KEY_ID_PATTERN = r"[a-zA-Z0-9]+"
-_DOCUMENT_PATTERN = r"[a-zA-Z0-9._/-]+"
-
-
-# ----- Param factories for the high-frequency, always-required shapes -----
-# Each is declared once so its validation pattern can never drift across the
-# ~13 (bucket_name) / 8 (key_id, bucket_id) / 4 (local_alias) sites that use
-# it. The one-off params (key_name, aliases, tiers, credentials, ...) stay
-# inline as ParamDef: there is no repetition to collapse, and an inline
-# ParamDef shows its pattern and default at the spec site.
-
-
-def _bucket_name(description: str) -> ParamDef:
-    """A required S3-strict bucket-name / global-alias param."""
-    return ParamDef(
-        placeholder="bucket_name",
-        default=None,
-        pattern=_BUCKET_NAME_PATTERN,
-        description=description,
-    )
-
-
-def _key_id(description: str) -> ParamDef:
-    """A required Garage access-key id param."""
-    return ParamDef(
-        placeholder="key_id",
-        default=None,
-        pattern=_KEY_ID_PATTERN,
-        description=description,
-    )
-
-
-def _bucket_id(description: str) -> ParamDef:
-    """A required Garage bucket UUID param (16 or 64 hex chars)."""
-    return ParamDef(
-        placeholder="bucket_id",
-        default=None,
-        pattern=_BUCKET_ID_PATTERN,
-        description=description,
-    )
-
-
-def _local_alias(description: str) -> ParamDef:
-    """A required local-alias param (bucket-name shaped, key-scoped)."""
-    return ParamDef(
-        placeholder="local_alias",
-        default=None,
-        pattern=_BUCKET_NAME_PATTERN,
-        description=description,
-    )
-
-
-def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
-    """Build the Garage command registry from config.
-
-    Uses config.docker_binary, config.container_name, and config.garage_binary
-    to construct the full subprocess command templates, and binds each job's
-    handler thunk to ``config``.
-    """
-    docker = config.docker_binary
-    container = config.container_name
-    garage = config.garage_binary
-
-    def garage_cli(*args: str) -> list[str]:
-        """The ``docker exec <container> /garage ...`` prefix, written once.
-
-        Subprocess specs pass only their garage subcommand and arguments;
-        the docker/exec/container/binary plumbing lives here so each spec
-        reads as the garage command it actually runs.
-        """
-        return [docker, "exec", container, garage, *args]
-
+def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
+    """Build the orchestrated job specs, binding each handler thunk to config."""
     # Lazy handler imports: loaded only when a live garage integration builds
     # its specs, so a garage-less host never imports handler code. Each thunk
     # fires at dispatch, when validated params exist.
@@ -159,54 +60,6 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     from stormpulse.garage.jobs.walk_bucket_stats import make_walk_bucket_stats_handler
 
     return {
-        # ----- Read-only -----
-        "garage_status": CommandSpec(
-            group="garage",
-            command=garage_cli("status"),
-            timeout=15,
-            description="Show Garage node status",
-        ),
-        "garage_stats": CommandSpec(
-            group="garage",
-            command=garage_cli("stats"),
-            timeout=15,
-            description="Show Garage cluster statistics",
-        ),
-        "garage_bucket_list": CommandSpec(
-            group="garage",
-            command=garage_cli("bucket", "list"),
-            timeout=15,
-            description="List all Garage buckets",
-        ),
-        "garage_bucket_info": CommandSpec(
-            group="garage",
-            command=garage_cli("bucket", "info", "{bucket_name}"),
-            timeout=15,
-            description="Show bucket details",
-            params={"bucket_name": _bucket_name("Bucket name or alias")},
-        ),
-        "garage_key_list": CommandSpec(
-            group="garage",
-            command=garage_cli("key", "list"),
-            timeout=15,
-            description="List all Garage API keys",
-        ),
-        # ----- State-changing -----
-        "garage_bucket_create": CommandSpec(
-            group="garage",
-            command=garage_cli("bucket", "create", "{bucket_name}"),
-            timeout=15,
-            description="Create a new bucket",
-            params={"bucket_name": _bucket_name("Name for the new bucket")},
-        ),
-        "garage_bucket_delete": CommandSpec(
-            group="garage",
-            command=garage_cli("bucket", "delete", "--yes", "{bucket_name}"),
-            timeout=15,
-            requires_confirmation=True,
-            description="Delete a bucket",
-            params={"bucket_name": _bucket_name("Bucket to delete")},
-        ),
         # The Headroom wall, applied via the Garage admin HTTP API
         # (UpdateBucket), not the CLI: a typed call instead of scraping CLI text,
         # addressing the bucket by id (garage_bucket_id, never the local alias).
@@ -227,7 +80,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 params, admin_url=config.admin_url, admin_token=config.admin_token,
             ),
             params={
-                "bucket_id": _bucket_id(
+                "bucket_id": bucket_id_param(
                     "Bucket id (garage_bucket_id), never the local alias"
                 ),
                 "max_size": ParamDef(
@@ -251,7 +104,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "access_key_id": ParamDef(
                     placeholder="access_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Account key id (GK...) to toggle",
                 ),
                 "enable": ParamDef(
@@ -259,163 +112,6 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     default=None,
                     pattern=r"(?:true|false)",
                     description="'true' to allow bucket creation, 'false' to deny",
-                ),
-            },
-        ),
-        "garage_key_create": CommandSpec(
-            group="garage",
-            command=garage_cli("key", "create", "{key_name}"),
-            timeout=15,
-            description="Create a new API key",
-            sensitive_output=True,
-            params={
-                "key_name": ParamDef(
-                    placeholder="key_name",
-                    default=None,
-                    pattern=_KEY_NAME_PATTERN,
-                    description="Name for the new key",
-                ),
-            },
-        ),
-        "garage_bucket_allow": CommandSpec(
-            group="garage",
-            command=garage_cli(
-                "bucket", "allow", "--read", "--write", "--owner",
-                "{bucket_name}", "--key", "{key_id}",
-            ),
-            timeout=15,
-            description="Grant full access to a bucket for a key",
-            params={
-                "bucket_name": _bucket_name("Bucket to grant access to"),
-                "key_id": _key_id("Key to grant access for"),
-            },
-        ),
-        "garage_bucket_allow_rw": CommandSpec(
-            group="garage",
-            command=garage_cli(
-                "bucket", "allow", "--read", "--write",
-                "{bucket_name}", "--key", "{key_id}",
-            ),
-            timeout=15,
-            description="Grant read-write access to a bucket for a key",
-            params={
-                "bucket_name": _bucket_name("Bucket to grant access to"),
-                "key_id": _key_id("Key to grant access for"),
-            },
-        ),
-        "garage_bucket_allow_ro": CommandSpec(
-            group="garage",
-            command=garage_cli(
-                "bucket", "allow", "--read", "{bucket_name}", "--key", "{key_id}",
-            ),
-            timeout=15,
-            description="Grant read-only access to a bucket for a key",
-            params={
-                "bucket_name": _bucket_name("Bucket to grant access to"),
-                "key_id": _key_id("Key to grant access for"),
-            },
-        ),
-        "garage_bucket_website_allow": CommandSpec(
-            group="garage",
-            command=garage_cli(
-                "bucket", "website", "--allow", "{bucket_name}",
-                "--index-document", "{index_document}",
-                "--error-document", "{error_document}",
-            ),
-            timeout=30,
-            description="Enable static website hosting on a bucket",
-            params={
-                "bucket_name": _bucket_name("Bucket name or alias"),
-                "index_document": ParamDef(
-                    placeholder="index_document",
-                    default="index.html",
-                    pattern=_DOCUMENT_PATTERN,
-                    description="Index document filename",
-                ),
-                "error_document": ParamDef(
-                    placeholder="error_document",
-                    default="404.html",
-                    pattern=_DOCUMENT_PATTERN,
-                    description="Error document filename",
-                ),
-            },
-        ),
-        "garage_bucket_website_deny": CommandSpec(
-            group="garage",
-            command=garage_cli("bucket", "website", "--deny", "{bucket_name}"),
-            timeout=30,
-            requires_confirmation=True,
-            description="Disable static website hosting on a bucket",
-            params={"bucket_name": _bucket_name("Bucket name or alias")},
-        ),
-        "garage_bucket_alias_global_add": CommandSpec(
-            group="garage",
-            command=garage_cli("bucket", "alias", "{bucket_name}", "{new_alias}"),
-            timeout=15,
-            description="Add a global alias to a bucket",
-            params={
-                "bucket_name": _bucket_name(
-                    "Bucket reference: existing global alias or hex UUID"
-                ),
-                "new_alias": ParamDef(
-                    placeholder="new_alias",
-                    default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="New global alias to add",
-                ),
-            },
-        ),
-        "garage_bucket_alias_global_remove": CommandSpec(
-            group="garage",
-            command=garage_cli("bucket", "unalias", "{alias_name}"),
-            timeout=15,
-            requires_confirmation=True,
-            description="Remove a global alias from a bucket",
-            params={
-                "alias_name": ParamDef(
-                    placeholder="alias_name",
-                    default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="Global alias to remove",
-                ),
-            },
-        ),
-        "garage_bucket_alias_local_add": CommandSpec(
-            group="garage",
-            command=garage_cli(
-                "bucket", "alias", "--local",
-                "{key_id}", "{bucket_name}", "{new_alias}",
-            ),
-            timeout=15,
-            description="Add a local alias scoped to an access key",
-            params={
-                "key_id": _key_id("Access key the local alias is scoped to"),
-                "bucket_name": _bucket_name(
-                    "Bucket reference: existing global alias or hex UUID"
-                ),
-                "new_alias": ParamDef(
-                    placeholder="new_alias",
-                    default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="New local alias to add",
-                ),
-            },
-        ),
-        "garage_bucket_alias_local_remove": CommandSpec(
-            group="garage",
-            command=garage_cli(
-                "bucket", "unalias", "--local", "{key_id}", "{alias_name}",
-            ),
-            timeout=15,
-            requires_confirmation=True,
-            description="Remove a local alias scoped to an access key",
-            params={
-                "key_id": _key_id("Access key the local alias is scoped to"),
-                "alias_name": ParamDef(
-                    placeholder="alias_name",
-                    default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
-                    description="Local alias to remove",
                 ),
             },
         ),
@@ -431,13 +127,13 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "display_name": ParamDef(
                     placeholder="display_name",
                     default=None,
-                    pattern=_BUCKET_NAME_PATTERN,
+                    pattern=BUCKET_NAME_PATTERN,
                     description="Customer-facing bucket name; becomes the local alias on the admin key",
                 ),
                 "key_name_admin": ParamDef(
                     placeholder="key_name_admin",
                     default=None,
-                    pattern=_KEY_NAME_PATTERN,
+                    pattern=KEY_NAME_PATTERN,
                     description="Garage key name for the admin (all-permissions) key",
                 ),
             },
@@ -451,7 +147,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_delete_provisioned_bucket_handler(config, params),
             params={
-                "bucket_id": _bucket_id(
+                "bucket_id": bucket_id_param(
                     "Bucket UUID (16 or 64-char Garage ID) to delete"
                 ),
             },
@@ -468,13 +164,13 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "new_key_name": ParamDef(
                     placeholder="new_key_name",
                     default=None,
-                    pattern=_KEY_NAME_PATTERN,
+                    pattern=KEY_NAME_PATTERN,
                     description="Garage key name for the new tiered key",
                 ),
-                "bucket_id": _bucket_id(
+                "bucket_id": bucket_id_param(
                     "Bucket UUID (16 or 64-char Garage ID) to attach the local alias to"
                 ),
-                "local_alias": _local_alias(
+                "local_alias": local_alias_param(
                     "Local alias to attach on the new key (typically display_name)"
                 ),
                 "key_tier": ParamDef(
@@ -497,7 +193,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "new_key_name": ParamDef(
                     placeholder="new_key_name",
                     default=None,
-                    pattern=_KEY_NAME_PATTERN,
+                    pattern=KEY_NAME_PATTERN,
                     description="Garage key name for the account key",
                 ),
                 "allow_create_bucket": ParamDef(
@@ -520,19 +216,19 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Garage ID of the key being rotated out",
                 ),
                 "new_key_name": ParamDef(
                     placeholder="new_key_name",
                     default=None,
-                    pattern=_KEY_NAME_PATTERN,
+                    pattern=KEY_NAME_PATTERN,
                     description="Name for the replacement key",
                 ),
-                "bucket_id": _bucket_id(
+                "bucket_id": bucket_id_param(
                     "Bucket UUID (16 or 64-char Garage ID) the local alias is attached to"
                 ),
-                "local_alias": _local_alias(
+                "local_alias": local_alias_param(
                     "Local alias to re-attach on the new key"
                 ),
                 "key_tier": ParamDef(
@@ -558,7 +254,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_delete_key_handler(config, params),
             params={
-                "key_id": _key_id("Garage key ID to delete"),
+                "key_id": key_id_param("Garage key ID to delete"),
             },
         ),
         "garage_detach_account_key": CommandSpec(
@@ -576,14 +272,14 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_detach_account_key_handler(config, params),
             params={
-                "bucket_id": _bucket_id("Bucket UUID (16 or 64-char Garage ID)"),
+                "bucket_id": bucket_id_param("Bucket UUID (16 or 64-char Garage ID)"),
                 "account_key_id": ParamDef(
                     placeholder="account_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Account key Garage ID whose grant is removed",
                 ),
-                "local_alias": _local_alias(
+                "local_alias": local_alias_param(
                     "The account key's local alias for the bucket to drop"
                 ),
             },
@@ -603,14 +299,14 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_attach_account_key_handler(config, params),
             params={
-                "bucket_id": _bucket_id("Bucket UUID (16 or 64-char Garage ID)"),
+                "bucket_id": bucket_id_param("Bucket UUID (16 or 64-char Garage ID)"),
                 "account_key_id": ParamDef(
                     placeholder="account_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Account key Garage ID receiving the grant",
                 ),
-                "local_alias": _local_alias(
+                "local_alias": local_alias_param(
                     "Local alias to attach on the key (the bucket's display_name)"
                 ),
                 "tier": ParamDef(
@@ -638,7 +334,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "account_key_id": ParamDef(
                     placeholder="account_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="The account key (GK...) whose grants to enforce",
                 ),
                 "tier": ParamDef(
@@ -673,13 +369,13 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Account key Garage ID being rotated out",
                 ),
                 "new_key_id": ParamDef(
                     placeholder="new_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Replacement account key Garage ID receiving ownership",
                 ),
                 "bucket_snapshot": ParamDef(
@@ -713,7 +409,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Compromised account key Garage ID to snapshot then delete",
                 ),
             },
@@ -732,7 +428,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_get_key_buckets_handler(config, params),
             params={
-                "key_id": _key_id("Account key Garage ID to list owned buckets for"),
+                "key_id": key_id_param("Account key Garage ID to list owned buckets for"),
             },
         ),
         "garage_get_bucket_owners": CommandSpec(
@@ -749,7 +445,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_get_bucket_owners_handler(config, params),
             params={
-                "bucket_id": _bucket_id("Bucket UUID (16 or 64-char Garage ID)"),
+                "bucket_id": bucket_id_param("Bucket UUID (16 or 64-char Garage ID)"),
             },
         ),
         "garage_bucket_clear": CommandSpec(
@@ -767,8 +463,8 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_clear_bucket_handler(config, params),
             params={
-                "bucket_name": _bucket_name("Bucket to clear (customer-secret mode)"),
-                "bucket_id": _bucket_id(
+                "bucket_name": bucket_name_param("Bucket to clear (customer-secret mode)"),
+                "bucket_id": bucket_id_param(
                     "Bucket id (garage_bucket_id, never the local alias) "
                     "for the credential-less purge clear"
                 ),
@@ -787,7 +483,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "access_key_id": ParamDef(
                     placeholder="access_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Customer S3 access key ID",
                 ),
                 "secret_access_key": ParamDef(
@@ -814,7 +510,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=make_walk_bucket_stats_handler,
             params={
-                "bucket_name": _bucket_name("Bucket to walk (local alias = display_name)"),
+                "bucket_name": bucket_name_param("Bucket to walk (local alias = display_name)"),
                 "s3_endpoint": ParamDef(
                     placeholder="s3_endpoint",
                     default=None,
@@ -830,7 +526,7 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "access_key_id": ParamDef(
                     placeholder="access_key_id",
                     default=None,
-                    pattern=_KEY_ID_PATTERN,
+                    pattern=KEY_ID_PATTERN,
                     description="Customer S3 access key ID (any tier)",
                 ),
                 "secret_access_key": ParamDef(
@@ -854,20 +550,6 @@ def build_garage_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     pattern=r"[0-9]{1,7}",
                     description="Cap; truncated=True returned if exceeded",
                 ),
-            },
-        ),
-        "garage_bucket_deny": CommandSpec(
-            group="garage",
-            command=garage_cli(
-                "bucket", "deny", "--read", "--write", "--owner",
-                "{bucket_name}", "--key", "{key_id}",
-            ),
-            timeout=15,
-            requires_confirmation=True,
-            description="Revoke all access to a bucket for a key",
-            params={
-                "bucket_name": _bucket_name("Bucket to revoke access from"),
-                "key_id": _key_id("Key to revoke access for"),
             },
         ),
     }
