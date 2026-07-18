@@ -252,16 +252,59 @@ async def test_dispatch_sequence_continues_past_failure(
 
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
-async def test_dispatch_sequence_invalid_command_aborts(
+async def test_dispatch_sequence_invalid_command_sends_failure(
     mock_exec: MagicMock,
     agent: Agent,
 ) -> None:
+    """An authenticated sequence with a bad command gets a wire failure, not silence."""
     ws = AsyncMock()
     await dispatch.dispatch_message(
         agent, ws, sign_command_sequence(["this_command_does_not_exist"])
     )
     mock_exec.assert_not_called()
-    ws.send.assert_not_called()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is False
+    assert sent_data["payload"]["failure_reason"] == "validation_failed"
+    assert sent_data["payload"]["command"] == "this_command_does_not_exist"
+    assert sent_data["payload"]["sequence_id"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_unknown_command_sends_failure(agent: Agent) -> None:
+    """An authenticated request for an unknown command gets a wire failure."""
+    ws = AsyncMock()
+    await dispatch.dispatch_message(
+        agent, ws, sign_command_request(command="this_command_does_not_exist")
+    )
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is False
+    assert sent_data["payload"]["failure_reason"] == "validation_failed"
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_sealed_sequence_sends_refusal(
+    mock_exec: MagicMock,
+    agent: Agent,
+) -> None:
+    """A sealed sequence sends the refusal on the wire, mirroring the single path."""
+    agent.signoff_state.seal()
+    ws = AsyncMock()
+    await dispatch.dispatch_message(
+        agent, ws, sign_command_sequence(["git_pull", "run_apply_block"])
+    )
+    mock_exec.assert_not_called()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is False
+    assert sent_data["payload"]["failure_reason"] == "signoff_sealed"
+    assert sent_data["payload"]["command"] == "run_apply_block"
+    assert sent_data["payload"]["sequence_id"]
 
 
 # ---------------------------------------------------------------------------

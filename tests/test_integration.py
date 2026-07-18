@@ -449,12 +449,12 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
 
 @pytest.mark.asyncio
 async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
-    """Sequence with a bogus command name - pre-validation blocks all execution."""
+    """Sequence with a bogus command name - no execution, one wire failure."""
     config = build_config(tmp_path, free_port)
     store = NonceStore(tmp_path / "nonces.db")
     shutdown = asyncio.Event()
     server_done = asyncio.Event()
-    stray_results: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
 
     async def handler(ws: ServerConnection) -> None:
         await _wait_for_register(ws)
@@ -464,7 +464,7 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
         )
         await ws.send(msg)
 
-        stray_results.extend(await _drain_non_results(ws, timeout=0.5))
+        results.extend(await _collect_results(ws, count=1))
         server_done.set()
 
     mock_exec = MagicMock()
@@ -491,7 +491,12 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
 
     store.close()
 
-    assert stray_results == []
+    assert len(results) == 1
+    payload = results[0]["payload"]
+    assert payload["success"] is False
+    assert payload["failure_reason"] == "validation_failed"
+    assert payload["command"] == "totally_bogus_command"
+    assert payload["sequence_id"]
     mock_exec.assert_not_called()
 
 

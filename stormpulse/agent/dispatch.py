@@ -6,6 +6,7 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, TypeVar
 
 from websockets.asyncio.client import ClientConnection
@@ -154,8 +155,6 @@ async def handle_command_request(
         return
 
     result = await _run_subprocess_command(agent, payload, envelope.id)
-    if result is None:
-        return
     await _send_result(agent, ws, result)
     _log_to_pulse(agent, payload.command, result)
 
@@ -211,8 +210,14 @@ async def _run_subprocess_command(
     agent: Agent,
     payload: CommandRequestPayload,
     request_id: str,
-) -> CommandResultPayload | None:
-    """Run a whitelisted subprocess command; ``None`` means logged error, drop the request."""
+) -> CommandResultPayload:
+    """Run a whitelisted subprocess command; dispatch errors become failure results.
+
+    The request already passed HMAC verification (auth failures drop silently
+    upstream, in ``_verify_typed_payload``), so an unknown command or a bad
+    param gets an honest failure on the wire, never silence: a dropped result
+    is a dashboard spinner timing out with no reason.
+    """
     try:
         return await asyncio.to_thread(
             execute_command,
@@ -224,7 +229,18 @@ async def _run_subprocess_command(
         )
     except (CommandError, ParamValidationError) as exc:
         logger.warning("Command error for %s: %s", request_id, exc)
-        return None
+        cmd_def = agent.registry.get(payload.command)
+        return CommandResultPayload(
+            request_id=request_id,
+            command=payload.command,
+            group=cmd_def.group if cmd_def else "unknown",
+            success=False,
+            exit_code=-1,
+            stdout="",
+            stderr=str(exc),
+            duration_ms=0,
+            failure_reason="validation_failed",
+        )
 
 
 async def _send_result(
@@ -414,6 +430,23 @@ async def handle_command_sequence(
             get_command(name, registry=agent.registry)
     except CommandError as exc:
         logger.warning("Sequence %s has invalid command: %s", payload.sequence_id, exc)
+        # Authenticated request, so the refusal goes on the wire (one failure
+        # result terminates the sequence dashboard-side), never silence.
+        failure = CommandResultPayload(
+            request_id=str(uuid.uuid4()),
+            command=name,
+            group="unknown",
+            success=False,
+            exit_code=-1,
+            stdout="",
+            stderr=str(exc),
+            duration_ms=0,
+            sequence_id=payload.sequence_id,
+            failure_reason="validation_failed",
+        )
+        await ws.send(
+            make_command_result(agent.config.agent.id, failure).to_json()
+        )
         return
 
     # Sequence seal recheck mirrors the single-command path (ADR CORE-004).
@@ -424,6 +457,14 @@ async def handle_command_sequence(
             payload.sequence_id,
             ", ".join(sealed_in_sequence),
         )
+        first_sealed = sealed_in_sequence[0]
+        sealed = replace(
+            sealed_refusal_result(
+                str(uuid.uuid4()), first_sealed, agent.registry.get(first_sealed),
+            ),
+            sequence_id=payload.sequence_id,
+        )
+        await ws.send(make_command_result(agent.config.agent.id, sealed).to_json())
         return
 
     agent_id = agent.config.agent.id
