@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **`garage_delete_customer_key`: guarded delete for a per-bucket key** (`stormpulse/garage/jobs/delete_customer_key.py`). Deletes a customer bucket key only after verifying, against live Garage state (GetBucketInfo), that at least one *covering* key still holds a live grant on the bucket. Which keys count as coverage is the control plane's call (`covering_key_ids`); whether a grant exists is Garage's. All-or-nothing like the enforce-tier stranding pre-pass: a failed check (`not_covered`) changes nothing, a positively absent bucket is vacuous coverage (reported, never silent), an all-denied lingering grant is presence, not coverage. The delete itself keeps `garage_delete_key`'s confirmed-gone semantics, and that unconditional primitive is untouched: the sweep's contract stays unconditional.
-
 ### Removed
 
 - **`retention_days` is gone from `[[log_groups]]`.** The agent tails and ships; it stores no logs, so the knob enforced nothing (a dead knob under the CONTEXT.md "No dead knobs" rule). `stormpulse init` templates no longer emit it, and a stale key in an existing config logs a deprecation warning instead of failing, so deployed agents keep working. Log retention is a dashboard-side concern.

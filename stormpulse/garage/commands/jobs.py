@@ -30,9 +30,6 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     from stormpulse.garage.jobs.converge_account_key_rotation import (
         make_converge_account_key_rotation_handler,
     )
-    from stormpulse.garage.jobs.delete_customer_key import (
-        make_delete_customer_key_handler,
-    )
     from stormpulse.garage.jobs.delete_key import make_delete_key_handler
     from stormpulse.garage.jobs.delete_provisioned_bucket import (
         make_delete_provisioned_bucket_handler,
@@ -260,37 +257,6 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             handler=lambda params: make_delete_key_handler(config, params),
             params={
                 "key_id": key_id_param("Garage key ID to delete"),
-            },
-        ),
-        "garage_delete_customer_key": CommandSpec(
-            group="garage",
-            command=["garage_delete_customer_key"],  # internal - handled by JobManager
-            timeout=30,
-            requires_confirmation=True,
-            description=(
-                "Guarded admin-API delete of a per-bucket customer key: "
-                "verifies one of the covering keys still holds a live grant "
-                "on the bucket (GetBucketInfo, live state), then deletes with "
-                "the same confirmed-gone semantics as garage_delete_key. "
-                "All-or-nothing: a failed coverage check (not_covered) makes "
-                "no changes."
-            ),
-            mode="job",
-            handler=lambda params: make_delete_customer_key_handler(config, params),
-            params={
-                "key_id": key_id_param("Garage key ID to delete"),
-                "bucket_id": bucket_id_param(
-                    "Bucket UUID whose remaining coverage gates the delete"
-                ),
-                "covering_key_ids": ParamDef(
-                    placeholder="covering_key_ids",
-                    default=None,
-                    pattern=r"[a-zA-Z0-9]+(,[a-zA-Z0-9]+)*",
-                    description=(
-                        "Comma-separated Garage key ids that count as "
-                        "coverage; at least one must hold a live grant"
-                    ),
-                ),
             },
         ),
         "garage_detach_account_key": CommandSpec(
