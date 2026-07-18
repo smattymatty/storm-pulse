@@ -23,20 +23,13 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.tiers import TIER_PERMS
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 4
 
-_VALID_TIERS = frozenset({"all", "rw", "ro"})
-
-# (read, write, owner) per tier.
-_TIER_PERMS: dict[str, tuple[bool, bool, bool]] = {
-    "all": (True, True, True),
-    "rw": (True, True, False),
-    "ro": (True, False, False),
-}
 
 
 def make_rotate_customer_key_handler(
@@ -66,7 +59,7 @@ def make_rotate_customer_key_handler(
 
     # Defence in depth: don't trust the dispatcher's regex to be the
     # only check. An unknown tier here is treated as a missing param.
-    if key_tier not in _VALID_TIERS:
+    if key_tier not in TIER_PERMS:
         logger.error(
             "garage_rotate_customer_key got invalid key_tier: %r",
             key_tier,
@@ -118,11 +111,11 @@ async def run_rotate_customer_key(
     key_tier: str,
 ) -> JobOutcome:
     started_at = time.monotonic()
-    if key_tier not in _VALID_TIERS:
+    if key_tier not in TIER_PERMS:
         # Should be unreachable when called via the handler factory, but
         # keep a hard floor here so a direct caller can't slip past.
         raise ValueError(f"Invalid key_tier: {key_tier!r}")
-    read, write, owner = _TIER_PERMS[key_tier]
+    read, write, owner = TIER_PERMS[key_tier]
     state = _RotateState(
         bucket_id=bucket_id,
         local_alias=local_alias,

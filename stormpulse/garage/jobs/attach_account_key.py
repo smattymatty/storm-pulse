@@ -21,18 +21,13 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.tiers import ATTACH_TIER_PERMS
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 3
 
-# (read, write, owner) per attach tier.
-_TIER_PERMS: dict[str, tuple[bool, bool, bool]] = {
-    "ro": (True, False, False),
-    "rw": (True, True, False),
-    "owner": (True, True, True),
-}
 
 
 def make_attach_account_key_handler(
@@ -51,7 +46,7 @@ def make_attach_account_key_handler(
             [k for k in required if not params.get(k)],
         )
         return None
-    if params["tier"] not in _TIER_PERMS:
+    if params["tier"] not in ATTACH_TIER_PERMS:
         logger.error("garage_attach_account_key invalid tier: %s", params["tier"])
         return None
 
@@ -94,14 +89,14 @@ async def run_attach_account_key(
             ),
             started_at=started_at,
         )
-    if tier not in _TIER_PERMS:
+    if tier not in ATTACH_TIER_PERMS:
         return _failure(
             failure_reason="invalid_tier",
             bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
-            stderr=f"tier must be one of {tuple(_TIER_PERMS)}, got {tier!r}",
+            stderr=f"tier must be one of {tuple(ATTACH_TIER_PERMS)}, got {tier!r}",
             started_at=started_at,
         )
-    read, write, owner = _TIER_PERMS[tier]
+    read, write, owner = ATTACH_TIER_PERMS[tier]
 
     # ---- Step 1: AllowBucketKey at the chosen tier ----
     await progress("starting", 0, _TOTAL_STEPS, f"Granting {tier} access")

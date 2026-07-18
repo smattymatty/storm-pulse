@@ -76,3 +76,34 @@ def local_alias_param(description: str) -> ParamDef:
         pattern=BUCKET_NAME_PATTERN,
         description=description,
     )
+
+
+def s3_credential_params(access_key_description: str) -> dict[str, ParamDef]:
+    """The S3 endpoint + SigV4 credential quartet shared by clear and walk."""
+    return {
+        "s3_endpoint": ParamDef(
+            placeholder="s3_endpoint",
+            default=None,
+            pattern=r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+            description="Garage S3 endpoint URL (no path/query)",
+        ),
+        "region": ParamDef(
+            placeholder="region",
+            default=None,
+            pattern=r"[a-zA-Z0-9_-]+",
+            description="S3 region for SigV4 signing",
+        ),
+        "access_key_id": ParamDef(
+            placeholder="access_key_id",
+            default=None,
+            pattern=KEY_ID_PATTERN,
+            description=access_key_description,
+        ),
+        "secret_access_key": ParamDef(
+            placeholder="secret_access_key",
+            default=None,
+            pattern=r".+",
+            description="Customer S3 secret. Held in agent process memory only for the job's lifetime.",
+            secret=True,
+        ),
+    }

@@ -30,15 +30,10 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.tiers import TIER_PERMS
 
 logger = logging.getLogger(__name__)
 
-# (read, write, owner) the tier allows as its maximum per-bucket grant.
-_TIER_MAX: dict[str, tuple[bool, bool, bool]] = {
-    "all": (True, True, True),
-    "rw": (True, True, False),
-    "ro": (True, False, False),
-}
 
 
 def make_enforce_account_key_tier_handler(
@@ -51,7 +46,7 @@ def make_enforce_account_key_tier_handler(
     if not account_key_id:
         logger.error("garage_enforce_account_key_tier missing required param: account_key_id")
         return None
-    if tier not in _TIER_MAX:
+    if tier not in TIER_PERMS:
         logger.error("garage_enforce_account_key_tier invalid tier: %s", tier)
         return None
 
@@ -93,13 +88,13 @@ async def run_enforce_account_key_tier(
             ),
             started_at=started_at,
         )
-    if tier not in _TIER_MAX:
+    if tier not in TIER_PERMS:
         return _failure(
             failure_reason="invalid_tier", account_key_id=account_key_id, tier=tier,
-            stderr=f"tier must be one of {tuple(_TIER_MAX)}, got {tier!r}",
+            stderr=f"tier must be one of {tuple(TIER_PERMS)}, got {tier!r}",
             started_at=started_at,
         )
-    tier_max = _TIER_MAX[tier]
+    tier_max = TIER_PERMS[tier]
     mr, mw, mo = tier_max
 
     # ---- Step 1: read the key's actual grants ----

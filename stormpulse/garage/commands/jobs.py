@@ -12,8 +12,10 @@ from stormpulse.garage.commands.params import (
     bucket_name_param,
     key_id_param,
     local_alias_param,
+    s3_credential_params,
 )
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.tiers import ATTACH_TIER_PATTERN, TIER_PATTERN
 
 
 def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
@@ -176,7 +178,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "key_tier": ParamDef(
                     placeholder="key_tier",
                     default=None,
-                    pattern=r"(?:all|rw|ro)",
+                    pattern=TIER_PATTERN,
                     description="Permission tier: 'rw'/'ro' add a tiered key to a bucket that already has an owner; 'all' mints the owner key onto an adopted bucket whose owner slot is free (claim-admin).",
                 ),
             },
@@ -234,7 +236,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "key_tier": ParamDef(
                     placeholder="key_tier",
                     default=None,
-                    pattern=r"(?:all|rw|ro)",
+                    pattern=TIER_PATTERN,
                     description="Permission tier for the new key: 'all', 'rw', or 'ro'",
                 ),
             },
@@ -312,7 +314,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "tier": ParamDef(
                     placeholder="tier",
                     default=None,
-                    pattern=r"(?:ro|rw|owner)",
+                    pattern=ATTACH_TIER_PATTERN,
                     description="Grant tier: 'ro', 'rw', or 'owner' (least-privilege)",
                 ),
             },
@@ -340,7 +342,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "tier": ParamDef(
                     placeholder="tier",
                     default=None,
-                    pattern=r"(?:all|rw|ro)",
+                    pattern=TIER_PATTERN,
                     description=(
                         "The tier ceiling (all/rw/ro); grants above it are "
                         "narrowed down"
@@ -468,31 +470,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     "Bucket id (garage_bucket_id, never the local alias) "
                     "for the credential-less purge clear"
                 ),
-                "s3_endpoint": ParamDef(
-                    placeholder="s3_endpoint",
-                    default=None,
-                    pattern=r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
-                    description="Garage S3 endpoint URL (no path/query)",
-                ),
-                "region": ParamDef(
-                    placeholder="region",
-                    default=None,
-                    pattern=r"[a-zA-Z0-9_-]+",
-                    description="S3 region for SigV4 signing",
-                ),
-                "access_key_id": ParamDef(
-                    placeholder="access_key_id",
-                    default=None,
-                    pattern=KEY_ID_PATTERN,
-                    description="Customer S3 access key ID",
-                ),
-                "secret_access_key": ParamDef(
-                    placeholder="secret_access_key",
-                    default=None,
-                    pattern=r".+",
-                    description="Customer S3 secret. Held in agent process memory only for the job's lifetime.",
-                    secret=True,
-                ),
+                **s3_credential_params("Customer S3 access key ID"),
             },
         ),
         "garage_walk_bucket_stats": CommandSpec(
@@ -511,31 +489,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             handler=make_walk_bucket_stats_handler,
             params={
                 "bucket_name": bucket_name_param("Bucket to walk (local alias = display_name)"),
-                "s3_endpoint": ParamDef(
-                    placeholder="s3_endpoint",
-                    default=None,
-                    pattern=r"^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
-                    description="Garage S3 endpoint URL (no path/query)",
-                ),
-                "region": ParamDef(
-                    placeholder="region",
-                    default=None,
-                    pattern=r"[a-zA-Z0-9_-]+",
-                    description="S3 region for SigV4 signing",
-                ),
-                "access_key_id": ParamDef(
-                    placeholder="access_key_id",
-                    default=None,
-                    pattern=KEY_ID_PATTERN,
-                    description="Customer S3 access key ID (any tier)",
-                ),
-                "secret_access_key": ParamDef(
-                    placeholder="secret_access_key",
-                    default=None,
-                    pattern=r".+",
-                    description="Customer S3 secret. In agent memory only for the job lifetime.",
-                    secret=True,
-                ),
+                **s3_credential_params("Customer S3 access key ID (any tier)"),
                 "prefix": ParamDef(
                     placeholder="prefix",
                     default="",

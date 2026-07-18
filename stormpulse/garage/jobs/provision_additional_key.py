@@ -21,23 +21,17 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.tiers import TIER_PERMS
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 3
 
-_VALID_TIERS = ("all", "rw", "ro")
 
-# (read, write, owner) for each tier. The ``all`` tier mints an owner key onto
-# a bucket whose owner slot is free - the claim-admin path for an adopted
-# bucket, the first owner-grant-on-existing-bucket in the system.
-# rw/ro remain non-owner tiered keys added to a bucket that already has one.
-_TIER_PERMS: dict[str, tuple[bool, bool, bool]] = {
-    "all": (True, True, True),
-    "rw": (True, True, False),
-    "ro": (True, False, False),
-}
+# Here the ``all`` tier mints an owner key onto a bucket whose owner slot is
+# free - the claim-admin path for an adopted bucket. rw/ro remain non-owner
+# tiered keys added to a bucket that already has one.
 
 
 def make_provision_additional_key_handler(
@@ -57,7 +51,7 @@ def make_provision_additional_key_handler(
             [k for k in required if not params.get(k)],
         )
         return None
-    if params["key_tier"] not in _VALID_TIERS:
+    if params["key_tier"] not in TIER_PERMS:
         logger.error(
             "garage_provision_additional_key invalid key_tier: %s",
             params["key_tier"],
@@ -112,13 +106,13 @@ async def run_provision_additional_key(
         key_tier=key_tier,
     )
 
-    if key_tier not in _VALID_TIERS:
+    if key_tier not in TIER_PERMS:
         # Defensive: handler factory rejects this, but enforce here too.
         return _failure(
             failure_reason="invalid_key_tier",
             step_failed=None,
             state=state,
-            stderr=f"key_tier must be one of {_VALID_TIERS}, got {key_tier!r}",
+            stderr=f"key_tier must be one of {tuple(TIER_PERMS)}, got {key_tier!r}",
             started_at=started_at,
             rollback_status="not_required",
             extras_extra={},
@@ -140,7 +134,7 @@ async def run_provision_additional_key(
             extras_extra={},
         )
 
-    read, write, owner = _TIER_PERMS[key_tier]
+    read, write, owner = TIER_PERMS[key_tier]
     new_secret: str | None = None
 
     # ---- Step 1: CreateKey ----
@@ -273,7 +267,7 @@ async def _rollback(
     """
     manual: list[dict[str, Any]] = []
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
-    read, write, owner = _TIER_PERMS[state.key_tier]
+    read, write, owner = TIER_PERMS[state.key_tier]
 
     # 1. Revoke permissions
     if state.perms_granted and state.new_key_id is not None:
