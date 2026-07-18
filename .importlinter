@@ -11,10 +11,10 @@
 ;               metrics, enroll, status,      sibling-feature imports.
 ;               signoff, system_inventory)
 ;   Framework  (commands, init, auth,        - shared infrastructure; "|" -
-;               integrations)                  these modules do not import
+;               integrations, wizard)          these modules do not import
 ;                                             each other.
-;   Foundation (protocol, config)           - wire-format + config contracts;
-;                                             "|" - independent.
+;   Foundation (protocol, config,           - wire-format + config contracts;
+;               events, sdk)                   "|" - independent.
 ;
 ; Tests are outside the stormpulse package, so no ignore_imports needed.
 

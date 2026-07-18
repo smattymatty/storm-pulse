@@ -2,8 +2,8 @@
 
 Node telemetry (cluster status, statistics, key list) and per-bucket state
 (sizes, object counts, quotas, keys) are all read via the admin HTTP API, never
-the Garage CLI. ``GaragePeer`` is the one type still imported from ``parse`` (a
-dataclass, not a scraper); it relocates when ``parse.py`` is finally deleted.
+the Garage CLI. ``GaragePeer`` (a dataclass, not a scraper) lives here; it
+moved in when the CLI-scraping ``parse.py`` was deleted.
 """
 
 from __future__ import annotations

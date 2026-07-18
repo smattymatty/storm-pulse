@@ -25,12 +25,12 @@ The `stormpulse/` package is organized into four layers. Every module and subpac
 
 | Layer | Members | May import |
 |-------|---------|------------|
-| **Foundation** | `protocol.py`, `config.py`, `sdk/` | nothing intra-package |
+| **Foundation** | `protocol.py`, `config.py`, `events.py`, `sdk/` | nothing intra-package |
 | **Framework** | `commands/`, `init/`, `auth.py`, `integrations/`, `wizard/` | Foundation |
 | **Features** | `garage/`, `caddy/`, `logging/`, `signoff/`, `metrics.py`, `enroll.py`, `status.py`, `system_inventory.py` | Foundation, Framework; not sibling Features |
 | **Entry** | `agent/`, `cli/`, `__main__.py` | any layer |
 
-- **Foundation** is the wire-format, config, and integration-contract substrate. `protocol.py` carries the message envelope and payload contracts; `config.py` carries the TOML-backed dataclasses; `sdk/` carries the versioned integration-wizard contract, the typed `Question`/`Finding`/`InitPlan` data a private integration is written against ([CORE-007](007-external-integration-loader-and-command-contributor-grant.md)). Foundation imports nothing intra-package, so `sdk/` stays pure enough for external plugin code to depend on it.
+- **Foundation** is the wire-format, config, and integration-contract substrate. `protocol.py` carries the message envelope and payload contracts; `config.py` carries the TOML-backed dataclasses; `events.py` carries the wide-event emission buffer (Foundation-tier because every layer emits into it); `sdk/` carries the versioned integration-wizard contract, the typed `Question`/`Finding`/`InitPlan` data a private integration is written against ([CORE-007](007-external-integration-loader-and-command-contributor-grant.md)). Foundation imports nothing intra-package, so `sdk/` stays pure enough for external plugin code to depend on it.
 - **Framework** is shared infrastructure: `commands/` is the runtime command registry and job runner, `init/` is the install-time setup framework, `auth.py` is HMAC and nonce verification, `integrations/` is the Integration contract registry ([CORE-005](005-integration-contract.md)), and `wizard/` is the transactional mutation engine that applies an integration's typed `InitPlan` with preview, per-step verify, receipt, and a journalled crash-recoverable reverse-order rollback ([CORE-007](007-external-integration-loader-and-command-contributor-grant.md)).
 - **Features** are capability surfaces. Size is not the criterion: `metrics.py` is a one-module Feature, `garage/` is a fifteen-module Feature, and the same rule binds both. Placement comes from the capability test, not the import shape.
 - **Entry** is composition. `agent/` wires the running agent; `cli/` and `__main__.py` are the command-line surface. Nothing imports Entry.
