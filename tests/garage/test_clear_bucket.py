@@ -229,6 +229,28 @@ async def test_partial_delete_failure_marks_overall_failure() -> None:
 
 
 @pytest.mark.asyncio
+async def test_unreported_keys_count_as_failures() -> None:
+    """A 200 response naming a key in neither Deleted nor Error never passes
+    as success: format drift / an empty-body proxy 200 must fail loud."""
+    client = _FakeS3Client(
+        pages=[_make_page(["a", "b", "c"], is_truncated=False)],
+        delete_results=[DeleteResult(deleted=["a"], errors=[])],
+    )
+    progress = _ProgressRecorder()
+
+    outcome = await run_clear_bucket(progress, client, "test-bucket")  # type: ignore[arg-type]
+
+    assert outcome.success is False
+    assert outcome.failure_reason == "partial_failure"
+    assert outcome.extras["deleted_count"] == 1
+    assert outcome.extras["failed_count"] == 2
+    assert {e["Key"] for e in outcome.extras["errors"]} == {"b", "c"}
+    assert all(
+        e["Code"] == "UnreportedByDeleteObjects" for e in outcome.extras["errors"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_errors_are_truncated_to_first_ten() -> None:
     """Wire payload stays small even when many objects fail."""
     keys = [f"k{i}" for i in range(15)]

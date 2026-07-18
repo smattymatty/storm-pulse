@@ -415,6 +415,22 @@ async def run_clear_bucket(
             error_entries.append(
                 {"Key": err.key, "Code": err.code, "Message": err.message},
             )
+        # Fail-safe in the KEEP direction: a key the response names in neither
+        # <Deleted> nor <Error> (format drift, a proxy 200ing an empty body) is
+        # counted failed, never assumed gone - success requires positive proof.
+        reported = set(result.deleted) | {err.key for err in result.errors}
+        for key in batch:
+            if key not in reported:
+                error_entries.append(
+                    {
+                        "Key": key,
+                        "Code": "UnreportedByDeleteObjects",
+                        "Message": (
+                            "DeleteObjects response named this key in neither "
+                            "Deleted nor Error"
+                        ),
+                    },
+                )
         await progress(
             "running",
             deleted_total,
