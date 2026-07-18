@@ -239,13 +239,22 @@ def _region_lock(region: str) -> asyncio.Lock:
     return lock
 
 
+class _SyncFailure(Exception):
+    """Raised by a sync step to abort the workflow with a failed JobOutcome."""
+
+    def __init__(self, outcome: JobOutcome) -> None:
+        super().__init__(outcome.stderr)
+        self.outcome = outcome
+
+
 def make_caddy_sync_handler(
     caddy: CaddyConfig,
     params: dict[str, str],
 ) -> JobHandler:
     """Build a long-running handler for buckets_custom_domain_caddy_sync.
 
-    Workflow:
+    Workflow, one ``_*`` step function per numbered phase below; a step
+    aborts the sync by raising ``_SyncFailure`` with its failed outcome:
 
     1. Decode + validate the tenants manifest (a Storm-side render guard:
        bad JSON, an unsafe key, or an oversized fragment rejects the sync
@@ -275,22 +284,71 @@ def make_caddy_sync_handler(
         tenants_raw = params.get("tenants", "{}")
         authorize_bulk = params.get("authorize_bulk", "false") == "true"
 
-        await progress(
-            "starting",
-            0,
-            4,
-            f"syncing Caddy for region {region}",
-        )
-
-        # ----- Step 1: decode + validate the manifest -----
-        tenants, manifest_err = _decode_manifest(tenants_raw)
-        if tenants is None:
-            logger.warning(
-                "caddy_sync: rejected manifest for region=%s: %s",
-                region,
-                manifest_err,
+        try:
+            await progress(
+                "starting",
+                0,
+                4,
+                f"syncing Caddy for region {region}",
             )
-            return JobOutcome(
+            tenants = _validate_manifest(region, tenants_raw)
+
+            await progress(
+                "running",
+                1,
+                4,
+                "reconciling drop-in file set",
+            )
+            plan = _scan_and_plan(caddy, region, tenants, authorize_bulk)
+
+            await progress(
+                "running",
+                2,
+                4,
+                "persisting drop-in files to disk",
+            )
+            await _persist_plan(caddy, region, plan)
+
+            await progress(
+                "running",
+                3,
+                5,
+                "preflighting composed config via admin /adapt",
+            )
+            load_body = await _preflight_composed(caddy, region)
+
+            await progress(
+                "running",
+                4,
+                5,
+                "reloading Caddy via admin /load",
+            )
+            await _reload_caddy(caddy, region, load_body)
+        except _SyncFailure as failed:
+            return failed.outcome
+
+        await progress(
+            "finalizing",
+            5,
+            5,
+            "sync applied, delete rail tripped" if plan.rail_tripped else "sync complete",
+        )
+        return _terminal_outcome(region, plan)
+
+    return handler
+
+
+def _validate_manifest(region: str, tenants_raw: str) -> dict[str, str]:
+    """Step 1: decode + validate the tenants manifest before anything touches disk."""
+    tenants, manifest_err = _decode_manifest(tenants_raw)
+    if tenants is None:
+        logger.warning(
+            "caddy_sync: rejected manifest for region=%s: %s",
+            region,
+            manifest_err,
+        )
+        raise _SyncFailure(
+            JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=(
@@ -299,126 +357,134 @@ def make_caddy_sync_handler(
                 ),
                 failure_reason="config_invalid",
             )
-
-        drop_in_dir = caddy.drop_in_path.parent
-        legacy_name = caddy.drop_in_path.name
-
-        # ----- Step 2: plan the reconcile against our own on-disk set -----
-        await progress(
-            "running",
-            1,
-            4,
-            "reconciling drop-in file set",
         )
-        try:
-            on_disk = {p.name for p in drop_in_dir.glob(_MANAGED_GLOB)}
-            legacy_exists = caddy.drop_in_path.exists()
-        except OSError as exc:
-            logger.error(
-                "caddy_sync: could not scan drop-in dir %s for region=%s: %s",
-                drop_in_dir,
-                region,
-                exc,
-            )
-            return JobOutcome(
+    return tenants
+
+
+def _scan_and_plan(
+    caddy: CaddyConfig,
+    region: str,
+    tenants: dict[str, str],
+    authorize_bulk: bool,
+) -> ReconcilePlan:
+    """Step 2: plan the reconcile against the agent's own on-disk managed set."""
+    drop_in_dir = caddy.drop_in_path.parent
+    legacy_name = caddy.drop_in_path.name
+    try:
+        on_disk = {p.name for p in drop_in_dir.glob(_MANAGED_GLOB)}
+        legacy_exists = caddy.drop_in_path.exists()
+    except OSError as exc:
+        logger.error(
+            "caddy_sync: could not scan drop-in dir %s for region=%s: %s",
+            drop_in_dir,
+            region,
+            exc,
+        )
+        raise _SyncFailure(
+            JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=f"Failed to scan drop-in directory {drop_in_dir}: {exc}",
                 failure_reason="persist_failed",
             )
+        ) from exc
 
-        plan = _plan_reconcile(
-            tenants=tenants,
-            on_disk=on_disk,
-            legacy_name=legacy_name,
-            legacy_exists=legacy_exists,
-            authorize_bulk=authorize_bulk,
-        )
+    return _plan_reconcile(
+        tenants=tenants,
+        on_disk=on_disk,
+        legacy_name=legacy_name,
+        legacy_exists=legacy_exists,
+        authorize_bulk=authorize_bulk,
+    )
 
-        # ----- Step 3: apply disk mutations (writes then deletes) -----
-        # All mutations happen before the /adapt preflight so the composed
-        # state Caddy adapts is the final set, never a transient superset.
-        # A leftover legacy file colliding with a new per-bucket file
-        # declaring the same site would otherwise fail /adapt on a duplicate
-        # site address.
-        await progress(
-            "running",
-            2,
-            4,
-            "persisting drop-in files to disk",
-        )
-        try:
-            for name, frag in plan.writes.items():
-                await asyncio.to_thread(
-                    _atomic_write_or_remove,
-                    drop_in_dir / name,
-                    frag,
-                )
-            for name in plan.deletes:
-                await asyncio.to_thread(
-                    _atomic_write_or_remove,
-                    drop_in_dir / name,
-                    "",
-                )
-        except OSError as exc:
-            logger.error(
-                "caddy_sync: persist failed for region=%s dir=%s: %s",
-                region,
-                drop_in_dir,
-                exc,
+
+async def _persist_plan(
+    caddy: CaddyConfig, region: str, plan: ReconcilePlan
+) -> None:
+    """Step 3: apply disk mutations, writes then deletes, atomically per file.
+
+    All mutations happen before the /adapt preflight so the composed
+    state Caddy adapts is the final set, never a transient superset.
+    A leftover legacy file colliding with a new per-bucket file
+    declaring the same site would otherwise fail /adapt on a duplicate
+    site address.
+    """
+    drop_in_dir = caddy.drop_in_path.parent
+    try:
+        for name, frag in plan.writes.items():
+            await asyncio.to_thread(
+                _atomic_write_or_remove,
+                drop_in_dir / name,
+                frag,
             )
-            return JobOutcome(
+        for name in plan.deletes:
+            await asyncio.to_thread(
+                _atomic_write_or_remove,
+                drop_in_dir / name,
+                "",
+            )
+    except OSError as exc:
+        logger.error(
+            "caddy_sync: persist failed for region=%s dir=%s: %s",
+            region,
+            drop_in_dir,
+            exc,
+        )
+        raise _SyncFailure(
+            JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=f"Failed to persist drop-in files to {drop_in_dir}: {exc}",
                 failure_reason="persist_failed",
             )
+        ) from exc
 
-        # ----- Step 4: preflight via admin /adapt -----
-        # /adapt runs the Caddyfile adapter WITHOUT loading, so a
-        # broken composed config (missing import target, two files
-        # declaring the same site) surfaces as a named failure here
-        # while the running Caddy keeps serving untouched. Both bugs
-        # of the 2026-06-11 incident were adapter errors that a /load
-        # 400 reported into a log nobody read; this step is what turns
-        # that into a self-diagnosing command result.
-        await progress(
-            "running",
-            3,
-            5,
-            "preflighting composed config via admin /adapt",
+
+async def _preflight_composed(caddy: CaddyConfig, region: str) -> str:
+    """Step 4: preflight the composed config via admin /adapt; returns the load body.
+
+    /adapt runs the Caddyfile adapter WITHOUT loading, so a
+    broken composed config (missing import target, two files
+    declaring the same site) surfaces as a named failure here
+    while the running Caddy keeps serving untouched. Both bugs
+    of the 2026-06-11 incident were adapter errors that a /load
+    400 reported into a log nobody read; this step is what turns
+    that into a self-diagnosing command result.
+    """
+    try:
+        load_body = await asyncio.to_thread(
+            _read_and_absolutize_imports,
+            caddy.main_caddyfile,
         )
-        try:
-            load_body = await asyncio.to_thread(
-                _read_and_absolutize_imports,
-                caddy.main_caddyfile,
-            )
-        except OSError as exc:
-            logger.error(
-                "caddy_sync: drop-in persisted but could not read main "
-                "Caddyfile %s for reload: %s",
-                caddy.main_caddyfile,
-                exc,
-            )
-            return JobOutcome(
+    except OSError as exc:
+        logger.error(
+            "caddy_sync: drop-in persisted but could not read main "
+            "Caddyfile %s for reload: %s",
+            caddy.main_caddyfile,
+            exc,
+        )
+        raise _SyncFailure(
+            JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=(f"Drop-in persisted but main Caddyfile read failed: {exc}"),
                 failure_reason="reload_failed",
             )
-        ok, err = await asyncio.to_thread(
-            _post_caddy_adapt,
-            caddy.admin_url,
-            load_body,
+        ) from exc
+    ok, err = await asyncio.to_thread(
+        _post_caddy_adapt,
+        caddy.admin_url,
+        load_body,
+    )
+    if not ok:
+        logger.warning(
+            "caddy_sync: composed config failed /adapt preflight "
+            "for region=%s: %s",
+            region,
+            err,
         )
-        if not ok:
-            logger.warning(
-                "caddy_sync: composed config failed /adapt preflight "
-                "for region=%s: %s",
-                region,
-                err,
-            )
-            return JobOutcome(
+        raise _SyncFailure(
+            JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=(
@@ -430,81 +496,83 @@ def make_caddy_sync_handler(
                 ),
                 failure_reason="config_invalid",
             )
+        )
+    return load_body
 
-        # ----- Step 5: reload Caddy via admin /load -----
-        # POST the main Caddyfile so Caddy re-adapts the composed
-        # config from disk. Posting just a fragment would replace
-        # the entire running config (Caddy /load is a full-config
-        # endpoint), wiping every other site the main Caddyfile
-        # declares until the next operator-initiated restart.
-        await progress(
-            "running",
-            4,
-            5,
-            "reloading Caddy via admin /load",
+
+async def _reload_caddy(caddy: CaddyConfig, region: str, load_body: str) -> None:
+    """Step 5: reload Caddy via admin /load.
+
+    POST the main Caddyfile so Caddy re-adapts the composed
+    config from disk. Posting just a fragment would replace
+    the entire running config (Caddy /load is a full-config
+    endpoint), wiping every other site the main Caddyfile
+    declares until the next operator-initiated restart.
+    """
+    ok, err = await asyncio.to_thread(
+        _post_caddy_load,
+        caddy.admin_url,
+        load_body,
+    )
+    if not ok:
+        logger.warning(
+            "caddy_sync: drop-ins persisted but Caddy reload "
+            "failed for region=%s: %s",
+            region,
+            err,
         )
-        ok, err = await asyncio.to_thread(
-            _post_caddy_load,
-            caddy.admin_url,
-            load_body,
-        )
-        if not ok:
-            logger.warning(
-                "caddy_sync: drop-ins persisted but Caddy reload "
-                "failed for region=%s: %s",
-                region,
-                err,
-            )
-            return JobOutcome(
+        raise _SyncFailure(
+            JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=f"Caddy admin /load rejected reload: {err}",
                 failure_reason="reload_failed",
             )
+        )
 
-        # ----- Terminal outcome -----
-        # The writes are live. If the rail tripped, the writes still
-        # applied (adds/updates are safe) but the suspicious deletes were
-        # refused and those files keep serving; return a named failure so
-        # the operator sees it, rather than a silent partial apply.
-        extras = {
-            "region": region,
-            "tenants": len(plan.writes),
-            "deleted": len(plan.deletes),
-            "rail_tripped": plan.rail_tripped,
-        }
-        if plan.rail_tripped:
-            skipped = ", ".join(plan.skipped_deletes)
-            await progress("finalizing", 5, 5, "sync applied, delete rail tripped")
-            return JobOutcome(
-                success=False,
-                exit_code=-1,
-                stderr=(
-                    f"Delete rail tripped for region {region}: the manifest "
-                    f"would remove {len(plan.skipped_deletes)} drop-in files "
-                    f"({skipped}), above the inline cadence of "
-                    f"{_INLINE_DELETE_CADENCE}. Writes were applied and those "
-                    "files keep serving; no delete was performed. If this is a "
-                    "deliberate bulk op (e.g. region decommission), re-dispatch "
-                    "with authorize_bulk set. Otherwise Storm's manifest is "
-                    "under-returning and should be investigated before the "
-                    "files are removed."
-                ),
-                failure_reason="delete_rail_tripped",
-                extras=extras,
-            )
 
-        await progress("finalizing", 5, 5, "sync complete")
+def _terminal_outcome(region: str, plan: ReconcilePlan) -> JobOutcome:
+    """Build the terminal outcome once the writes are live.
+
+    If the rail tripped, the writes still applied (adds/updates are safe)
+    but the suspicious deletes were refused and those files keep serving;
+    return a named failure so the operator sees it, rather than a silent
+    partial apply.
+    """
+    extras = {
+        "region": region,
+        "tenants": len(plan.writes),
+        "deleted": len(plan.deletes),
+        "rail_tripped": plan.rail_tripped,
+    }
+    if plan.rail_tripped:
+        skipped = ", ".join(plan.skipped_deletes)
         return JobOutcome(
-            success=True,
-            stdout=(
-                f"Synced {len(plan.writes)} drop-in file(s), removed "
-                f"{len(plan.deletes)} for region {region}"
+            success=False,
+            exit_code=-1,
+            stderr=(
+                f"Delete rail tripped for region {region}: the manifest "
+                f"would remove {len(plan.skipped_deletes)} drop-in files "
+                f"({skipped}), above the inline cadence of "
+                f"{_INLINE_DELETE_CADENCE}. Writes were applied and those "
+                "files keep serving; no delete was performed. If this is a "
+                "deliberate bulk op (e.g. region decommission), re-dispatch "
+                "with authorize_bulk set. Otherwise Storm's manifest is "
+                "under-returning and should be investigated before the "
+                "files are removed."
             ),
+            failure_reason="delete_rail_tripped",
             extras=extras,
         )
 
-    return handler
+    return JobOutcome(
+        success=True,
+        stdout=(
+            f"Synced {len(plan.writes)} drop-in file(s), removed "
+            f"{len(plan.deletes)} for region {region}"
+        ),
+        extras=extras,
+    )
 
 
 def _post_caddy_adapt(admin_url: str, fragment: str) -> tuple[bool, str]:
