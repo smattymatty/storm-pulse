@@ -442,3 +442,16 @@ class TestParseDockerRaw:
         result = parse_docker_raw(line)
         assert result is not None
         assert result["truncated"] is True
+
+
+def test_parser_registry_matches_config_whitelist() -> None:
+    """The two parser-name declarations must never drift.
+
+    ``config._LOG_PARSERS`` (Foundation) cannot import ``logging.parsers``
+    (Features), so the set is declared twice by topology; this test is the
+    sync check. A parser added to only one side fails here, not at bootstrap.
+    """
+    from stormpulse.config import _LOG_PARSERS
+    from stormpulse.logging.parsers import PARSERS
+
+    assert set(PARSERS) == set(_LOG_PARSERS)
