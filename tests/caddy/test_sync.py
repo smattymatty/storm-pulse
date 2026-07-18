@@ -307,6 +307,52 @@ class TestCaddySyncHandler:
         assert out2.success is True
         assert max_active == 1
 
+    def test_different_region_labels_still_serialize(self, tmp_path: Path) -> None:
+        """The lock guards the drop-in directory, never the caller's region
+        param: two dispatches naming different regions (or omitting one)
+        reconcile the same directory and must not overlap."""
+        import time as time_mod
+
+        from stormpulse.caddy import sync as sync_module
+
+        cfg = _make_config(tmp_path)
+        drop_in_dir = cfg.drop_in_path.parent
+        drop_in_dir.mkdir()
+
+        active = 0
+        max_active = 0
+        gauge = threading.Lock()
+        real_write = sync_module._atomic_write_or_remove
+
+        def slow_write(path: Path, fragment: str) -> None:
+            nonlocal active, max_active
+            with gauge:
+                active += 1
+                max_active = max(max_active, active)
+            time_mod.sleep(0.05)
+            try:
+                real_write(path, fragment)
+            finally:
+                with gauge:
+                    active -= 1
+
+        tenants = {"abcdef0123456789": "example.com { }\n"}
+
+        async def run_two() -> tuple[Any, Any]:
+            h1 = make_caddy_sync_handler(cfg, _params(tenants, region="vancouver-1"))
+            h2 = make_caddy_sync_handler(cfg, _params(tenants, region="toronto-1"))
+            return await asyncio.gather(_run_handler(h1), _run_handler(h2))
+
+        with patch(
+            "stormpulse.caddy.sync.http.client.HTTPConnection",
+            return_value=_make_mock_connection(status=200),
+        ), patch.object(sync_module, "_atomic_write_or_remove", slow_write):
+            out1, out2 = asyncio.run(run_two())
+
+        assert out1.success is True
+        assert out2.success is True
+        assert max_active == 1
+
     def test_empty_manifest_removes_single_managed_file(
         self, tmp_path: Path,
     ) -> None:

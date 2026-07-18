@@ -221,21 +221,24 @@ def _plan_reconcile(
     return ReconcilePlan(writes=writes, deletes=delete_names)
 
 
-# One reconcile per region at a time, per agent process. Each sync is a
-# full read-modify-write of the region's drop-in set (scan -> plan ->
-# apply -> reload), so two running concurrently race on the shared file
-# set: the 2026-07-04 persist_failed in the events plane's first live
-# minutes was two same-second syncs sharing site-<id>.caddy.tmp, the
-# loser's os.replace hitting Errno 2. Bursts of same-region dispatches
-# are legitimate website behavior (per-bucket closure sweeps), so the
-# serialization lives here, at the invariant's home.
-_REGION_LOCKS: dict[str, asyncio.Lock] = {}
+# One reconcile per drop-in DIRECTORY at a time, per agent process. Each
+# sync is a full read-modify-write of that directory's site-*.caddy set
+# (scan -> plan -> apply -> reload), so two running concurrently race on
+# the shared file set: the 2026-07-04 persist_failed in the events plane's
+# first live minutes was two same-second syncs sharing site-<id>.caddy.tmp,
+# the loser's os.replace hitting Errno 2. Bursts of dispatches are
+# legitimate website behavior (per-bucket closure sweeps), so the
+# serialization lives here, at the invariant's home. The lock keys on the
+# directory (the resource actually shared), never the caller-supplied
+# region param: two dispatches naming different regions - or omitting the
+# param - still reconcile the same directory and must serialize.
+_DIR_LOCKS: dict[str, asyncio.Lock] = {}
 
 
-def _region_lock(region: str) -> asyncio.Lock:
-    lock = _REGION_LOCKS.get(region)
+def _dir_lock(drop_in_dir: str) -> asyncio.Lock:
+    lock = _DIR_LOCKS.get(drop_in_dir)
     if lock is None:
-        lock = _REGION_LOCKS[region] = asyncio.Lock()
+        lock = _DIR_LOCKS[drop_in_dir] = asyncio.Lock()
     return lock
 
 
@@ -276,7 +279,7 @@ def make_caddy_sync_handler(
     """
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
-        async with _region_lock(params.get("region", "")):
+        async with _dir_lock(str(caddy.drop_in_path.parent)):
             return await _sync_once(progress)
 
     async def _sync_once(progress: ProgressCallback) -> JobOutcome:
