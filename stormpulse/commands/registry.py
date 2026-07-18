@@ -157,6 +157,12 @@ def validate_params(
         # Regex validation: short identifiers, bucket names, key IDs.
         if pdef.pattern is not None:
             if not re.fullmatch(pdef.pattern, value):
+                # A secret's value must never ride the error: it lands in logs + stderr.
+                if pdef.secret:
+                    raise ParamValidationError(
+                        f"Param {name!r} value ({len(value)} chars, withheld: "
+                        f"secret) does not match pattern {pdef.pattern!r}"
+                    )
                 raise ParamValidationError(
                     f"Param {name!r} value {value!r} "
                     f"does not match pattern {pdef.pattern!r}"

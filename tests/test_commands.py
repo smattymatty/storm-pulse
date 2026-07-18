@@ -725,6 +725,19 @@ def test_validate_params_pattern_mismatch_raises() -> None:
         validate_params(cmd, {"service": "INVALID!!!"})
 
 
+def test_validate_params_secret_pattern_mismatch_withholds_value() -> None:
+    """A failing secret value never rides the error message (it lands in logs)."""
+    cmd = _cmd_with_params(
+        secret_access_key=ParamDef(
+            placeholder="secret_access_key", default=None, pattern=r".+", secret=True,
+        ),
+    )
+    leaked = "SuperSecretValue123\n"
+    with pytest.raises(ParamValidationError, match="withheld") as excinfo:
+        validate_params(cmd, {"secret_access_key": leaked})
+    assert "SuperSecretValue123" not in str(excinfo.value)
+
+
 def test_validate_params_none_default_no_override_skips() -> None:
     """When default is None and no runtime override, the param is skipped.
 
