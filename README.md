@@ -101,7 +101,7 @@ Run `stormpulse init` to generate a config interactively - see the [Setup Guide]
 | `garage` | `enabled` | Enable Garage S3 integration (optional, default: absent) |
 | `garage` | `container_name` | Docker container name for Garage (e.g. `garaged`) |
 | `garage` | `config_path` | Path to Garage config file |
-| `garage` | `state_push_interval_seconds` | How often to refresh Garage state (default: 30) |
+| `garage` | `detector_interval_seconds` | How often to check for brand-new buckets (optional, default: 2.0) |
 
 ## Documentation
 
