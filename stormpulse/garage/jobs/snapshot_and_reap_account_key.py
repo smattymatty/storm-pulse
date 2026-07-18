@@ -18,6 +18,7 @@ success (idempotent).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -98,7 +99,8 @@ async def run_snapshot_and_reap_account_key(
 
     # ---- Step 1: snapshot (before anything destructive) ----
     await progress("starting", 0, _TOTAL_STEPS, "Snapshotting owned buckets")
-    kinfo, kerr = admin_api.get_key_info(
+    kinfo, kerr = await asyncio.to_thread(
+        admin_api.get_key_info,
         admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
     )
     if kinfo is None:
@@ -114,7 +116,8 @@ async def run_snapshot_and_reap_account_key(
 
     # ---- Step 2: reap the key object now ----
     await progress("running", 1, _TOTAL_STEPS, "Deleting compromised key")
-    ok, err = admin_api.delete_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.delete_key,
         admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
     )
     if not (ok or admin_api.is_not_found(err)):

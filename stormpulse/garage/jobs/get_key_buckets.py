@@ -15,6 +15,7 @@ ownership).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -63,7 +64,8 @@ async def run_get_key_buckets(
         )
 
     await progress("starting", 0, 1, "Reading key buckets")
-    kinfo, err = admin_api.get_key_info(
+    kinfo, err = await asyncio.to_thread(
+        admin_api.get_key_info,
         admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
     )
     if kinfo is None:

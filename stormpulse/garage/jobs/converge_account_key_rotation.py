@@ -18,6 +18,7 @@ transient failure, retried next tick.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -162,7 +163,8 @@ async def run_converge_account_key_rotation(
                 "aliases": [e["alias"]] if e.get("alias") else [],
             }
     else:
-        old_info, old_err = admin_api.get_key_info(
+        old_info, old_err = await asyncio.to_thread(
+            admin_api.get_key_info,
             admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
         )
         if old_info is None:
@@ -176,7 +178,8 @@ async def run_converge_account_key_rotation(
             )
         old_owned = _owned(old_info)
 
-    new_info, new_err = admin_api.get_key_info(
+    new_info, new_err = await asyncio.to_thread(
+        admin_api.get_key_info,
         admin_url=admin_url, admin_token=admin_token, access_key_id=new_key_id,
     )
     if new_info is None:
@@ -205,7 +208,8 @@ async def run_converge_account_key_rotation(
     manual: list[dict[str, Any]] = []
     for full_id in to_transfer:
         read, write, owner = old_owned[full_id]["perms"]
-        ok, err = admin_api.allow_bucket_key(
+        ok, err = await asyncio.to_thread(
+            admin_api.allow_bucket_key,
             admin_url=admin_url, admin_token=admin_token,
             bucket_ref=full_id, access_key_id=new_key_id,
             read=read, write=write, owner=owner,
@@ -216,7 +220,8 @@ async def run_converge_account_key_rotation(
         aliases = old_owned[full_id]["aliases"]
         if aliases:
             # Cosmetic: replicate the old key's name for the bucket on the new key.
-            admin_api.add_bucket_alias_local(
+            await asyncio.to_thread(
+                admin_api.add_bucket_alias_local,
                 admin_url=admin_url, admin_token=admin_token,
                 bucket_ref=full_id, access_key_id=new_key_id,
                 local_alias=aliases[0],

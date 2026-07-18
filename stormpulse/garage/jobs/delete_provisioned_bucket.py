@@ -14,6 +14,7 @@ a missing bucket. Step 3 (key cleanup) is best-effort: failures accumulate in
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -77,7 +78,8 @@ async def run_delete_provisioned_bucket(
 
     # ---- Step 1: GetBucketInfo ----
     await progress("starting", 0, _TOTAL_STEPS, "Reading bucket state")
-    info, err = admin_api.get_bucket_info(
+    info, err = await asyncio.to_thread(
+        admin_api.get_bucket_info,
         admin_url=admin_url, admin_token=admin_token, bucket_ref=bucket_id,
     )
     if info is None:
@@ -112,7 +114,8 @@ async def run_delete_provisioned_bucket(
 
     # ---- Step 2: DeleteBucket (removes the bucket and all its aliases) ----
     await progress("running", 1, _TOTAL_STEPS, "Deleting bucket")
-    ok, err = admin_api.delete_bucket(
+    ok, err = await asyncio.to_thread(
+        admin_api.delete_bucket,
         admin_url=admin_url, admin_token=admin_token, bucket_ref=full_id or bucket_id,
     )
     if not ok:
@@ -169,7 +172,8 @@ async def _cleanup_unmoored_keys(
     deleted: list[str] = []
     skipped: list[str] = []
     for key_id in candidate_key_ids:
-        kinfo, kerr = admin_api.get_key_info(
+        kinfo, kerr = await asyncio.to_thread(
+            admin_api.get_key_info,
             admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
         )
         if kinfo is None:
@@ -181,7 +185,8 @@ async def _cleanup_unmoored_keys(
         if kinfo.get("buckets"):
             skipped.append(key_id)  # shared key, still attached elsewhere
             continue
-        ok, _err = admin_api.delete_key(
+        ok, _err = await asyncio.to_thread(
+            admin_api.delete_key,
             admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
         )
         if ok:

@@ -17,6 +17,7 @@ All Garage interaction is the admin HTTP API, never the CLI.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -102,7 +103,8 @@ async def run_provision_account_key(
 
     # ---- Step 1: CreateKey with the tier's create capability ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating account key")
-    info, err = admin_api.create_key(
+    info, err = await asyncio.to_thread(
+        admin_api.create_key,
         admin_url=admin_url,
         admin_token=admin_token,
         name=new_key_name,

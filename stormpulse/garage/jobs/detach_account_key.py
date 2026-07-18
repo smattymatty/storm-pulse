@@ -20,6 +20,7 @@ otherwise-confirmed detach.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -92,7 +93,8 @@ async def run_detach_account_key(
 
     # ---- Step 1: DenyBucketKey (the security-critical step) ----
     await progress("starting", 0, _TOTAL_STEPS, "Revoking account-key grant")
-    ok, err = admin_api.deny_bucket_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.deny_bucket_key,
         admin_url=admin_url, admin_token=admin_token,
         bucket_ref=bucket_id, access_key_id=account_key_id,
         read=True, write=True, owner=True,
@@ -108,7 +110,8 @@ async def run_detach_account_key(
 
     # ---- Step 2: RemoveBucketAlias (cosmetic; best-effort) ----
     await progress("running", 1, _TOTAL_STEPS, "Dropping account-key alias")
-    alias_ok, alias_err = admin_api.remove_bucket_alias_local(
+    alias_ok, alias_err = await asyncio.to_thread(
+        admin_api.remove_bucket_alias_local,
         admin_url=admin_url, admin_token=admin_token,
         bucket_ref=bucket_id, access_key_id=account_key_id,
         local_alias=local_alias,
@@ -122,7 +125,8 @@ async def run_detach_account_key(
 
     # ---- Step 3: read-back confirmation (the Q1 grant-absent proof) ----
     await progress("running", 2, _TOTAL_STEPS, "Confirming grant removed")
-    kinfo, kerr = admin_api.get_key_info(
+    kinfo, kerr = await asyncio.to_thread(
+        admin_api.get_key_info,
         admin_url=admin_url, admin_token=admin_token,
         access_key_id=account_key_id,
     )

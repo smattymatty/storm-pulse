@@ -16,6 +16,7 @@ domain. One outbound connection over loopback, no mutation.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import socket
 import ssl
@@ -55,7 +56,7 @@ async def run_caddy_cert_status(
     started_at = time.monotonic()
     await progress("starting", 0, 1, f"Checking certificate for {domain}")
 
-    cert, err = _probe_cert(domain)
+    cert, err = await asyncio.to_thread(_probe_cert, domain)
     if cert is None:
         # Verification failed: no live publicly-trusted cert yet (still
         # provisioning, name mismatch, expired, or Caddy's internal CA). A

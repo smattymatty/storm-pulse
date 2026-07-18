@@ -13,6 +13,7 @@ deleted. Additional keys (rw/ro) are added later via ``provision_additional_key`
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -97,7 +98,8 @@ async def run_provision_customer_bucket(
 
     # ---- Step 1: CreateKey (admin) ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating admin key")
-    info, err = admin_api.create_key(
+    info, err = await asyncio.to_thread(
+        admin_api.create_key,
         admin_url=admin_url, admin_token=admin_token, name=key_name_admin,
     )
     if info is None:
@@ -135,7 +137,8 @@ async def run_provision_customer_bucket(
 
     # ---- Step 2: CreateBucket, binding the admin local alias + perms atomically ----
     await progress("running", 1, _TOTAL_STEPS, "Creating bucket")
-    bucket, err = admin_api.create_bucket(
+    bucket, err = await asyncio.to_thread(
+        admin_api.create_bucket,
         admin_url=admin_url,
         admin_token=admin_token,
         local_alias={
@@ -152,7 +155,7 @@ async def run_provision_customer_bucket(
             bucket_uuid=None,
             stderr=err,
             started_at=started_at,
-            **_rollback_orphan_key(garage_config, admin_key_id),
+            **await _rollback_orphan_key(garage_config, admin_key_id),
         )
     bucket_uuid = bucket.get("id") or ""
     if not bucket_uuid:
@@ -163,7 +166,7 @@ async def run_provision_customer_bucket(
             bucket_uuid=None,
             stderr="CreateBucket response missing id",
             started_at=started_at,
-            **_rollback_orphan_key(garage_config, admin_key_id),
+            **await _rollback_orphan_key(garage_config, admin_key_id),
         )
 
     # ---- Success ----
@@ -188,7 +191,7 @@ async def run_provision_customer_bucket(
     )
 
 
-def _rollback_orphan_key(
+async def _rollback_orphan_key(
     garage_config: GarageConfig,
     admin_key_id: str,
 ) -> dict[str, Any]:
@@ -199,7 +202,8 @@ def _rollback_orphan_key(
     manual cleanup). admin_api never raises, so a transport failure is just a
     ``(False, _)`` here, not an exception.
     """
-    ok, _err = admin_api.delete_key(
+    ok, _err = await asyncio.to_thread(
+        admin_api.delete_key,
         admin_url=garage_config.admin_url,
         admin_token=garage_config.admin_token,
         access_key_id=admin_key_id,

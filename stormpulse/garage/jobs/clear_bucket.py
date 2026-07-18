@@ -167,7 +167,8 @@ async def run_clear_bucket_credential_less(
     purge_name = f"{bucket_id[:8]}-purge"
 
     await progress("starting", 0, None, "Minting temporary purge key")
-    key_info, err = admin_api.create_key(
+    key_info, err = await asyncio.to_thread(
+        admin_api.create_key,
         admin_url=admin_url, admin_token=admin_token, name=purge_name,
     )
     access_key_id = (key_info or {}).get("accessKeyId") or ""
@@ -196,7 +197,8 @@ async def run_clear_bucket_credential_less(
             started_at=started_at,
         )
     finally:
-        key_deleted, delete_err = admin_api.delete_key(
+        key_deleted, delete_err = await asyncio.to_thread(
+            admin_api.delete_key,
             admin_url=admin_url, admin_token=admin_token,
             access_key_id=access_key_id,
         )
@@ -236,7 +238,8 @@ async def _clear_with_temp_key(
     started_at: float,
 ) -> JobOutcome:
     """Grant + alias the minted key, then run the ordinary clear via the alias."""
-    ok, err = admin_api.allow_bucket_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.allow_bucket_key,
         admin_url=admin_url, admin_token=admin_token,
         bucket_ref=bucket_id, access_key_id=access_key_id,
         read=True, write=True,
@@ -248,7 +251,8 @@ async def _clear_with_temp_key(
             started_at=started_at,
         )
 
-    ok, err = admin_api.add_bucket_alias_local(
+    ok, err = await asyncio.to_thread(
+        admin_api.add_bucket_alias_local,
         admin_url=admin_url, admin_token=admin_token,
         bucket_ref=bucket_id, access_key_id=access_key_id,
         local_alias=purge_alias,

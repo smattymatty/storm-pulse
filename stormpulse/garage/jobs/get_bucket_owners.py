@@ -9,6 +9,7 @@ account key X"). No mutation; a missing bucket (404) returns an empty list.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -58,7 +59,8 @@ async def run_get_bucket_owners(
         )
 
     await progress("starting", 0, 1, "Reading bucket owners")
-    info, err = admin_api.get_bucket_info(
+    info, err = await asyncio.to_thread(
+        admin_api.get_bucket_info,
         admin_url=admin_url, admin_token=admin_token, bucket_ref=bucket_id,
     )
     if info is None:

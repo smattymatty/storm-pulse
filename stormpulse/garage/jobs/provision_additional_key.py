@@ -12,6 +12,7 @@ full 64-char id before each bucket-scoped call.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -144,7 +145,8 @@ async def run_provision_additional_key(
 
     # ---- Step 1: CreateKey ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
-    info, err = admin_api.create_key(
+    info, err = await asyncio.to_thread(
+        admin_api.create_key,
         admin_url=admin_url, admin_token=admin_token, name=new_key_name,
     )
     if info is None:
@@ -180,7 +182,8 @@ async def run_provision_additional_key(
 
     # ---- Step 2: AllowBucketKey ----
     await progress("running", 1, _TOTAL_STEPS, f"Granting {key_tier} permissions")
-    ok, err = admin_api.allow_bucket_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.allow_bucket_key,
         admin_url=admin_url,
         admin_token=admin_token,
         bucket_ref=bucket_id,
@@ -205,7 +208,8 @@ async def run_provision_additional_key(
 
     # ---- Step 3: AddBucketAlias (local variant) ----
     await progress("running", 2, _TOTAL_STEPS, "Attaching local alias")
-    ok, err = admin_api.add_bucket_alias_local(
+    ok, err = await asyncio.to_thread(
+        admin_api.add_bucket_alias_local,
         admin_url=admin_url,
         admin_token=admin_token,
         bucket_ref=bucket_id,
@@ -273,7 +277,8 @@ async def _rollback(
 
     # 1. Revoke permissions
     if state.perms_granted and state.new_key_id is not None:
-        ok, _err = admin_api.deny_bucket_key(
+        ok, _err = await asyncio.to_thread(
+            admin_api.deny_bucket_key,
             admin_url=admin_url,
             admin_token=admin_token,
             bucket_ref=state.bucket_id,
@@ -288,7 +293,8 @@ async def _rollback(
 
     # 2. Delete new key
     if state.new_key_id is not None:
-        ok, _err = admin_api.delete_key(
+        ok, _err = await asyncio.to_thread(
+            admin_api.delete_key,
             admin_url=admin_url,
             admin_token=admin_token,
             access_key_id=state.new_key_id,

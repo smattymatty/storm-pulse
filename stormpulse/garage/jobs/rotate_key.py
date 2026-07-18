@@ -14,6 +14,7 @@ All Garage interaction is the admin HTTP API, never the CLI.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -148,7 +149,8 @@ async def run_rotate_customer_key(
 
     # ---- Step 1: CreateKey ----
     await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
-    info, err = admin_api.create_key(
+    info, err = await asyncio.to_thread(
+        admin_api.create_key,
         admin_url=admin_url, admin_token=admin_token, name=new_key_name,
     )
     if info is None:
@@ -185,7 +187,8 @@ async def run_rotate_customer_key(
 
     # ---- Step 2: AllowBucketKey ----
     await progress("running", 1, _TOTAL_STEPS, "Granting permissions to new key")
-    ok, err = admin_api.allow_bucket_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.allow_bucket_key,
         admin_url=admin_url,
         admin_token=admin_token,
         bucket_ref=bucket_id,
@@ -210,7 +213,8 @@ async def run_rotate_customer_key(
 
     # ---- Step 3: AddBucketAlias (local) on the new key ----
     await progress("running", 2, _TOTAL_STEPS, "Attaching local alias to new key")
-    ok, err = admin_api.add_bucket_alias_local(
+    ok, err = await asyncio.to_thread(
+        admin_api.add_bucket_alias_local,
         admin_url=admin_url,
         admin_token=admin_token,
         bucket_ref=bucket_id,
@@ -233,7 +237,8 @@ async def run_rotate_customer_key(
 
     # ---- Step 4: DeleteKey (the old key) ----
     await progress("running", 3, _TOTAL_STEPS, "Deleting old key")
-    ok, err = admin_api.delete_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.delete_key,
         admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
     )
     if not ok:
@@ -283,7 +288,8 @@ async def _rollback(
 
     # 1. Detach new key's local alias if attached
     if state.new_alias_attached and state.new_key_id is not None:
-        ok, _err = admin_api.remove_bucket_alias_local(
+        ok, _err = await asyncio.to_thread(
+            admin_api.remove_bucket_alias_local,
             admin_url=admin_url,
             admin_token=admin_token,
             bucket_ref=state.bucket_id,
@@ -311,7 +317,8 @@ async def _rollback(
 
     # 2. Revoke permissions on the new key if granted
     if state.new_key_permissions_granted and state.new_key_id is not None:
-        ok, _err = admin_api.deny_bucket_key(
+        ok, _err = await asyncio.to_thread(
+            admin_api.deny_bucket_key,
             admin_url=admin_url,
             admin_token=admin_token,
             bucket_ref=state.bucket_id,
@@ -333,7 +340,8 @@ async def _rollback(
 
     # 3. Delete new key
     if state.new_key_id is not None:
-        ok, _err = admin_api.delete_key(
+        ok, _err = await asyncio.to_thread(
+            admin_api.delete_key,
             admin_url=admin_url,
             admin_token=admin_token,
             access_key_id=state.new_key_id,

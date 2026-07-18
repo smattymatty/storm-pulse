@@ -22,6 +22,7 @@ One admin call, no rollback (DeleteKey is the single mutation).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -78,7 +79,8 @@ async def run_delete_key(
         )
 
     await progress("starting", 0, _TOTAL_STEPS, "Deleting key")
-    ok, err = admin_api.delete_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.delete_key,
         admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
     )
     if ok:

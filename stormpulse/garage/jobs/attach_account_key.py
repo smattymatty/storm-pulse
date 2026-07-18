@@ -13,6 +13,7 @@ before reporting success.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -104,7 +105,8 @@ async def run_attach_account_key(
 
     # ---- Step 1: AllowBucketKey at the chosen tier ----
     await progress("starting", 0, _TOTAL_STEPS, f"Granting {tier} access")
-    ok, err = admin_api.allow_bucket_key(
+    ok, err = await asyncio.to_thread(
+        admin_api.allow_bucket_key,
         admin_url=admin_url, admin_token=admin_token,
         bucket_ref=bucket_id, access_key_id=account_key_id,
         read=read, write=write, owner=owner,
@@ -123,7 +125,8 @@ async def run_attach_account_key(
     # deny op's own positive result is the authoritative confirmation the bits
     # were removed. (Slice 3.)
     if not (read and write and owner):
-        ok, err = admin_api.deny_bucket_key(
+        ok, err = await asyncio.to_thread(
+            admin_api.deny_bucket_key,
             admin_url=admin_url, admin_token=admin_token,
             bucket_ref=bucket_id, access_key_id=account_key_id,
             read=not read, write=not write, owner=not owner,
@@ -137,7 +140,8 @@ async def run_attach_account_key(
 
     # ---- Step 2: AddBucketAlias (local; cosmetic, best-effort) ----
     await progress("running", 1, _TOTAL_STEPS, "Attaching alias")
-    alias_ok, _alias_err = admin_api.add_bucket_alias_local(
+    alias_ok, _alias_err = await asyncio.to_thread(
+        admin_api.add_bucket_alias_local,
         admin_url=admin_url, admin_token=admin_token,
         bucket_ref=bucket_id, access_key_id=account_key_id,
         local_alias=local_alias,
@@ -151,7 +155,8 @@ async def run_attach_account_key(
 
     # ---- Step 3: read-back confirmation (grant-present proof) ----
     await progress("running", 2, _TOTAL_STEPS, "Confirming grant landed")
-    kinfo, kerr = admin_api.get_key_info(
+    kinfo, kerr = await asyncio.to_thread(
+        admin_api.get_key_info,
         admin_url=admin_url, admin_token=admin_token, access_key_id=account_key_id,
     )
     if kinfo is None:

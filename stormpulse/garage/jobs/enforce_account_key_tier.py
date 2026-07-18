@@ -22,6 +22,7 @@ All Garage interaction is the admin HTTP API, never the CLI.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import Any
@@ -103,7 +104,8 @@ async def run_enforce_account_key_tier(
 
     # ---- Step 1: read the key's actual grants ----
     await progress("starting", 0, 3, "Reading current grants")
-    kinfo, kerr = admin_api.get_key_info(
+    kinfo, kerr = await asyncio.to_thread(
+        admin_api.get_key_info,
         admin_url=admin_url, admin_token=admin_token, access_key_id=account_key_id,
     )
     if kinfo is None:
@@ -134,7 +136,8 @@ async def run_enforce_account_key_tier(
     for bid, (_gr, _gw, go) in over_tier:
         if not (go and not mo):
             continue  # not removing owner here; can't strand
-        binfo, berr = admin_api.get_bucket_info(
+        binfo, berr = await asyncio.to_thread(
+            admin_api.get_bucket_info,
             admin_url=admin_url, admin_token=admin_token, bucket_ref=bid,
         )
         if binfo is None:
@@ -168,7 +171,8 @@ async def run_enforce_account_key_tier(
     await progress("running", 2, 3, "Narrowing grants")
     narrowed: list[str] = []
     for bid, _grant in over_tier:
-        ok, err = admin_api.allow_bucket_key(
+        ok, err = await asyncio.to_thread(
+            admin_api.allow_bucket_key,
             admin_url=admin_url, admin_token=admin_token,
             bucket_ref=bid, access_key_id=account_key_id,
             read=mr, write=mw, owner=mo,
@@ -181,7 +185,8 @@ async def run_enforce_account_key_tier(
             )
         # owner tier (all) denies nothing; rw/ro deny the complement.
         if not (mr and mw and mo):
-            ok, err = admin_api.deny_bucket_key(
+            ok, err = await asyncio.to_thread(
+                admin_api.deny_bucket_key,
                 admin_url=admin_url, admin_token=admin_token,
                 bucket_ref=bid, access_key_id=account_key_id,
                 read=not mr, write=not mw, owner=not mo,
