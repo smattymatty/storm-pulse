@@ -181,15 +181,8 @@ def test_force_topology_bypasses_the_cache() -> None:
         assert m["status"].call_count == 1
         assert reader.collect(_config(), force_topology=True) is not None
         assert m["status"].call_count == 2                    # forced re-read
-        # The forced read reset the window: the next periodic call caches again.
+        # The forced read reset the window: the next periodic call caches
+        # again. (The unchanged periodic cadence itself is pinned by
+        # test_topology_cached_between_slow_multiple above.)
         assert reader.collect(_config()) is not None
         assert m["status"].call_count == 2
-
-
-def test_periodic_cadence_unchanged_by_force_support() -> None:
-    # The default path is byte-identical: no force, no extra admin calls.
-    reader = GarageStateReader()
-    with _patched() as m:
-        for _ in range(GarageStateReader.TOPOLOGY_EVERY):
-            reader.collect(_config())
-    assert m["status"].call_count == 1
