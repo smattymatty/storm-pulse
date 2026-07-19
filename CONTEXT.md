@@ -55,6 +55,33 @@ flight; it is never the resting place for that data.
 _Avoid_: migration server (implies a separate service; it is a Pulse agent),
 worker (overloaded; the JobManager already has "jobs").
 
+**Investigation**:
+A named, one-shot diagnostic run (`stormpulse investigate <name>`) that
+executes a fixed set of checks non-interactively and prints a Case file.
+One engine, two doors: agent-core investigations live under the bare
+command; an Integration declares its own on its descriptor (a contract
+surface alongside commands and detectors), surfaced as
+`stormpulse <integration> investigate <name>`. Human-first output: each
+check explains what it means, and guidance lives in the report's prose,
+never in interactive prompts.
+_Avoid_: wizard (implies interactive stepping; the guidance is in the
+output, the run is one-shot and scriptable)
+
+**Case file**:
+An Investigation's output: one Verdict per suspect with its evidence
+line, then suggested next moves and named open questions (things only
+the operator can answer, e.g. "was that reboot you?"). Ruling a suspect
+out is a first-class finding, not the absence of one.
+
+**Verdict**:
+The per-suspect result inside a Case file. Exactly three values:
+CLEARED (ruled out, evidence stated), IMPLICATED (evidence points
+here), INCONCLUSIVE (could not check; names precisely what is missing
+and the command that would supply it - a check that cannot see must
+say so, never print nothing).
+_Avoid_: pass/fail (loses the checked-and-ruled-out vs no-alarm
+distinction), acquitted/convicted (overstates what one check proves)
+
 ## Privacy by design
 
 Pulse is built so the agent has almost nothing to hold and therefore
@@ -117,8 +144,16 @@ known log signature. In load order:
 - **Log shipping** (`log_loop`, one per group): tail, parse, batch,
   ship. Bounded at 200 lines per batch, 1000 lines per tailer read,
   4 KB per line. Signature: INFO `Shipped log.batch ... lines=N
-  dropped=N duration_ms=N`. Rising `duration_ms` or persistent
-  `dropped>0` means the source outruns the caps.
+  dropped=N duration_ms=N`. Two of those numbers mislead if read
+  naively: `duration_ms` pinned near `ship_interval * 0.9` is the
+  streaming tailer's deliberate drain window, not a stall; and
+  `dropped` counts every line the parser returned ``None`` for, which
+  for `garage_s3` includes deliberately suppressed read-only
+  admin-poll noise (the agent's own periodic walk), not just
+  unparseable output. A steady `lines=0 dropped=N` drumbeat therefore
+  needs one decider: compare `docker logs --timestamps <container> |
+  tail` against the group's parser to tell suppressed noise from a
+  real format mismatch.
 - **Jobs** (`JobManager`): long-running commands, max 6 concurrent,
   serialized against the Garage admin API.
 - **Heartbeat**: one tiny send per interval. It is the canary, never

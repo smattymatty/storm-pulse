@@ -15,6 +15,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from stormpulse.config import CommandSpec
 from stormpulse.sdk import Capability, CapabilityStatus
+from stormpulse.sdk.investigate import CaseFile, Window
 
 
 class StateBlob(Protocol):
@@ -76,6 +77,26 @@ class Detector:
     interval: DetectInterval
 
 
+# One Investigation's runner: given the parsed integration config and the
+# resolved Window, produce a CaseFile. Fetching evidence (docker logs, admin
+# calls) happens inside; the CLI host owns rendering.
+RunInvestigation = Callable[[Any, "Window"], "CaseFile"]
+
+
+@dataclass(frozen=True, slots=True)
+class InvestigationSpec:
+    """A declared Investigation: name, operator-facing title, and its runner.
+
+    Surfaced as ``stormpulse <id> investigate <name>`` and listed by the bare
+    ``stormpulse investigate``. Names are scoped per-Integration; the receipt
+    lives inside the produced CaseFile, next to the checks it earned.
+    """
+
+    name: str
+    title: str
+    run: RunInvestigation
+
+
 @dataclass(frozen=True, slots=True)
 class Integration:
     """A registered Integration contract (CORE-005 decision 2): required core is
@@ -110,6 +131,9 @@ class Integration:
     # Optional host-touching readiness probe. When absent, each declared
     # capability's liveness is derived from ``preconditions`` (single-sourced).
     readiness: ReadinessProbe | None = None
+    # Optional one-shot diagnostic investigations (`stormpulse <id> investigate`).
+    # Read-only by contract: an investigation observes and reports, never mutates.
+    investigations: tuple[InvestigationSpec, ...] | None = None
 
 
 _integrations: list[Integration] = []

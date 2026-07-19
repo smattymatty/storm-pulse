@@ -145,6 +145,23 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
     registration manifest: loop bodies, dispatch, refresh, runtime helpers, and the
     composition root are all contract-generic.
 
+14. **Investigations are a contract capability.** An Integration may declare
+    `investigations`: named one-shot diagnostics
+    (`stormpulse <id> investigate <name>`) that produce a Case file - one
+    Verdict per suspect (CLEARED / IMPLICATED / INCONCLUSIVE), then next moves
+    and open questions (vocabulary sealed in CONTEXT.md). Read-only by
+    contract: an investigation observes and reports, never mutates. Runs are
+    non-interactive; guidance lives in the report's prose ("wizard" is banned
+    vocabulary - that word belongs to the CORE-007 init flow). The CLI host
+    owns rendering, mirroring the init wizard's host-owns-rendering inversion.
+    Two doors, one engine: agent-core investigations (flaps, box,
+    logs-pipeline) live under bare `stormpulse investigate` beside the same
+    engine that runs declared ones; bare invocation lists both. No
+    self-escalation: a check that cannot see goes INCONCLUSIVE and names the
+    exact command that would supply the missing evidence - an unwitnessed
+    window must never read as CLEARED. Checks are fetch/judge split (pure
+    judges over fetched text) so verdict logic is testable without a host.
+
 ## Consequences
 
 **Positive:**
@@ -231,6 +248,9 @@ untrusted (non-first-party) in-process loader.
   (`agent/garage_actions.py`) deleted. The log-enrichment join was briefly kept as a
   named composition-root exception; the parser key made its semantics data, so it
   was promoted to the `log_enrichers` capability the same day.
+- 2026-07-19: decision 14 added (the `investigations` capability), design sealed
+  by operator grill the same day it was earned hunting an agent flap storm; garage
+  `health` is the reference investigation.
 
 **Related ADRs:** [CORE-000](000-internal-module-architecture.md) (Integration sub-types
 Feature), [CORE-001](001-fitness-functions.md) (Fn4 and the whitelist hold; a contract

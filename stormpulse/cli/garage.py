@@ -57,3 +57,12 @@ def add_garage_subparser(subparsers: argparse._SubParsersAction) -> None:  # typ
         action="store_true",
         help="overwrite existing [garage] section",
     )
+
+    # --- garage investigate ---
+    from stormpulse.cli.investigate import add_investigate_args
+
+    investigate_parser = garage_sub.add_parser(
+        "investigate",
+        help="run a garage diagnostic case file (bare = list investigations)",
+    )
+    add_investigate_args(investigate_parser)

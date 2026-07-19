@@ -12,7 +12,13 @@ from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig, parse_garage_config
 from stormpulse.garage.preconditions import run_preconditions
 from stormpulse.garage.state import GarageBucket, GarageState
-from stormpulse.integrations import Detector, Integration, register_integration
+from stormpulse.garage.investigate import run_health
+from stormpulse.integrations import (
+    Detector,
+    Integration,
+    InvestigationSpec,
+    register_integration,
+)
 from stormpulse.sdk import Capability
 
 
@@ -85,6 +91,13 @@ GARAGE_INTEGRATION = Integration(
     read_affected=_read_affected,
     log_enrichers={"garage_s3": _log_enricher},
     capabilities=(Capability("garage.admin.v1", "garage"),),
+    investigations=(
+        InvestigationSpec(
+            name="health",
+            title="garage daemon restarts and maintenance load",
+            run=run_health,
+        ),
+    ),
 )
 
 register_integration(GARAGE_INTEGRATION)

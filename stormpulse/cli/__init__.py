@@ -239,6 +239,15 @@ def main() -> None:
         help=f"path to config file (default: {_DEFAULT_CONFIG})",
     )
 
+    # --- investigate subcommand ---
+    from stormpulse.cli.investigate import add_investigate_args
+
+    investigate_parser = subparsers.add_parser(
+        "investigate",
+        help="run a one-shot diagnostic case file (bare = list investigations)",
+    )
+    add_investigate_args(investigate_parser)
+
     # --- garage subcommand group ---
     from stormpulse.cli.garage import add_garage_subparser
 
@@ -323,15 +332,27 @@ def main() -> None:
         from stormpulse.cli.logs import cmd_logs
 
         cmd_logs(args)
+    elif args.command == "investigate":
+        from stormpulse.cli.investigate import cmd_investigate
+
+        cmd_investigate(args)
     elif args.command == "garage":
         if getattr(args, "garage_command", None) == "init":
             from stormpulse.cli.garage import cmd_garage_init
 
             cmd_garage_init(args)
+        elif getattr(args, "garage_command", None) == "investigate":
+            from stormpulse.cli.investigate import cmd_integration_investigate
+
+            cmd_integration_investigate("garage", args)
         else:
             print("Usage: stormpulse garage <subcommand>\n", file=sys.stderr)
             print("Subcommands:", file=sys.stderr)
-            print("  init     Detect and configure Garage integration", file=sys.stderr)
+            print("  init         Detect and configure Garage integration", file=sys.stderr)
+            print(
+                "  investigate  Run a garage diagnostic case file",
+                file=sys.stderr,
+            )
             sys.exit(1)
     elif args.command == "caddy":
         if getattr(args, "caddy_command", None) == "init":
@@ -436,6 +457,10 @@ def main() -> None:
                 "  update               Reinstall via pipx and restart", file=sys.stderr
             )
             print("  restart              Restart the systemd unit", file=sys.stderr)
+            print(
+                "  investigate          Run a diagnostic case file",
+                file=sys.stderr,
+            )
             print("  garage               Garage S3 node management", file=sys.stderr)
             print(
                 "  caddy                Caddy reverse-proxy integration",
