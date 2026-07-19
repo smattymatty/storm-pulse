@@ -208,6 +208,38 @@ class TestGarageJudges:
         assert "Snapshotting" in maintenance[0]
 
 
+class TestShippingOverloadThreshold:
+    def test_few_capped_batches_in_big_window_is_cleared(self) -> None:
+        """First live run: 6 capped of 9561 batches read as IMPLICATED.
+        Capped batches must be judged proportionally to window size."""
+        import argparse
+        from unittest.mock import patch
+
+        from stormpulse.cli import investigate as inv
+
+        entries = [
+            (
+                datetime(2026, 7, 19, 10, 0, 0),
+                "2026-07-19T10:00:00 x WARNING Connection closed: timed out during handshake",
+            ),
+        ] + [
+            (
+                datetime(2026, 7, 19, 10, 0, i % 60),
+                f"2026-07-19T10:00:{i % 60:02d} x INFO Shipped log.batch b{i} "
+                f"group=g lines={200 if i < 6 else 0} dropped=0 duration_ms=1",
+            )
+            for i in range(1000)
+        ]
+        with patch.object(inv, "_fetch_agent_journal", return_value=entries):
+            case = inv.run_flaps(
+                argparse.Namespace(), Window(since=datetime(2026, 7, 19, 6)),
+            )
+        shipping = next(
+            r for r in case.reports if r.suspect == "log shipping overload"
+        )
+        assert shipping.verdict is Verdict.CLEARED
+
+
 class TestFlapsEmptyJournal:
     def test_empty_journal_is_inconclusive_not_cleared(self) -> None:
         """journalctl exits 0 with no output for a unit that doesn't exist;

@@ -336,9 +336,13 @@ def run_flaps(args: argparse.Namespace, window: Window) -> CaseFile:
     batches = parse_shipped(messages)
     capped = sum(1 for b in batches if b.lines >= _BATCH_LINE_CAP)
     peak = max((b.lines for b in batches), default=0)
+    # Proportional, not absolute: a 24h window ships thousands of batches,
+    # so a handful at the cap is burst absorption working, not overload
+    # (first live run: 6 capped of 9561 read as IMPLICATED - wrong).
+    overloaded = capped > max(10, len(batches) // 100)
     reports.append(SuspectReport(
         suspect="log shipping overload",
-        verdict=Verdict.IMPLICATED if capped > 5 else Verdict.CLEARED,
+        verdict=Verdict.IMPLICATED if overloaded else Verdict.CLEARED,
         evidence=f"{len(batches)} batches shipped; peak {peak} lines; "
                  f"{capped} at the {_BATCH_LINE_CAP}-line cap.",
         detail="A steady duration_ms near ship_interval x 0.9 is the drain "
