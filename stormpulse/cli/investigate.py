@@ -28,6 +28,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date as date_cls
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -364,7 +365,9 @@ def run_flaps(args: argparse.Namespace, window: Window) -> CaseFile:
         ))
         next_moves.append(
             "Run `stormpulse investigate box` over the same window: steal, "
-            "iowait, upgrades, kernel faults, reboots."
+            "iowait, upgrades, kernel faults, reboots, and the sar "
+            "storage-latency tape (it names the install command if the box "
+            "has no sysstat history yet)."
         )
     else:
         reports.append(SuspectReport(
@@ -470,6 +473,70 @@ def judge_scheduled_reboots(uu_log_text: str) -> list[datetime]:
         except ValueError:
             continue
     return scheduled
+
+
+@dataclass(frozen=True, slots=True)
+class StorageSpike:
+    """One sar -d sample where a block device's await crossed the threshold."""
+
+    at: datetime
+    device: str
+    await_ms: float
+
+
+_STORAGE_AWAIT_THRESHOLD_MS = 100.0  # healthy virtual disks sit at 1-5ms
+
+
+def judge_sar_spikes(
+    text: str,
+    file_date: "date_cls",
+    threshold_ms: float = _STORAGE_AWAIT_THRESHOLD_MS,
+) -> list[StorageSpike]:
+    """Block-device latency spikes from one day's ``sar -d`` output.
+
+    The conviction shape (2026-07-19): await inflating 100-1000x while
+    tps/throughput stays at a trickle means the storage BELOW the guest
+    stalled - no in-guest workload can slow several virtual disks at
+    once while asking almost nothing of them. Handles both 12h (AM/PM)
+    and 24h sar time formats; Average rows and loop devices excluded.
+    """
+    spikes: list[StorageSpike] = []
+    for line in text.splitlines():
+        fields = line.split()
+        if len(fields) < 8 or fields[0] == "Average:":
+            continue
+        if fields[1] in ("AM", "PM"):
+            time_raw, fmt = f"{fields[0]} {fields[1]}", "%I:%M:%S %p"
+            device, rest = fields[2], fields[3:]
+        else:
+            time_raw, fmt = fields[0], "%H:%M:%S"
+            device, rest = fields[1], fields[2:]
+        if not device[0].isalpha() or device == "DEV" or device.startswith("loop"):
+            continue
+        try:
+            sampled = datetime.strptime(time_raw, fmt).time()
+            await_ms = float(rest[-2])
+        except (ValueError, IndexError):
+            continue
+        if await_ms >= threshold_ms:
+            spikes.append(StorageSpike(
+                at=datetime.combine(file_date, sampled),
+                device=device,
+                await_ms=await_ms,
+            ))
+    return spikes
+
+
+def _fetch_sar_history() -> list[tuple["date_cls", str]] | None:
+    """Every retained sysstat day file as (file date, ``sar -d`` text);
+    None when sysstat isn't recording here."""
+    day_files = sorted(Path("/var/log/sysstat").glob("sa[0-3][0-9]"))
+    days: list[tuple[date_cls, str]] = []
+    for f in day_files:
+        out = _run(["sar", "-d", "-f", str(f)])
+        if out:
+            days.append((date_cls.fromtimestamp(f.stat().st_mtime), out))
+    return days or None
 
 
 _KERNEL_ALARM_RE = re.compile(
@@ -617,6 +684,64 @@ def run_box(args: argparse.Namespace, window: Window) -> CaseFile:
                 suspect="package upgrades",
                 verdict=Verdict.CLEARED,
                 evidence="No apt activity in window.",
+            ))
+
+    history = _fetch_sar_history()
+    if history is None:
+        reports.append(SuspectReport(
+            suspect="storage latency (sar history)",
+            verdict=Verdict.INCONCLUSIVE,
+            evidence="No sysstat history on this box - storage stalls in the "
+                     "past are invisible without the flight recorder.",
+            detail="sar samples CPU and per-disk latency every 10 minutes "
+                   "around the clock; it is how a host-side storage stall "
+                   "gets caught after the fact.",
+            remedy="sudo apt install sysstat && sudo systemctl enable --now "
+                   "sysstat sysstat-collect.timer",
+        ))
+    else:
+        all_spikes = [
+            s for day, text in history for s in judge_sar_spikes(text, day)
+        ]
+        in_window = [
+            s for s in all_spikes
+            if s.at >= window.since
+            and (window.until is None or s.at <= window.until)
+        ]
+        days_hit = len({s.at.date() for s in all_spikes})
+        if in_window:
+            worst = max(in_window, key=lambda s: s.await_ms)
+            reports.append(SuspectReport(
+                suspect="storage latency (sar history)",
+                verdict=Verdict.IMPLICATED,
+                evidence=f"{len(in_window)} sample(s) >= "
+                         f"{int(_STORAGE_AWAIT_THRESHOLD_MS)}ms await in "
+                         f"window; worst {worst.await_ms:.0f}ms on "
+                         f"{worst.device} at {worst.at:%m-%d %H:%M}.",
+                detail="High await at trickle load is the storage below the "
+                       "guest stalling, not guest workload - "
+                       "provider-ticket territory.",
+            ))
+        elif all_spikes:
+            worst = max(all_spikes, key=lambda s: s.await_ms)
+            reports.append(SuspectReport(
+                suspect="storage latency (sar history)",
+                verdict=Verdict.CLEARED,
+                evidence=f"No spikes in this window, but {len(all_spikes)} "
+                         f"sample(s) >= {int(_STORAGE_AWAIT_THRESHOLD_MS)}ms "
+                         f"await across {days_hit} recorded day(s); worst "
+                         f"{worst.await_ms:.0f}ms on {worst.device} at "
+                         f"{worst.at:%m-%d %H:%M}.",
+                detail="Chronic background storage latency: cleared for this "
+                       "window, ticket material overall (sar -d has the rows).",
+            ))
+        else:
+            reports.append(SuspectReport(
+                suspect="storage latency (sar history)",
+                verdict=Verdict.CLEARED,
+                evidence="No block-device awaits >= "
+                         f"{int(_STORAGE_AWAIT_THRESHOLD_MS)}ms anywhere in "
+                         "the sysstat retention window.",
             ))
 
     if not _can_read_system_journal():

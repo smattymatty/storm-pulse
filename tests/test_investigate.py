@@ -152,6 +152,44 @@ class TestBoxJudges:
         assert "self-detected stall" in hits[0]
 
 
+class TestSarStorageJudge:
+    def test_spike_rows_from_real_tape(self) -> None:
+        """Rows from the 2026-07-19 conviction: 1713ms await on dm-0 at a
+        30 KB/s trickle, in sar's 12h clock format."""
+        from datetime import date
+
+        from stormpulse.cli.investigate import judge_sar_spikes
+
+        text = (
+            "Linux 6.8.0-136-generic (alpha)     07/19/2026      _x86_64_        (4 CPU)\n"
+            "\n"
+            "05:30:02 AM       DEV       tps     rkB/s     wkB/s     dkB/s   areq-sz    aqu-sz     await     %util\n"
+            "10:10:10 AM      dm-0      8.26      0.00     34.71      0.00      4.20      0.02      2.04      2.13\n"
+            "10:30:16 AM      dm-0      7.06      0.06     29.67      0.00      4.21     12.10   1713.06     17.34\n"
+            "10:30:16 AM     loop0      0.00      0.00      0.00      0.00      0.00      0.00    999.00      0.00\n"
+            "Average:         dm-0      7.39      0.04     31.08      0.00      4.21      5.22    705.81     15.32\n"
+        )
+        spikes = judge_sar_spikes(text, date(2026, 7, 19))
+        assert len(spikes) == 1
+        assert spikes[0].device == "dm-0"
+        assert spikes[0].await_ms == 1713.06
+        assert spikes[0].at == datetime(2026, 7, 19, 10, 30, 16)
+
+    def test_24h_format_also_parses(self) -> None:
+        from datetime import date
+
+        from stormpulse.cli.investigate import judge_sar_spikes
+
+        text = (
+            "19:12:02      dm-0      4.81      0.00     20.19      0.00      "
+            "4.20     12.45   2591.69     45.63\n"
+        )
+        spikes = judge_sar_spikes(text, date(2026, 7, 12))
+        assert len(spikes) == 1
+        assert spikes[0].at == datetime(2026, 7, 12, 19, 12, 2)
+        assert spikes[0].await_ms == 2591.69
+
+
 class TestLogsPipelineJudge:
     def test_all_drop_with_unparseable_sample_is_implicated(self) -> None:
         batches = [ShippedBatch("garaged", 0, 45, 4502)]
