@@ -89,6 +89,11 @@ class Integration:
     specs: BuildSpecs | None = None
     discover: CollectState | None = None
     collect_state: CollectState | None = None
+    # Optional collector for the on-demand ``{id}_refresh`` command: a
+    # variant that must bypass any internal slow-cadence caches, because
+    # an explicit refresh means "the operator just changed something".
+    # When absent, refresh uses ``collect_state``.
+    collect_state_fresh: CollectState | None = None
     # Optional fast new-resource detector (its run + cadence as one object).
     # caddy declares none; the detect loop spawns iff this is present.
     detect: Detector | None = None

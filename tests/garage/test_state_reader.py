@@ -170,3 +170,26 @@ def test_unconfigured_returns_none_without_admin_calls() -> None:
         assert reader.collect(_config(admin_url="", admin_token="")) is None
     assert m["status"].call_count == 0
     assert m["list_buckets"].call_count == 0
+
+def test_force_topology_bypasses_the_cache() -> None:
+    # The on-demand garage_refresh path: an operator who just changed the
+    # layout must see it immediately, mid-window, cadence notwithstanding.
+    reader = GarageStateReader()
+    with _patched() as m:
+        assert reader.collect(_config()) is not None          # cold: reads topology
+        assert reader.collect(_config()) is not None          # cached
+        assert m["status"].call_count == 1
+        assert reader.collect(_config(), force_topology=True) is not None
+        assert m["status"].call_count == 2                    # forced re-read
+        # The forced read reset the window: the next periodic call caches again.
+        assert reader.collect(_config()) is not None
+        assert m["status"].call_count == 2
+
+
+def test_periodic_cadence_unchanged_by_force_support() -> None:
+    # The default path is byte-identical: no force, no extra admin calls.
+    reader = GarageStateReader()
+    with _patched() as m:
+        for _ in range(GarageStateReader.TOPOLOGY_EVERY):
+            reader.collect(_config())
+    assert m["status"].call_count == 1

@@ -455,14 +455,25 @@ class GarageStateReader:
         self._topology: _Topology | None = None
         self._since_topology = 0
 
-    def collect(self, config: GarageConfig) -> GarageState | None:
-        """One periodic read: walk every bucket, refresh topology on its slow multiple."""
+    def collect(
+        self, config: GarageConfig, *, force_topology: bool = False
+    ) -> GarageState | None:
+        """One periodic read: walk every bucket, refresh topology on its slow multiple.
+
+        ``force_topology`` bypasses the topology cache for the on-demand
+        refresh command: an explicit refresh is the "the operator just
+        changed something" signal, and serving it cached topology made a
+        deliberate layout change invisible for up to ``TOPOLOGY_EVERY``
+        ticks. The periodic loop never sets it, so the admin-API cadence
+        is unchanged.
+        """
         if not _admin_configured(config):
             return None
 
-        # Cold start or slow multiple due: refresh topology. A failed refresh
-        # keeps the cache and stays due, so the next call retries.
-        if self._topology is None or self._since_topology >= self.TOPOLOGY_EVERY:
+        # Cold start, slow multiple due, or an explicit refresh: read
+        # topology. A failed refresh keeps the cache and stays due, so
+        # the next call retries.
+        if force_topology or self._topology is None or self._since_topology >= self.TOPOLOGY_EVERY:
             fresh = _collect_topology(config)
             if fresh is not None:
                 self._topology = fresh

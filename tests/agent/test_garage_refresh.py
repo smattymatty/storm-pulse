@@ -73,3 +73,19 @@ async def test_garage_refresh_collection_failure(
     result = await refresh.collect_refresh_result(ag, "garage_refresh", "req-1", "garage")
     assert result.success is False
     assert result.failure_reason == "collection_failed"
+
+
+@pytest.mark.asyncio
+@patch.object(GarageStateReader, "collect")
+async def test_garage_refresh_forces_a_topology_read(
+    mock_collect: MagicMock,
+    agent_with_garage: Callable[..., Agent],
+) -> None:
+    """An explicit refresh is the "operator just changed something" signal:
+    it must bypass the topology cache, or a fresh layout change (capacity,
+    zones) stays invisible for up to TOPOLOGY_EVERY periodic ticks."""
+    mock_collect.return_value = make_fake_garage_state()
+    ag = agent_with_garage()
+    result = await refresh.collect_refresh_result(ag, "garage_refresh", "req-1", "garage")
+    assert result.success is True
+    assert mock_collect.call_args.kwargs.get("force_topology") is True

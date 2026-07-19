@@ -41,7 +41,11 @@ async def collect_refresh_result(
             failure_reason="not_configured",
         )
     start = time.monotonic()
-    state = await asyncio.to_thread(runtime.descriptor.collect_state, runtime.config)
+    # An explicit refresh must not serve cached sub-state (garage's
+    # topology cache made a fresh layout change invisible here); prefer
+    # the cache-bypassing collector when the Integration declares one.
+    collector = runtime.descriptor.collect_state_fresh or runtime.descriptor.collect_state
+    state = await asyncio.to_thread(collector, runtime.config)
     duration_ms = int((time.monotonic() - start) * 1000)
     if state is None:
         return CommandResultPayload(
