@@ -170,8 +170,19 @@ def main() -> None:
         "-n",
         "--lines",
         type=int,
-        default=100,
-        help="number of lines to show before following (default: 100)",
+        default=None,
+        help=(
+            "number of lines to show (default: 100, or the whole window "
+            "when --since/--until is given)"
+        ),
+    )
+    logs_parser.add_argument(
+        "-f",
+        "--follow",
+        dest="follow",
+        action="store_true",
+        default=None,
+        help="follow after printing (default unless --since/--until is given)",
     )
     logs_parser.add_argument(
         "--no-follow",
@@ -179,7 +190,28 @@ def main() -> None:
         action="store_false",
         help="dump lines and exit instead of following",
     )
-    logs_parser.set_defaults(follow=True)
+    logs_parser.add_argument(
+        "--since",
+        default=None,
+        metavar="WHEN",
+        help='window start, journalctl syntax: "06:00", "1 hour ago", "2026-07-19 06:14"',
+    )
+    logs_parser.add_argument(
+        "--until",
+        default=None,
+        metavar="WHEN",
+        help="window end, same syntax as --since",
+    )
+    logs_parser.add_argument(
+        "-g",
+        "--grep",
+        default=None,
+        metavar="PATTERN",
+        help=(
+            "only lines whose message matches this PCRE "
+            "(case-insensitive when all-lowercase); combines with follow"
+        ),
+    )
 
     # --- status subcommand ---
     status_parser = subparsers.add_parser("status", help="show agent status")

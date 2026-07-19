@@ -86,3 +86,54 @@ nothing misleads the operator reading the config.
 **Protective defaults**:
 Any operator deploying Pulse gets the privacy-protective option by
 default, without Storm-specific context or extra configuration.
+
+## Reading the agent under load
+
+When the control plane shows reconnect churn (`1011 keepalive ping
+timeout`, `timed out during handshake`, `no close frame received or
+sent`), the question is which side starved: the agent's box or the
+control plane. The error strings decide direction first:
+
+- **`sent 1011 ... keepalive ping timeout`**: a websocket ping went
+  unanswered for 20 s. Either the peer stalled, or this process's own
+  event loop was too starved to read the pong. Not proof of a remote
+  fault on its own.
+- **`timed out during handshake`**: a reconnect attempt the control
+  plane could not accept within 10 s. Points at the backend or the
+  path to it.
+- **`no close frame received or sent`**: abrupt TCP death, the
+  signature of a process being killed or restarted, on either end.
+
+The agent's steady-state work is a small set of loops, each with a
+known log signature. In load order:
+
+- **Garage admin walk** (`integration_state_loop`): one full
+  O(buckets) state collection per metrics push interval, in a worker
+  thread. The on-demand `garage_refresh` command runs the same walk
+  with no debounce or rate limit; a client looping refresh is the one
+  unbounded path to Garage's admin API (jobs are capped, refresh is
+  not). Signature: INFO `Sent result for 'garage_refresh'` with
+  `duration_ms`.
+- **Log shipping** (`log_loop`, one per group): tail, parse, batch,
+  ship. Bounded at 200 lines per batch, 1000 lines per tailer read,
+  4 KB per line. Signature: INFO `Shipped log.batch ... lines=N
+  dropped=N duration_ms=N`. Rising `duration_ms` or persistent
+  `dropped>0` means the source outruns the caps.
+- **Jobs** (`JobManager`): long-running commands, max 6 concurrent,
+  serialized against the Garage admin API.
+- **Heartbeat**: one tiny send per interval. It is the canary, never
+  the load.
+
+Windowing the journal to an incident is `stormpulse logs` with the
+passthrough flags:
+
+```
+stormpulse logs --since "06:00" --until "07:10"        # whole window, one shot
+stormpulse logs --since "2 hours ago" -g "1011|Reconnecting|Connection closed"
+stormpulse logs -g "Shipped log.batch"                 # live shipping cadence
+stormpulse logs -g "Sent result"                       # command/refresh traffic
+```
+
+Every drop is also recorded as a `reconnect` wide event while the
+agent is offline and shipped once a session resumes, so the flap
+window itself is never a telemetry blind spot.
