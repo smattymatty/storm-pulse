@@ -221,6 +221,10 @@ class CommandProgressPayload:
     eta_seconds: int | None = None
     objects_current: int | None = None
     objects_total: int | None = None
+    # Bytes freed so far by a drain job (garage_bucket_clear). Flat and
+    # optional like the transfer fields: absent on every other command,
+    # dropped tolerantly by an old dashboard, no protocol bump.
+    bytes_freed: int | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:

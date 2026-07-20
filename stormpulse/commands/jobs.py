@@ -50,6 +50,7 @@ class ProgressCallback(Protocol):
         message: str,
         *,
         transfer: TransferStats | None = None,
+        bytes_freed: int | None = None,
     ) -> None: ...
 
 
@@ -530,6 +531,7 @@ class JobManager:
             message: str,
             *,
             transfer: TransferStats | None = None,
+            bytes_freed: int | None = None,
         ) -> None:
             # The one place TransferStats is flattened onto the wire. Jobs hand
             # up a cohesive value; the payload keeps the flat optional fields
@@ -546,6 +548,7 @@ class JobManager:
                 current=current,
                 total=total,
                 message=message,
+                bytes_freed=bytes_freed,
                 **(asdict(transfer) if transfer else {}),
             )
             envelope = make_command_progress(self._agent_id, payload)

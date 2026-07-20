@@ -17,13 +17,14 @@ Two modes, selected by the param shape:
   command result.
 
 The first ListObjectsV2 page validates credentials before any delete (it
-is itself a signed request, so a wrong key raises S3AuthError there);
-per-object errors from DeleteObjects fail the whole job (the bug class the
-Django path got wrong - 200 OK with non-empty Errors silently treated as
-success).
+is itself a signed request, so a wrong key raises S3AuthError there). The
+clear itself is a self-converging drain loop (see ``run_clear_bucket``): an
+empty list is the proof of success, so a transient delete failure is retried
+rather than failing the whole job.
 
-Failure reasons: ``auth_failed``, ``partial_failure``, ``os_error``, and in
-credential-less mode ``admin_api_unconfigured``, ``purge_key_mint_failed``,
+Failure reasons: ``auth_failed``, ``clear_stalled`` (drained what it could,
+the rest awaits a retry), and in credential-less mode
+``admin_api_unconfigured``, ``purge_key_mint_failed``,
 ``purge_key_grant_failed``, ``purge_alias_failed``.
 """
 
@@ -45,8 +46,10 @@ from stormpulse.garage.s3 import (
 logger = logging.getLogger(__name__)
 
 
-_BATCH_SIZE = 1000  # S3 DeleteObjects accepts at most 1000 keys per call.
+_DELETE_BATCH_SIZE = 250  # Keep each DeleteObjects well under the 30s socket read.
 _MAX_REPORTED_ERRORS = 10  # Trim the errors array on the wire to keep messages small.
+_MAX_NO_PROGRESS_ROUNDS = 3  # Consecutive rounds freeing zero objects before giving up.
+_MAX_WALL_SECONDS = 600  # Hard backstop: a clear never runs longer than this.
 
 
 def make_clear_bucket_handler(
@@ -299,6 +302,7 @@ def _credential_less_failure(
         failure_reason=failure_reason,
         extras={
             "deleted_count": 0,
+            "bytes_freed": 0,
             "failed_count": 0,
             "errors": [],
             "duration_seconds": _elapsed(started_at),
@@ -312,165 +316,173 @@ async def run_clear_bucket(
     client: GarageS3Client,
     bucket: str,
 ) -> JobOutcome:
-    """Clear all objects from ``bucket`` via the local Garage S3 endpoint.
+    """Drain every object from ``bucket`` via the local Garage S3 endpoint.
+
+    A self-converging loop, not a two-phase list-then-delete: each round
+    lists one page from the front, deletes it in small batches, and re-lists.
+    An empty list IS the proof the bucket is clear - the fail-safe KEEP rule
+    holds structurally, since a key never positively deleted simply reappears
+    next round and gets retried. This absorbs the "Garage deleted it but the
+    response timed out" case (the deleted keys don't come back) and needs no
+    up-front total, so O(one page) memory regardless of bucket size.
+
+    Progress counts UP: objects deleted and bytes freed, both summed from
+    keys Garage positively confirmed. The dashboard draws an approximate bar
+    from the bucket size it already knows; the numbers here are exact.
+
+    Termination is guaranteed two ways: ``_MAX_NO_PROGRESS_ROUNDS`` consecutive
+    rounds that free zero objects (a stuck object, or Garage unreachable), and
+    a ``_MAX_WALL_SECONDS`` backstop. Either bails with the freed-so-far count,
+    leaving the rest for a later retry - re-dispatching a clear is idempotent
+    by design (an empty list is the only success proof), so resuming is safe.
 
     Tests inject a fake ``GarageS3Client``; production wires the real one.
     """
     started_at = time.monotonic()
-
-    # ---- Phase 1: paginate the bucket to compute total ----
-    # ListObjectsV2 is a signed, authenticated request, so the first page
-    # IS the credential proof: a wrong key raises S3AuthError here, exactly
-    # as a standalone HeadBucket pre-flight would have. Skipping that extra
-    # pre-flight removes one authenticated round-trip per clear. The auth
-    # branch must be caught BEFORE the generic S3Error (S3AuthError is a
-    # subclass): downstream consumers distinguish a wrong-credential result
-    # from an operational failure by failure_reason, so an auth failure
-    # collapsed into os_error would silently lose that signal.
-    await progress("starting", 0, None, "Listing objects")
-    all_keys: list[str] = []
-    continuation: str | None = None
-    while True:
-        try:
-            page = await asyncio.to_thread(
-                client.list_objects_v2,
-                bucket,
-                continuation,
-            )
-        except S3AuthError as exc:
-            return JobOutcome(
-                success=False,
-                exit_code=-1,
-                stderr=f"Authentication failed: {exc}",
-                failure_reason="auth_failed",
-                extras={
-                    "deleted_count": 0,
-                    "failed_count": 0,
-                    "errors": [],
-                    "duration_seconds": _elapsed(started_at),
-                    "error": "Could not authenticate. Check your Admin secret key.",
-                },
-            )
-        except S3Error as exc:
-            return JobOutcome(
-                success=False,
-                exit_code=-1,
-                stderr=f"List failed: {exc}",
-                failure_reason="os_error",
-                extras={
-                    "deleted_count": 0,
-                    "failed_count": 0,
-                    "errors": [],
-                    "duration_seconds": _elapsed(started_at),
-                    "error": str(exc),
-                },
-            )
-        all_keys.extend(o.key for o in page.contents)
-        if not page.is_truncated:
-            break
-        continuation = page.next_continuation_token
-
-    total = len(all_keys)
-    if total == 0:
-        # Nothing to delete - succeed with zero counts.
-        return JobOutcome(
-            success=True,
-            exit_code=0,
-            stdout="Bucket is already empty",
-            extras={
-                "deleted_count": 0,
-                "failed_count": 0,
-                "errors": [],
-                "duration_seconds": _elapsed(started_at),
-            },
-        )
-
-    # ---- Phase 2: delete in batches, emitting per-batch progress ----
     deleted_total = 0
-    error_entries: list[dict[str, str]] = []
-    for i in range(0, total, _BATCH_SIZE):
-        batch = all_keys[i : i + _BATCH_SIZE]
+    bytes_freed = 0
+    no_progress_rounds = 0
+    last_errors: list[dict[str, str]] = []
+    last_transport: str | None = None
+
+    # Leave the "0 objects" state immediately: a large bucket's first list can
+    # take a beat, and the customer must see the modal is alive before then.
+    await progress("running", 0, None, "Clearing", bytes_freed=0)
+
+    while True:
+        if _elapsed(started_at) > _MAX_WALL_SECONDS:
+            return _clear_stalled(
+                deleted_total,
+                bytes_freed,
+                last_errors,
+                last_transport or f"clear exceeded {_MAX_WALL_SECONDS}s",
+                started_at,
+            )
+
+        # ListObjectsV2 is a signed request, so the first list doubles as the
+        # credential proof: a wrong key raises S3AuthError here. The auth branch
+        # must precede the generic S3Error (it is a subclass) so a wrong secret
+        # reports auth_failed, never a stalled-clear give-up.
         try:
-            result = await asyncio.to_thread(
-                client.delete_objects,
-                bucket,
-                batch,
-            )
+            page = await asyncio.to_thread(client.list_objects_v2, bucket)
+        except S3AuthError as exc:
+            return _auth_failure(exc, started_at)
         except S3Error as exc:
-            return JobOutcome(
-                success=False,
-                exit_code=-1,
-                stderr=f"Delete batch failed: {exc}",
-                failure_reason="os_error",
-                extras={
-                    "deleted_count": deleted_total,
-                    "failed_count": total - deleted_total,
-                    "errors": error_entries[:_MAX_REPORTED_ERRORS],
-                    "duration_seconds": _elapsed(started_at),
-                    "error": str(exc),
-                },
-            )
-        deleted_total += len(result.deleted)
-        for err in result.errors:
-            error_entries.append(
-                {"Key": err.key, "Code": err.code, "Message": err.message},
-            )
-        # Fail-safe in the KEEP direction: a key the response names in neither
-        # <Deleted> nor <Error> (format drift, a proxy 200ing an empty body) is
-        # counted failed, never assumed gone - success requires positive proof.
-        reported = set(result.deleted) | {err.key for err in result.errors}
-        for key in batch:
-            if key not in reported:
-                error_entries.append(
-                    {
-                        "Key": key,
-                        "Code": "UnreportedByDeleteObjects",
-                        "Message": (
-                            "DeleteObjects response named this key in neither "
-                            "Deleted nor Error"
-                        ),
-                    },
+            no_progress_rounds += 1
+            last_transport = str(exc)
+            if no_progress_rounds >= _MAX_NO_PROGRESS_ROUNDS:
+                return _clear_stalled(
+                    deleted_total, bytes_freed, last_errors, last_transport, started_at
                 )
-        await progress(
-            "running",
-            deleted_total,
-            total,
-            f"Deleted {deleted_total} of {total}",
-        )
+            continue
 
-    # ---- Phase 3: finalize and report ----
-    await progress("finalizing", deleted_total, total, "Computing summary")
+        if not page.contents:
+            break  # Empty list: the bucket is drained. This is the success proof.
 
-    if error_entries:
-        # P1 contract: any per-object failure means the whole job failed.
-        # The dashboard will leave the bucket counts untouched and let the
-        # customer retry.
-        return JobOutcome(
-            success=False,
-            exit_code=-1,
-            stderr=f"{len(error_entries)} object(s) could not be deleted",
-            failure_reason="partial_failure",
-            extras={
-                "deleted_count": deleted_total,
-                "failed_count": len(error_entries),
-                "errors": error_entries[:_MAX_REPORTED_ERRORS],
-                "duration_seconds": _elapsed(started_at),
-                "error": (
-                    f"{len(error_entries)} of {total} objects could not be deleted. "
-                    "The bucket was partially cleared; retry to finish."
-                ),
-            },
-        )
+        size_by_key = {o.key: o.size for o in page.contents}
+        keys = list(size_by_key)
+        deleted_before = deleted_total
+        last_errors = []
 
+        for i in range(0, len(keys), _DELETE_BATCH_SIZE):
+            batch = keys[i : i + _DELETE_BATCH_SIZE]
+            try:
+                result = await asyncio.to_thread(client.delete_objects, bucket, batch)
+            except S3Error as exc:
+                # Transient: bail this page and re-list. Garage may have deleted
+                # some of the batch server-side; those keys won't come back, so
+                # the loop still makes forward progress.
+                last_transport = str(exc)
+                break
+            deleted_total += len(result.deleted)
+            bytes_freed += sum(size_by_key.get(k, 0) for k in result.deleted)
+            last_errors.extend(
+                {"Key": err.key, "Code": err.code, "Message": err.message}
+                for err in result.errors
+            )
+            await progress(
+                "running",
+                deleted_total,
+                None,
+                f"Deleted {deleted_total}",
+                bytes_freed=bytes_freed,
+            )
+
+        if deleted_total == deleted_before:
+            no_progress_rounds += 1
+            if no_progress_rounds >= _MAX_NO_PROGRESS_ROUNDS:
+                return _clear_stalled(
+                    deleted_total,
+                    bytes_freed,
+                    last_errors,
+                    last_transport or "no objects could be deleted",
+                    started_at,
+                )
+        else:
+            no_progress_rounds = 0
+
+    await progress(
+        "finalizing", deleted_total, None, "Done", bytes_freed=bytes_freed
+    )
     return JobOutcome(
         success=True,
         exit_code=0,
         stdout=f"Cleared {deleted_total} object(s)",
         extras={
             "deleted_count": deleted_total,
+            "bytes_freed": bytes_freed,
             "failed_count": 0,
             "errors": [],
             "duration_seconds": _elapsed(started_at),
+        },
+    )
+
+
+def _auth_failure(exc: S3Error, started_at: float) -> JobOutcome:
+    """Wrong-credential outcome. Distinct reason so consumers don't retry it."""
+    return JobOutcome(
+        success=False,
+        exit_code=-1,
+        stderr=f"Authentication failed: {exc}",
+        failure_reason="auth_failed",
+        extras={
+            "deleted_count": 0,
+            "bytes_freed": 0,
+            "failed_count": 0,
+            "errors": [],
+            "duration_seconds": _elapsed(started_at),
+            "error": "Could not authenticate. Check your Admin secret key.",
+        },
+    )
+
+
+def _clear_stalled(
+    deleted_total: int,
+    bytes_freed: int,
+    errors: list[dict[str, str]],
+    detail: str,
+    started_at: float,
+) -> JobOutcome:
+    """Gave-up outcome: freed what it could, the rest awaits a retry.
+
+    Not a partial-success accounting claim - the bucket is simply not yet
+    empty. Re-dispatch (dashboard retry or purge tick) resumes from here.
+    """
+    return JobOutcome(
+        success=False,
+        exit_code=-1,
+        stderr=f"Clear stalled after freeing {deleted_total} object(s): {detail}",
+        failure_reason="clear_stalled",
+        extras={
+            "deleted_count": deleted_total,
+            "bytes_freed": bytes_freed,
+            "failed_count": len(errors),
+            "errors": errors[:_MAX_REPORTED_ERRORS],
+            "duration_seconds": _elapsed(started_at),
+            "error": (
+                f"Cleared {deleted_total} object(s) but could not finish "
+                f"({detail}). Retry to continue."
+            ),
         },
     )
 
