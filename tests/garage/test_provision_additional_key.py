@@ -49,6 +49,7 @@ class _ProgressRecorder:
         self, stage: str, current: int, total: int | None, message: str,
         *,
         transfer: object | None = None,
+        bytes_freed: object | None = None,
     ) -> None:
         self.events.append((stage, current, total, message))
 

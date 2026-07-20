@@ -44,6 +44,7 @@ class ProgressRecorder:
     def __init__(self) -> None:
         self.events: list[tuple[str, int, int | None, str]] = []
         self.transfers: list[TransferStats | None] = []
+        self.bytes_freed: list[int | None] = []
 
     async def __call__(
         self,
@@ -53,9 +54,11 @@ class ProgressRecorder:
         message: str,
         *,
         transfer: TransferStats | None = None,
+        bytes_freed: int | None = None,
     ) -> None:
         self.events.append((stage, current, total, message))
         self.transfers.append(transfer)
+        self.bytes_freed.append(bytes_freed)
 
 
 class FakeRclone:
