@@ -1,13 +1,18 @@
 """External-loader no-execution fence (CORE-007).
 
-The P1 external loader identifies, verifies, installs, and inspects packages but
-never imports or executes their code. This is an AST check (not a substring grep,
-which would fire on ``literal_eval`` and miss ``getattr``-obfuscated calls): it
-fails if anything in ``integrations/external/`` or the loader CLI glue imports
-``importlib``/``runpy``, calls ``eval``/``exec``, or mutates ``sys.path``.
+Install and inspect identify, verify, and install packages but never import or
+execute their code, so an untrusted package can always be inspected safely. This
+is an AST check (not a substring grep, which would fire on ``literal_eval`` and
+miss ``getattr``-obfuscated calls): it fails if anything in
+``integrations/external/`` or the loader CLI glue imports ``importlib``/``runpy``,
+calls ``eval``/``exec``, or mutates ``sys.path``.
 
-Its value is catching *accidental* reintroduction during later P2/P3 work, when
-someone will legitimately add ``importlib`` to a neighboring module.
+The runtime loader (``loader.py``) is the ONE sanctioned executor: it imports
+sealed, granted adapter code, so it is excluded by name. The fence is thus a
+per-file allowlist inside ``external/``, not a directory-level rule - every other
+module stays no-execution, and a reviewer knows ``loader.py`` is the sole
+carve-out. Its value is catching *accidental* reintroduction of execution into a
+neighboring no-execution module.
 """
 
 from __future__ import annotations
@@ -18,6 +23,9 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parent.parent / "stormpulse"
 _SCOPE_DIRS = [_ROOT / "integrations" / "external"]
 _SCOPE_FILES = [_ROOT / "cli" / "integration.py"]
+# The sanctioned executor (CORE-007 runtime loader): the sole file under
+# external/ allowed to import importlib and load sealed code.
+_SCOPE_EXCLUDE = {_ROOT / "integrations" / "external" / "loader.py"}
 
 _FORBIDDEN_IMPORT_ROOTS = {"importlib", "runpy"}
 _FORBIDDEN_CALLS = {"eval", "exec"}
@@ -37,7 +45,7 @@ def _scoped_files() -> list[Path]:
     files: list[Path] = []
     for directory in _SCOPE_DIRS:
         if directory.is_dir():
-            files.extend(sorted(directory.rglob("*.py")))
+            files.extend(sorted(p for p in directory.rglob("*.py") if p not in _SCOPE_EXCLUDE))
     files.extend(path for path in _SCOPE_FILES if path.is_file())
     return files
 

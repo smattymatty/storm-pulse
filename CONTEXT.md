@@ -82,6 +82,37 @@ say so, never print nothing).
 _Avoid_: pass/fail (loses the checked-and-ruled-out vs no-alarm
 distinction), acquitted/convicted (overstates what one check proves)
 
+**External integration (adapter)**:
+A signed, operator-sealed integration package installed onto an agent
+without entering the public tree (CORE-007). Fully trusted in-process
+code once sealed, equal in privilege to a built-in Feature. It authors
+against the SDK declaration surface only, never the internal registry
+directly.
+_Avoid_: plugin (implies an untrusted third-party ecosystem, which the
+in-process tier explicitly is not), first-party integration (that is the
+built-in tier registered in `integrations_manifest.py`)
+
+**SDK declaration surface**:
+The versioned Foundation-layer types (`SdkIntegration`, `SdkCommandSpec`,
+...) an external adapter declares its integration and commands with. The
+loader translates a declared adapter into the internal
+`registry.Integration` + `config.CommandSpec` at load time. The single
+stable contract an external package is written against; keeps the SDK
+Foundation-pure (Fn8).
+
+**Grant seal**:
+The per-agent operator act (distinct from the install receipt) that
+authorizes loading an installed package and binds its digests +
+granted capabilities. A receipt attests bytes were installed; only a
+grant authorizes execution. Loading reads grants, never receipts.
+_Avoid_: install (that is byte provenance, not authority)
+
+**Capability-specific revocation**:
+Revocation fences, it does not unload, and is per-capability: revoking
+`command_contributor` stops new command dispatch while the adapter keeps
+loading for state/health; revoking `integration_load` fences every new
+callback and evicts the code only on agent restart (CORE-007 D3).
+
 ## Privacy by design
 
 Pulse is built so the agent has almost nothing to hold and therefore

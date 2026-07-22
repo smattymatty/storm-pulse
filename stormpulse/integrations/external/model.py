@@ -132,6 +132,34 @@ class InstallReceiptV1:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SealedGrantV1:
+    """The operator's execution authority for one installed package (CORE-007 D3).
+
+    Distinct from an install receipt: a receipt attests bytes were installed and
+    which key signed them; a grant authorizes RUNNING that code. The loader reads
+    grants, never receipts. Binds every digest so any change invalidates the
+    grant - authority never carries across versions. ``granted_capabilities`` is
+    the whole set the package requested (grant is all-or-nothing); revocation is
+    the capability-specific overlay (D3): ``revoked_capabilities`` fences those
+    tokens while the rest keep their authority.
+    """
+
+    agent_id: str
+    integration_id: str
+    publisher_fingerprint: str
+    package_digest: str
+    manifest_digest: str
+    granted_capabilities: tuple[CapabilityRequest, ...]
+    sealed_at: str
+    schema_version: int = 1
+    seal_format_version: int = 1
+    command_specs_digest: str | None = None
+    service_manifest_digest: str | None = None
+    revoked_capabilities: tuple[CapabilityRequest, ...] = ()
+    revoked_at: str | None = None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Finding:
     code: str
     severity: Severity

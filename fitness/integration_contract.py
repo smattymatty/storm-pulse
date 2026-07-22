@@ -1,6 +1,14 @@
 """Function 5: the Integration contract (CORE-005 governance): required core
 fields, first-party command contribution (decision 8), and disjoint log-enricher
-parser keys (decision 13). The runtime sibling of Fn4's static dependency fence."""
+parser keys (decision 13). The runtime sibling of Fn4's static dependency fence.
+
+CORE-007 amends decision 8: a command contributor is first-party OR a sealed
+external adapter holding a ``command_contributor`` grant. Only built-ins register
+at fitness time (the runtime loader does not run here), so this still asserts
+first-party for everything it can see; an external adapter's commands are gated
+at load by its grant, not by this static check, and its translated ``specs``
+builder lives in the Entry-layer translator (a ``stormpulse`` module), so it
+would satisfy the check below anyway."""
 
 from __future__ import annotations
 
@@ -26,8 +34,9 @@ def check_integration_contract() -> list[str]:
             if not module.startswith("stormpulse"):
                 violations.append(
                     f"Integration {integ.id!r}: contributes commands from "
-                    f"non-first-party module {module!r} (CORE-005 decision 8: "
-                    "command contribution is first-party-only)"
+                    f"non-first-party module {module!r} (CORE-005 decision 8 / "
+                    "CORE-007: a built-in contributor is first-party; an external "
+                    "one is gated by its command_contributor grant at load)"
                 )
         for parser in integ.log_enrichers or {}:
             owner = enricher_owners.setdefault(parser, integ.id)

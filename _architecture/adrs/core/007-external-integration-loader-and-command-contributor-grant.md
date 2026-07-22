@@ -164,3 +164,54 @@ binding lives in the managing integration's own docs.
   adapter.
 - [CORE-004](004-signoff-verify-hatch-and-seal.md) — the mirror-never-seal authority
   model reused here.
+
+## Amendment (2026-07-22) — runtime loader realization
+
+The P1 surface (sign, trust, install, inspect) shipped without the runtime half.
+Building it, `buckets_gate` (the guard's in-process adapter, D4) as the first
+consumer, resolved these decisions:
+
+- **Authoring surface.** An external adapter authors against a **versioned SDK
+  declaration surface** (`SdkIntegration`, `SdkCommandSpec`, ...), never the
+  internal registry. The loader translates a declared adapter into the internal
+  `registry.Integration` + `config.CommandSpec` at load. This keeps `sdk/`
+  Foundation-pure (Fn8) and makes "stdlib + versioned SDK only" literally true
+  for an adapter. The v1 surface mirrors `CommandSpec` **in full**, which
+  **supersedes D5's command-surface minimalism** for the command tier (the
+  wizard/mutation minimalism of D5 stands); a declared `subprocess` command must
+  pin its exact argv.
+- **`command_specs_digest`.** A single SDK function over the **full declarative
+  surface** (name, group, mode, timeout, params, flags, subprocess argv), sorted
+  and canonical. Run identically by the publisher (to fill the manifest) and the
+  host (to verify at load), so it cannot drift. The **handler callable is
+  excluded** — its code is pinned by `package_digest`, not the specs digest.
+- **Loader home.** The executing loader is `integrations/external/loader.py`.
+  **Fn7 changes from a directory-level to a per-file no-execution fence**:
+  install/inspect/digest/trust/manifest stay provably no-execution; `loader.py`
+  is the one sanctioned executor.
+- **Seal and revocation.** A seal grants **all** the package's requested
+  capabilities (no à-la-carte grant). **Revocation stays capability-specific per
+  D3**: revoking `command_contributor` fences new command dispatch while the
+  adapter keeps loading for state/health; revoking `integration_load` fences
+  every callback, evicting on restart. Loading reads sealed grants, never
+  receipts.
+- **Fn5.** Amended: a command-contributing Integration is first-party **or** a
+  sealed external package holding a `command_contributor` grant.
+- **Load mechanism (D1).** Sealed packages import through a **scoped
+  `MetaPathFinder`** that resolves only sealed integration-ids (each unique and
+  non-stdlib/non-`stormpulse` by the reserved-id rule) to their content-addressed
+  tree. It never touches `sys.path`, and multi-module packages + relative imports
+  resolve normally. The loader re-hashes the installed tree against the sealed
+  digest at load (cheap defense-in-depth over the read-only content-addressed
+  dir).
+- **Command gate (D2).** Enforced **at registration**, not at dispatch: the
+  loader registers an adapter WITH its translated commands only when
+  `command_contributor` is effective **and** the recomputed `command_specs_digest`
+  matches the seal; otherwise it registers **command-less** (loads for
+  state/health under `integration_load`, advertises no commands, logs loudly). A
+  digest mismatch therefore fences commands without dropping the adapter. The
+  dispatcher and wire manifest stay grant-unaware.
+- **Collision (D6).** Read literally: a repeated id **or** any single command-name
+  clash with a built-in quarantines the **whole** external package with a named
+  error (built-ins always win). Ordinary import/parse/precondition exceptions
+  soft-disable that one adapter; the agent and its siblings stay up.

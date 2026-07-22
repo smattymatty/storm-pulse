@@ -46,6 +46,10 @@ def receipts_dir(state_dir: Path) -> Path:
     return integrations_root(state_dir) / "receipts"
 
 
+def grants_dir(state_dir: Path) -> Path:
+    return integrations_root(state_dir) / "grants"
+
+
 def tmp_dir(state_dir: Path) -> Path:
     return integrations_root(state_dir) / "tmp"
 
@@ -61,6 +65,7 @@ def ensure_layout(state_dir: Path) -> None:
         publishers_dir(state_dir),
         packages_dir(state_dir),
         receipts_dir(state_dir),
+        grants_dir(state_dir),
         tmp_dir(state_dir),
     ):
         directory.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)

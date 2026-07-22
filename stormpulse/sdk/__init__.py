@@ -13,6 +13,17 @@ concrete ``stormpulse update`` behavior on a compat break is CORE-002 / P3 work.
 
 from __future__ import annotations
 
+from stormpulse.sdk.declaration import (
+    SdkCommandHandler,
+    SdkCommandMode,
+    SdkCommandSpec,
+    SdkIntegration,
+    SdkJobHandler,
+    SdkJobOutcome,
+    SdkParamDef,
+    SdkProgress,
+    command_specs_digest,
+)
 from stormpulse.sdk.findings import Finding, Severity, severity_rank
 from stormpulse.sdk.plan import (
     CaddyDropIn,
@@ -52,6 +63,16 @@ SDK_API: int = 1
 
 __all__ = [
     "SDK_API",
+    # declaration surface (CORE-007 external adapters)
+    "SdkCommandHandler",
+    "SdkCommandMode",
+    "SdkCommandSpec",
+    "SdkIntegration",
+    "SdkJobHandler",
+    "SdkJobOutcome",
+    "SdkParamDef",
+    "SdkProgress",
+    "command_specs_digest",
     # findings
     "Finding",
     "Severity",

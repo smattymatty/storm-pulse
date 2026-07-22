@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 
 import stormpulse.agent.integrations_manifest  # noqa: F401  (registers in-tree Integrations)
+from stormpulse.agent.external_adapters import load_and_register_external
 from stormpulse.agent.integrations_runtime import (
     STATUS_DISABLED_CHOICE,
     STATUS_DISABLED_ERROR,
@@ -67,10 +68,15 @@ def _resolve_integration(
     integ: Integration,
     raw: dict[str, object],
     commands: dict[str, CommandSpec],
+    external_ids: frozenset[str] = frozenset(),
 ) -> IntegrationRuntime:
     """Parse, gate, and (if live) register one Integration's commands. Every failure
     here soft-disables THIS integration with a wire-visible reason; the agent and
-    all siblings stay up (CORE-005 decision 5, the fatal/soft line)."""
+    all siblings stay up (CORE-005 decision 5, the fatal/soft line).
+
+    ``external_ids`` names the sealed external adapters; a command-name clash
+    between one of those and an already-registered (built-in) command quarantines
+    the whole external package - built-ins always win (CORE-007 D6)."""
     try:
         parsed = integ.parse_config(raw)
     except ConfigError as exc:
@@ -104,6 +110,17 @@ def _resolve_integration(
                 parsed,
                 integ,
             )
+    if integ.id in external_ids:
+        clash = sorted(set(integ_specs) & set(commands))
+        if clash:
+            return IntegrationRuntime(
+                integ.id,
+                STATUS_DISABLED_ERROR,
+                f"command name(s) {clash} collide with a built-in; the external "
+                "package is quarantined (built-ins win, CORE-007 D6)",
+                parsed,
+                integ,
+            )
     commands.update(integ_specs)
     return IntegrationRuntime(integ.id, STATUS_LIVE, None, parsed, integ)
 
@@ -117,6 +134,10 @@ def build_agent_dependencies(
     """Assemble the registry, log shippers, and one runtime per configured
     Integration - a loop over the registered set, never by name (CORE-005)."""
     commands = dict(config.commands)
+    # Load, translate, and register any sealed external adapters (CORE-007)
+    # before the setup loop, so id/command collisions resolve with built-ins
+    # already present (built-ins win). No sealed grants => a no-op.
+    external_ids = load_and_register_external(config.storage.db_path.parent)
     integrations: dict[str, IntegrationRuntime] = {}
     # First declarer of an enricher parser wins (registration order); a later
     # CONFIGURED declarer is refused at boot - the fork path where CI never ran.
@@ -146,7 +167,7 @@ def build_agent_dependencies(
         runtime = (
             IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, None, integ)
             if reason is not None
-            else _resolve_integration(integ, raw, commands)
+            else _resolve_integration(integ, raw, commands, external_ids)
         )
         integrations[integ.id] = runtime
         if runtime.status == STATUS_DISABLED_ERROR:

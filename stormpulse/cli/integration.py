@@ -15,13 +15,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from stormpulse.integrations.external import doctor, inspection, install, ledger, trust
+from stormpulse.integrations.external import doctor, grants, inspection, install, ledger, trust
 from stormpulse.integrations.external.model import (
+    CapabilityRequest,
     FailureCode,
     Finding,
     InspectionReport,
     PackageError,
     PublisherRecordV1,
+    SealedGrantV1,
     Severity,
 )
 
@@ -57,6 +59,27 @@ def add_integration_subparser(subparsers: Any) -> None:
     _add_common(install_parser)
 
     _add_common(sub.add_parser("list", help="list install receipts"))
+
+    seal_parser = sub.add_parser("seal", help="grant execution authority to an installed digest")
+    seal_parser.add_argument("package_digest")
+    seal_parser.add_argument("--confirm-hostname")
+    _add_common(seal_parser)
+
+    grant_revoke_parser = sub.add_parser("revoke", help="fence one capability on a sealed grant")
+    grant_revoke_parser.add_argument("package_digest")
+    grant_revoke_parser.add_argument(
+        "--capability", required=True, choices=[c.value for c in CapabilityRequest]
+    )
+    grant_revoke_parser.add_argument("--confirm-hostname")
+    _add_common(grant_revoke_parser)
+
+    rollback_parser = sub.add_parser("rollback", help="re-activate a previously sealed digest")
+    rollback_parser.add_argument("integration_id")
+    rollback_parser.add_argument("package_digest")
+    rollback_parser.add_argument("--confirm-hostname")
+    _add_common(rollback_parser)
+
+    _add_common(sub.add_parser("grants", help="list sealed grants"))
 
     # `doctor` diagnoses installed P1 package integrity AND reports the P2 readiness
     # graph (available/configured/enabled/ready + live capabilities; host probes run
@@ -149,6 +172,29 @@ def _dispatch(
     if command == "list":
         receipts = ledger.list_receipts(state_dir)
         _emit(args, "list", {"receipts": [ledger.to_dict(r) for r in receipts]}, [])
+        return 0
+    if command == "seal":
+        _require_hostname(args)
+        grant = grants.seal(state_dir, package_digest=args.package_digest)
+        _emit(args, "seal", _grant_dict(grant), [])
+        return 0
+    if command == "revoke":
+        _require_hostname(args)
+        grant = grants.revoke(
+            state_dir, package_digest=args.package_digest, capability=CapabilityRequest(args.capability)
+        )
+        _emit(args, "revoke", _grant_dict(grant), [])
+        return 0
+    if command == "rollback":
+        _require_hostname(args)
+        grant = grants.rollback(
+            state_dir, integration_id=args.integration_id, package_digest=args.package_digest
+        )
+        _emit(args, "rollback", _grant_dict(grant), [])
+        return 0
+    if command == "grants":
+        sealed = grants.list_grants(state_dir)
+        _emit(args, "grants", {"grants": [_grant_dict(g) for g in sealed]}, [])
         return 0
     if command == "doctor":
         return _doctor(args, state_dir, integrations_config)
@@ -335,6 +381,17 @@ def _report_dict(report: InspectionReport) -> dict[str, object]:
     }
 
 
+def _grant_dict(grant: SealedGrantV1) -> dict[str, object]:
+    return {
+        "integration_id": grant.integration_id,
+        "package_digest": grant.package_digest,
+        "granted_capabilities": [c.value for c in grant.granted_capabilities],
+        "revoked_capabilities": [c.value for c in grant.revoked_capabilities],
+        "sealed_at": grant.sealed_at,
+        "revoked_at": grant.revoked_at,
+    }
+
+
 def _publisher_dict(record: PublisherRecordV1) -> dict[str, object]:
     return {
         "fingerprint": record.fingerprint,
@@ -346,4 +403,8 @@ def _publisher_dict(record: PublisherRecordV1) -> dict[str, object]:
 
 
 def _usage() -> None:
-    print("Usage: stormpulse integration <inspect|install|list|doctor|publisher> ...", file=sys.stderr)
+    print(
+        "Usage: stormpulse integration "
+        "<inspect|install|list|seal|revoke|rollback|grants|doctor|publisher> ...",
+        file=sys.stderr,
+    )
