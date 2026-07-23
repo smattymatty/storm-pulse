@@ -27,13 +27,14 @@ from pathlib import Path
 from typing import Any
 
 from stormpulse.commands.jobs import JobOutcome, ProgressCallback
-from stormpulse.config import CommandSpec, ParamDef
+from stormpulse.config import CommandSpec, ConfigError, ParamDef
 from stormpulse.integrations import Integration, register_integration, registered_integrations
 from stormpulse.integrations.external import grants, loader
 from stormpulse.integrations.external.model import CapabilityRequest, SealedGrantV1
 from stormpulse.sdk import (
     SdkCommandHandler,
     SdkCommandSpec,
+    SdkConfigError,
     SdkIntegration,
     SdkParamDef,
     command_specs_digest,
@@ -65,10 +66,27 @@ def load_and_register_external(state_dir: Path) -> frozenset[str]:
     return frozenset(registered)
 
 
+def _wrap_parse_config(sdk_parse: Any) -> Any:
+    """Map an adapter's config failure to the host's ConfigError, so bootstrap
+    soft-disables it (CORE-005 d5 / D6). An adapter can't import ConfigError
+    (SDK-only), so it raises SdkConfigError; any other parse failure is treated
+    the same rather than crashing the agent."""
+
+    def parse(raw: dict[str, object]) -> Any:
+        try:
+            return sdk_parse(raw)
+        except SdkConfigError as exc:
+            raise ConfigError(str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 - a parse failure soft-disables, never crashes
+            raise ConfigError(f"external adapter config parse failed: {exc}") from exc
+
+    return parse
+
+
 def _translate(sdk: SdkIntegration, grant: SealedGrantV1) -> Integration:
     return Integration(
         id=sdk.id,
-        parse_config=sdk.parse_config,
+        parse_config=_wrap_parse_config(sdk.parse_config),
         enabled=sdk.enabled,
         preconditions=sdk.preconditions,
         specs=_gated_specs_builder(sdk, grant) if sdk.specs is not None else None,

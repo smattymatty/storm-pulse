@@ -35,6 +35,13 @@ SdkCommandMode = Literal["subprocess", "job", "refresh"]
 _CREDENTIAL_NAME_RE = re.compile(r"secret|password|token|passphrase", re.IGNORECASE)
 
 
+class SdkConfigError(Exception):
+    """Raised by an adapter's ``parse_config`` to soft-disable itself on invalid
+    config. The host maps this to its internal config-error type; the adapter and
+    every sibling stay up. The adapter never imports the host's config module, so
+    this is the SDK-level signal for "this section is misconfigured"."""
+
+
 @dataclass(frozen=True, slots=True)
 class SdkParamDef:
     """An overridable command placeholder. Mirror of ``config.ParamDef``: either

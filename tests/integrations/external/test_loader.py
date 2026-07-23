@@ -242,3 +242,21 @@ def test_external_command_name_collision_quarantines() -> None:
     assert runtime.status == STATUS_DISABLED_ERROR
     assert "collide" in (runtime.disabled_reason or "")
     assert commands["shared_cmd"].group == "builtin"  # built-in untouched, external lost
+
+
+def test_wrap_parse_config_maps_adapter_errors_to_config_error() -> None:
+    from stormpulse.agent.external_adapters import _wrap_parse_config
+    from stormpulse.config import ConfigError
+    from stormpulse.sdk import SdkConfigError
+
+    def bad(_raw: dict[str, object]) -> object:
+        raise SdkConfigError("policy_path must be absolute")
+
+    with pytest.raises(ConfigError):
+        _wrap_parse_config(bad)({})
+
+    def boom(_raw: dict[str, object]) -> object:
+        raise ValueError("unexpected")
+
+    with pytest.raises(ConfigError):  # any parse failure soft-disables, never crashes
+        _wrap_parse_config(boom)({})

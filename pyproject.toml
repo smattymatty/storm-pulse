@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "storm-pulse-agent"
-version = "0.3.0"
+version = "0.3.1"
 description = "Secure server management agent for Storm Developments infrastructure"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -70,3 +70,9 @@ quote-style = "preserve"
 
 [tool.setuptools.packages.find]
 include = ["stormpulse*"]
+
+[tool.setuptools.package-data]
+# PEP 561: ship the marker so `stormpulse` is a typed dependency. An external
+# integration adapter (CORE-007) is written against `stormpulse.sdk` and can
+# now type-check the SDK as an installed dep, not just via MYPYPATH.
+stormpulse = ["py.typed"]
