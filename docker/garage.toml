@@ -1,0 +1,32 @@
+# TEST-ONLY local Garage for the storm-pulse wire tier.
+#
+# Single-node, loopback, throwaway. Pinned by digest in
+# docker-compose.test.yml to the version the fleet actually runs, so the
+# wire tests answer "does the agent still work against THIS Garage".
+#
+# Nothing here is a secret: the cluster is one node on loopback with no
+# data anyone cares about. It is recreated from scratch by `make garage-up`.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+# Meaningless outside this single-node loopback test cluster: rpc_secret only
+# authenticates inter-node RPC, and there is exactly one node.
+rpc_secret = "0000000000000000000000000000000000000000000000000000000000000001"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+# Path-style to 127.0.0.1 never matches this suffix (the s3_api.root_domain
+# trap, core/buckets-customer-truth.md). Kept unresolvable on purpose so a
+# test cannot accidentally depend on vhost-style addressing.
+root_domain = ".s3.test.localhost"
+
+[admin]
+api_bind_addr = "[::]:3903"
+# TEST-ONLY bootstrap admin token. The harness reads this exact string; it
+# never leaves loopback and grants nothing outside the throwaway container.
+admin_token = "storm-pulse-wire-test-token"

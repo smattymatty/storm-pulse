@@ -1,0 +1,30 @@
+# TEST-ONLY Garage for the wire tier (`make garage-up` + `make test-wire`).
+#
+# Digest-pinned to the image the fleet runs, so a green wire run is evidence
+# about that exact build. Override GARAGE_IMAGE to run the same suite against
+# a candidate version before it ships:
+#
+#   GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-wire
+#
+# Host ports are deliberately NOT 3900/3903: storm-buckets-guard publishes its
+# own test Garage on 3900, and both repos' test containers must be able to run
+# at the same time.
+#
+# The explicit project name is load-bearing. Compose otherwise derives the
+# project from the directory name, which is `docker` in this repo, in
+# storm-buckets-guard, and in website: an unnamed `up -d` here adopts and
+# RECREATES the other repos' containers. Observed 2026-07-23.
+name: storm-pulse-test
+
+services:
+  garage:
+    image: ${GARAGE_IMAGE:-dxflrs/garage@sha256:866bd13ed2038ba7e7190e840482bc27234c4afaf77be8cfa439ae088c1e4690}
+    container_name: storm-pulse-test-garage
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3910:3900"   # S3 API
+      - "127.0.0.1:3913:3903"   # admin API
+    volumes:
+      - ./garage.toml:/etc/garage.toml:ro
+      - ./garage-meta:/var/lib/garage/meta
+      - ./garage-data:/var/lib/garage/data

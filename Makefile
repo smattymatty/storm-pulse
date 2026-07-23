@@ -9,13 +9,35 @@
 PYTHON ?= .venv/bin/python
 LINT_IMPORTS ?= .venv/bin/lint-imports
 
-.PHONY: check test mypy fitness pre-release-check clean
+COMPOSE = docker compose -f docker/docker-compose.test.yml
 
-# Umbrella: every check in one command.
+.PHONY: check test mypy fitness pre-release-check clean \
+        garage-up garage-down test-wire
+
+# Umbrella: every check in one command. No Docker, no network.
 check: test mypy fitness
 
 test:
 	$(PYTHON) -m pytest -q
+
+# --- wire tier -------------------------------------------------------------
+# Real Garage, real admin API, real S3. Deselected from `make check` by the
+# `garage` marker; this is how you answer "does the agent still work against
+# this Garage build" without deploying.
+#
+# Version matrix: point it at a candidate build before the fleet takes it.
+#   GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-wire
+
+garage-up:
+	$(COMPOSE) up -d
+
+garage-down:
+	$(COMPOSE) down
+
+# The harness self-provisions its key and bucket, so there is nothing to set
+# up beyond the container. It fails loudly (never skips) if that is missing.
+test-wire:
+	$(PYTHON) -m pytest -m garage -q
 
 mypy:
 	$(PYTHON) -m mypy .

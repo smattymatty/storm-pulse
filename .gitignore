@@ -16,3 +16,7 @@ venv/
 storm-release.pub
 __pycache__/
 *.pyc
+
+# Test Garage state (docker/docker-compose.test.yml bind mounts)
+docker/garage-meta/
+docker/garage-data/

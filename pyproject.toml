@@ -32,6 +32,15 @@ stormpulse = "stormpulse.cli:main"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# The wire tier (tests/wire/) needs a real Garage container and is deselected
+# by default, so `make check` stays Docker-free and fast. `make test-wire`
+# selects it with `-m garage`. tests/wire/conftest.py applies the marker to
+# every test in that directory, so a new wire test cannot leak into the
+# default suite by forgetting it.
+addopts = "-m 'not garage'"
+markers = [
+    "garage: needs the real test Garage (make garage-up); run via make test-wire",
+]
 
 [tool.mypy]
 strict = true

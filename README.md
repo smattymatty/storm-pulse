@@ -118,9 +118,32 @@ Run `stormpulse init` to generate a config interactively - see the [Setup Guide]
 git clone https://git.stormdevelopments.ca/official-public/storm-pulse.git && cd storm-pulse
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-pytest
-mypy .          # strict
-make fitness    # architecture + security invariants
+make check      # pytest + mypy (strict) + architecture/security invariants
+```
+
+`make check` needs no Docker, no network, and no credentials.
+
+### The wire tier
+
+The default suite fakes Garage. The wire tier runs the agent's admin-API, S3,
+and state-walk paths against a **real** Garage in a throwaway container, which
+is the only way to catch a Garage release that renames a JSON field, changes a
+status code, or reworks an error string.
+
+```bash
+make garage-up      # digest-pinned Garage on loopback (ports 3910/3913)
+make test-wire      # ~40 tests, ~12s
+make garage-down
+```
+
+The harness mints its own key and bucket on first use, so there is nothing to
+configure and no secret to source. It fails loudly, never skips, if the
+container is not up.
+
+Testing a Garage upgrade before the fleet takes it:
+
+```bash
+GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-wire
 ```
 
 ## License
