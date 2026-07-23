@@ -1,10 +1,10 @@
-# TEST-ONLY Garage for the wire tier (`make garage-up` + `make test-wire`).
+# TEST-ONLY Garage for the wire tier (`make garage-up` + `make test-garage-wire`).
 #
 # Digest-pinned to the image the fleet runs, so a green wire run is evidence
 # about that exact build. Override GARAGE_IMAGE to run the same suite against
 # a candidate version before it ships:
 #
-#   GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-wire
+#   GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-garage-wire
 #
 # Host ports are deliberately NOT 3900/3903: storm-buckets-guard publishes its
 # own test Garage on 3900, and both repos' test containers must be able to run

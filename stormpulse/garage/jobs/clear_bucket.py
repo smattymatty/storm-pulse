@@ -285,7 +285,44 @@ async def _clear_with_temp_key(
             started_at=started_at,
         )
 
-    return await run_clear_bucket(progress, client, purge_alias)
+    outcome = await run_clear_bucket(progress, client, purge_alias)
+
+    # The purge path is allowed to abort in-flight uploads that an ordinary
+    # clear must leave alone: this bucket is being destroyed, so there is no
+    # live customer operation left to protect, and parts left behind are
+    # resident bytes nobody can reach or account for.
+    aborted = await _abort_all_uploads(client, purge_alias)
+    outcome.extras["uploads_aborted"] = aborted
+    if aborted:
+        outcome.extras["unfinished_uploads"] = 0
+    return outcome
+
+
+async def _abort_all_uploads(client: GarageS3Client, bucket: str) -> int:
+    """Abort every in-flight upload in a bucket being purged. Returns the count.
+
+    Best-effort per upload: one that will not abort is logged and the rest
+    still go, since leaving the others resident helps nobody.
+    """
+    try:
+        listing = await asyncio.to_thread(client.list_multipart_uploads, bucket)
+    except S3Error as exc:
+        logger.warning("could not list uploads to abort in %s: %s", bucket, exc)
+        return 0
+    aborted = 0
+    for upload in listing.uploads:
+        try:
+            await asyncio.to_thread(
+                client.abort_multipart_upload, bucket, upload.key, upload.upload_id
+            )
+        except S3Error as exc:
+            logger.warning(
+                "could not abort upload %s of %s in %s: %s",
+                upload.upload_id[:12], upload.key, bucket, exc,
+            )
+            continue
+        aborted += 1
+    return aborted
 
 
 def _credential_less_failure(
@@ -421,21 +458,66 @@ async def run_clear_bucket(
         else:
             no_progress_rounds = 0
 
+    # An empty object list is NOT proof the bucket holds nothing: multipart
+    # uploads that were started and never completed keep their parts resident
+    # on disk and are invisible to ListObjectsV2. Reporting "cleared" without
+    # this check tells the customer their bucket is empty while it still holds
+    # their bytes (and, since Garage does not count MPU parts against the
+    # quota, bytes the cap never governed).
+    unfinished = await _count_unfinished_uploads(client, bucket)
+
     await progress(
         "finalizing", deleted_total, None, "Done", bytes_freed=bytes_freed
     )
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=f"Cleared {deleted_total} object(s)",
+        stdout=_clear_summary(deleted_total, unfinished),
         extras={
             "deleted_count": deleted_total,
             "bytes_freed": bytes_freed,
             "failed_count": 0,
             "errors": [],
+            "unfinished_uploads": unfinished,
             "duration_seconds": _elapsed(started_at),
         },
     )
+
+
+async def _count_unfinished_uploads(
+    client: GarageS3Client, bucket: str
+) -> int | None:
+    """How many multipart uploads are still in flight. None if unknowable.
+
+    Best-effort by design: a failure to run this check must not fail a clear
+    that already drained every object. But it must not read as zero either,
+    so an unchecked bucket reports None and the summary says so.
+    """
+    try:
+        result = await asyncio.to_thread(client.list_multipart_uploads, bucket)
+    except S3Error as exc:
+        logger.warning(
+            "could not list multipart uploads for %s after clear; "
+            "cannot confirm the bucket holds nothing: %s",
+            bucket, exc,
+        )
+        return None
+    return len(result.uploads)
+
+
+def _clear_summary(deleted_total: int, unfinished: int | None) -> str:
+    """The operator- and customer-facing line. Never claims more than it knows."""
+    base = f"Cleared {deleted_total} object(s)"
+    if unfinished is None:
+        return f"{base}; could not check for incomplete multipart uploads"
+    if unfinished:
+        return (
+            f"{base}; {unfinished} incomplete multipart upload(s) still hold "
+            f"data in this bucket. They are invisible to the object list and "
+            f"are not counted against the bucket quota. Abort them with "
+            f"garage_bucket_cleanup_uploads."
+        )
+    return base
 
 
 def _auth_failure(exc: S3Error, started_at: float) -> JobOutcome:

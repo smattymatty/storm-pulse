@@ -14,7 +14,7 @@ import time
 
 from stormpulse.garage import admin_api
 from stormpulse.garage.state import GarageState, GarageStateReader, collect_garage_state
-from tests.wire.conftest import (
+from tests.wire.garage.conftest import (
     WireBucket,
     WireEnv,
     garage_cli,

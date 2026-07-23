@@ -9,10 +9,10 @@
 PYTHON ?= .venv/bin/python
 LINT_IMPORTS ?= .venv/bin/lint-imports
 
-COMPOSE = docker compose -f docker/docker-compose.test.yml
+GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
 .PHONY: check test mypy fitness pre-release-check clean \
-        garage-up garage-down test-wire
+        garage-up garage-down test-wire test-garage-wire
 
 # Umbrella: every check in one command. No Docker, no network.
 check: test mypy fitness
@@ -21,23 +21,33 @@ test:
 	$(PYTHON) -m pytest -q
 
 # --- wire tier -------------------------------------------------------------
-# Real Garage, real admin API, real S3. Deselected from `make check` by the
-# `garage` marker; this is how you answer "does the agent still work against
-# this Garage build" without deploying.
+# The real system an Integration drives, not a fake of it. One directory and
+# one container per integration under tests/wire/; the `wire` marker keeps the
+# whole tier out of `make check`.
 #
-# Version matrix: point it at a candidate build before the fleet takes it.
-#   GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-wire
+# Each integration owns a pair of targets: `<name>-up` to boot its container,
+# `test-<name>-wire` to run its tests. `test-wire` runs every integration and
+# therefore needs every container up.
+#
+# Version matrix: point one at a candidate build before the fleet takes it.
+#   GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-garage-wire
 
-garage-up:
-	$(COMPOSE) up -d
+# Every integration's wire tests. Needs every integration's container up.
+test-wire:
+	$(PYTHON) -m pytest -m wire -q
 
-garage-down:
-	$(COMPOSE) down
-
+# -- garage --
 # The harness self-provisions its key and bucket, so there is nothing to set
 # up beyond the container. It fails loudly (never skips) if that is missing.
-test-wire:
-	$(PYTHON) -m pytest -m garage -q
+
+garage-up:
+	$(GARAGE_COMPOSE) up -d
+
+garage-down:
+	$(GARAGE_COMPOSE) down
+
+test-garage-wire:
+	$(PYTHON) -m pytest -m "wire and garage" -q
 
 mypy:
 	$(PYTHON) -m mypy .

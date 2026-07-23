@@ -380,6 +380,38 @@ def delete_key(
     return _post(admin_url, admin_token, path)
 
 
+def cleanup_incomplete_uploads(
+    *, admin_url: str, admin_token: str, bucket_ref: str, older_than_secs: int,
+) -> tuple[int | None, str]:
+    """Abort a bucket's incomplete multipart uploads older than a cutoff.
+
+    ``POST /v2/CleanupIncompleteUploads`` with ``{bucketId, olderThanSecs}``
+    (both required by Garage); returns ``(uploadsDeleted, "")`` or
+    ``(None, error)``.
+
+    The age cutoff is the whole safety of this call. An in-flight upload from
+    seconds ago is a live customer operation; one from days ago is garbage
+    holding disk. Aborting by age keeps the fail-safe direction (data it cannot
+    classify as garbage is kept), which is why there is no "abort everything"
+    convenience here.
+    """
+    auth = {"Authorization": f"Bearer {admin_token}"}
+    full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
+    if not full_id:
+        return None, err
+    body = json.dumps(
+        {"bucketId": full_id, "olderThanSecs": int(older_than_secs)}
+    ).encode("utf-8")
+    data, err = _post_json(
+        admin_url, admin_token, "/v2/CleanupIncompleteUploads", body
+    )
+    if data is None:
+        return None, err
+    if not isinstance(data, dict) or "uploadsDeleted" not in data:
+        return None, "CleanupIncompleteUploads returned an unexpected body"
+    return int(data["uploadsDeleted"]), ""
+
+
 def is_not_found(err: str) -> bool:
     """True if an admin-API error string means the resource is already gone.
 

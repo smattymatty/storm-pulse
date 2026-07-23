@@ -49,6 +49,28 @@ class ListResult:
 
 
 @dataclass(frozen=True, slots=True)
+class MultipartUpload:
+    """One in-flight multipart upload, as ListMultipartUploads reports it."""
+
+    key: str
+    upload_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class MultipartListResult:
+    """Result of one ListMultipartUploads page.
+
+    In-flight uploads are invisible to ListObjectsV2 but their parts are
+    resident on disk, so "the object list is empty" is NOT the same claim as
+    "the bucket holds nothing". Anything treating an empty list as proof of an
+    empty bucket has to consult this too.
+    """
+
+    uploads: list[MultipartUpload]
+    is_truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
 class S3ErrorEntry:
     """One per-object failure from a DeleteObjects response."""
 
@@ -250,6 +272,33 @@ class GarageS3Client:
         )
         return _parse_delete_response(body)
 
+    def list_multipart_uploads(
+        self, bucket: str, max_uploads: int = 1000
+    ) -> MultipartListResult:
+        """One page of ListMultipartUploads: the uploads ListObjectsV2 hides.
+
+        Garage accepts multipart parts that push a bucket past its quota
+        (verified against v2.3.0: an ordinary PUT past the cap is refused 403,
+        an MPU part past the same cap is accepted 200), and reports their bytes
+        only under ``unfinishedMultipartUpload*`` in the admin API. Over S3
+        this is the only way to see them, and it works with whatever
+        credentials the caller already holds.
+        """
+        query = [("uploads", ""), ("max-uploads", str(max_uploads))]
+        body = self._signed_request("GET", f"/{bucket}", query, b"")
+        return _parse_multipart_list_response(body)
+
+    def abort_multipart_upload(self, bucket: str, key: str, upload_id: str) -> None:
+        """Abort one in-flight multipart upload, freeing its parts.
+
+        Destructive to an operation that may still be in progress, so callers
+        must know the bucket is being torn down (the purge path) or that the
+        upload is old enough to be garbage. Raises on failure.
+        """
+        self._signed_request(
+            "DELETE", f"/{bucket}/{key}", [("uploadId", upload_id)], b""
+        )
+
     # -- internals ------------------------------------------------------
 
     def _signed_request(
@@ -386,6 +435,30 @@ def _parse_list_response(body: bytes) -> ListResult:
         next_continuation_token=next_token,
         key_count=key_count or len(contents),
     )
+
+
+def _parse_multipart_list_response(body: bytes) -> MultipartListResult:
+    if not body:
+        return MultipartListResult(uploads=[], is_truncated=False)
+    root = ElementTree.fromstring(body)
+    uploads: list[MultipartUpload] = []
+    is_truncated = False
+    for child in root:
+        tag = _strip_ns(child.tag)
+        if tag == "Upload":
+            key = ""
+            upload_id = ""
+            for sub in child:
+                stag = _strip_ns(sub.tag)
+                if stag == "Key" and sub.text:
+                    key = sub.text
+                elif stag == "UploadId" and sub.text:
+                    upload_id = sub.text
+            if key and upload_id:
+                uploads.append(MultipartUpload(key=key, upload_id=upload_id))
+        elif tag == "IsTruncated" and child.text:
+            is_truncated = child.text.strip().lower() == "true"
+    return MultipartListResult(uploads=uploads, is_truncated=is_truncated)
 
 
 def _parse_delete_response(body: bytes) -> DeleteResult:

@@ -16,7 +16,7 @@ import pytest
 
 from stormpulse.garage.jobs.clear_bucket import run_clear_bucket
 from stormpulse.garage.s3 import GarageS3Client, S3AuthError
-from tests.wire.conftest import (
+from tests.wire.garage.conftest import (
     WireBucket,
     WireEnv,
     put_object,

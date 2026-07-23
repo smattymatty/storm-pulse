@@ -18,6 +18,7 @@ from stormpulse.garage.s3 import (
     _parse_delete_response,
     _parse_error_response,
     _parse_list_response,
+    _parse_multipart_list_response,
 )
 
 # ---------------------------------------------------------------------------
@@ -223,3 +224,62 @@ def test_auth_error_is_an_s3_error() -> None:
     assert isinstance(err, S3Error)
     assert err.status == 403
     assert err.code == "SignatureDoesNotMatch"
+
+
+# ---------------------------------------------------------------------------
+# ListMultipartUploads: the uploads ListObjectsV2 hides
+# ---------------------------------------------------------------------------
+
+
+def test_parses_in_flight_uploads_with_their_ids() -> None:
+    """Key and UploadId both, since aborting needs the pair."""
+    body = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ListMultipartUploadsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Bucket>b</Bucket>
+  <IsTruncated>false</IsTruncated>
+  <Upload><Key>big.bin</Key><UploadId>abc123</UploadId></Upload>
+  <Upload><Key>other.bin</Key><UploadId>def456</UploadId></Upload>
+</ListMultipartUploadsResult>"""
+
+    result = _parse_multipart_list_response(body)
+
+    assert [(u.key, u.upload_id) for u in result.uploads] == [
+        ("big.bin", "abc123"),
+        ("other.bin", "def456"),
+    ]
+    assert result.is_truncated is False
+
+
+def test_an_upload_missing_its_id_is_dropped_not_half_parsed() -> None:
+    """A pair we cannot abort is not a pair we should report as abortable."""
+    body = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ListMultipartUploadsResult>
+  <Upload><Key>orphan.bin</Key></Upload>
+  <Upload><Key>good.bin</Key><UploadId>xyz</UploadId></Upload>
+</ListMultipartUploadsResult>"""
+
+    result = _parse_multipart_list_response(body)
+
+    assert [u.key for u in result.uploads] == ["good.bin"]
+
+
+def test_no_uploads_parses_as_empty_not_an_error() -> None:
+    """The common case: a bucket with nothing in flight."""
+    body = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ListMultipartUploadsResult><IsTruncated>false</IsTruncated></ListMultipartUploadsResult>"""
+
+    assert _parse_multipart_list_response(body).uploads == []
+
+
+def test_truncation_is_reported() -> None:
+    """More uploads than one page: the caller must know it saw a partial set."""
+    body = b"""<?xml version="1.0" encoding="UTF-8"?>
+<ListMultipartUploadsResult><IsTruncated>true</IsTruncated>
+  <Upload><Key>a</Key><UploadId>1</UploadId></Upload>
+</ListMultipartUploadsResult>"""
+
+    assert _parse_multipart_list_response(body).is_truncated is True
+
+
+def test_an_empty_body_is_empty_not_a_crash() -> None:
+    assert _parse_multipart_list_response(b"").uploads == []

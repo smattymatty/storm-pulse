@@ -35,6 +35,8 @@ from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.s3 import (
     DeleteResult,
     ListResult,
+    MultipartListResult,
+    MultipartUpload,
     S3AuthError,
     S3Error,
     S3ErrorEntry,
@@ -65,6 +67,11 @@ class _FakeS3Client:
     - ``delete_frees_before_raise``: when raising, still remove the keys
       from state first, modelling "Garage deleted server-side but the
       response timed out" - the precise shape of the reported bug.
+    - ``uploads``: in-flight multipart uploads. Modelled because an empty
+      object list is NOT proof the bucket holds nothing: MPU parts are
+      resident but invisible to ListObjectsV2.
+    - ``uploads_list_raises``: raised on every list-uploads call, so the
+      "cannot confirm" branch is reachable.
     """
 
     def __init__(
@@ -75,14 +82,36 @@ class _FakeS3Client:
         stuck_keys: set[str] | None = None,
         delete_raises_times: int = 0,
         delete_frees_before_raise: bool = False,
+        uploads: dict[str, str] | None = None,
+        uploads_list_raises: Exception | None = None,
     ) -> None:
         self._objects = dict(objects or {})
         self._list_raises = list_raises
         self._stuck = set(stuck_keys or ())
         self._delete_raises_times = delete_raises_times
         self._delete_frees_before_raise = delete_frees_before_raise
+        self._uploads = dict(uploads or {})
+        self._uploads_list_raises = uploads_list_raises
         self.delete_calls: list[list[str]] = []
         self.list_calls = 0
+        self.aborted: list[tuple[str, str]] = []
+
+    def list_multipart_uploads(
+        self, bucket: str, max_uploads: int = 1000
+    ) -> MultipartListResult:
+        if self._uploads_list_raises is not None:
+            raise self._uploads_list_raises
+        return MultipartListResult(
+            uploads=[
+                MultipartUpload(key=k, upload_id=v)
+                for k, v in self._uploads.items()
+            ],
+            is_truncated=False,
+        )
+
+    def abort_multipart_upload(self, bucket: str, key: str, upload_id: str) -> None:
+        self.aborted.append((key, upload_id))
+        self._uploads.pop(key, None)
 
     def head_bucket(self, bucket: str) -> None:  # pragma: no cover - unused now
         pass
@@ -704,3 +733,60 @@ async def test_credential_less_leaked_key_is_loud_in_result(
     assert outcome.extras["manual_cleanup_required"] == [
         {"type": "key", "id": "GKPURGE"},
     ]
+
+
+# ---------------------------------------------------------------------------
+# Incomplete multipart uploads: an empty object list is not an empty bucket
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_clear_reports_an_in_flight_upload_and_does_not_abort_it() -> None:
+    """Objects drain; the upload is named, kept, and the fix is spelled out.
+
+    Fail-safe KEEP. An upload seconds old is a live customer operation, so the
+    ordinary clear reports it rather than destroying it.
+    """
+    client = _FakeS3Client(objects={"a.bin": 10}, uploads={"inflight.bin": "u-1"})
+    progress = _ProgressRecorder()
+
+    outcome = await run_clear_bucket(progress, client, "bucket")  # type: ignore[arg-type]
+
+    assert outcome.success
+    assert outcome.extras["unfinished_uploads"] == 1
+    assert "incomplete multipart upload" in outcome.stdout
+    assert "garage_bucket_cleanup_uploads" in outcome.stdout
+    assert client.aborted == [], "the ordinary clear aborted a live upload"
+
+
+@pytest.mark.asyncio
+async def test_clear_with_no_uploads_reports_zero_and_stays_quiet() -> None:
+    """The clean case must not grow a scary message."""
+    client = _FakeS3Client(objects={"a.bin": 10})
+    progress = _ProgressRecorder()
+
+    outcome = await run_clear_bucket(progress, client, "bucket")  # type: ignore[arg-type]
+
+    assert outcome.extras["unfinished_uploads"] == 0
+    assert "incomplete" not in outcome.stdout
+    assert outcome.stdout == "Cleared 1 object(s)"
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_upload_check_reports_unknown_not_zero() -> None:
+    """A failed check must never read as "no uploads".
+
+    Reporting zero here would be the same lie in a new place: the clear would
+    claim a clean bucket on the strength of a check that did not run.
+    """
+    client = _FakeS3Client(
+        objects={"a.bin": 10},
+        uploads_list_raises=S3Error("ListMultipartUploads -> transport error"),
+    )
+    progress = _ProgressRecorder()
+
+    outcome = await run_clear_bucket(progress, client, "bucket")  # type: ignore[arg-type]
+
+    assert outcome.success
+    assert outcome.extras["unfinished_uploads"] is None
+    assert "could not check" in outcome.stdout

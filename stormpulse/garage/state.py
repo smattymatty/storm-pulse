@@ -66,6 +66,14 @@ class GarageBucket:
     website_error_document: str | None
     quota_max_size_bytes: int | None
     quota_max_objects: int | None
+    # Bytes held by multipart uploads that were started and never completed.
+    # Reported SEPARATELY from size_bytes, never folded into it: Garage does
+    # not count these against the bucket's quota (an ordinary PUT past the cap
+    # is refused, an MPU part past the same cap is accepted), so folding them
+    # in would silently redefine what "usage" means to the capacity model.
+    # Surfaced so the control plane can see storage the cap does not govern.
+    unfinished_upload_bytes: int = 0
+    unfinished_uploads: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -218,6 +226,8 @@ def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
         website_error_document=website.get("errorDocument"),
         quota_max_size_bytes=quotas.get("maxSize"),
         quota_max_objects=quotas.get("maxObjects"),
+        unfinished_upload_bytes=int(info.get("unfinishedMultipartUploadBytes") or 0),
+        unfinished_uploads=int(info.get("unfinishedMultipartUploads") or 0),
     )
 
 

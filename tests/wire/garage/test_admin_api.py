@@ -8,7 +8,7 @@ version bump currently requires a real deploy to trust.
 Each test names the field, code, or semantic the agent depends on, so a
 failure reads as "Garage changed X" rather than "something broke".
 
-Run: ``make garage-up && make test-wire``
+Run: ``make garage-up && make test-garage-wire``
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 
 from stormpulse.garage import admin_api
-from tests.wire.conftest import (
+from tests.wire.garage.conftest import (
     WireBucket,
     WireEnv,
     bucket_info_cli,

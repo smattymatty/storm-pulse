@@ -125,25 +125,30 @@ make check      # pytest + mypy (strict) + architecture/security invariants
 
 ### The wire tier
 
-The default suite fakes Garage. The wire tier runs the agent's admin-API, S3,
-and state-walk paths against a **real** Garage in a throwaway container, which
-is the only way to catch a Garage release that renames a JSON field, changes a
-status code, or reworks an error string.
+The default suite fakes the systems the agent drives. The wire tier runs
+against the real ones in throwaway containers, which is the only way to catch a
+dependency release that renames a JSON field, changes a status code, or reworks
+an error string.
+
+One directory and one container per Integration, under `tests/wire/<name>/`.
+Each owns a `<name>-up` / `test-<name>-wire` pair:
 
 ```bash
-make garage-up      # digest-pinned Garage on loopback (ports 3910/3913)
-make test-wire      # ~40 tests, ~12s
+make garage-up           # digest-pinned Garage on loopback (ports 3910/3913)
+make test-garage-wire    # ~40 tests, ~12s
 make garage-down
+
+make test-wire           # every integration at once (needs every container up)
 ```
 
-The harness mints its own key and bucket on first use, so there is nothing to
+Each harness mints its own credentials on first use, so there is nothing to
 configure and no secret to source. It fails loudly, never skips, if the
 container is not up.
 
 Testing a Garage upgrade before the fleet takes it:
 
 ```bash
-GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-wire
+GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-garage-wire
 ```
 
 ## License

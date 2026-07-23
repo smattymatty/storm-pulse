@@ -1,7 +1,7 @@
 # TEST-ONLY local Garage for the storm-pulse wire tier.
 #
 # Single-node, loopback, throwaway. Pinned by digest in
-# docker-compose.test.yml to the version the fleet actually runs, so the
+# garage.test.yml to the version the fleet actually runs, so the
 # wire tests answer "does the agent still work against THIS Garage".
 #
 # Nothing here is a secret: the cluster is one node on loopback with no

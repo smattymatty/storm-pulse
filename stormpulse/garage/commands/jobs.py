@@ -55,6 +55,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     from stormpulse.garage.jobs.set_account_key_capability import (
         make_set_account_key_capability_handler,
     )
+    from stormpulse.garage.jobs.cleanup_uploads import make_cleanup_uploads_handler
     from stormpulse.garage.jobs.set_quota import make_set_quota_handler
     from stormpulse.garage.jobs.snapshot_and_reap_account_key import (
         make_snapshot_and_reap_account_key_handler,
@@ -471,6 +472,39 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                     "for the credential-less purge clear"
                 ),
                 **s3_credential_params("Customer S3 access key ID"),
+            },
+        ),
+        "garage_bucket_cleanup_uploads": CommandSpec(
+            group="garage",
+            command=["garage_bucket_cleanup_uploads"],  # internal - JobManager
+            timeout=120,
+            description=(
+                "Abort incomplete multipart uploads older than a given age, "
+                "reclaiming disk they hold. Their parts are resident but "
+                "invisible to the object list, and Garage does not count them "
+                "against the bucket quota, so this is the only way to reclaim "
+                "them. The age bound is the safety: a young upload is a live "
+                "customer operation and is kept"
+            ),
+            requires_confirmation=True,
+            mode="job",
+            handler=lambda params: make_cleanup_uploads_handler(
+                params, admin_url=config.admin_url, admin_token=config.admin_token,
+            ),
+            params={
+                "bucket_id": bucket_id_param(
+                    "Bucket id (garage_bucket_id), never the local alias"
+                ),
+                "older_than_secs": ParamDef(
+                    placeholder="older_than_secs",
+                    default=None,
+                    pattern=r"[0-9]+",
+                    description=(
+                        "Only abort uploads older than this many seconds. "
+                        "No default on purpose: the caller states the age it "
+                        "means, so nothing young is aborted by omission"
+                    ),
+                ),
             },
         ),
         "garage_walk_bucket_stats": CommandSpec(

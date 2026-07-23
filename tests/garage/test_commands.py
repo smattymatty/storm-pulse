@@ -31,6 +31,7 @@ class TestBuildGarageCommands:
             "garage_bucket_create",
             "garage_bucket_delete",
             "garage_bucket_set_quota",
+            "garage_bucket_cleanup_uploads",
             "garage_set_account_key_create_bucket",
             "garage_key_create",
             "garage_bucket_allow",
