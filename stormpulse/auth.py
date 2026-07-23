@@ -23,7 +23,29 @@ logger = logging.getLogger(__name__)
 
 
 class AuthError(Exception):
-    """Raised when a command fails HMAC, timestamp, or nonce verification."""
+    """Raised when a command fails HMAC, timestamp, or nonce verification.
+
+    ``reason`` is a closed enum naming which check refused. A refused
+    command is either a bug or an attack, and telling those apart needs
+    to know which gate closed; parsing the human message to find out
+    would make the distinction rot the first time the wording changes.
+    """
+
+    #: Every value ``reason`` may take. A refusal outside this set is a bug.
+    REASONS = frozenset({
+        "secret_missing",
+        "secret_empty",
+        "wrong_type",
+        "future_dated",
+        "too_old",
+        "bad_signature",
+        "replayed_nonce",
+        "unspecified",
+    })
+
+    def __init__(self, message: str, *, reason: str = "unspecified") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 # Accept commands dated up to this many seconds in the future to tolerate
@@ -39,10 +61,10 @@ def load_hmac_secret(path: Path) -> bytes:
     whitespace is stripped. Raises AuthError if missing or empty.
     """
     if not path.is_file():
-        raise AuthError(f"HMAC secret file not found: {path}")
+        raise AuthError(f"HMAC secret file not found: {path}", reason="secret_missing")
     raw = path.read_bytes().strip()
     if not raw:
-        raise AuthError(f"HMAC secret file is empty: {path}")
+        raise AuthError(f"HMAC secret file is empty: {path}", reason="secret_empty")
     return raw
 
 
@@ -135,13 +157,13 @@ class NonceStore:
                 if row is not None:
                     # Raising here rolls back both the DELETE and any INSERT.
                     # Pruning work is lost but harmless - next call re-prunes.
-                    raise AuthError(f"Nonce already seen: {nonce!r}")
+                    raise AuthError(f"Nonce already seen: {nonce!r}", reason="replayed_nonce")
                 self._conn.execute(
                     "INSERT INTO seen_nonces (nonce, seen_at) VALUES (?, ?)",
                     (nonce, time.time()),
                 )
         except sqlite3.IntegrityError:
-            raise AuthError(f"Nonce already seen: {nonce!r}")
+            raise AuthError(f"Nonce already seen: {nonce!r}", reason="replayed_nonce")
 
     def close(self) -> None:
         """Close the database connection."""
@@ -172,7 +194,8 @@ def verify_envelope(
     # 1. Type check
     if envelope.type not in (MessageType.COMMAND_REQUEST, MessageType.COMMAND_SEQUENCE):
         raise AuthError(
-            f"Cannot verify non-command message type: {envelope.type.value}"
+            f"Cannot verify non-command message type: {envelope.type.value}",
+            reason="wrong_type",
         )
 
     # 2. Timestamp freshness - directional: reject future-dated commands
@@ -181,9 +204,15 @@ def verify_envelope(
     now = datetime.now(UTC)
     age = (now - envelope.ts).total_seconds()
     if age < -_CLOCK_SKEW_TOLERANCE_SECONDS:
-        raise AuthError(f"Command timestamp in the future: {-age:.1f}s ahead")
+        raise AuthError(
+            f"Command timestamp in the future: {-age:.1f}s ahead",
+            reason="future_dated",
+        )
     if age > max_age_seconds:
-        raise AuthError(f"Command too old: {age:.1f}s > {max_age_seconds}s limit")
+        raise AuthError(
+            f"Command too old: {age:.1f}s > {max_age_seconds}s limit",
+            reason="too_old",
+        )
 
     # 3. Parse payload, build canonical message, verify HMAC
     ts_str = format_timestamp(envelope.ts)
@@ -215,7 +244,7 @@ def verify_envelope(
 
     computed = sign(canonical, secret)
     if not hmac_mod.compare_digest(computed, expected_hmac):
-        raise AuthError("HMAC verification failed")
+        raise AuthError("HMAC verification failed", reason="bad_signature")
 
     # 4. Nonce uniqueness (only after HMAC passes)
     nonce_store.check_and_store(nonce, max_age_seconds)

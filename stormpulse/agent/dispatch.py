@@ -177,6 +177,20 @@ def _verify_typed_payload(
         )
     except AuthError as exc:
         logger.warning("Auth failed for %s: %s", envelope.id, exc)
+        # Dropping a refused envelope on the wire is correct: a forgery
+        # gets no answer. Dropping it from the record is not. This emit
+        # is the only witness that someone tried, and the agent is the
+        # only place that can see it. The envelope id is untrusted here
+        # (nothing about this message verified), so it is capped before
+        # it rides the wire as an opaque ref.
+        events.emit(
+            "signature_failure",
+            source="auth",
+            status="refused",
+            failure_reason=exc.reason,
+            command_ref=str(envelope.id)[:100],
+            error=str(exc),
+        )
         return None
     if not isinstance(payload, expected_type):
         logger.error(
@@ -229,6 +243,20 @@ async def _run_subprocess_command(
         )
     except (CommandError, ParamValidationError) as exc:
         logger.warning("Command error for %s: %s", request_id, exc)
+        # A CommandError here means the name was not in the registry: the
+        # agent was asked to run something outside its whitelist, which is
+        # the invariant that makes this fleet auditable. That is a security
+        # signal and it alarms. A ParamValidationError is an ordinary bad
+        # request against a command that does exist, so it stays quiet.
+        if isinstance(exc, CommandError):
+            events.emit(
+                "whitelist_rejection",
+                source="commands",
+                status="refused",
+                command=str(payload.command)[:100],
+                command_ref=str(request_id)[:100],
+                error=str(exc),
+            )
         cmd_def = agent.registry.get(payload.command)
         return CommandResultPayload(
             request_id=request_id,
