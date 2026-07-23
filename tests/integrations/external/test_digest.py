@@ -209,6 +209,33 @@ def test_leading_dot_name_rejected(tmp_path: Path) -> None:
     assert excinfo.value.code is FailureCode.F2
 
 
+def test_bytecode_cache_dir_rejected(tmp_path: Path) -> None:
+    tree = _write_tree(
+        tmp_path / "pkg",
+        {d.MANIFEST_NAME: _MANIFEST, "__pycache__/mod.cpython-312.pyc": b"\x00bytecode"},
+    )
+    with pytest.raises(PackageError) as excinfo:
+        d.scan_and_hash(tree)
+    assert excinfo.value.code is FailureCode.F2
+
+
+def test_loose_bytecode_file_rejected(tmp_path: Path) -> None:
+    tree = _write_tree(tmp_path / "pkg", {d.MANIFEST_NAME: _MANIFEST, "mod.pyc": b"\x00bytecode"})
+    with pytest.raises(PackageError) as excinfo:
+        d.scan_and_hash(tree)
+    assert excinfo.value.code is FailureCode.F2
+
+
+def test_copy_tree_rejects_bytecode(tmp_path: Path) -> None:
+    src = _write_tree(
+        tmp_path / "src",
+        {d.MANIFEST_NAME: _MANIFEST, "__pycache__/mod.cpython-312.pyc": b"\x00bytecode"},
+    )
+    with pytest.raises(PackageError) as excinfo:
+        d.copy_tree(src, tmp_path / "dest")
+    assert excinfo.value.code is FailureCode.F2
+
+
 def test_copy_tree_rejects_symlink(tmp_path: Path) -> None:
     src = _write_tree(tmp_path / "src", {d.MANIFEST_NAME: _MANIFEST, "f.txt": b"x"})
     (src / "link.txt").symlink_to(src / "f.txt")
