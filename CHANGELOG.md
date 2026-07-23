@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-22
+
+External integrations get built-in-quality setup. `stormpulse integration init <id>` drives a sealed adapter's own wizard through the host wizard engine, so a private integration is configured with typed questions, a previewed plan, and transactional apply with rollback, instead of a hand-edited `stormpulse.toml`. The rclone SDK-init path now shares that one runner.
+
+### Added
+
+- **`stormpulse integration init <id>`** (`stormpulse/cli/integration.py`, `stormpulse/cli/wizard_run.py`). Loads a sealed adapter through the loader (the sole sanctioned executor, so the CLI itself never imports package code and Fn7 holds), reads its declared wizard, and runs it through the P2 wizard engine: ask the typed questions, `inspect` the answers (a refusal blocks application), preview the ordered plan, confirm, then apply transactionally with a durable journal and rollback. `SdkIntegration` gains an optional `wizard` field so an external adapter can declare setup that reaches built-in parity; an adapter without one says so and points at its config section rather than crashing. Fn8 still holds: `sdk/` imports only its own submodules.
+
+### Changed
+
+- **`rclone init --sdk` and `integration init` share one interactive runner** (`stormpulse/cli/wizard_run.py`), extracted from the rclone path with no behavior change. Questions, preview, confirm, and transactional apply live in one place, so the built-in and external setup routes cannot drift.
+
 ## [0.3.1] - 2026-07-22
 
 The agent learns to run code it did not ship. This release cuts the CORE-007 runtime half: a signed private integration, installed and inspected without ever executing its code, can now be operator-sealed and loaded in-process, contributing commands under a two-party, digest-bound grant. The built-in manifest is untouched; the external set loads alongside it and built-ins win every collision. The guard's `buckets_gate` adapter is the first consumer.

@@ -81,6 +81,10 @@ def add_integration_subparser(subparsers: Any) -> None:
 
     _add_common(sub.add_parser("grants", help="list sealed grants"))
 
+    init_parser = sub.add_parser("init", help="run a sealed adapter's setup wizard")
+    init_parser.add_argument("integration_id")
+    _add_common(init_parser)
+
     # `doctor` diagnoses installed P1 package integrity AND reports the P2 readiness
     # graph (available/configured/enabled/ready + live capabilities; host probes run
     # here, never under `config check`), plus any interrupted wizard apply. --recover
@@ -135,6 +139,11 @@ def cmd_integration(args: argparse.Namespace) -> None:
     except ConfigError as exc:
         print(f"config invalid: {exc}", file=sys.stderr)
         sys.exit(1)
+    # `init` runs the sealed adapter's wizard: it needs the full config + path,
+    # and it executes adapter code (through the loader), so it lives outside run().
+    if args.integration_command == "init":
+        _cmd_init(args, config, Path(config_path))
+        return
     sys.exit(
         run(
             args,
@@ -142,6 +151,43 @@ def cmd_integration(args: argparse.Namespace) -> None:
             agent_id=config.agent.id,
             integrations_config=config.integrations,
         )
+    )
+
+
+def _cmd_init(args: argparse.Namespace, config: object, config_path: Path) -> None:
+    """Load a sealed adapter by id (through the loader, the one sanctioned
+    executor) and drive its setup wizard. No `importlib` here - Fn7 holds."""
+    from stormpulse.cli.wizard_run import drive_wizard
+    from stormpulse.init.mode import detect_mode
+    from stormpulse.integrations.external import loader
+    from stormpulse.sdk import InitContext
+
+    state_dir = config.storage.db_path.parent  # type: ignore[attr-defined]
+    integration_id = args.integration_id
+    try:
+        loaded = loader.load_one_sealed_adapter(state_dir, integration_id)
+    except Exception as exc:  # noqa: BLE001 - report, don't traceback
+        print(f"cannot load sealed adapter {integration_id!r}: {exc}", file=sys.stderr)
+        sys.exit(5)
+    if loaded is None:
+        print(
+            f"no sealed adapter {integration_id!r} on this agent; install and seal it first",
+            file=sys.stderr,
+        )
+        sys.exit(4)
+    wizard = loaded.integration.wizard
+    if wizard is None:
+        print(
+            f"adapter {integration_id!r} declares no init wizard; configure its "
+            f"[{integration_id}] section in stormpulse.toml by hand",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
+    mode = detect_mode()
+    context = InitContext(mode=mode.name.lower(), config_path=str(config_path))
+    drive_wizard(
+        wizard, context, config=config, config_path=config_path, mode=mode, label=integration_id
     )
 
 

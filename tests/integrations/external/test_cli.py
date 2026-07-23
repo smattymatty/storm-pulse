@@ -84,6 +84,7 @@ def test_cmd_integration_missing_config_is_usage_not_crash(
         ["integration", "revoke", _DIGEST, "--capability", "command_contributor"],
         ["integration", "rollback", "obs", _DIGEST],
         ["integration", "doctor"],
+        ["integration", "init", "someadapter"],
         ["integration", "publisher", "list"],
         ["integration", "publisher", "revoke", _DIGEST],
     ],

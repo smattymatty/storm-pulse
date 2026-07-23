@@ -102,6 +102,17 @@ def load_sealed_adapters(state_dir: Path) -> list[LoadedAdapter]:
     return loaded
 
 
+def load_one_sealed_adapter(state_dir: Path, integration_id: str) -> LoadedAdapter | None:
+    """Load a single sealed adapter by id (for `integration init`). Returns None
+    if it has no active grant; raises with a clear reason if it is granted but
+    unloadable, so the caller can report it rather than silently skipping."""
+    _ensure_finder()
+    grant = grants.active_grant(state_dir, integration_id)
+    if grant is None:
+        return None
+    return _load_one(state_dir, grant)
+
+
 def _load_one(state_dir: Path, grant: SealedGrantV1) -> LoadedAdapter:
     installed = layout.packages_dir(state_dir) / grant.package_digest.split(":", 1)[1]
     if not installed.is_dir():

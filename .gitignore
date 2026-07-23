@@ -10,5 +10,9 @@ _temp/
 storm-pulse.wiki/
 .env
 venv/
+# Release-side signing keys (authoring keygen output). The private .key is a
+# secret and must NEVER land in this public repo; keep it in your key store.
+*.key
+storm-release.pub
 __pycache__/
 *.pyc

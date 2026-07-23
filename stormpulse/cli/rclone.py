@@ -40,14 +40,12 @@ def _run_rclone_sdk_init(
     """The rclone setup through the wizard SDK + engine (P2): wizard questions ->
     inspect -> plan preview -> confirm -> transactional apply with rollback and a
     durable journal. The legacy ``run_rclone_init`` path is untouched."""
+    from stormpulse.cli.wizard_run import drive_wizard
     from stormpulse.config import load_config
     from stormpulse.init.mode import detect_mode
-    from stormpulse.init.prompts import prompt, prompt_confirm
-    from stormpulse.init.system import restart_or_hint
     from stormpulse.rclone.init import find_rclone_binary, has_rclone_section
     from stormpulse.rclone.wizard import RCLONE_WIZARD
-    from stormpulse.sdk import Answer, InitContext, QuestionKind, Severity
-    from stormpulse.wizard import STATUS_COMMITTED, ApplyEnv, apply_plan, preview_plan
+    from stormpulse.sdk import InitContext
 
     config = load_config(config_path)
     if has_rclone_section(config_path) and not force:
@@ -61,54 +59,9 @@ def _run_rclone_sdk_init(
         config_path=str(config_path),
         discovered={"binary_path": discovered} if discovered else {},
     )
-
-    answers: dict[str, Answer] = {}
-    for question in RCLONE_WIZARD.questions(context):
-        if question.kind is QuestionKind.DISCOVERED:
-            continue
-        if question.kind is QuestionKind.CONFIRM:
-            value = "yes" if prompt_confirm(question.prompt) else "no"
-        else:
-            value = prompt(question.prompt, default=question.default or "")
-        answers[question.key] = Answer(question.key, value)
-
-    findings = RCLONE_WIZARD.inspect(answers, context)
-    for finding in findings:
-        repair = f" ({finding.repair})" if finding.repair else ""
-        print(f"  [{finding.severity.value}] {finding.message}{repair}", file=sys.stderr)
-    if any(f.severity is Severity.REFUSAL for f in findings):
-        print("Aborted.", file=sys.stderr)
-        sys.exit(1)
-
-    plan = RCLONE_WIZARD.plan(answers, context)
-    preview = preview_plan(plan)
-    print("\nPlan:", file=sys.stderr)
-    for step in preview.steps:
-        tag = " (best-effort)" if step.best_effort else ""
-        print(f"  {step.kind} {step.target}{tag}", file=sys.stderr)
-    if not prompt_confirm("Apply this plan?"):
-        print("Aborted.", file=sys.stderr)
-        return
-
-    def restart(_unit: str, _action: str) -> None:
-        restart_or_hint(mode)
-
-    env = ApplyEnv(
-        config_path=config_path,
-        base_dir=config_path.parent,
-        systemd_user_dir=config_path.parent,
-        state_dir=config.storage.db_path.parent,
-        restart=restart,
+    drive_wizard(
+        RCLONE_WIZARD, context, config=config, config_path=config_path, mode=mode, label="rclone"
     )
-    receipt = apply_plan(plan, env, agent_id=config.agent.id)
-    if receipt.status == STATUS_COMMITTED:
-        print(
-            f"\n  [rclone] configured; {len(receipt.applied)} step(s) applied.",
-            file=sys.stderr,
-        )
-    else:
-        logger.error("apply %s: %s", receipt.status, receipt.failure)
-        sys.exit(5)
 
 
 def add_rclone_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]

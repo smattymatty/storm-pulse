@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 from stormpulse.sdk.readiness import Capability, CapabilityStatus
+from stormpulse.sdk.wizard import IntegrationWizard
 
 SdkCommandMode = Literal["subprocess", "job", "refresh"]
 
@@ -162,6 +163,11 @@ class SdkIntegration:
     specs: Callable[[Any], dict[str, SdkCommandSpec]] | None = None
     capabilities: tuple[Capability, ...] | None = None
     readiness: Callable[[Any], tuple[CapabilityStatus, ...]] | None = None
+    # Optional setup wizard (CORE-007 D5). When present, `stormpulse integration
+    # init <id>` drives it through the host wizard engine (questions -> inspect ->
+    # preview -> transactional apply), so an external adapter is configured with
+    # the same quality as a built-in, not hand-edited into stormpulse.toml.
+    wizard: IntegrationWizard | None = None
 
 
 def command_specs_digest(specs: Mapping[str, SdkCommandSpec]) -> str:
