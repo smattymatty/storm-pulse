@@ -365,6 +365,34 @@ def abort_upload(wire: WireEnv, bucket: str, key: str, upload_id: str) -> None:
     ).abort_multipart_upload(bucket, key, upload_id)
 
 
+def s3_create_bucket(
+    wire: WireEnv, access_key: str, secret_key: str, name: str
+) -> int:
+    """Attempt an S3 CreateBucket with the given key. Returns the HTTP status.
+
+    The account-key tier backstop is an S3-endpoint fact: a key minted without
+    the createBucket capability is refused here (403), one with it succeeds
+    (200). Only a real Garage answers that, so the agent's tier claim can only
+    be proven over the wire.
+    """
+    proc = subprocess.run(
+        [
+            "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+            "--aws-sigv4", f"aws:amz:{wire.region}:s3",
+            "--user", f"{access_key}:{secret_key}",
+            "-X", "PUT", f"{wire.s3_endpoint}/{name}",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    return int(proc.stdout.decode().strip() or 0)
+
+
+def delete_bucket_cli(name: str) -> None:
+    """Best-effort bucket teardown by alias, for buckets a test created by name."""
+    garage_cli("bucket", "delete", "--yes", name)
+
+
 def bucket_info_cli(name: str) -> dict[str, str]:
     """Parse ``garage bucket info`` into a field map. Out-of-band truth."""
     out = garage_cli("bucket", "info", name)
