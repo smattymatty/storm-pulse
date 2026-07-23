@@ -93,7 +93,9 @@ def add_integration_subparser(subparsers: Any) -> None:
     _add_common(doctor_parser)
 
     publisher_parser = sub.add_parser("publisher", help="manage approved publisher keys")
-    publisher_sub = publisher_parser.add_subparsers(dest="publisher_command")
+    # required: a bare `integration publisher` is a usage error, not a crash. The
+    # top-level subparser stays optional on purpose (custom usage in cmd_integration).
+    publisher_sub = publisher_parser.add_subparsers(dest="publisher_command", required=True)
 
     add_parser = publisher_sub.add_parser("add", help="approve a publisher key")
     add_parser.add_argument("key_file")
@@ -122,8 +124,14 @@ def cmd_integration(args: argparse.Namespace) -> None:
     if args.integration_command is None:
         _usage()
         sys.exit(2)
+    # Defense: a subcommand group reached without a leaf (so no --config default
+    # was applied) is a usage error, never an AttributeError crash.
+    config_path = getattr(args, "config", None)
+    if config_path is None:
+        _usage()
+        sys.exit(2)
     try:
-        config = load_config(Path(args.config))
+        config = load_config(Path(config_path))
     except ConfigError as exc:
         print(f"config invalid: {exc}", file=sys.stderr)
         sys.exit(1)

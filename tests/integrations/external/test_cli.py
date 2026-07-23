@@ -43,6 +43,59 @@ def _run(args: argparse.Namespace, state: Path) -> int:
     return cli.run(args, state_dir=state, agent_id="agent-1")
 
 
+def _real_parser() -> argparse.ArgumentParser:
+    """The actual CLI parser, so tests exercise argv parsing + cmd_integration,
+    not just run() with a hand-built Namespace (the gap that hid the crash)."""
+    parser = argparse.ArgumentParser(prog="stormpulse")
+    sub = parser.add_subparsers(dest="command")
+    cli.add_integration_subparser(sub)
+    return parser
+
+
+_DIGEST = "sha256:" + "0" * 64
+
+
+def test_bare_publisher_subgroup_is_usage_error_not_crash() -> None:
+    # Regression: `stormpulse integration publisher` (no add/list/revoke) used to
+    # AttributeError on args.config; it must be a clean usage error.
+    with pytest.raises(SystemExit) as exc:
+        _real_parser().parse_args(["integration", "publisher"])
+    assert exc.value.code == 2
+
+
+def test_cmd_integration_missing_config_is_usage_not_crash(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Defense for any config-less subcommand path: usage + exit, never a crash.
+    args = argparse.Namespace(integration_command="publisher")  # no config attr
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_integration(args)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["integration", "list"],
+        ["integration", "grants"],
+        ["integration", "inspect", "/src"],
+        ["integration", "install", "/src"],
+        ["integration", "seal", _DIGEST],
+        ["integration", "revoke", _DIGEST, "--capability", "command_contributor"],
+        ["integration", "rollback", "obs", _DIGEST],
+        ["integration", "doctor"],
+        ["integration", "publisher", "list"],
+        ["integration", "publisher", "revoke", _DIGEST],
+    ],
+)
+def test_every_integration_subcommand_carries_config(argv: list[str]) -> None:
+    # Every leaf must apply the --config default, so cmd_integration can load it
+    # without the AttributeError this whole test class exists to prevent. A future
+    # subcommand that forgets _add_common fails here, not on the operator's shell.
+    args = _real_parser().parse_args(argv)
+    assert getattr(args, "config", None) is not None
+
+
 def test_cli_inspect_valid_is_exit_0(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     private, fingerprint = keypair()
     state = state_dir(tmp_path)

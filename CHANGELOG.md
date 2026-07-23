@@ -22,6 +22,10 @@ The agent learns to run code it did not ship. This release cuts the CORE-007 run
 
 - **`retention_days` is gone from `[[log_groups]]`.** The agent tails and ships; it stores no logs, so the knob enforced nothing (a dead knob under the CONTEXT.md "No dead knobs" rule). `stormpulse init` templates no longer emit it, and a stale key in an existing config logs a deprecation warning instead of failing, so deployed agents keep working. Log retention is a dashboard-side concern.
 
+### Fixed
+
+- **`stormpulse integration publisher` with no subcommand crashed** with an `AttributeError` instead of a usage message: the `publisher` subcommand group never carried the `--config` default the CLI entry reads. The publisher subcommand is now required (a clean argparse usage error), and the entry guards a missing config so no subcommand path can crash on it. Root cause was a test gap: the CLI tests drove `run()` with a hand-built namespace and never exercised the real argument parser, so a parametrized test now parses every `integration` subcommand through the actual parser and asserts each carries its config default.
+
 ## [0.3.0] - 2026-07-09
 
 The agent learns to move data, not just manage it. This release cuts the rclone Integration: S3-to-S3 migration as agent jobs, with credentials that never touch disk and a restore test that proves the data comes back. It is the agent half of a control-plane-orchestrated import: the agent measures, transfers, and verifies; every decision about capacity and sequencing stays server-side.
