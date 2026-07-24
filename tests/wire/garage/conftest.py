@@ -27,6 +27,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import pytest
 
@@ -391,6 +392,59 @@ def s3_create_bucket(
 def delete_bucket_cli(name: str) -> None:
     """Best-effort bucket teardown by alias, for buckets a test created by name."""
     garage_cli("bucket", "delete", "--yes", name)
+
+
+def seed_objects(
+    wire: WireEnv, bucket: str, keys: list[str], body: bytes = b"xx"
+) -> None:
+    """PUT many objects into a bucket in parallel, each with the same body.
+
+    Multi-page pagination only exists past 1000 objects, so seeding at that
+    scale has to be fast. Each PUT is a curl with native SigV4; a thread pool
+    keeps the wall time down. Keys are percent-encoded per segment so a folder
+    name with a space or a plus lands as the literal key rather than a mangled
+    one (the trap that makes a naive probe think the LIST is broken when it was
+    the SEED).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _put(key: str) -> int:
+        enc = "/".join(quote(seg, safe="") for seg in key.split("/"))
+        proc = subprocess.run(
+            [
+                "curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                "--aws-sigv4", f"aws:amz:{wire.region}:s3",
+                "--user", f"{wire.access_key}:{wire.secret_key}",
+                "-X", "PUT", "--data-binary", "@-",
+                f"{wire.s3_endpoint}/{bucket}/{enc}",
+            ],
+            input=body,
+            capture_output=True,
+            timeout=30,
+        )
+        return int(proc.stdout.decode().strip() or 0)
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        statuses = list(pool.map(_put, keys))
+    bad = [(k, st) for k, st in zip(keys, statuses) if st != 200]
+    if bad:
+        raise RuntimeError(f"seeding failed for {len(bad)} object(s): {bad[:5]}")
+
+
+def drain_bucket(wire: WireEnv, bucket: str) -> None:
+    """Delete every object in a bucket across all pages. Teardown for big seeds."""
+    client = GarageS3Client(
+        endpoint=wire.s3_endpoint, region=wire.region,
+        access_key=wire.access_key, secret_key=wire.secret_key,
+    )
+    token = None
+    while True:
+        page = client.list_objects_v2(bucket, token, 1000, None)
+        if page.contents:
+            client.delete_objects(bucket, [o.key for o in page.contents])
+        if not page.is_truncated:
+            break
+        token = page.next_continuation_token
 
 
 def bucket_info_cli(name: str) -> dict[str, str]:
