@@ -308,6 +308,67 @@ async def test_dispatch_sealed_sequence_sends_refusal(
 
 
 # ---------------------------------------------------------------------------
+# Unseal-before-restart: hatch command missing from the boot-built registry
+# while the agent is unsealed (ADR CORE-004). Simulated by dropping the
+# command from the registry, which is what a boot-time-sealed agent has.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_deflects_unsealed_hatch_awaiting_restart(
+    mock_exec: MagicMock,
+    agent: Agent,
+) -> None:
+    """Unsealed but the command is not loaded: ask for a restart, do not alarm."""
+    assert not agent.signoff_state.is_sealed()
+    agent.registry.pop("run_verify_block", None)
+    ws = AsyncMock()
+
+    await dispatch.dispatch_message(
+        agent,
+        ws,
+        sign_command_request(
+            command="run_verify_block",
+            params={"verify_command": "echo ok"},
+        ),
+    )
+
+    mock_exec.assert_not_called()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is False
+    assert sent_data["payload"]["failure_reason"] == "restart_required"
+    assert sent_data["payload"]["command"] == "run_verify_block"
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_sequence_deflects_unsealed_hatch_awaiting_restart(
+    mock_exec: MagicMock,
+    agent: Agent,
+) -> None:
+    """Sequence path mirrors the single path: restart_required before whitelist alarm."""
+    assert not agent.signoff_state.is_sealed()
+    agent.registry.pop("run_apply_block", None)
+    ws = AsyncMock()
+
+    await dispatch.dispatch_message(
+        agent, ws, sign_command_sequence(["git_pull", "run_apply_block"])
+    )
+
+    mock_exec.assert_not_called()
+    ws.send.assert_called_once()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["type"] == "command.result"
+    assert sent_data["payload"]["success"] is False
+    assert sent_data["payload"]["failure_reason"] == "restart_required"
+    assert sent_data["payload"]["command"] == "run_apply_block"
+    assert sent_data["payload"]["sequence_id"]
+
+
+# ---------------------------------------------------------------------------
 # log.batch.ack
 # ---------------------------------------------------------------------------
 

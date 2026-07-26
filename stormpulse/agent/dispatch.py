@@ -20,6 +20,8 @@ from stormpulse.agent.refresh import handle_refresh
 from stormpulse.agent.signoff_guard import (
     SEALED_COMMANDS,
     is_blocked_by_seal,
+    needs_restart_to_load,
+    restart_pending_result,
     sealed_refusal_result,
 )
 from stormpulse import events
@@ -146,6 +148,9 @@ async def handle_command_request(
     if await _refuse_if_sealed(agent, ws, envelope, payload, cmd_def):
         return
 
+    if await _deflect_if_restart_pending(agent, ws, envelope, payload):
+        return
+
     if cmd_def is not None and cmd_def.mode == "refresh":
         # group == id (bootstrap-enforced): the spec's group names its integration.
         await handle_refresh(agent, ws, payload.command, envelope.id, cmd_def.group)
@@ -214,6 +219,34 @@ async def _refuse_if_sealed(
     await ws.send(make_command_result(agent.config.agent.id, sealed).to_json())
     logger.warning(
         "Refused %s (request %s): signoff is sealed",
+        payload.command,
+        envelope.id,
+    )
+    return True
+
+
+async def _deflect_if_restart_pending(
+    agent: Agent,
+    ws: ClientConnection,
+    envelope: Envelope,
+    payload: CommandRequestPayload,
+) -> bool:
+    """Deflect a now-unsealed hatch command the boot-built registry has not loaded yet.
+
+    Reply asking for a restart instead of letting it fall through to the
+    whitelist-violation path, which would fire a security alarm for the
+    operator's own legitimate command (ADR CORE-004). Returns ``True`` if handled.
+    """
+    restart_cmd = needs_restart_to_load(
+        agent.signoff_state, agent.registry, [payload.command]
+    )
+    if restart_cmd is None:
+        return False
+    result = restart_pending_result(envelope.id, restart_cmd)
+    await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+    logger.warning(
+        "Deflected %s (request %s): unsealed after boot, registry not rebuilt "
+        "(restart required)",
         payload.command,
         envelope.id,
     )
@@ -452,6 +485,27 @@ async def handle_command_sequence(
         payload.sequence_id,
         payload.commands,
     )
+
+    # Deflect a now-unsealed hatch command missing from the boot-built
+    # registry before whitelist validation, which would otherwise reject it
+    # as unknown and fire the security alarm (ADR CORE-004). Mirrors the
+    # single-command path's _deflect_if_restart_pending.
+    restart_cmd = needs_restart_to_load(
+        agent.signoff_state, agent.registry, payload.commands
+    )
+    if restart_cmd is not None:
+        logger.warning(
+            "Deflected sequence %s: %s unsealed after boot, registry not "
+            "rebuilt (restart required)",
+            payload.sequence_id,
+            restart_cmd,
+        )
+        result = replace(
+            restart_pending_result(str(uuid.uuid4()), restart_cmd),
+            sequence_id=payload.sequence_id,
+        )
+        await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+        return
 
     try:
         for name in payload.commands:

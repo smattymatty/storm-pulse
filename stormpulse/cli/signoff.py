@@ -64,6 +64,10 @@ def cmd_signoff_status(args: argparse.Namespace) -> None:
         "shell to this agent until you re-seal.",
     )
     print(
+        "  (If the agent was started while sealed, restart it so the boot-built "
+        "command whitelist reloads: systemctl --user restart stormpulse.service.)",
+    )
+    print(
         "  Persistence implanted during the unsealed window survives reseal - "
         "treat this window as elevated risk.",
     )
@@ -123,12 +127,19 @@ def cmd_signoff_unseal(args: argparse.Namespace) -> None:
         hostname,
         state.path,
     )
-    print(f"Unsealed. Verify-block dispatch is RE-ENABLED ({state.path}).")
+    print(f"Unsealed on disk ({state.path}).")
+    print(
+        "A RUNNING agent will not pick this up until it restarts: the command "
+        "whitelist is built once at boot, so verify-block and apply-block "
+        "dispatch stay unloaded until then. Restart the agent to load them:",
+    )
+    print("      systemctl --user restart stormpulse.service   # rootless (all prod)")
+    print("      # system-mode installs: sudo systemctl restart stormpulse.service")
     print(
         "Reseal as soon as verification is done. While unsealed the dashboard "
         "can run arbitrary HMAC-signed shell on this host.",
     )
-    print("  Reseal with: stormpulse signoff seal")
+    print("  Reseal with: stormpulse signoff seal   (live, no restart)")
 
 
 def _interactive_confirm(hostname: str) -> str:
