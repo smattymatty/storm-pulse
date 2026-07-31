@@ -135,7 +135,7 @@ New contributors should start at the [Architecture guide](https://git.stormdevel
 
 ## [0.1.10] - 2026-05-31
 
-Adds `run_apply_block`, the dashboard-driven apply-block sibling of `run_verify_block` introduced in 0.1.8. The website's command-block dispatch path sends `run_verify_block` for verify blocks and `run_apply_block` for apply blocks; the agent only implemented the verify side, so apply-block "Run (Pulse)" clicks were rejected as `Unknown command: 'run_apply_block'` and the operator had to fall back to **Mark run** plus a manual SSH paste. Discovered 2026-05-29 during the alpha-node 002-garage walk, where the Step 2 grype scan would not dispatch. The verify and apply hatches share the same seal: a sealed agent now auto-disables both. Also ships the rootless-install `--config` EUID-awareness fix queued from 0.1.9 cleanup work.
+Adds `run_apply_block`, the dashboard-driven apply-block sibling of `run_verify_block` introduced in 0.1.8. The website's command-block dispatch path sends `run_verify_block` for verify blocks and `run_apply_block` for apply blocks; the agent only implemented the verify side, so apply-block "Run (Pulse)" clicks were rejected as `Unknown command: 'run_apply_block'` and the operator had to fall back to **Mark run** plus a manual SSH paste. Discovered 2026-05-29 during a playbook walk, where a vulnerability-scan step would not dispatch. The verify and apply hatches share the same seal: a sealed agent now auto-disables both. Also ships the rootless-install `--config` EUID-awareness fix queued from 0.1.9 cleanup work.
 
 ### Added
 
@@ -145,7 +145,7 @@ Adds `run_apply_block`, the dashboard-driven apply-block sibling of `run_verify_
 
 ### Fixed
 
-- **`--config` defaults are now EUID-aware across every subcommand.** Root → `/etc/stormpulse/stormpulse.toml` (legacy system install). Non-root → `$XDG_CONFIG_HOME/stormpulse/stormpulse.toml` (defaulting to `~/.config/stormpulse/stormpulse.toml`). Applies to `signoff` (status/seal/unseal), `caddy`, `garage`, `logging`, and `run`. `--config` still overrides. Resolved through a new shared `stormpulse.init.files.default_config_path()` helper that mirrors the existing `_default_creds_dir()` logic in `stormpulse.cli`, so future CLI subcommands that need a config-path default have one source of truth to import from instead of pasting another hardcoded `/etc/stormpulse/stormpulse.toml` constant. Original fix queued 2026-05-28 during the alpha-node sign-off walk; ships with 0.1.10 alongside `run_apply_block`.
+- **`--config` defaults are now EUID-aware across every subcommand.** Root → `/etc/stormpulse/stormpulse.toml` (legacy system install). Non-root → `$XDG_CONFIG_HOME/stormpulse/stormpulse.toml` (defaulting to `~/.config/stormpulse/stormpulse.toml`). Applies to `signoff` (status/seal/unseal), `caddy`, `garage`, `logging`, and `run`. `--config` still overrides. Resolved through a new shared `stormpulse.init.files.default_config_path()` helper that mirrors the existing `_default_creds_dir()` logic in `stormpulse.cli`, so future CLI subcommands that need a config-path default have one source of truth to import from instead of pasting another hardcoded `/etc/stormpulse/stormpulse.toml` constant. Original fix queued 2026-05-28 during a sign-off walk; ships with 0.1.10 alongside `run_apply_block`.
 
 ## [0.1.9] - 2026-05-26
 

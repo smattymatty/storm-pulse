@@ -435,8 +435,7 @@ async def dispatch_long_running(
         )
         return
 
-    # Quota admission ceiling (estate-map: capacity-ledger-headroom, containment
-    # B). A Headroom metrics-tick storm re-dispatches the same set_quota
+    # Quota admission ceiling. A metrics-tick storm re-dispatches the same set_quota
     # mismatches every ~5s; past one execution wave the JobManager sheds them as
     # agent_overloaded rather than growing an unbounded accepted-but-queued
     # backlog. The manager owns the quota-command identity and the ceiling; this

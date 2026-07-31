@@ -139,7 +139,7 @@ class JobManager:
     MAX_CONCURRENT_JOBS = 6
 
     # The one command whose ACCEPTANCE is bounded, not just its execution
-    # (estate-map: capacity-ledger-headroom, containment B). The Headroom loop
+    # The Headroom loop
     # re-dispatches the same set_quota mismatches every metrics tick (~5s) until
     # Garage's observed cap catches up; without an admission ceiling that backlog
     # queues without bound behind the six execution permits. One full wave

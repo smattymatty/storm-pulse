@@ -22,10 +22,10 @@ _GARAGE_CONFIG_SEARCH_PATHS = [
     Path("./garage.toml"),
 ]
 
-# Storm rootless convention: the 002-garage playbook places config under
-# each admin user's home so the rootless daemon (running as that user)
-# can sanely bind-mount it without sudo gymnastics. Glob across /home/*/
-# so the wizard auto-detects on a Storm-shaped box without forcing
+# Rootless convention: config lives under each admin user's home so the
+# rootless daemon (running as that user) can bind-mount it without sudo
+# gymnastics. Glob across /home/*/
+# so the wizard auto-detects on such a layout without forcing
 # --garage-config. Checked after the fixed paths above so existing
 # installs at /opt/garage/ continue to win when both exist.
 _GARAGE_CONFIG_GLOB_PATTERNS = [

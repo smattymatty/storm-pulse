@@ -136,7 +136,7 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
     declares `log_enrichers`, parser name to a builder that turns its current state
     blob into a line enricher; the composition root wires each log group's parser to
     its declarer and the log loop rebuilds per batch from the current snapshot
-    (tick-fresh, BUCKETS-015). The parser key makes multi-implementer dispatch data,
+    (tick-fresh). The parser key makes multi-implementer dispatch data,
     not invention, and keys are disjoint across Integrations (fitness-enforced). A
     builder accepts a `None` state and returns the honest empty enricher, so the
     wire shape is constant: no answer is `bucket_id=""`, never a vanished key a
@@ -207,8 +207,8 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
   root may name its concrete parts), but it leaves one integration name in the agent
   that every audit re-litigates, and the parser key was already the natural dispatch
   datum, so the capability costs one optional field, not invented semantics.
-- **Dashboard-side log enrichment.** Reopens sealed BUCKETS-015 (agent-side,
-  tick-fresh) across two repos to remove one import. Wrong trade.
+- **Dashboard-side log enrichment.** Reopens the sealed agent-side, tick-fresh
+  decision across two repos to remove one import. Wrong trade.
 
 ## Governance
 

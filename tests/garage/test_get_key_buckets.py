@@ -87,7 +87,7 @@ async def test_returns_owned_buckets(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_bucket_grants_carry_every_grant_with_permissions(monkeypatch):
-    # An rw attach (BUCKETS-014) is a grant, not ownership: absent from
+    # An rw attach is a grant, not ownership: absent from
     # owned_buckets, present in bucket_grants with its raw booleans.
     _install(monkeypatch, ({"buckets": [
         _bucket(_B1, owner=True, aliases=["vault"]),

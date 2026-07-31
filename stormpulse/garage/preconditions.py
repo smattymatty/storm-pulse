@@ -15,15 +15,13 @@ Reasons (closed set):
   is not callable. Covers the FileNotFoundError, TimeoutExpired, and
   non-auth non-zero exit cases.
 
-The original included a substrate precondition that asserted
-``/var/lib/garage/{meta,data}`` were ZFS mounts (per the original
-commitment). That check was dropped because the alpha
-provider's disk topology (ServaRica delivers storage as a multi-disk
-LVM ext4 root) makes ZFS-on-clean-disk unworkable. The substrate
-durability story moved one layer up the stack to garage.toml
-(``metadata_fsync = true`` + ``metadata_auto_snapshot_interval``);
-that's now the 002-garage playbook's sign-off responsibility, not the
-agent's startup gate. See amendment for the full pivot.
+An earlier version asserted that ``/var/lib/garage/{meta,data}`` were
+ZFS mounts. That check is gone: a multi-disk LVM ext4 root, which is
+what most managed hosts deliver, makes ZFS-on-clean-disk unworkable,
+so a mount-type gate at startup refuses hosts that are otherwise fine.
+Metadata durability belongs in garage.toml (``metadata_fsync = true``
+plus ``metadata_auto_snapshot_interval``), which is a deployment
+decision rather than something this agent gates on.
 
 These checks are synchronous so the bootstrap code path can run them
 without spinning an event loop. Each one wraps its subprocess in a
