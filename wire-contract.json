@@ -1,0 +1,63 @@
+{
+  "digest": "sha256:f7ba4418f3d174c758c9e10449d9127b1c8b8765f2f9c21c4f9d349279451e55",
+  "digest_covers": "integrations",
+  "integrations": {
+    "garage": {
+      "classes": {
+        "GarageAdminMetric": {
+          "calls_per_sec": null,
+          "p95_latency_ms": null,
+          "sample_count": null,
+          "target_node_id": null
+        },
+        "GarageBucket": {
+          "alias": null,
+          "id": null,
+          "keys": "GarageKeyRef",
+          "object_count": null,
+          "quota_max_objects": null,
+          "quota_max_size_bytes": null,
+          "size_bytes": null,
+          "unfinished_upload_bytes": null,
+          "unfinished_uploads": null,
+          "website_access": null,
+          "website_error_document": null,
+          "website_index_document": null
+        },
+        "GarageKeyRef": {
+          "bucket_local_aliases": null,
+          "key_id": null,
+          "key_name": null,
+          "permissions": null
+        },
+        "GaragePeer": {
+          "address": null,
+          "capacity_gb": null,
+          "data_avail_gb": null,
+          "data_avail_percent": null,
+          "healthy": null,
+          "hostname": null,
+          "node_id": null,
+          "version": null,
+          "zone": null
+        },
+        "GarageState": {
+          "admin_metrics": "GarageAdminMetric",
+          "buckets": "GarageBucket",
+          "capacity_gb": null,
+          "data_avail_gb": null,
+          "healthy": null,
+          "hostname": null,
+          "keys": "GarageKeyRef",
+          "node_id": null,
+          "object_count": null,
+          "peers": "GaragePeer",
+          "version": null,
+          "zone": null
+        }
+      },
+      "root": "GarageState"
+    }
+  },
+  "schema": 1
+}

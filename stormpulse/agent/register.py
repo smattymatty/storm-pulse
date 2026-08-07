@@ -11,6 +11,7 @@ from websockets.asyncio.client import ClientConnection
 from stormpulse import __version__
 from stormpulse.agent.integrations_runtime import build_integrations_payload
 from stormpulse.agent.metadata import build_commands_metadata
+from stormpulse.agent.wire_contract import wire_contract_digest
 from stormpulse.protocol import make_register
 from stormpulse.system_inventory import collect_system_inventory
 
@@ -59,6 +60,10 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
         system_inventory=system_inventory,
         signoff_sealed=sealed_now,
         unsealed_since=since.isoformat() if since is not None else None,
+        # Computed here, from the classes in this interpreter, so the value is
+        # true of the agent that sent it (CORE-008 decision 4). Never read from
+        # the published artifact: that file describes a commit, not a process.
+        wire_contract=wire_contract_digest(),
     )
     await ws.send(register.to_json())
     logger.info("Sent register (v%s)", __version__)

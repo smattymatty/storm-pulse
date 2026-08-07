@@ -1,8 +1,8 @@
 """Fitness suite harness.
 
-Runs Functions 2 through 6 (CORE-001 defines 2-4; CORE-005 governance adds
-5 and 6). Function 1 (layer topology) is enforced separately by
-``lint-imports`` (see Makefile target ``fitness``).
+Runs Functions 2 through 9 (CORE-001 defines 2-4; CORE-005 governance adds
+5 and 6; CORE-007 adds 7 and 8; CORE-008 adds 9). Function 1 (layer topology)
+is enforced separately by ``lint-imports`` (see Makefile target ``fitness``).
 
 Discipline: run every check, report every violation, exit non-zero
 on any. Never fail-fast - a run that stops at the first violation
@@ -24,6 +24,7 @@ from fitness.integration_contract import check_integration_contract
 from fitness.merge_fence import check_merge_fence
 from fitness.no_shell import check_no_shell
 from fitness.private_imports import check_private_imports
+from fitness.wire_contract import check_wire_contract
 from fitness.wizard_sdk_p2 import check_wizard_sdk
 
 BASELINE_PATH = Path(__file__).resolve().parent / "baseline.txt"
@@ -51,6 +52,7 @@ def main() -> int:
         ("Function 6 - merge-primitive fence", check_merge_fence),
         ("Function 7 - external loader no-execution", check_external_loader_no_execution),
         ("Function 8 - wizard SDK purity and topology", check_wizard_sdk),
+        ("Function 9 - declared wire shape", check_wire_contract),
     ]:
         violations = [v for v in check() if v not in baseline]
         findings.append((label, violations))

@@ -170,6 +170,22 @@ class SdkIntegration:
     wizard: IntegrationWizard | None = None
 
 
+def canonical_digest(payload: Any) -> str:
+    """The one hashing convention in this codebase: ``sha256:`` over key-sorted,
+    separator-canonical, ASCII-escaped JSON.
+
+    Extracted from ``command_specs_digest`` so a second declared surface can be
+    digested without inventing a second convention (CORE-008 decision 3). The
+    determinism property both callers depend on is stated there: the release
+    author and the host produce identical bytes.
+
+    Callers own what goes IN. This function only guarantees that equal payloads
+    hash equal, on any host, in any process.
+    """
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def command_specs_digest(specs: Mapping[str, SdkCommandSpec]) -> str:
     """Canonical ``sha256:`` digest of the declarative command surface.
 
@@ -202,5 +218,4 @@ def command_specs_digest(specs: Mapping[str, SdkCommandSpec]) -> str:
         }
         for name, spec in sorted(specs.items())
     ]
-    blob = json.dumps(canon, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return canonical_digest(canon)

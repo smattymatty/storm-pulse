@@ -4,14 +4,68 @@ from __future__ import annotations
 
 import json
 import uuid
-from dataclasses import MISSING, asdict, dataclass, fields
+from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Self, get_args, get_type_hints
 
 
 class ProtocolError(Exception):
     """Raised when a message fails validation or parsing."""
+
+
+def _nested_dataclass(annotation: Any) -> type | None:
+    """The dataclass a field's annotation ultimately contains, or None.
+
+    Unwraps one level of container or union at a time (``list[X]``,
+    ``tuple[X, ...]``, ``X | None``) because the shapes we publish nest exactly
+    that way. A ``tuple[str, ...]`` yields None: a container of scalars is a
+    leaf, not a nesting.
+    """
+    if is_dataclass(annotation) and isinstance(annotation, type):
+        return annotation
+    for arg in get_args(annotation):
+        if arg is type(None):
+            continue
+        found = _nested_dataclass(arg)
+        if found is not None:
+            return found
+    return None
+
+
+def dataclass_wire_shape(root: type) -> dict[str, dict[str, str | None]]:
+    """Field names and nesting of *root* and every dataclass reachable from it.
+
+    The declared shape of what a dataclass tree publishes when it is serialized
+    by ``asdict``: ``{class name: {field name: nested class name or None}}``.
+    A field whose annotation contains another dataclass records that class by
+    name; every other field records None.
+
+    **Names and nesting only.** Not types, not units, not meaning. A field that
+    changes from bytes to kilobytes, or from one encoding to another, is
+    invisible here, and that is the documented scope (CORE-008 decision 5), not
+    an omission. Adding, removing or renaming a field is what shows up.
+
+    Returned in traversal order; callers that hash or serialize this sort it.
+    """
+    if not (is_dataclass(root) and isinstance(root, type)):
+        raise TypeError(f"dataclass_wire_shape requires a dataclass type, got {root!r}")
+
+    classes: dict[str, dict[str, str | None]] = {}
+    pending: list[type] = [root]
+    while pending:
+        cls = pending.pop()
+        if cls.__name__ in classes:
+            continue
+        hints = get_type_hints(cls)
+        shape: dict[str, str | None] = {}
+        for f in fields(cls):
+            nested = _nested_dataclass(hints[f.name])
+            shape[f.name] = nested.__name__ if nested is not None else None
+            if nested is not None:
+                pending.append(nested)
+        classes[cls.__name__] = shape
+    return classes
 
 
 class MessageType(StrEnum):
@@ -254,6 +308,12 @@ class RegisterPayload:
     # the authoritative wall-clock so the dashboard doesn't have to
     # guess from its own register history.
     unsealed_since: str | None = None
+    # Digest of the shape this agent emits, derived from its live dataclasses
+    # (CORE-008). Optional and additive: agents that predate it send nothing,
+    # and a control plane that has never seen the field must treat absence as
+    # "unknown", never as "compatible". Names and nesting only; it says nothing
+    # about what a field MEANS.
+    wire_contract: str | None = None
 
     @classmethod
     def from_dict(cls, data: Any) -> Self:
@@ -430,6 +490,7 @@ def make_register(
     system_inventory: dict[str, Any] | None = None,
     signoff_sealed: bool | None = None,
     unsealed_since: str | None = None,
+    wire_contract: str | None = None,
 ) -> Envelope:
     """Create a register envelope."""
     return _make_envelope(
@@ -445,6 +506,7 @@ def make_register(
                 system_inventory=system_inventory,
                 signoff_sealed=signoff_sealed,
                 unsealed_since=unsealed_since,
+                wire_contract=wire_contract,
             )
         ),
     )

@@ -25,7 +25,7 @@ The obvious move is to drop them in the pytest suite. The problem with that move
 
 ## Decision
 
-The suite is extensible: a later ADR that mechanizes a new invariant adds a function, and `python -m fitness` runs them all. It currently holds eight - the four founding checks (two enforcing [CORE-000](000-internal-module-architecture.md), two enforcing [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) invariants) plus four contract-and-boundary checks added by the integration ADRs.
+The suite is extensible: a later ADR that mechanizes a new invariant adds a function, and `python -m fitness` runs them all. It currently holds nine - the four founding checks (two enforcing [CORE-000](000-internal-module-architecture.md), two enforcing [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) invariants) plus five contract-and-boundary checks added by the integration and protocol ADRs.
 
 | # | Function | Enforces | Mechanism |
 |---|----------|----------|-----------|
@@ -37,6 +37,7 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 | 6 | State-merge fence | CORE-005 (one merge call site) | `fitness/` runner |
 | 7 | External-loader no-execution | CORE-007 (P1 loader imports no package code) | `fitness/` runner |
 | 8 | Wizard SDK purity & topology | CORE-007 (`sdk/` pure Foundation, `wizard/` imports no Feature) | `fitness/` runner |
+| 9 | Declared wire shape | CORE-008 (`wire-contract.json` matches the emitting dataclasses) | `fitness/` runner |
 
 **Function 1 - Layer topology.** `import-linter` contracts in `.importlinter` express CORE-000's four-layer model as layered contracts: Foundation below Framework below Features below Entry, with Features forbidden from importing sibling Features. Same tool the sibling django repo uses; shared tooling across the two Storm codebases is deliberate.
 
@@ -48,12 +49,14 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 
 **Functions 5-8 - contract and boundary checks added by the integration ADRs.** Function 5 (CORE-005) asserts every registered Integration satisfies the required core and that command-contributing Integrations are first-party (inside `stormpulse/`). Function 6 (CORE-005) fences the state-merge primitive to its one legal call site. Function 7 (CORE-007) asserts the external-package loader never imports or executes package code. Function 8 (CORE-007) asserts the wizard SDK's boundaries: `sdk/` stays pure Foundation (it imports no other `stormpulse` module and no host-mutation primitive, so external plugin code can trust it) and the `wizard/` engine imports only Foundation, never a Feature - which is what makes its capability-provider dispatch (a lookup by token, invisible to Function 1) safe. Each cites the ADR it mechanizes, per the governance rule below.
 
+**Function 9 - Declared wire shape.** [CORE-008](008-declared-wire-shape-for-emitted-state.md) asserts the checked-in `wire-contract.json` matches the field names and nesting of the dataclasses that actually serialize onto the wire. It is the first function to defend an *outbound* contract: functions 2 through 8 all guard something internal to this repo, while this one guards a promise made to a consumer we do not control and cannot test against. A rename that the artifact does not also carry fails the suite, which is what turns a diff to a struct into a diff to a contract.
+
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**
 
 - Function 1 runs as `lint-imports`.
-- Functions 2 through 8 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
+- Functions 2 through 9 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
 - The `fitness/` runner runs every check and reports every violation before exiting non-zero, never fail-fast. Stopping at the first violation would hide the rest; the cost of decoupling from pytest is hand-rolled reporting, and the reporting has to be honest.
 - `make fitness` runs the whole suite: `lint-imports && python -m fitness`.
 
@@ -64,7 +67,7 @@ One candidate check - asserting every command in the registry uses an absolute b
 - A red `fitness` job is unambiguous: an invariant was crossed, not a behaviour changed.
 - The two CORE-000 rules and two Security Architecture commitments stop depending on whether the reviewer happened to know them.
 - The suite is gating from commit one; no warn-mode, no period where CI is green over a broken rule.
-- New fitness functions have a home. Adding a check as a later ADR mechanizes a new invariant is a known-shape operation - the suite has grown from the founding four to eight this way.
+- New fitness functions have a home. Adding a check as a later ADR mechanizes a new invariant is a known-shape operation - the suite has grown from the founding four to nine this way.
 
 **Negative:**
 

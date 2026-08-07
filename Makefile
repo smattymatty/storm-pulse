@@ -11,7 +11,7 @@ LINT_IMPORTS ?= .venv/bin/lint-imports
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
-.PHONY: check test mypy fitness pre-release-check clean \
+.PHONY: check test mypy fitness pre-release-check clean wire-contract \
         garage-up garage-down test-wire test-garage-wire
 
 # Umbrella: every check in one command. No Docker, no network.
@@ -53,11 +53,19 @@ mypy:
 	$(PYTHON) -m mypy .
 
 # CORE-001 fitness suite.
-# Function 1 (layer topology) via import-linter; Functions 2-4 via the
+# Function 1 (layer topology) via import-linter; Functions 2-9 via the
 # fitness/ runner. See _architecture/adrs/core/001-fitness-functions.md.
 fitness:
 	$(LINT_IMPORTS)
 	$(PYTHON) -m fitness
+
+# CORE-008: regenerate the declared wire shape from the live dataclasses.
+# Run after changing anything an Integration emits, and commit the result:
+# Function 9 fails the suite while the artifact and the classes disagree.
+# Exits 1 when the file changed, so CI can use it as a forgot-to-regenerate
+# check. The diff is a change to a published contract; review it as one.
+wire-contract:
+	$(PYTHON) -m scripts.generate_wire_contract
 
 # CORE-002 release-time check. Asserts pyproject [project].version matches
 # the top CHANGELOG.md entry. Run before `uv publish`.
