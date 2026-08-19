@@ -192,6 +192,7 @@ _LOG_PARSERS: frozenset[str] = frozenset(
 )
 _LOG_SOURCE_TYPES: frozenset[str] = frozenset({"file", "docker", "docker_stream"})
 _LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,50}")
+_DEFAULT_DOCKER_BINARY = "/usr/bin/docker"
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,7 +208,7 @@ class LogGroupConfig:
     ship_interval_seconds: float
     max_lines_per_batch: int
     container_name: str = ""
-    docker_binary: str = "/usr/bin/docker"
+    docker_binary: str = _DEFAULT_DOCKER_BINARY
 
 
 # Top-level TOML tables Foundation knows by name. Everything else that is a
@@ -421,97 +422,103 @@ def _parse_commands(raw: dict[str, Any]) -> dict[str, CommandSpec]:
         return {}
     if not isinstance(section, dict):
         raise ConfigError("[commands] must be a table")
+    return {name: _parse_one_command(name, entry) for name, entry in section.items()}
 
-    result: dict[str, CommandSpec] = {}
-    for name, entry in section.items():
-        label = f"commands.{name}"
-        if not isinstance(entry, dict):
-            raise ConfigError(f"[{label}] must be a table")
 
-        group = require_key(entry, "group", str, label)
-        if not group:
-            raise ConfigError(f"'group' in [{label}] must not be empty")
+def _parse_one_command(name: str, entry: Any) -> CommandSpec:
+    """Validate one ``[commands.<name>]`` table; raise ConfigError on any problem."""
+    label = f"commands.{name}"
+    if not isinstance(entry, dict):
+        raise ConfigError(f"[{label}] must be a table")
 
-        command = require_key(entry, "command", list, label)
-        if not command:
-            raise ConfigError(f"'command' in [{label}] must be a non-empty list")
-        for i, arg in enumerate(command):
-            if not isinstance(arg, str):
-                raise ConfigError(
-                    f"'command[{i}]' in [{label}] must be a string, got {type(arg).__name__}"
-                )
-        if not command[0].startswith("/"):
+    group = require_key(entry, "group", str, label)
+    if not group:
+        raise ConfigError(f"'group' in [{label}] must not be empty")
+
+    command = require_key(entry, "command", list, label)
+    if not command:
+        raise ConfigError(f"'command' in [{label}] must be a non-empty list")
+    for i, arg in enumerate(command):
+        if not isinstance(arg, str):
             raise ConfigError(
-                f"'command[0]' in [{label}] must be an absolute path (starts with /), "
-                f"got {command[0]!r}"
+                f"'command[{i}]' in [{label}] must be a string, got {type(arg).__name__}"
             )
-
-        timeout = require_key(entry, "timeout", int, label)
-        if timeout <= 0:
-            raise ConfigError(f"'timeout' in [{label}] must be positive, got {timeout}")
-
-        requires_confirmation = optional_key(entry, "requires_confirmation", bool, False, label)
-        sensitive_output = optional_key(entry, "sensitive_output", bool, False, label)
-        if optional_key(entry, "long_running", bool, False, label):
-            raise ConfigError(
-                f"[{label}]: 'long_running' is not supported for config-defined "
-                "commands. Long-running (job) commands are contributed by "
-                "integrations, which supply the handler; a config command is "
-                "always a subprocess. Remove the key."
-            )
-        description = optional_key(entry, "description", str, "", label)
-
-        params_raw = entry.get("params", {})
-        if not isinstance(params_raw, dict):
-            raise ConfigError(f"'params' in [{label}] must be a table")
-        param_defs: dict[str, ParamDef] = {}
-        for pname, pentry in params_raw.items():
-            plabel = f"{label}.params.{pname}"
-            if not isinstance(pentry, dict):
-                raise ConfigError(f"[{plabel}] must be a table")
-            placeholder = require_key(pentry, "placeholder", str, plabel)
-            if placeholder != pname:
-                raise ConfigError(
-                    f"'placeholder' in [{plabel}] must match the table key "
-                    f"{pname!r}, got {placeholder!r}"
-                )
-            if placeholder in PROTECTED_PLACEHOLDERS:
-                raise ConfigError(
-                    f"'placeholder' in [{plabel}] must not override a protected "
-                    f"placeholder: {placeholder!r}"
-                )
-            default_raw = optional_key(pentry, "default", str, None, plabel)
-            pattern = require_key(pentry, "pattern", str, plabel)
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                raise ConfigError(
-                    f"'pattern' in [{plabel}] is not valid regex: {exc}"
-                ) from exc
-            pdescription = optional_key(pentry, "description", str, "", plabel)
-            psecret = optional_key(pentry, "secret", bool, False, plabel)
-            try:
-                param_defs[placeholder] = ParamDef(
-                    placeholder=placeholder,
-                    default=default_raw,
-                    pattern=pattern,
-                    description=pdescription,
-                    secret=psecret,
-                )
-            except ValueError as exc:
-                raise ConfigError(f"[{plabel}]: {exc}") from exc
-
-        result[name] = CommandSpec(
-            group=group,
-            command=command,
-            timeout=timeout,
-            requires_confirmation=requires_confirmation,
-            description=description,
-            sensitive_output=sensitive_output,
-            params=param_defs,
+    if not command[0].startswith("/"):
+        raise ConfigError(
+            f"'command[0]' in [{label}] must be an absolute path (starts with /), "
+            f"got {command[0]!r}"
         )
 
-    return result
+    timeout = require_key(entry, "timeout", int, label)
+    if timeout <= 0:
+        raise ConfigError(f"'timeout' in [{label}] must be positive, got {timeout}")
+
+    requires_confirmation = optional_key(entry, "requires_confirmation", bool, False, label)
+    sensitive_output = optional_key(entry, "sensitive_output", bool, False, label)
+    if optional_key(entry, "long_running", bool, False, label):
+        raise ConfigError(
+            f"[{label}]: 'long_running' is not supported for config-defined "
+            "commands. Long-running (job) commands are contributed by "
+            "integrations, which supply the handler; a config command is "
+            "always a subprocess. Remove the key."
+        )
+    description = optional_key(entry, "description", str, "", label)
+
+    params_raw = entry.get("params", {})
+    if not isinstance(params_raw, dict):
+        raise ConfigError(f"'params' in [{label}] must be a table")
+    param_defs: dict[str, ParamDef] = {}
+    for pname, pentry in params_raw.items():
+        pdef = _parse_one_param(pname, pentry, label)
+        param_defs[pdef.placeholder] = pdef
+
+    return CommandSpec(
+        group=group,
+        command=command,
+        timeout=timeout,
+        requires_confirmation=requires_confirmation,
+        description=description,
+        sensitive_output=sensitive_output,
+        params=param_defs,
+    )
+
+
+def _parse_one_param(pname: str, pentry: Any, label: str) -> ParamDef:
+    """Validate one ``[commands.<name>.params.<pname>]`` table into a ParamDef."""
+    plabel = f"{label}.params.{pname}"
+    if not isinstance(pentry, dict):
+        raise ConfigError(f"[{plabel}] must be a table")
+    placeholder = require_key(pentry, "placeholder", str, plabel)
+    if placeholder != pname:
+        raise ConfigError(
+            f"'placeholder' in [{plabel}] must match the table key "
+            f"{pname!r}, got {placeholder!r}"
+        )
+    if placeholder in PROTECTED_PLACEHOLDERS:
+        raise ConfigError(
+            f"'placeholder' in [{plabel}] must not override a protected "
+            f"placeholder: {placeholder!r}"
+        )
+    default_raw = optional_key(pentry, "default", str, None, plabel)
+    pattern = require_key(pentry, "pattern", str, plabel)
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ConfigError(
+            f"'pattern' in [{plabel}] is not valid regex: {exc}"
+        ) from exc
+    pdescription = optional_key(pentry, "description", str, "", plabel)
+    psecret = optional_key(pentry, "secret", bool, False, plabel)
+    try:
+        return ParamDef(
+            placeholder=placeholder,
+            default=default_raw,
+            pattern=pattern,
+            description=pdescription,
+            secret=psecret,
+        )
+    except ValueError as exc:
+        raise ConfigError(f"[{plabel}]: {exc}") from exc
 
 
 def _parse_integrations(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -592,7 +599,7 @@ def _parse_one_log_group(
         )
 
     container_name = ""
-    docker_binary = "/usr/bin/docker"
+    docker_binary = _DEFAULT_DOCKER_BINARY
     source_path = ""
     if source_type == "file":
         source_path = require_key(entry, "source_path", str, ctx)
@@ -606,7 +613,7 @@ def _parse_one_log_group(
             raise ConfigError(
                 f"'container_name' in {ctx} must be non-empty for docker sources"
             )
-        docker_binary = optional_key(entry, "docker_binary", str, "/usr/bin/docker", ctx)
+        docker_binary = optional_key(entry, "docker_binary", str, _DEFAULT_DOCKER_BINARY, ctx)
         if not docker_binary.startswith("/"):
             raise ConfigError(f"'docker_binary' in {ctx} must be an absolute path")
 
