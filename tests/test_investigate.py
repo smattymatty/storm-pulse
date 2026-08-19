@@ -8,22 +8,22 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from stormpulse.cli.investigate import (
-    ShippedBatch,
-    classify_drops,
-    count_command_results,
+from stormpulse.cli.investigate import parse_window, render_case_file
+from stormpulse.cli.investigate._journal import ShippedBatch, parse_shipped
+from stormpulse.cli.investigate.box import (
     judge_apt_activity,
     judge_cpu_pressure,
-    judge_freezes,
-    judge_group_health,
     judge_kernel_lines,
     judge_reboots,
     judge_scheduled_reboots,
-    parse_shipped,
-    parse_window,
     read_proc_stat_cpu,
-    render_case_file,
 )
+from stormpulse.cli.investigate.flaps import (
+    classify_drops,
+    count_command_results,
+    judge_freezes,
+)
+from stormpulse.cli.investigate.logs_pipeline import judge_group_health
 from stormpulse.garage.investigate import judge_maintenance, judge_shutdown_waves
 from stormpulse.sdk.investigate import (
     CaseFile,
@@ -158,7 +158,7 @@ class TestSarStorageJudge:
         30 KB/s trickle, in sar's 12h clock format."""
         from datetime import date
 
-        from stormpulse.cli.investigate import judge_sar_spikes
+        from stormpulse.cli.investigate.box import judge_sar_spikes
 
         text = (
             "Linux 6.8.0-136-generic (alpha)     07/19/2026      _x86_64_        (4 CPU)\n"
@@ -178,7 +178,7 @@ class TestSarStorageJudge:
     def test_24h_format_also_parses(self) -> None:
         from datetime import date
 
-        from stormpulse.cli.investigate import judge_sar_spikes
+        from stormpulse.cli.investigate.box import judge_sar_spikes
 
         text = (
             "19:12:02      dm-0      4.81      0.00     20.19      0.00      "
@@ -253,7 +253,7 @@ class TestShippingOverloadThreshold:
         import argparse
         from unittest.mock import patch
 
-        from stormpulse.cli import investigate as inv
+        from stormpulse.cli.investigate import flaps as inv
 
         entries = [
             (
@@ -285,7 +285,7 @@ class TestFlapsEmptyJournal:
         import argparse
         from unittest.mock import patch
 
-        from stormpulse.cli import investigate as inv
+        from stormpulse.cli.investigate import flaps as inv
 
         with patch.object(inv, "_fetch_agent_journal", return_value=[]):
             case = inv.run_flaps(
