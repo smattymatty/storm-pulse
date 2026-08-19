@@ -151,7 +151,7 @@ _CORE: dict[str, _CoreInvestigation] = {
 }
 
 
-def _case(
+def make_case(
     name: str,
     window: Window,
     reports: list[SuspectReport],

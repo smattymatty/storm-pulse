@@ -8,7 +8,7 @@ from pathlib import Path
 
 from stormpulse.sdk.investigate import CaseFile, SuspectReport, Verdict, Window
 
-from ._journal import ShippedBatch, _fetch_agent_journal, _run, parse_shipped
+from ._journal import ShippedBatch, fetch_agent_journal, run_evidence, parse_shipped
 
 
 def judge_group_health(  # skylos: ignore[SKY-C304,SKY-L028] one return per verdict outcome - CORE-005 fetch/judge contract
@@ -76,7 +76,7 @@ def _fetch_raw_sample(group: object) -> list[str] | None:
     """Last few raw lines from a group's source (docker or file)."""
     source_type = getattr(group, "source_type", "")
     if source_type == "docker":
-        out = _run([
+        out = run_evidence([
             getattr(group, "docker_binary", "/usr/bin/docker"),
             "logs", "--timestamps", "--tail", "10",
             getattr(group, "container_name", ""),
@@ -93,9 +93,9 @@ def run_logs_pipeline(args: argparse.Namespace, window: Window) -> CaseFile:  # 
     from stormpulse.config import ConfigError, load_config
     from stormpulse.logging.parsers import PARSERS
 
-    # Function-level: _case lives in the host (__init__), which imports this
+    # Function-level: make_case lives in the host (__init__), which imports this
     # module for the _CORE registry.
-    from . import _case
+    from . import make_case
 
     reports: list[SuspectReport] = []
     try:
@@ -107,9 +107,9 @@ def run_logs_pipeline(args: argparse.Namespace, window: Window) -> CaseFile:  # 
             evidence=f"config unreadable: {exc}",
             remedy=f"stormpulse config check {args.config}",
         ))
-        return _case("logs-pipeline", window, reports, [], [])
+        return make_case("logs-pipeline", window, reports, [], [])
 
-    entries = _fetch_agent_journal(window)
+    entries = fetch_agent_journal(window)
     batches = parse_shipped([m for _, m in entries]) if entries else []
     for group in config.log_groups:
         if not group.enabled:
@@ -127,4 +127,4 @@ def run_logs_pipeline(args: argparse.Namespace, window: Window) -> CaseFile:  # 
             verdict=Verdict.CLEARED,
             evidence="No enabled log groups in config.",
         ))
-    return _case("logs-pipeline", window, reports, [], [])
+    return make_case("logs-pipeline", window, reports, [], [])

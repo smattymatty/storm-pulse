@@ -187,8 +187,105 @@ def _summarize_user_agent(ua: str) -> str:
     return m.group(0) if m else ua[:40]
 
 
+def _ts_iso(raw_ts: Any) -> str:
+    """Render Caddy's ``ts`` field (unix epoch number or preformatted string)."""
+    if isinstance(raw_ts, (int, float)):
+        return datetime.fromtimestamp(float(raw_ts), tz=UTC).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+        )
+    return str(raw_ts)
+
+
+def _parse_cert_event(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any] | None:
+    """Parse a certmagic lifecycle event, or ``None`` if ``obj`` isn't one.
+
+    certmagic logs lifecycle events under loggers like 'tls.obtain',
+    'tls.cache.maintenance', etc. They have 'msg' but no 'request'. Pass
+    them through with cert-relevant fields preserved; Storm's
+    _detect_caddy_cert_event classifies which ones are cert_obtained /
+    cert_renewed / cert_failed downstream.
+    """
+    logger_name = obj.get("logger")
+    msg = obj.get("msg")
+    if (
+        "request" in obj
+        or not isinstance(logger_name, str)
+        or not logger_name.startswith(_CERT_LOGGER_PREFIX)
+        or not isinstance(msg, str)
+        or not msg
+    ):
+        return None
+    raw_ts = obj.get("ts")
+    if raw_ts is None:
+        return None
+    names = obj.get("names")
+    return {
+        "ts": _ts_iso(raw_ts),
+        "level": str(obj.get("level", "info")),
+        "message": msg,
+        "logger": logger_name,
+        "msg": msg,
+        "identifier": str(obj.get("identifier") or ""),
+        "names": names if isinstance(names, list) else None,
+        "error": str(obj.get("error") or ""),
+        "truncated": truncated,
+    }
+
+
+def _request_user_agent(request: dict[str, Any]) -> str:
+    """Pull the first User-Agent header value out of a request object."""
+    headers_raw = request.get("headers") or {}
+    headers: dict[str, Any] = (
+        cast(dict[str, Any], headers_raw) if isinstance(headers_raw, dict) else {}
+    )
+    ua_list = headers.get("User-Agent") or []
+    return str(ua_list[0]) if isinstance(ua_list, list) and ua_list else ""
+
+
+def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any] | None:
+    """Parse a Caddy access-log object into the shipped row shape."""
+    missing = _CADDY_REQUIRED - obj.keys()
+    if missing:
+        return None
+
+    request_raw = obj.get("request", {})
+    if not isinstance(request_raw, dict):
+        return None
+    request: dict[str, Any] = cast(dict[str, Any], request_raw)
+
+    method = request.get("method", "") or ""
+    uri = request.get("uri", "") or ""
+    host = request.get("host", "") or ""
+    client_ip = request.get("remote_ip", "") or request.get("client_ip", "") or ""
+    status = obj.get("status", 0)
+
+    ua = _request_user_agent(request)
+    ua_brief = _summarize_user_agent(ua)
+
+    message = f"{method} {host}{uri} -> {status}"
+    if client_ip:
+        message += f" from {client_ip}"
+    if ua_brief:
+        message += f" ({ua_brief})"
+
+    return {
+        "ts": _ts_iso(obj.get("ts")),
+        "level": obj.get("level", "info"),
+        "message": message,
+        "client_ip": client_ip,
+        "method": method,
+        "host": host,
+        "path": uri,
+        "status": status,
+        "user_agent": ua,
+        "duration_ms": int(float(obj.get("duration", 0.0)) * 1000),
+        "bytes_sent": obj.get("size", 0),
+        "truncated": truncated,
+    }
+
+
 def parse_caddy_json(line: str) -> dict[str, Any] | None:
-    """Parse a Caddy JSON access log line.
+    """Parse a Caddy JSON log line: a cert lifecycle event or an access log.
 
     Tolerates an optional Docker ``--timestamps`` prefix so the same
     parser works for both file-source and docker-source ``caddy`` log
@@ -212,93 +309,10 @@ def parse_caddy_json(line: str) -> dict[str, Any] | None:
         return None
     obj: dict[str, Any] = cast(dict[str, Any], parsed)
 
-    # Cert-event branch. certmagic logs lifecycle events under loggers
-    # like 'tls.obtain', 'tls.cache.maintenance', etc. They have 'msg'
-    # but no 'request'. Pass them through with cert-relevant fields
-    # preserved; Storm's _detect_caddy_cert_event classifies which ones
-    # are cert_obtained / cert_renewed / cert_failed downstream.
-    logger_name = obj.get("logger")
-    msg = obj.get("msg")
-    if (
-        "request" not in obj
-        and isinstance(logger_name, str)
-        and logger_name.startswith(_CERT_LOGGER_PREFIX)
-        and isinstance(msg, str)
-        and msg
-    ):
-        raw_ts = obj.get("ts")
-        if raw_ts is None:
-            return None
-        if isinstance(raw_ts, (int, float)):
-            ts_iso = datetime.fromtimestamp(float(raw_ts), tz=UTC).strftime(
-                "%Y-%m-%dT%H:%M:%S.%fZ",
-            )
-        else:
-            ts_iso = str(raw_ts)
-        names = obj.get("names")
-        return {
-            "ts": ts_iso,
-            "level": str(obj.get("level", "info")),
-            "message": msg,
-            "logger": logger_name,
-            "msg": msg,
-            "identifier": str(obj.get("identifier") or ""),
-            "names": names if isinstance(names, list) else None,
-            "error": str(obj.get("error") or ""),
-            "truncated": truncated,
-        }
-
-    missing = _CADDY_REQUIRED - obj.keys()
-    if missing:
-        return None
-
-    request_raw = obj.get("request", {})
-    if not isinstance(request_raw, dict):
-        return None
-    request: dict[str, Any] = cast(dict[str, Any], request_raw)
-
-    raw_ts = obj.get("ts")
-    if isinstance(raw_ts, (int, float)):
-        ts_iso = datetime.fromtimestamp(float(raw_ts), tz=UTC).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ",
-        )
-    else:
-        ts_iso = str(raw_ts)
-
-    method = request.get("method", "") or ""
-    uri = request.get("uri", "") or ""
-    host = request.get("host", "") or ""
-    client_ip = request.get("remote_ip", "") or request.get("client_ip", "") or ""
-    status = obj.get("status", 0)
-
-    headers_raw = request.get("headers") or {}
-    headers: dict[str, Any] = (
-        cast(dict[str, Any], headers_raw) if isinstance(headers_raw, dict) else {}
-    )
-    ua_list = headers.get("User-Agent") or []
-    ua = str(ua_list[0]) if isinstance(ua_list, list) and ua_list else ""
-    ua_brief = _summarize_user_agent(ua)
-
-    message = f"{method} {host}{uri} -> {status}"
-    if client_ip:
-        message += f" from {client_ip}"
-    if ua_brief:
-        message += f" ({ua_brief})"
-
-    return {
-        "ts": ts_iso,
-        "level": obj.get("level", "info"),
-        "message": message,
-        "client_ip": client_ip,
-        "method": method,
-        "host": host,
-        "path": uri,
-        "status": status,
-        "user_agent": ua,
-        "duration_ms": int(float(obj.get("duration", 0.0)) * 1000),
-        "bytes_sent": obj.get("size", 0),
-        "truncated": truncated,
-    }
+    cert_event = _parse_cert_event(obj, truncated=truncated)
+    if cert_event is not None:
+        return cert_event
+    return _parse_access_log(obj, truncated=truncated)
 
 
 def parse_docker_raw(line: str) -> dict[str, Any] | None:

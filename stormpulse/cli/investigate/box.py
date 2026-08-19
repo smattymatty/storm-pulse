@@ -13,7 +13,7 @@ from pathlib import Path
 
 from stormpulse.sdk.investigate import CaseFile, SuspectReport, Verdict, Window
 
-from ._journal import _journal_ts, _run
+from ._journal import journal_ts, run_evidence
 
 
 def read_proc_stat_cpu(text: str) -> tuple[int, ...] | None:
@@ -159,7 +159,7 @@ def _fetch_sar_history() -> list[tuple["date_cls", str]] | None:
     day_files = sorted(Path("/var/log/sysstat").glob("sa[0-3][0-9]"))
     days: list[tuple[date_cls, str]] = []
     for f in day_files:
-        out = _run(["sar", "-d", "-f", str(f)])
+        out = run_evidence(["sar", "-d", "-f", str(f)])
         if out:
             days.append((date_cls.fromtimestamp(f.stat().st_mtime), out))
     return days or None
@@ -193,9 +193,9 @@ def _can_read_system_journal() -> bool:
 
 
 def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ignore[SKY-Q301,SKY-Q306,SKY-C304] branch-per-verdict is the CORE-005 case-script contract
-    # Function-level: _case lives in the host (__init__), which imports this
+    # Function-level: make_case lives in the host (__init__), which imports this
     # module for the _CORE registry.
-    from . import _case
+    from . import make_case
 
     reports: list[SuspectReport] = []
     next_moves: list[str] = []
@@ -244,7 +244,7 @@ def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ig
     except OSError:
         uu_text = None
 
-    last_out = _run(["last", "-F", "reboot"])
+    last_out = run_evidence(["last", "-F", "reboot"])
     if last_out is None:
         reports.append(SuspectReport(
             suspect="unexpected reboots",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
@@ -379,14 +379,14 @@ def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ig
             suspect="kernel faults",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
             verdict=Verdict.INCONCLUSIVE,
             evidence="System journal not readable as this user.",
-            remedy=f'sudo journalctl -k --since "{_journal_ts(window.since)}" '
+            remedy=f'sudo journalctl -k --since "{journal_ts(window.since)}" '
                    '--no-pager | grep -iE "rcu|stall|hung|lockup|oom"',
         ))
     else:
-        argv = ["journalctl", "-k", "--no-pager", "--since", _journal_ts(window.since)]
+        argv = ["journalctl", "-k", "--no-pager", "--since", journal_ts(window.since)]
         if window.until is not None:
-            argv += ["--until", _journal_ts(window.until)]
-        kernel_out = _run(argv)
+            argv += ["--until", journal_ts(window.until)]
+        kernel_out = run_evidence(argv)
         if kernel_out is None:
             reports.append(SuspectReport(
                 suspect="kernel faults",
@@ -410,4 +410,4 @@ def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ig
                     detail="A clean kernel log does NOT acquit the "
                            "hypervisor: full pauses leave no in-guest trace.",
                 ))
-    return _case("box", window, reports, next_moves, open_questions)
+    return make_case("box", window, reports, next_moves, open_questions)

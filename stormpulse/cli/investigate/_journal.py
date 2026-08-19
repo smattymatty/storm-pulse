@@ -11,11 +11,11 @@ from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.sdk.investigate import Window
 
 
-def _journal_ts(dt: datetime) -> str:
+def journal_ts(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _run(argv: list[str], timeout: float = 30.0) -> str | None:
+def run_evidence(argv: list[str], timeout: float = 30.0) -> str | None:
     """Run a read-only evidence command; None on any failure (the caller
     turns None into INCONCLUSIVE, never into silence)."""
     try:
@@ -29,18 +29,18 @@ def _run(argv: list[str], timeout: float = 30.0) -> str | None:
     return result.stdout
 
 
-def _fetch_agent_journal(window: Window) -> list[tuple[datetime, str]] | None:
+def fetch_agent_journal(window: Window) -> list[tuple[datetime, str]] | None:
     """(journald receipt time, message) pairs for the agent unit in-window."""
     argv = ["journalctl"]
     if detect_mode() is InstallMode.USER:
         argv.append("--user")
     argv += [
         "-u", "stormpulse", "--no-pager", "--output=json",
-        "--since", _journal_ts(window.since),
+        "--since", journal_ts(window.since),
     ]
     if window.until is not None:
-        argv += ["--until", _journal_ts(window.until)]
-    raw = _run(argv)
+        argv += ["--until", journal_ts(window.until)]
+    raw = run_evidence(argv)
     if raw is None:
         return None
     entries: list[tuple[datetime, str]] = []

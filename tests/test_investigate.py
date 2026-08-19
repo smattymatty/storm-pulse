@@ -268,7 +268,7 @@ class TestShippingOverloadThreshold:
             )
             for i in range(1000)
         ]
-        with patch.object(inv, "_fetch_agent_journal", return_value=entries):
+        with patch.object(inv, "fetch_agent_journal", return_value=entries):
             case = inv.run_flaps(
                 argparse.Namespace(), Window(since=datetime(2026, 7, 19, 6)),
             )
@@ -287,7 +287,7 @@ class TestFlapsEmptyJournal:
 
         from stormpulse.cli.investigate import flaps as inv
 
-        with patch.object(inv, "_fetch_agent_journal", return_value=[]):
+        with patch.object(inv, "fetch_agent_journal", return_value=[]):
             case = inv.run_flaps(
                 argparse.Namespace(), Window(since=datetime(2026, 7, 19, 6)),
             )

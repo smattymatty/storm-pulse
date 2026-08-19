@@ -8,7 +8,7 @@ from datetime import datetime
 
 from stormpulse.sdk.investigate import CaseFile, SuspectReport, Verdict, Window
 
-from ._journal import _fetch_agent_journal, parse_shipped
+from ._journal import fetch_agent_journal, parse_shipped
 
 _APP_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s")
 
@@ -80,15 +80,15 @@ _BATCH_LINE_CAP = 200  # config ceiling for max_lines_per_batch
 
 
 def run_flaps(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ignore[SKY-Q301,SKY-C304] branch-per-verdict is the CORE-005 case-script contract
-    # Function-level: _case lives in the host (__init__), which imports this
+    # Function-level: make_case lives in the host (__init__), which imports this
     # module for the _CORE registry.
-    from . import _case
+    from . import make_case
 
     reports: list[SuspectReport] = []
     next_moves: list[str] = []
     open_questions: list[str] = []
 
-    entries = _fetch_agent_journal(window)
+    entries = fetch_agent_journal(window)
     if not entries:
         # None (journalctl failed) and [] (zero entries) both mean we saw
         # nothing - and an unwitnessed window must never read as CLEARED
@@ -101,7 +101,7 @@ def run_flaps(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: 
                      "installed here, not running, or window predates the journal.",
             remedy="stormpulse logs --no-follow  (does the unit log at all?)",
         ))
-        return _case("flaps", window, reports, next_moves, open_questions)
+        return make_case("flaps", window, reports, next_moves, open_questions)
 
     messages = [m for _, m in entries]
     drops = classify_drops(messages)
@@ -113,7 +113,7 @@ def run_flaps(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: 
             verdict=Verdict.CLEARED,
             evidence="0 connection drops in window; the agent held its socket.",
         ))
-        return _case("flaps", window, reports, next_moves, open_questions)
+        return make_case("flaps", window, reports, next_moves, open_questions)
 
     taxonomy = ", ".join(f"{v} x {k}" for k, v in drops.items() if v)
     reports.append(SuspectReport(
@@ -188,4 +188,4 @@ def run_flaps(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: 
             "Did the control plane deploy or restart at the drop times? "
             "A fleet-wide same-minute cluster is the backend-bounce signature."
         )
-    return _case("flaps", window, reports, next_moves, open_questions)  # skylos: ignore[SKY-L027] each early return files the same case name
+    return make_case("flaps", window, reports, next_moves, open_questions)  # skylos: ignore[SKY-L027] each early return files the same case name
