@@ -94,6 +94,15 @@ def test_t09_structural_failures_are_f4(raw: bytes) -> None:
     assert excinfo.value.code is FailureCode.F4
 
 
+def test_sdk_api_boolean_is_f4() -> None:
+    # TOML `sdk_api = true` reaches Python as True, and True == 1 would
+    # silently pass as a supported API version without the bool guard.
+    raw = _manifest(integration_body=_DEFAULT_INTEGRATION + "sdk_api = true\n")
+    with pytest.raises(PackageError) as excinfo:
+        parse_manifest(raw)
+    assert excinfo.value.code is FailureCode.F4
+
+
 def test_non_utf8_manifest_is_f4() -> None:
     with pytest.raises(PackageError) as excinfo:
         parse_manifest(b"\xff\xfe not utf-8")

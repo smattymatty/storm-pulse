@@ -199,7 +199,9 @@ def _int_default(mapping: Any, key: str, default: int, context: str) -> int:
     if not isinstance(mapping, dict) or key not in mapping:
         return default
     value = mapping[key]
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool):
+        raise PackageError(FailureCode.F4, f"'{key}' in {context} must be an integer")
+    if not isinstance(value, int):
         raise PackageError(FailureCode.F4, f"'{key}' in {context} must be an integer")
     return value
 
