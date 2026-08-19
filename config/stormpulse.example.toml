@@ -23,7 +23,7 @@ client_cert = "/home/deploy/.config/stormpulse/agent.pem"
 client_key = "/home/deploy/.config/stormpulse/agent-key.pem"
 
 [auth]
-hmac_secret = "/home/deploy/.config/stormpulse/hmac.key"
+hmac_secret = "/home/deploy/.config/stormpulse/hmac.key"  # path to the key file, not the secret (skylos: ignore[SKY-S101])
 command_max_age_seconds = 60
 
 [metrics]

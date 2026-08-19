@@ -87,3 +87,25 @@ include = ["stormpulse*"]
 # integration adapter (CORE-007) is written against `stormpulse.sdk` and can
 # now type-check the SDK as an installed dep, not just via MYPYPATH.
 stormpulse = ["py.typed"]
+
+[tool.skylos]
+# Globally excluded rule families, each with its reason:
+# - SKY-D215/D324/D325 (path taint): Pulse's job is reading and writing
+#   operator-owned files, so "attacker-controlled path" is the agent's normal
+#   input, not a finding. Audit deliberately when the premise holds (e.g. the
+#   external-integrations install path):
+#     skylos . --select SKY-D215,SKY-D324,SKY-D325 --format pretty
+# - SKY-D223 (undeclared import): text-matches the word "import" in docstring
+#   prose (Caddyfile import directive); a real undeclared dep fails CI at
+#   install time anyway.
+ignore = ["SKY-D215", "SKY-D324", "SKY-D325", "SKY-D223"]
+
+[tool.skylos.gate]
+# Zero-tolerance security gate: the tree is clean, keep it clean.
+fail_on_critical = true
+max_critical = 0
+max_high = 0
+max_security = 0
+max_secrets = 0
+max_ai_defects = 0
+max_dependency_vulnerabilities = 0

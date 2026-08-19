@@ -50,7 +50,7 @@ class LogPositionStore:
             ("last_ts", "TEXT"),
         ]:
             try:
-                self._conn.execute(
+                self._conn.execute(  # skylos: ignore[SKY-D211] col/definition from the hardcoded list above
                     f"ALTER TABLE log_positions ADD COLUMN {col} {definition}"
                 )
             except sqlite3.OperationalError:

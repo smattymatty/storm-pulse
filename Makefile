@@ -12,11 +12,12 @@ SKYLOS ?= .venv/bin/skylos
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
-.PHONY: check test mypy fitness deadcode pre-release-check clean wire-contract \
-        garage-up garage-down test-wire test-garage-wire
+.PHONY: check test mypy fitness deadcode security pre-release-check clean \
+        wire-contract garage-up garage-down test-wire test-garage-wire
 
-# Umbrella: every check in one command. No Docker, no network.
-check: test mypy fitness deadcode
+# Umbrella: every check in one command. No Docker, no network (except
+# `security`, whose AI-defect checks may consult the PyPI registry).
+check: test mypy fitness deadcode security
 
 # Dead-code gate (Skylos), scoped to unused functions / imports / variables /
 # classes / files (SKY-U001..U005). SKY-U006 (unused parameters) stays out:
@@ -24,6 +25,14 @@ check: test mypy fitness deadcode
 # code. Deliberate keepers carry inline `# skylos: ignore[...]` with a reason.
 deadcode:
 	$(SKYLOS) . --select SKY-U001,SKY-U002,SKY-U003,SKY-U004,SKY-U005 --format concise
+
+# Security + secrets + AI-defect gate (Skylos). Exit code comes from the
+# zero-tolerance [tool.skylos.gate] policy in pyproject.toml, which counts
+# only these categories, so dead-code output cannot redden this gate.
+# Globally excluded families and their reasons live in [tool.skylos];
+# deliberate keepers carry inline `# skylos: ignore[...]` with a reason.
+security:
+	$(SKYLOS) . --danger --secrets --ai-defects --sca --gate --format concise
 
 test:
 	$(PYTHON) -m pytest -q

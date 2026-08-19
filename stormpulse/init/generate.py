@@ -46,7 +46,7 @@ client_cert = "{creds_dir}/agent.pem"
 client_key = "{creds_dir}/agent-key.pem"
 
 [auth]
-hmac_secret = "{creds_dir}/hmac.key"
+{hmac_secret_line}
 command_max_age_seconds = 60
 
 [metrics]
@@ -68,6 +68,7 @@ def generate_toml(config: InitConfig) -> str:
     env_line = ""
     if config.env_file is not None:
         env_line = f'env_file = "{config.env_file}"\n'
+    hmac_line = f'hmac_secret = "{config.creds_dir}/hmac.key"'  # skylos: ignore[SKY-S101] path to the key file, not a secret
     rendered = TOML_TEMPLATE.format(
         agent_id=config.agent_id,
         pulse_token=config.pulse_token,
@@ -77,6 +78,7 @@ def generate_toml(config: InitConfig) -> str:
         compose_file=config.compose_file,
         docker_service_name=config.docker_service_name,
         env_file_line=env_line,
+        hmac_secret_line=hmac_line,
     )
     # In user mode, point [storage].db_path at the user-scoped data
     # location (default ``~/.local/share/stormpulse/stormpulse.db``)

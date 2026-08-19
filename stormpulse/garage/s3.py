@@ -357,7 +357,7 @@ class GarageS3Client:
                 self._host, self._port, timeout=self._timeout
             )
         try:
-            conn.request(method, url_path, body=body or None, headers=headers)
+            conn.request(method, url_path, body=body or None, headers=headers)  # skylos: ignore[SKY-D216] host/port from operator-owned agent config
             response = conn.getresponse()
             response_body = response.read()
             status = response.status

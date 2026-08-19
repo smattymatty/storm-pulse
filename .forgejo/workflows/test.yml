@@ -90,3 +90,31 @@ jobs:
       # interface conformance, not dead code. Same command as `make deadcode`.
       - name: Dead-code scan (skylos)
         run: skylos . --select SKY-U001,SKY-U002,SKY-U003,SKY-U004,SKY-U005 --format concise
+
+  # Security + secrets + AI-defect gate (Skylos). Separate job for a separate
+  # signal: red here means a security-shaped finding, a leaked credential, or
+  # an evidence-backed AI-code defect. Exit code comes from the zero-tolerance
+  # [tool.skylos.gate] policy in pyproject.toml. Same command as
+  # `make security`; the pin matches the dev extra in pyproject.toml.
+  security:
+    runs-on: docker
+    container:
+      image: python:3.12-slim
+      volumes:
+        - pip-cache:/pip-cache
+
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout code
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+
+      - name: Install skylos
+        run: pip install --cache-dir /pip-cache "skylos==4.33.2"
+
+      - name: Security scan (skylos)
+        run: skylos . --danger --secrets --ai-defects --sca --gate --format concise

@@ -132,7 +132,7 @@ def request_certificate(
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:  # skylos: ignore[SKY-D216] operator-supplied endpoint, https enforced above
             data: dict[str, str] = json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         raise EnrollError(_friendly_http_error(exc)) from exc
