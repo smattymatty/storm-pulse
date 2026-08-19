@@ -98,7 +98,10 @@ stormpulse = ["py.typed"]
 # - SKY-D223 (undeclared import): text-matches the word "import" in docstring
 #   prose (Caddyfile import directive); a real undeclared dep fails CI at
 #   install time anyway.
-ignore = ["SKY-D215", "SKY-D324", "SKY-D325", "SKY-D223"]
+# - SKY-L009 (debug leftover / print): Pulse prints by design. Case files,
+#   wizard prompts, and init steps are the product's human-first output
+#   surface, and the rule has no per-path scoping.
+ignore = ["SKY-D215", "SKY-D324", "SKY-D325", "SKY-D223", "SKY-L009"]
 
 [tool.skylos.gate]
 # Zero-tolerance security gate: the tree is clean, keep it clean.
@@ -109,3 +112,4 @@ max_security = 0
 max_secrets = 0
 max_ai_defects = 0
 max_dependency_vulnerabilities = 0
+max_quality = 0

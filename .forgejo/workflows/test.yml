@@ -118,3 +118,32 @@ jobs:
 
       - name: Security scan (skylos)
         run: skylos . --danger --secrets --ai-defects --sca --gate --format concise
+
+  # Quality gate (Skylos), pull requests only and scoped to the lines the PR
+  # changes (--diff origin/main): new code meets the bar, the legacy findings
+  # stay a known baseline. Full clone because --diff needs main's history.
+  # Same command as `make quality`.
+  quality:
+    if: github.event_name == 'pull_request'
+    runs-on: docker
+    container:
+      image: python:3.12-slim
+      volumes:
+        - pip-cache:/pip-cache
+
+    steps:
+      - name: Install git
+        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+      - name: Checkout code (full, with main)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          git fetch origin main
+
+      - name: Install skylos
+        run: pip install --cache-dir /pip-cache "skylos==4.33.2"
+
+      - name: Quality scan, changed lines (skylos)
+        run: skylos . --quality --diff origin/main --gate --format concise

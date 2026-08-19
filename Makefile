@@ -12,12 +12,12 @@ SKYLOS ?= .venv/bin/skylos
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
-.PHONY: check test mypy fitness deadcode security pre-release-check clean \
+.PHONY: check test mypy fitness deadcode security quality pre-release-check clean \
         wire-contract garage-up garage-down test-wire test-garage-wire
 
 # Umbrella: every check in one command. No Docker, no network (except
 # `security`, whose AI-defect checks may consult the PyPI registry).
-check: test mypy fitness deadcode security
+check: test mypy fitness deadcode security quality
 
 # Dead-code gate (Skylos), scoped to unused functions / imports / variables /
 # classes / files (SKY-U001..U005). SKY-U006 (unused parameters) stays out:
@@ -33,6 +33,20 @@ deadcode:
 # deliberate keepers carry inline `# skylos: ignore[...]` with a reason.
 security:
 	$(SKYLOS) . --danger --secrets --ai-defects --sca --gate --format concise
+
+# Quality gate (Skylos), scoped to COMMITS ahead of origin/main so new code
+# meets the bar while the legacy findings stay a known baseline. Skylos
+# resolves --diff via `git diff origin/main...HEAD`, so uncommitted edits are
+# invisible to it, and an empty diff falls back to a FULL scan (red on the
+# baseline); the guard below skips the scan in that case instead. SKY-L009
+# (print) is globally ignored in [tool.skylos]: Pulse's Case files and
+# wizards print by design.
+quality:
+	@if [ -z "$$(git diff --name-only origin/main...HEAD)" ]; then \
+		echo "quality: no commits ahead of origin/main, skipping"; \
+	else \
+		$(SKYLOS) . --quality --diff origin/main --gate --format concise; \
+	fi
 
 test:
 	$(PYTHON) -m pytest -q
