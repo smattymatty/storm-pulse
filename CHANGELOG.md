@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-19
+
 ### Added
+
+- **The agent declares the wire shape it emits and advertises its digest.** `wire-contract.json` at the repo root is the generated, committed declaration of every message type and field the agent sends (`make wire-contract` regenerates it; a fitness function fails the build when the code and the declaration drift). On register, the agent sends `wire_contract`, a digest of that declared shape. Dashboards that vendor the contract can compare digests and treat an unrecognised one as a stale vendored copy rather than guessing; the field is additive, so older dashboards ignore it unchanged. This is the emitter half of the drift gate: it detects that the two sides are reading different specs, not that either is correct.
 
 - **A diff-scoped quality gate now runs on pull requests and in `make check`** (`make quality`, Skylos). It scans only the lines a change touches relative to `origin/main`, so new code meets the complexity/nesting/cohesion bar while the tree's existing findings remain a known baseline to burn down deliberately. SKY-L009 (print/debug leftover) is globally ignored with its reason in `[tool.skylos]`: Case files, wizard prompts, and init steps are Pulse's human-first output surface, and the rule has no per-path scoping.
 
@@ -259,7 +263,8 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* - current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.3.0...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.0...HEAD
+[0.4.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.3.2...v0.4.0
 [0.3.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.2.1...v0.3.0
 [0.2.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.2.0...v0.2.1
 [0.2.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.1.6...v0.2.0
