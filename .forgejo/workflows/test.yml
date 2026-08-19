@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# gcc + libc6-dev in every job: skylos (a dev dep and the scan tool) requires
+# tree-sitter-dart-orchard, which ships sdist-only on PyPI, so pip must compile
+# its C binding. The built wheel lands in the shared pip cache, so the compile
+# is paid once per cache lifetime, not per run.
 jobs:
   test:
     runs-on: docker
@@ -15,8 +19,8 @@ jobs:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git
-        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+      - name: Install git and build tools
+        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
       - name: Checkout code
         run: |
@@ -44,8 +48,8 @@ jobs:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git
-        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+      - name: Install git and build tools
+        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
       - name: Checkout code
         run: |
@@ -74,8 +78,8 @@ jobs:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git
-        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+      - name: Install git and build tools
+        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
       - name: Checkout code
         run: |
@@ -104,8 +108,8 @@ jobs:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git
-        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+      - name: Install git and build tools
+        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
       - name: Checkout code
         run: |
@@ -132,8 +136,8 @@ jobs:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git
-        run: apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+      - name: Install git and build tools
+        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
       - name: Checkout code (full, with main)
         run: |
