@@ -399,39 +399,35 @@ def _strip_ns(tag: str) -> str:
     return tag
 
 
+def _sub_texts(elem: ElementTree.Element) -> dict[str, str]:
+    """Map each direct child's namespace-stripped tag to its non-empty text.
+
+    Children with no text (containers) are skipped; a repeated tag keeps its
+    last occurrence, matching the hand-rolled scans this replaces.
+    """
+    return {_strip_ns(sub.tag): sub.text for sub in elem if sub.text}
+
+
 def _parse_list_response(body: bytes) -> ListResult:
     if not body:
         return ListResult(
             contents=[], is_truncated=False, next_continuation_token=None, key_count=0
         )
     root = ElementTree.fromstring(body)
+    fields = _sub_texts(root)
     contents: list[S3ObjectEntry] = []
-    is_truncated = False
-    next_token: str | None = None
-    key_count = 0
     for child in root:
-        tag = _strip_ns(child.tag)
-        if tag == "Contents":
-            key = ""
-            size = 0
-            for sub in child:
-                stag = _strip_ns(sub.tag)
-                if stag == "Key" and sub.text:
-                    key = sub.text
-                elif stag == "Size" and sub.text:
-                    size = int(sub.text)
-            if key:
-                contents.append(S3ObjectEntry(key=key, size=size))
-        elif tag == "IsTruncated" and child.text:
-            is_truncated = child.text.strip().lower() == "true"
-        elif tag == "NextContinuationToken" and child.text:
-            next_token = child.text
-        elif tag == "KeyCount" and child.text:
-            key_count = int(child.text)
+        if _strip_ns(child.tag) != "Contents":
+            continue
+        entry = _sub_texts(child)
+        key = entry.get("Key", "")
+        if key:
+            contents.append(S3ObjectEntry(key=key, size=int(entry.get("Size", 0))))
+    key_count = int(fields.get("KeyCount", 0))
     return ListResult(
         contents=contents,
-        is_truncated=is_truncated,
-        next_continuation_token=next_token,
+        is_truncated=fields.get("IsTruncated", "").strip().lower() == "true",
+        next_continuation_token=fields.get("NextContinuationToken"),
         key_count=key_count or len(contents),
     )
 
@@ -440,24 +436,20 @@ def _parse_multipart_list_response(body: bytes) -> MultipartListResult:
     if not body:
         return MultipartListResult(uploads=[], is_truncated=False)
     root = ElementTree.fromstring(body)
+    fields = _sub_texts(root)
     uploads: list[MultipartUpload] = []
-    is_truncated = False
     for child in root:
-        tag = _strip_ns(child.tag)
-        if tag == "Upload":
-            key = ""
-            upload_id = ""
-            for sub in child:
-                stag = _strip_ns(sub.tag)
-                if stag == "Key" and sub.text:
-                    key = sub.text
-                elif stag == "UploadId" and sub.text:
-                    upload_id = sub.text
-            if key and upload_id:
-                uploads.append(MultipartUpload(key=key, upload_id=upload_id))
-        elif tag == "IsTruncated" and child.text:
-            is_truncated = child.text.strip().lower() == "true"
-    return MultipartListResult(uploads=uploads, is_truncated=is_truncated)
+        if _strip_ns(child.tag) != "Upload":
+            continue
+        upload = _sub_texts(child)
+        key = upload.get("Key", "")
+        upload_id = upload.get("UploadId", "")
+        if key and upload_id:
+            uploads.append(MultipartUpload(key=key, upload_id=upload_id))
+    return MultipartListResult(
+        uploads=uploads,
+        is_truncated=fields.get("IsTruncated", "").strip().lower() == "true",
+    )
 
 
 def _parse_delete_response(body: bytes) -> DeleteResult:
@@ -469,20 +461,16 @@ def _parse_delete_response(body: bytes) -> DeleteResult:
     for child in root:
         tag = _strip_ns(child.tag)
         if tag == "Deleted":
-            for sub in child:
-                if _strip_ns(sub.tag) == "Key" and sub.text:
-                    deleted.append(sub.text)
+            key = _sub_texts(child).get("Key", "")
+            if key:
+                deleted.append(key)
         elif tag == "Error":
-            key, code, message = "", "", ""
-            for sub in child:
-                stag = _strip_ns(sub.tag)
-                if stag == "Key" and sub.text:
-                    key = sub.text
-                elif stag == "Code" and sub.text:
-                    code = sub.text
-                elif stag == "Message" and sub.text:
-                    message = sub.text
-            errors.append(S3ErrorEntry(key=key, code=code, message=message))
+            entry = _sub_texts(child)
+            errors.append(S3ErrorEntry(
+                key=entry.get("Key", ""),
+                code=entry.get("Code", ""),
+                message=entry.get("Message", ""),
+            ))
     return DeleteResult(deleted=deleted, errors=errors)
 
 

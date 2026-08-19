@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2026-08-19
+## [0.4.1] - 2026-08-19
+
+### Changed
+
+- **ListObjectsV2 response parsing refactored** (`_parse_list_response` reads child fields through one `_sub_texts` helper instead of three hand-rolled scans). Behavior identical; the full suite pins it.
+
+### Fixed
+
+- **`make pre-release-check` now refuses a dirty working tree.** 0.4.0 was built from a checkout carrying an uncommitted modification, so the published wheel matched no commit; it is yanked on PyPI and was never deployed to any node. The check now fails unless `git status --porcelain` is empty, making an unauditable artifact structurally impossible rather than a thing to remember.
+
+## [0.4.0] - 2026-08-19 [YANKED]
 
 ### Added
 
@@ -263,7 +273,8 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* - current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.0...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.1...HEAD
+[0.4.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.0...v0.4.1
 [0.4.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.3.2...v0.4.0
 [0.3.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.2.1...v0.3.0
 [0.2.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.2.0...v0.2.1

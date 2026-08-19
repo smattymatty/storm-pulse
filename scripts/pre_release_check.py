@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Assert pyproject.toml [project].version matches the top CHANGELOG.md entry.
+"""Release preflight, run before ``uv publish`` per CORE-002.
 
-Run before ``uv publish`` per CORE-002. Exits 0 on match, 1 on mismatch.
+Asserts pyproject.toml [project].version matches the top CHANGELOG.md
+entry, and that the working tree is clean: ``uv build`` packages the
+working tree, not a commit, so a dirty tree publishes code no commit
+carries and no gate has run against (how 0.4.0 got yanked). Exits 0
+only when both hold.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -46,8 +51,24 @@ def main() -> int:
         )
         return 1
 
+    dirty = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    if dirty:
+        print(
+            "ERROR: working tree is not clean; uv build packages the tree,\n"
+            "not a commit, so this artifact would match no commit:\n" + dirty,
+            file=sys.stderr,
+        )
+        return 1
+
     print(
-        f"ok - version {pyproject_version} agrees between pyproject.toml and CHANGELOG.md"
+        f"ok - version {pyproject_version} agrees between pyproject.toml and "
+        f"CHANGELOG.md, and the working tree is clean"
     )
     return 0
 
