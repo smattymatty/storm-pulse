@@ -8,7 +8,9 @@ Secure server management agent for [Storm Developments](https://stormdevelopment
 
 ## How It Works
 
-1. Agent connects **outbound** to the dashboard. Caddy terminates mTLS.
+1. Agent connects **outbound** to the dedicated Pulse transport at
+   `wss://pulse.stormdevelopments.ca/ws/pulse/`. Caddy requires and verifies
+   the agent's client certificate before proxying the WebSocket to Django.
 2. Sends a `register` message (including its available commands list), then pushes metrics every 15s (CPU, memory, disk, load, containers).
 3. Dashboard sends HMAC-signed commands. Agent verifies signature, nonce, and expiry before executing.
 4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config with optional overridable parameters (regex-validated). No shell injection possible.
@@ -38,6 +40,19 @@ pip install storm-pulse-agent
 ```
 
 For full setup instructions (operator user, permissions, systemd, firewall), see the [Setup Guide](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Setup-Guide).
+
+Storm Developments uses two deliberately separate endpoints:
+
+| Purpose | Endpoint | Client certificate |
+|---------|----------|--------------------|
+| One-time enrollment | `https://stormdevelopments.ca/api/enroll/` | Not required; the new agent does not have one yet |
+| Agent WebSocket | `wss://pulse.stormdevelopments.ca/ws/pulse/` | Required and verified by Caddy |
+
+Current dashboards return the dedicated WebSocket URL with the enrollment
+credentials, and `stormpulse init` uses it as the prompt default. Verify that
+the prompt shows `pulse.stormdevelopments.ca`; agents talking to an older
+dashboard retain the historical same-host derivation as a compatibility
+fallback.
 
 **Install modes.** `stormpulse init` auto-detects which to use:
 
@@ -93,7 +108,7 @@ Run `stormpulse init` to generate a config interactively - see the [Setup Guide]
 | `agent` | `id` | Unique identifier for this server |
 | `agent` | `pulse_token` | UUID from the Server record in the dashboard |
 | `agent` | `disabled_commands` | List of command names to remove from the registry (optional) |
-| `dashboard` | `url` | WebSocket URL (`wss://...`) |
+| `dashboard` | `url` | Agent WebSocket URL. Storm Developments installs use `wss://pulse.stormdevelopments.ca/ws/pulse/`. |
 | `project` | `project_dir` | Absolute path to the deployed project |
 | `project` | `compose_file` | Absolute path to docker-compose.yml |
 | `project` | `env_file` | Absolute path to `.env` file (optional, passed as `--env-file` to docker compose) |

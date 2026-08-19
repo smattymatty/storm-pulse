@@ -1214,6 +1214,7 @@ class TestRunInit:
                 {
                     "endpoint": "https://example.com/api/enroll/",
                     "agent_id": "happy-agent",
+                    "dashboard_url": "wss://pulse.example.com/ws/pulse/",
                 }
             )
         )
@@ -1240,6 +1241,9 @@ class TestRunInit:
         run_init(creds, force=True)
 
         mock_write_config.assert_called_once()
+        assert (
+            "wss://pulse.example.com/ws/pulse/" in mock_write_config.call_args.args[1]
+        )
         mock_write_unit.assert_called_once()
         mock_setup.assert_called_once()
         mock_reload.assert_called_once()

@@ -55,7 +55,12 @@ def cmd_enroll(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     try:
-        write_enroll_metadata(creds_dir, args.endpoint, args.agent_id)
+        write_enroll_metadata(
+            creds_dir,
+            args.endpoint,
+            args.agent_id,
+            response.get("dashboard_url"),
+        )
     except EnrollError:
         logger.warning(
             "Could not write enroll.json - init defaults will be unavailable"

@@ -106,7 +106,8 @@ def request_certificate(
 ) -> dict[str, str]:
     """POST the CSR to the enrollment endpoint and return credentials.
 
-    Returns a dict with keys: client_cert_pem, ca_cert_pem, hmac_key.
+    Returns a dict with required credential keys and, on newer dashboards,
+    an optional ``dashboard_url`` used by ``stormpulse init``.
     Raises EnrollError on any failure.
     """
     if endpoint.startswith("http://"):
@@ -155,6 +156,16 @@ def request_certificate(
                 f"Enrollment response missing '{key}'. "
                 f"The dashboard may be running an older version."
             )
+
+    dashboard_url = data.get("dashboard_url")
+    if dashboard_url is not None and (
+        not isinstance(dashboard_url, str)
+        or not dashboard_url.startswith(("wss://", "ws://"))
+    ):
+        raise EnrollError(
+            "Enrollment response has invalid 'dashboard_url'. "
+            "Expected a wss:// or ws:// WebSocket URL."
+        )
 
     return data
 
@@ -303,15 +314,19 @@ def write_enroll_metadata(
     creds_dir: Path,
     endpoint: str,
     agent_id: str,
+    dashboard_url: str | None = None,
 ) -> Path:
     """Write enrollment metadata for use by ``stormpulse init``.
 
-    Stores the enrollment endpoint and agent ID so that ``init`` can derive
-    a default dashboard WebSocket URL without prompting blindly.
+    Stores the enrollment endpoint and agent ID. Newer dashboards also return
+    an explicit WebSocket URL; older dashboards omit it and ``init`` retains
+    the same-host derivation as a compatibility fallback.
 
     Returns the path to the written file.
     """
     meta = {"endpoint": endpoint, "agent_id": agent_id}
+    if dashboard_url:
+        meta["dashboard_url"] = dashboard_url
     data = json.dumps(meta, indent=2).encode("utf-8") + b"\n"
     path = creds_dir / "enroll.json"
     _write_file(path, data, 0o644)

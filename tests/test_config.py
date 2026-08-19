@@ -71,7 +71,7 @@ def write_config(tmp_path: Path) -> Callable[[str], Path]:
 def test_load_example_config() -> None:
     config = load_config(EXAMPLE_CONFIG)
     assert config.agent.id == "vps-toronto-01"
-    assert config.dashboard.url == "wss://stormdevelopments.ca/ws/pulse/"
+    assert config.dashboard.url == "wss://pulse.stormdevelopments.ca/ws/pulse/"
     assert config.dashboard.reconnect_min_seconds == 3.0
     assert config.dashboard.reconnect_max_seconds == 60.0
     assert config.dashboard.heartbeat_interval_seconds == 30.0

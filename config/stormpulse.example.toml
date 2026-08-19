@@ -12,7 +12,7 @@ pulse_token = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # from Server.pulse_token 
 # disabled_commands = ["docker_logs"]  # optional, removes commands from the registry
 
 [dashboard]
-url = "wss://stormdevelopments.ca/ws/pulse/"
+url = "wss://pulse.stormdevelopments.ca/ws/pulse/"
 reconnect_min_seconds = 3
 reconnect_max_seconds = 60
 heartbeat_interval_seconds = 30

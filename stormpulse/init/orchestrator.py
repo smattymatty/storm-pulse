@@ -74,9 +74,10 @@ def run_init(
         file=sys.stderr,
     )
 
-    # Derive dashboard URL default from enrollment metadata
-    dashboard_default: str | None = None
-    if meta.get("endpoint"):
+    # Prefer the dashboard's explicit transport boundary. Enrollment responses
+    # from older dashboards lack it, so preserve the historical derivation.
+    dashboard_default = meta.get("dashboard_url")
+    if dashboard_default is None and meta.get("endpoint"):
         dashboard_default = derive_dashboard_url(meta["endpoint"])
 
     # Where any previous run's config would live. Used both as the

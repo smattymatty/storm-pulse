@@ -38,6 +38,7 @@ def _mock_response(hmac_key: str | None = None) -> dict[str, str]:
         "client_cert_pem": "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----\n",
         "ca_cert_pem": "-----BEGIN CERTIFICATE-----\nMOCKCA\n-----END CERTIFICATE-----\n",
         "hmac_key": hmac_key,
+        "dashboard_url": "wss://pulse.example.com/ws/pulse/",
     }
 
 
@@ -123,6 +124,39 @@ class TestRequestCertificate:
         assert result["client_cert_pem"] == response_data["client_cert_pem"]
         assert result["ca_cert_pem"] == response_data["ca_cert_pem"]
         assert result["hmac_key"] == response_data["hmac_key"]
+        assert result["dashboard_url"] == response_data["dashboard_url"]
+
+    @patch("stormpulse.enroll.urllib.request.urlopen")
+    def test_older_dashboard_without_url_remains_compatible(
+        self,
+        mock_urlopen: MagicMock,
+    ) -> None:
+        response_data = _mock_response()
+        response_data.pop("dashboard_url")
+        mock_urlopen.return_value = _mock_urlopen(response_data)
+
+        result = request_certificate(
+            "https://example.com/api/enroll/",
+            "agent-1",
+            "tok",
+            b"CSR_PEM",
+        )
+
+        assert "dashboard_url" not in result
+
+    @patch("stormpulse.enroll.urllib.request.urlopen")
+    def test_invalid_dashboard_url_rejected(self, mock_urlopen: MagicMock) -> None:
+        response_data = _mock_response()
+        response_data["dashboard_url"] = "https://example.com/ws/pulse/"
+        mock_urlopen.return_value = _mock_urlopen(response_data)
+
+        with pytest.raises(EnrollError, match="invalid 'dashboard_url'"):
+            request_certificate(
+                "https://example.com/api/enroll/",
+                "agent-1",
+                "tok",
+                b"CSR_PEM",
+            )
 
     @patch("stormpulse.enroll.urllib.request.urlopen")
     def test_http_401_raises_with_hint(self, mock_urlopen: MagicMock) -> None:
@@ -387,6 +421,18 @@ class TestWriteEnrollMetadata:
         assert data["endpoint"] == "https://example.com/api/enroll/"
         assert data["agent_id"] == "agent-01"
 
+    def test_writes_explicit_dashboard_url(self, tmp_path: Path) -> None:
+        creds_dir = tmp_path / "creds"
+        creds_dir.mkdir()
+        path = write_enroll_metadata(
+            creds_dir,
+            "https://example.com/api/enroll/",
+            "agent-01",
+            "wss://pulse.example.com/ws/pulse/",
+        )
+        data = json.loads(path.read_text())
+        assert data["dashboard_url"] == "wss://pulse.example.com/ws/pulse/"
+
     def test_permissions(self, tmp_path: Path) -> None:
         creds_dir = tmp_path / "creds"
         creds_dir.mkdir()
@@ -467,3 +513,43 @@ class TestIntegration:
         # Private key is NOT in the request body
         for value in request_body.values():
             assert "BEGIN PRIVATE KEY" not in str(value)
+
+
+class TestEnrollCLI:
+    def test_persists_dashboard_url_for_init(self, tmp_path: Path) -> None:
+        from stormpulse.cli.enroll import cmd_enroll
+
+        response = _mock_response()
+        args = MagicMock(
+            creds_dir=str(tmp_path / "creds"),
+            endpoint="https://example.com/api/enroll/",
+            agent_id="agent-01",
+            token="one-time-token",
+            force=False,
+        )
+
+        with (
+            patch("stormpulse.enroll.preflight_creds_dir"),
+            patch(
+                "stormpulse.enroll.generate_keypair",
+                return_value=(MagicMock(), b"KEY_PEM"),
+            ),
+            patch("stormpulse.enroll.build_csr", return_value=b"CSR_PEM"),
+            patch(
+                "stormpulse.enroll.request_certificate",
+                return_value=response,
+            ),
+            patch(
+                "stormpulse.enroll.write_credentials",
+                return_value=MagicMock(),
+            ),
+            patch("stormpulse.enroll.write_enroll_metadata") as write_metadata,
+        ):
+            cmd_enroll(args)
+
+        write_metadata.assert_called_once_with(
+            tmp_path / "creds",
+            "https://example.com/api/enroll/",
+            "agent-01",
+            "wss://pulse.example.com/ws/pulse/",
+        )
