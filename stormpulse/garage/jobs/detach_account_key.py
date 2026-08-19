@@ -110,7 +110,7 @@ async def run_detach_account_key(
 
     # ---- Step 2: RemoveBucketAlias (cosmetic; best-effort) ----
     await progress("running", 1, _TOTAL_STEPS, "Dropping account-key alias")
-    alias_ok, alias_err = await asyncio.to_thread(
+    alias_ok, _ = await asyncio.to_thread(
         admin_api.remove_bucket_alias_local,
         admin_url=admin_url, admin_token=admin_token,
         bucket_ref=bucket_id, access_key_id=account_key_id,

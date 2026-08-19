@@ -32,7 +32,7 @@ class AuthError(Exception):
     """
 
     #: Every value ``reason`` may take. A refusal outside this set is a bug.
-    REASONS = frozenset({
+    REASONS = frozenset({  # skylos: ignore - documented closed enum; the contract, not a consumer
         "secret_missing",
         "secret_empty",
         "wrong_type",

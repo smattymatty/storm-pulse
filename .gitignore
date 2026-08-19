@@ -20,3 +20,6 @@ __pycache__/
 # Test Garage state (docker/docker-compose.test.yml bind mounts)
 docker/garage-meta/
 docker/garage-data/
+
+# Skylos scan cache
+.skylos/cache/

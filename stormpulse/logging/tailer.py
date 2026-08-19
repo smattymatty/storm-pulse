@@ -118,7 +118,6 @@ class LogTailer:
 _DOCKER_TS_PREFIX_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)\s"
 )
-_MAX_LINE_BYTES = 4096
 _DOCKER_TIMEOUT_SECONDS = 30.0
 
 
@@ -485,8 +484,3 @@ class StreamingDockerTailer:
                 pass
         self._proc = None
         self._buffer = b""
-
-
-def _inode(path: str) -> int:
-    """Public-ish helper for tests - returns the current inode of a path."""
-    return os.stat(path).st_ino

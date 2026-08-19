@@ -24,7 +24,6 @@ from xml.etree import ElementTree
 logger = logging.getLogger(__name__)
 
 
-_S3_NS = "http://s3.amazonaws.com/doc/2006-03-01/"
 _ALGORITHM = "AWS4-HMAC-SHA256"
 _SERVICE = "s3"
 _EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()

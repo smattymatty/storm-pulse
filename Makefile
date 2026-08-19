@@ -8,14 +8,22 @@
 
 PYTHON ?= .venv/bin/python
 LINT_IMPORTS ?= .venv/bin/lint-imports
+SKYLOS ?= .venv/bin/skylos
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
-.PHONY: check test mypy fitness pre-release-check clean wire-contract \
+.PHONY: check test mypy fitness deadcode pre-release-check clean wire-contract \
         garage-up garage-down test-wire test-garage-wire
 
 # Umbrella: every check in one command. No Docker, no network.
-check: test mypy fitness
+check: test mypy fitness deadcode
+
+# Dead-code gate (Skylos), scoped to unused functions / imports / variables /
+# classes / files (SKY-U001..U005). SKY-U006 (unused parameters) stays out:
+# callback signatures (ws, args, context) are interface conformance, not dead
+# code. Deliberate keepers carry inline `# skylos: ignore[...]` with a reason.
+deadcode:
+	$(SKYLOS) . --select SKY-U001,SKY-U002,SKY-U003,SKY-U004,SKY-U005 --format concise
 
 test:
 	$(PYTHON) -m pytest -q

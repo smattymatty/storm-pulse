@@ -79,7 +79,7 @@ class JobOutcome:
 
 JobHandler = Callable[[ProgressCallback], Awaitable[JobOutcome]]
 
-LongRunningFactory = Callable[[dict[str, str]], "JobHandler | None"]
+LongRunningFactory = Callable[[dict[str, str]], "JobHandler | None"]  # skylos: ignore - published Feature contract type
 """Given the validated runtime params, build the ``JobHandler`` for a
 long-running command. Returns ``None`` when the command is registered
 but cannot be served on this install (e.g. its feature config is

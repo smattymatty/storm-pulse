@@ -33,8 +33,3 @@ def get_provider(token: str) -> CapabilityProvider | None:
 def registered_providers() -> dict[str, CapabilityProvider]:
     """A copy of the registered provider map (e.g. to build an ``ApplyEnv``)."""
     return dict(_providers)
-
-
-def _reset_for_tests() -> None:
-    """Clear the registry. Test-only; the production path registers at import."""
-    _providers.clear()
