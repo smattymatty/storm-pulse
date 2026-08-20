@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The changed-line quality gate now runs on pushes to main, not only pull requests.** This repo's normal flow is direct-to-main commits, so a PR-only gate never fired. A push diffs against the push event's own before-SHA (every commit in the push; falls back to the last commit when the before-SHA is unusable, e.g. a force push), a pull request still diffs against origin/main. A push whose diff is empty skips loudly instead of letting Skylos's empty-changed-set fallback run a full scan that is red on the legacy baseline.
+
 ## [0.4.1] - 2026-08-19
 
 ### Changed

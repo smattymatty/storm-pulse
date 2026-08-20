@@ -123,12 +123,13 @@ jobs:
       - name: Security scan (skylos)
         run: skylos . --danger --secrets --ai-defects --sca --gate --format concise
 
-  # Quality gate (Skylos), pull requests only and scoped to the lines the PR
-  # changes (--diff origin/main): new code meets the bar, the legacy findings
-  # stay a known baseline. Full clone because --diff needs main's history.
-  # Same command as `make quality`.
+  # Quality gate (Skylos), scoped to the changed lines only: new code meets
+  # the bar, the legacy findings stay a known baseline to burn down
+  # deliberately. A pull request diffs against origin/main; a push to main
+  # diffs against the push's own before-SHA, so direct-to-main commits (this
+  # repo's normal flow) are gated too. Full clone because --diff needs the
+  # base in history. Same scan as `make quality`.
   quality:
-    if: github.event_name == 'pull_request'
     runs-on: docker
     container:
       image: python:3.12-slim
@@ -150,4 +151,21 @@ jobs:
         run: pip install --cache-dir /pip-cache "skylos==4.33.2"
 
       - name: Quality scan, changed lines (skylos)
-        run: skylos . --quality --diff origin/main --gate --format concise
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="origin/main"
+          else
+            # The push event's before-SHA covers every commit in the push.
+            # Unusable (first push, force push) falls back to the last commit.
+            BASE="${{ github.event.before }}"
+            git cat-file -e "${BASE}^{commit}" 2>/dev/null || BASE="HEAD~1"
+          fi
+          # An empty changed set makes skylos fall back to a FULL scan, which
+          # is red on the legacy baseline. Skip loudly instead (the same guard
+          # the Makefile's quality target carries).
+          if [ -z "$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)" ]; then
+            echo "quality: no changed files vs ${BASE}, skipping"
+            exit 0
+          fi
+          echo "quality: gating changed lines vs ${BASE}"
+          skylos . --quality --diff "${BASE}" --gate --format concise
