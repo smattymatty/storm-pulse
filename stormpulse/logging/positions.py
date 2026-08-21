@@ -48,6 +48,11 @@ class LogPositionStore:
         for col, definition in [
             ("source_type", "TEXT NOT NULL DEFAULT 'file'"),
             ("last_ts", "TEXT"),
+            # Journald cursors get their own column rather than sharing
+            # last_ts: a cursor is an opaque token, and the timestamp
+            # normalization below rewrites values that merely LOOK like
+            # timestamps.
+            ("cursor", "TEXT"),
         ]:
             try:
                 self._conn.execute(  # skylos: ignore[SKY-D211] col/definition from the hardcoded list above
@@ -119,6 +124,32 @@ class LogPositionStore:
                 "  last_ts=excluded.last_ts, "
                 "  updated_at=excluded.updated_at",
                 (group, container_name, last_ts, time.time()),
+            )
+
+    def get_cursor(self, group: str) -> str | None:
+        """Return the stored journal cursor for a group, or None if unseen."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT cursor FROM log_positions WHERE group_name = ?",
+                (group,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return str(row[0])
+
+    def set_cursor(self, group: str, unit: str, cursor: str) -> None:
+        """Upsert the journal cursor for a group."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO log_positions "
+                "  (group_name, source_type, file_path, cursor, updated_at) "
+                "VALUES (?, 'journald', ?, ?, ?) "
+                "ON CONFLICT(group_name) DO UPDATE SET "
+                "  source_type='journald', "
+                "  file_path=excluded.file_path, "
+                "  cursor=excluded.cursor, "
+                "  updated_at=excluded.updated_at",
+                (group, unit, cursor, time.time()),
             )
 
     def close(self) -> None:

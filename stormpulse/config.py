@@ -188,9 +188,11 @@ PROTECTED_PLACEHOLDERS: frozenset[str] = frozenset(
 
 
 _LOG_PARSERS: frozenset[str] = frozenset(
-    {"garage_s3", "stormpulse", "caddy_json", "docker_raw", "django"}
+    {"garage_s3", "stormpulse", "caddy_json", "docker_raw", "django", "journald"}
 )
-_LOG_SOURCE_TYPES: frozenset[str] = frozenset({"file", "docker", "docker_stream"})
+_LOG_SOURCE_TYPES: frozenset[str] = frozenset(
+    {"file", "docker", "docker_stream", "journald"}
+)
 _LOG_NAME_PATTERN = re.compile(r"[a-zA-Z0-9_-]{1,50}")
 _DEFAULT_DOCKER_BINARY = "/usr/bin/docker"
 
@@ -209,6 +211,7 @@ class LogGroupConfig:
     max_lines_per_batch: int
     container_name: str = ""
     docker_binary: str = _DEFAULT_DOCKER_BINARY
+    unit: str = ""
 
 
 # Top-level TOML tables Foundation knows by name. Everything else that is a
@@ -601,12 +604,22 @@ def _parse_one_log_group(
     container_name = ""
     docker_binary = _DEFAULT_DOCKER_BINARY
     source_path = ""
+    unit = ""
     if source_type == "file":
         source_path = require_key(entry, "source_path", str, ctx)
         if not source_path.startswith("/"):
             raise ConfigError(
                 f"'source_path' in {ctx} must be an absolute path, got {source_path!r}"
             )
+    elif source_type == "journald":
+        # A systemd-supervised service logs to the journal, not to a file it
+        # owns. Tailing the journal means no log file to rotate, no directory
+        # to create, and no permissions to get right on the unit's behalf.
+        unit = require_key(entry, "unit", str, ctx)
+        if not unit.strip():
+            raise ConfigError(f"'unit' in {ctx} must be non-empty for journald sources")
+        if any(c.isspace() for c in unit):
+            raise ConfigError(f"'unit' in {ctx} must not contain whitespace, got {unit!r}")
     else:  # docker, docker_stream
         container_name = require_key(entry, "container_name", str, ctx)
         if not container_name.strip():
@@ -664,6 +677,7 @@ def _parse_one_log_group(
         max_lines_per_batch=batch_max,
         container_name=container_name,
         docker_binary=docker_binary,
+        unit=unit,
     )
 
 

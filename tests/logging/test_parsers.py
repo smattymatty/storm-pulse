@@ -10,6 +10,7 @@ from stormpulse.logging.parsers import (
     parse_django,
     parse_docker_raw,
     parse_garage_s3,
+    parse_journald,
     parse_stormpulse,
 )
 
@@ -455,3 +456,47 @@ def test_parser_registry_matches_config_whitelist() -> None:
     from stormpulse.logging.parsers import PARSERS
 
     assert set(PARSERS) == set(_LOG_PARSERS)
+
+
+# --- journald ------------------------------------------------------------
+
+
+def _journal_record(**overrides: object) -> str:
+    record: dict[str, object] = {
+        "__CURSOR": "s=1;i=10",
+        "__REALTIME_TIMESTAMP": "1755000000000000",
+        "MESSAGE": "service started",
+    }
+    record.update(overrides)
+    return json.dumps(record)
+
+
+def test_journald_reads_the_timestamp_and_message() -> None:
+    parsed = parse_journald(_journal_record())
+
+    assert parsed is not None
+    assert parsed["message"] == "service started"
+    # 1755000000 epoch seconds, expressed in UTC.
+    assert parsed["ts"].startswith("2025-08-12T")
+
+
+def test_journald_drops_a_binary_message() -> None:
+    """journald hands back a list of byte values when the line was not valid
+    UTF-8. Guessing at it would let a unit inject arbitrary bytes downstream."""
+    assert parse_journald(_journal_record(MESSAGE=[104, 105])) is None
+
+
+def test_journald_drops_a_record_with_no_timestamp() -> None:
+    assert parse_journald(_journal_record(__REALTIME_TIMESTAMP="not-a-number")) is None
+
+
+def test_journald_drops_non_json() -> None:
+    assert parse_journald("-- No entries --") is None
+    assert parse_journald("") is None
+
+
+def test_journald_strips_ansi_colour() -> None:
+    parsed = parse_journald(_journal_record(MESSAGE="\x1b[31mred\x1b[0m"))
+
+    assert parsed is not None
+    assert parsed["message"] == "red"

@@ -10,6 +10,7 @@ is the at-least-once delivery guarantee across restarts.
 from __future__ import annotations
 
 import fcntl
+import json
 import logging
 import os
 import re
@@ -24,6 +25,9 @@ from stormpulse.logging.positions import LogPositionStore
 logger = logging.getLogger(__name__)
 
 MAX_LINES_PER_INTERVAL = 1000
+
+_JOURNALCTL_BINARY = "journalctl"
+_JOURNALCTL_TIMEOUT_SECONDS = 15
 
 
 class LogTailer:
@@ -251,6 +255,126 @@ class DockerTailer:
             self._group.container_name,
             to_ts,
         )
+
+
+class JournaldTailer:
+    """Tail a systemd unit's journal via ``journalctl --after-cursor``.
+
+    The position marker is the journal's own cursor, an opaque token the
+    journal hands back with every record, so there is no byte offset to keep
+    in sync and no rotation to detect: the journal owns both. Caller runs this
+    in a thread via ``asyncio.to_thread``.
+
+    Why a unit rather than a file: a systemd-supervised service writes to the
+    journal by default. Pointing the agent at the journal means the service
+    needs no ``StandardOutput=`` redirect, no log directory, no permissions on
+    it, and no rotation policy, and the journal supplies the timestamp that a
+    bare ``eprintln``/``print`` line does not carry.
+
+    Never raises: a missing ``journalctl``, an unknown unit, a timeout and a
+    non-zero exit all collapse to an empty batch, matching ``DockerTailer``.
+    """
+
+    def __init__(self, group: LogGroupConfig, position_store: LogPositionStore) -> None:
+        self._group = group
+        self._store = position_store
+
+    def _run(self, args: list[str]) -> str | None:
+        """Run journalctl, returning stdout, or None when it could not run."""
+        try:
+            result = subprocess.run(
+                [_JOURNALCTL_BINARY, "--unit", self._group.unit, "--output", "json",
+                 "--no-pager", *args],
+                capture_output=True,
+                text=True,
+                timeout=_JOURNALCTL_TIMEOUT_SECONDS,
+                shell=False,
+                check=False,
+            )
+        except FileNotFoundError:
+            logger.warning(
+                "journalctl not found for group %s; journald groups need systemd",
+                self._group.name,
+            )
+            return None
+        except subprocess.TimeoutExpired:
+            logger.warning("journalctl timed out for group %s", self._group.name)
+            return None
+
+        if result.returncode != 0:
+            logger.warning(
+                "journalctl failed for group %s (exit %d): %s",
+                self._group.name,
+                result.returncode,
+                result.stderr.strip()[:200],
+            )
+            return None
+        return result.stdout
+
+    @staticmethod
+    def _cursor_of(record_line: str) -> str:
+        """The ``__CURSOR`` of one JSON record, or '' if it has none."""
+        try:
+            record = json.loads(record_line)
+        except (ValueError, TypeError):
+            return ""
+        if not isinstance(record, dict):
+            return ""
+        cursor = record.get("__CURSOR")
+        return cursor if isinstance(cursor, str) else ""
+
+    def read_new_lines(self, max_lines: int) -> tuple[list[str], str, str]:
+        """Return up to ``max_lines`` journal records newer than the cursor.
+
+        Returns ``(lines, from_cursor, to_cursor)``, where each line is one
+        JSON record for the ``journald`` parser. ``to_cursor`` is the cursor of
+        the last record actually taken, so a backlog larger than ``max_lines``
+        drains over successive intervals instead of being skipped. That is the
+        same contract the file tailer offers, and the reason this does not pass
+        ``--lines`` to journalctl: combined with ``--after-cursor`` that would
+        return the NEWEST n and silently drop the oldest.
+
+        On the first run for a group there is no cursor, so this seeds from the
+        newest existing record and ships nothing. Without the seed the agent
+        would replay the unit's entire retained journal on first start.
+        """
+        stored = self._store.get_cursor(self._group.name)
+        if stored is None:
+            seed = self._run(["--lines", "1"])
+            if seed:
+                cursor = self._cursor_of(seed.strip().splitlines()[-1])
+                if cursor:
+                    self._store.set_cursor(self._group.name, self._group.unit, cursor)
+            # Nothing shipped either way: an empty journal leaves the group
+            # unseeded and the next interval tries again.
+            return ([], "", "")
+
+        out = self._run(["--after-cursor", stored])
+        if not out:
+            return ([], stored, stored)
+
+        records = [line for line in out.splitlines() if line.strip()]
+        if not records:
+            return ([], stored, stored)
+
+        taken = records[:max_lines]
+        to_cursor = ""
+        for record_line in reversed(taken):
+            to_cursor = self._cursor_of(record_line)
+            if to_cursor:
+                break
+        if not to_cursor:
+            # Every record we took is unparseable, so there is no cursor to
+            # advance to. Do not move the position: re-reading is the correct
+            # failure, losing the window is not.
+            return (taken, stored, stored)
+        return (taken, stored, to_cursor)
+
+    def confirm_shipped(self, to_cursor: str) -> None:
+        """Persist ``to_cursor`` as the new stored cursor for this group."""
+        if not to_cursor:
+            return
+        self._store.set_cursor(self._group.name, self._group.unit, to_cursor)
 
 
 class StreamingDockerTailer:

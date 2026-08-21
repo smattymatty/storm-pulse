@@ -8,7 +8,12 @@ from stormpulse.logging.parsers import (
 )
 from stormpulse.logging.positions import LogPositionStore
 from stormpulse.logging.shipper import LogShipper
-from stormpulse.logging.tailer import DockerTailer, LogTailer, StreamingDockerTailer
+from stormpulse.logging.tailer import (
+    DockerTailer,
+    JournaldTailer,
+    LogTailer,
+    StreamingDockerTailer,
+)
 from stormpulse.logging.writer import PulseLogger
 
 __all__ = [
@@ -17,6 +22,7 @@ __all__ = [
     "LogShipper",
     "LogTailer",
     "PulseLogger",
+    "JournaldTailer",
     "StreamingDockerTailer",
     "parse_caddy_json",
     "parse_docker_raw",

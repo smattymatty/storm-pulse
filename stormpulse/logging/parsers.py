@@ -391,10 +391,51 @@ def parse_django(line: str) -> dict[str, Any] | None:
     return {"ts": fallback_ts, "message": body, "truncated": truncated}
 
 
+def parse_journald(line: str) -> dict[str, Any] | None:
+    """Parse one ``journalctl --output=json`` record.
+
+    The journal already holds a timestamp and the message separately, so this
+    is a field lookup rather than a regex: ``__REALTIME_TIMESTAMP`` is
+    microseconds since the epoch as a decimal string, ``MESSAGE`` is the line
+    the service wrote.
+
+    Returns ``None`` for anything that is not a usable record. ``MESSAGE`` is a
+    list of byte values rather than a string when the service emitted output
+    that is not valid UTF-8; that is dropped rather than guessed at, so a
+    binary-spewing unit cannot inject arbitrary bytes into the log stream.
+    """
+    stripped = line.rstrip("\r\n")
+    if not stripped:
+        return None
+    try:
+        record = json.loads(stripped)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(record, dict):
+        return None
+
+    message = record.get("MESSAGE")
+    if not isinstance(message, str):
+        return None
+
+    raw_ts = record.get("__REALTIME_TIMESTAMP")
+    if not isinstance(raw_ts, str) or not raw_ts.isdigit():
+        return None
+    ts = datetime.fromtimestamp(int(raw_ts) / 1_000_000, tz=UTC)
+
+    truncated_message, truncated = _truncate(message)
+    return {
+        "ts": ts.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+        "message": _ANSI_ESCAPE_RE.sub("", truncated_message),
+        "truncated": truncated,
+    }
+
+
 PARSERS: dict[str, Any] = {
     "garage_s3": parse_garage_s3,
     "stormpulse": parse_stormpulse,
     "caddy_json": parse_caddy_json,
     "docker_raw": parse_docker_raw,
     "django": parse_django,
+    "journald": parse_journald,
 }

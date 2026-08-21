@@ -1387,3 +1387,94 @@ secret = true
     )
     config = load_config(write_config(toml))
     assert config.commands["notify"].params["api_token"].secret is True
+
+
+def test_log_groups_journald_source_parses(
+    write_config: Callable[[str], Path],
+) -> None:
+    toml = (
+        MINIMAL_VALID
+        + """
+[[log_groups]]
+name = "example"
+enabled = true
+source_type = "journald"
+unit = "example.service"
+parser = "journald"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+"""
+    )
+    cfg = load_config(write_config(toml))
+    assert len(cfg.log_groups) == 1
+    assert cfg.log_groups[0].unit == "example.service"
+    # A journald group names a unit, never a path: there is no file.
+    assert str(cfg.log_groups[0].source_path) == "."
+
+
+def test_log_groups_journald_without_a_unit_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    toml = (
+        MINIMAL_VALID
+        + """
+[[log_groups]]
+name = "example"
+enabled = true
+source_type = "journald"
+parser = "journald"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+"""
+    )
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "unit" in caplog.text
+
+
+def test_log_groups_journald_unit_with_whitespace_skipped(
+    write_config: Callable[[str], Path], caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A unit name is passed to journalctl as one argv element. Whitespace in
+    it means the operator meant something the agent cannot honour, so refuse
+    the group rather than tail a unit nobody named."""
+    caplog.set_level(logging.WARNING)
+    toml = (
+        MINIMAL_VALID
+        + """
+[[log_groups]]
+name = "example"
+enabled = true
+source_type = "journald"
+unit = "example.service --since=yesterday"
+parser = "journald"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+"""
+    )
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups == []
+    assert "whitespace" in caplog.text
+
+
+def test_log_groups_journald_does_not_require_a_container(
+    write_config: Callable[[str], Path],
+) -> None:
+    """Regression guard on the validation branch order: journald must be its
+    own arm, not fall through to the docker arm that demands container_name."""
+    toml = (
+        MINIMAL_VALID
+        + """
+[[log_groups]]
+name = "example"
+enabled = true
+source_type = "journald"
+unit = "example.service"
+parser = "journald"
+ship_interval_seconds = 10
+max_lines_per_batch = 200
+"""
+    )
+    cfg = load_config(write_config(toml))
+    assert cfg.log_groups[0].container_name == ""

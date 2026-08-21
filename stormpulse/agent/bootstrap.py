@@ -22,6 +22,7 @@ from stormpulse.logging import (
     LogPositionStore,
     LogShipper,
     LogTailer,
+    JournaldTailer,
     StreamingDockerTailer,
 )
 
@@ -193,13 +194,15 @@ def build_agent_dependencies(
         for group in config.log_groups:
             if not group.enabled:
                 continue
-            tailer: LogTailer | DockerTailer | StreamingDockerTailer
+            tailer: LogTailer | DockerTailer | StreamingDockerTailer | JournaldTailer
             if group.source_type == "docker_stream":
                 streaming = StreamingDockerTailer(group, log_position_store)
                 streaming_tailers.append(streaming)
                 tailer = streaming
             elif group.source_type == "docker":
                 tailer = DockerTailer(group, log_position_store)
+            elif group.source_type == "journald":
+                tailer = JournaldTailer(group, log_position_store)
             else:
                 tailer = LogTailer(group, log_position_store)
             shippers[group.name] = LogShipper(group, tailer)

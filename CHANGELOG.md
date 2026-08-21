@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Log groups can tail a systemd unit's journal** (`source_type = "journald"`, `unit = "example.service"`, `parser = "journald"`). Until now a host-native service could only be shipped by pointing the agent at a file the service wrote itself, which works for something like Caddy that emits timestamped JSON, and does not for a service that writes plain lines to stdout: `docker_raw` requires a leading RFC3339 timestamp and drops everything else. Tailing the journal instead means the service needs no `StandardOutput=` redirect, no log directory, no permissions on it and no rotation policy, and the journal supplies the timestamp the line itself lacks. Position is the journal's own cursor, so there is no byte offset to keep in sync and no rotation to detect. A first run seeds from the newest record rather than replaying the unit's whole retained journal, and a backlog larger than `max_lines_per_batch` drains oldest-first across intervals rather than being skipped. A missing `journalctl`, an unknown unit, a timeout or a non-zero exit all collapse to an empty batch and leave the stored cursor where it was.
+
 ### Changed
 
 - **The changed-line quality gate now runs on pushes to main, not only pull requests.** This repo's normal flow is direct-to-main commits, so a PR-only gate never fired. A push diffs against the push event's own before-SHA (every commit in the push; falls back to the last commit when the before-SHA is unusable, e.g. a force push), a pull request still diffs against origin/main. A push whose diff is empty skips loudly instead of letting Skylos's empty-changed-set fallback run a full scan that is red on the legacy baseline.
