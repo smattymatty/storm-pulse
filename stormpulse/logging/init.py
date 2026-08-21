@@ -13,6 +13,7 @@ from stormpulse.init.host_native_logs import (
     offer_caddy_events_log_group,
     offer_caddy_log_group,
 )
+from stormpulse.init.journald_logs import offer_journald_log_groups
 from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
@@ -240,6 +241,11 @@ def run_logging_init(config_path: Path) -> None:
     if offer_caddy_log_group(config_path):
         wrote_anything = True
     if offer_caddy_events_log_group(config_path):
+        wrote_anything = True
+    # Systemd units cannot be detected the way containers and Caddy can, so
+    # this one asks. Opt-in with a NO default, so a Docker-only box answers one
+    # extra question and moves on.
+    if offer_journald_log_groups(config_path):
         wrote_anything = True
 
     if not wrote_anything:
