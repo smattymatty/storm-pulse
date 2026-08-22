@@ -7,11 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-22
+
 ### Added
 
 - **Log groups can tail a systemd unit's journal** (`source_type = "journald"`, `unit = "example.service"`, `parser = "journald"`). Until now a host-native service could only be shipped by pointing the agent at a file the service wrote itself, which works for something like Caddy that emits timestamped JSON, and does not for a service that writes plain lines to stdout: `docker_raw` requires a leading RFC3339 timestamp and drops everything else. Tailing the journal instead means the service needs no `StandardOutput=` redirect, no log directory, no permissions on it and no rotation policy, and the journal supplies the timestamp the line itself lacks. Position is the journal's own cursor, so there is no byte offset to keep in sync and no rotation to detect. A first run seeds from the newest record rather than replaying the unit's whole retained journal, and a backlog larger than `max_lines_per_batch` drains oldest-first across intervals rather than being skipped. A missing `journalctl`, an unknown unit, a timeout or a non-zero exit all collapse to an empty batch and leave the stored cursor where it was.
 
-- **`stormpulse logging init` can add a journald group.** Systemd units cannot be enumerated the way containers can, so the wizard asks rather than detects, opt-in with a NO default so a Docker-only box answers one question and moves on. What it adds over a hand-edited block is the check a hand edit cannot make: it reads the unit's journal before writing, so a typo is caught at setup instead of becoming a group that ships nothing forever. An unreadable unit is reported and can still be added deliberately, because a freshly installed service and a typo look identical from here. The group name is derived from the unit with anything the config loader would reject replaced, since a name the loader refuses produces a block skipped at load that looks exactly like a configured group.
+- **`stormpulse logging init` can add a journald group.** Opt-in with a NO default, so a Docker-only box answers one question and moves on. The wizard detects the box's operator-installed units and offers them by number, filtering out distro units, un-instantiated templates, the agent itself and units already configured; free text still takes anything detection did not surface, so the list is an offer and never a cage. Both routes then run the check a hand edit cannot make: the unit's journal is read before the block is written, so a typo is caught at setup instead of becoming a group that ships nothing forever. Detection proves a unit exists, never that this user can read it, which is a different question on a box where the agent is not in `systemd-journal`. An unreadable unit is reported and can still be added deliberately, because a freshly installed service and a typo look identical from here. The group name is derived from the unit with anything the config loader would reject replaced, since a name the loader refuses produces a block skipped at load that looks exactly like a configured group.
 
 ### Changed
 
@@ -283,7 +285,8 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* - current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.1...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.2...HEAD
+[0.4.2]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.1...v0.4.2
 [0.4.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.0...v0.4.1
 [0.4.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.3.2...v0.4.0
 [0.3.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.2.1...v0.3.0
