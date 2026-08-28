@@ -1,0 +1,158 @@
+{
+  "parsers": {
+    "caddy_json": {
+      "all_fields": [
+        "bytes_sent",
+        "client_ip",
+        "duration_ms",
+        "error",
+        "host",
+        "identifier",
+        "level",
+        "logger",
+        "message",
+        "method",
+        "msg",
+        "names",
+        "path",
+        "status",
+        "truncated",
+        "ts",
+        "user_agent"
+      ],
+      "shipper_added": [],
+      "variants": {
+        "access": [
+          "bytes_sent",
+          "client_ip",
+          "duration_ms",
+          "host",
+          "level",
+          "message",
+          "method",
+          "path",
+          "status",
+          "truncated",
+          "ts",
+          "user_agent"
+        ],
+        "cert_event": [
+          "error",
+          "identifier",
+          "level",
+          "logger",
+          "message",
+          "msg",
+          "names",
+          "truncated",
+          "ts"
+        ]
+      }
+    },
+    "django": {
+      "all_fields": [
+        "level",
+        "logger",
+        "message",
+        "truncated",
+        "ts"
+      ],
+      "shipper_added": [],
+      "variants": {
+        "app_line": [
+          "level",
+          "logger",
+          "message",
+          "truncated",
+          "ts"
+        ]
+      }
+    },
+    "docker_raw": {
+      "all_fields": [
+        "message",
+        "truncated",
+        "ts"
+      ],
+      "shipper_added": [],
+      "variants": {
+        "line": [
+          "message",
+          "truncated",
+          "ts"
+        ]
+      }
+    },
+    "garage_s3": {
+      "all_fields": [
+        "bucket",
+        "bucket_id",
+        "client_ip",
+        "key_id",
+        "level",
+        "message",
+        "method",
+        "object_key",
+        "path",
+        "proxy",
+        "response_code",
+        "truncated",
+        "ts"
+      ],
+      "shipper_added": [
+        "bucket_id"
+      ],
+      "variants": {
+        "request": [
+          "bucket",
+          "client_ip",
+          "key_id",
+          "level",
+          "message",
+          "method",
+          "object_key",
+          "path",
+          "proxy",
+          "response_code",
+          "truncated",
+          "ts"
+        ]
+      }
+    },
+    "journald": {
+      "all_fields": [
+        "message",
+        "truncated",
+        "ts"
+      ],
+      "shipper_added": [],
+      "variants": {
+        "line": [
+          "message",
+          "truncated",
+          "ts"
+        ]
+      }
+    },
+    "stormpulse": {
+      "all_fields": [
+        "event_type",
+        "level",
+        "message",
+        "truncated",
+        "ts"
+      ],
+      "shipper_added": [],
+      "variants": {
+        "line": [
+          "event_type",
+          "level",
+          "message",
+          "truncated",
+          "ts"
+        ]
+      }
+    }
+  },
+  "schema": 1
+}

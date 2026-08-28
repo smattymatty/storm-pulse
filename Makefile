@@ -13,7 +13,7 @@ SKYLOS ?= .venv/bin/skylos
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
 .PHONY: check test mypy fitness deadcode security quality pre-release-check clean \
-        wire-contract garage-up garage-down test-wire test-garage-wire
+        wire-contract log-line-contract garage-up garage-down test-wire test-garage-wire
 
 # Umbrella: every check in one command. No Docker, no network (except
 # `security`, whose AI-defect checks may consult the PyPI registry).
@@ -97,6 +97,13 @@ fitness:
 # check. The diff is a change to a published contract; review it as one.
 wire-contract:
 	$(PYTHON) -m scripts.generate_wire_contract
+
+# The log-line contract, published SEPARATELY from wire-contract.json on
+# purpose: that artifact's digest gates a destructive-sweep refusal on the
+# consumer side, and a logging-field change must never be able to pause a key
+# reconcile. Same review discipline, no runtime blast radius.
+log-line-contract:
+	$(PYTHON) -m scripts.generate_log_line_contract
 
 # CORE-002 release-time check. Asserts pyproject [project].version matches
 # the top CHANGELOG.md entry. Run before `uv publish`.
