@@ -14,14 +14,11 @@ jobs:
   test:
     runs-on: docker
     container:
-      image: python:3.12-slim
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
       volumes:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git and build tools
-        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-
       - name: Checkout code
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -43,14 +40,11 @@ jobs:
   fitness:
     runs-on: docker
     container:
-      image: python:3.12-slim
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
       volumes:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git and build tools
-        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-
       - name: Checkout code
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -73,14 +67,11 @@ jobs:
   deadcode:
     runs-on: docker
     container:
-      image: python:3.12-slim
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
       volumes:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git and build tools
-        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-
       - name: Checkout code
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -103,14 +94,11 @@ jobs:
   security:
     runs-on: docker
     container:
-      image: python:3.12-slim
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
       volumes:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git and build tools
-        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-
       - name: Checkout code
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -132,14 +120,11 @@ jobs:
   quality:
     runs-on: docker
     container:
-      image: python:3.12-slim
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
       volumes:
         - pip-cache:/pip-cache
 
     steps:
-      - name: Install git and build tools
-        run: apt-get update && apt-get install -y --no-install-recommends git gcc libc6-dev && rm -rf /var/lib/apt/lists/*
-
       - name: Checkout code (full, with main)
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"

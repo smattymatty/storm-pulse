@@ -34,7 +34,7 @@ jobs:
       # single copy serves both repos rather than a vendored second one
       # drifting out of step. Registry auth for it is host-level on the
       # runner, not declared here.
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
       volumes:
         - pip-cache:/pip-cache
     env:
