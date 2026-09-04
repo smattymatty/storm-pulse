@@ -88,7 +88,7 @@ jobs:
           git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.33.2"
+        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
 
       # SKY-U006 (unused parameters) stays out: callback signatures are
       # interface conformance, not dead code. Same command as `make deadcode`.
@@ -118,7 +118,7 @@ jobs:
           git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.33.2"
+        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
 
       - name: Security scan (skylos)
         run: skylos . --danger --secrets --ai-defects --sca --gate --format concise
@@ -148,7 +148,7 @@ jobs:
           git fetch origin main
 
       - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.33.2"
+        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
 
       - name: Quality scan, changed lines (skylos)
         run: |

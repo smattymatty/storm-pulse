@@ -24,7 +24,7 @@ dev = [
     "import-linter>=2.0",
     "ruff>=0.8.0",
     "pre-commit>=4.0",
-    "skylos==4.33.2",
+    "skylos==4.35.0",
 ]
 
 [project.scripts]
