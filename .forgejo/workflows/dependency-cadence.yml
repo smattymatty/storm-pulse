@@ -1,0 +1,96 @@
+# Weekly dependency cadence.
+#
+# Reports dependency staleness and known advisories into one standing
+# issue. It never changes a pin: the report is read, pins move by hand,
+# and the security job on every push is what actually blocks a merge.
+#
+# Why this exists here specifically. `skylos --sca` resolves EXACT pins
+# only, and this project declares nine floor-only constraints, one capped
+# range and a single exact pin. That leaves the push-time advisory scan
+# nearly blind: it can see `skylos` and nothing else. This job installs
+# the project, freezes the RESOLVED tree into exact pins, and scans that
+# instead, which is the only way a CVE in websockets, psutil or
+# cryptography would ever be noticed here.
+#
+# Sunday 10:00 UTC, an hour behind the website's cadence job: both repos
+# share one single-core runner and there is no reason to make them queue.
+
+name: Dependency cadence
+
+on:
+  schedule:
+    - cron: '0 10 * * 0'
+  # Permanent, not a development leftover: a cron cannot be fired on
+  # demand, so this is the only way to prove the job still works without
+  # waiting a week.
+  workflow_dispatch:
+
+jobs:
+  python-deps:
+    runs-on: docker
+    container:
+      # The one job here that does not use python:3.12-slim. It needs the
+      # `dependency-cadence` tool, which ships inside this image so that a
+      # single copy serves both repos rather than a vendored second one
+      # drifting out of step. Registry auth for it is host-level on the
+      # runner, not declared here.
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12
+      volumes:
+        - pip-cache:/pip-cache
+    env:
+      FORGE_API: https://git.stormdevelopments.ca/api/v1
+      FORGE_REPO: ${{ github.repository }}
+      DEPS_CADENCE_TOKEN: ${{ secrets.DEPS_CADENCE_TOKEN }}
+
+    steps:
+      - name: Checkout code
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+
+      - name: Confirm the token can reach the issues API
+        run: |
+          FORGE_TOKEN="$DEPS_CADENCE_TOKEN"
+          [ -n "$FORGE_TOKEN" ] || FORGE_TOKEN="$GITHUB_TOKEN"
+          export FORGE_TOKEN
+          dependency-cadence probe
+
+      - name: Install the project and its dev extra
+        run: pip install --cache-dir /pip-cache -e ".[dev]"
+
+      - name: Collect staleness and advisories
+        run: |
+          set -u
+          pip list --outdated --format=json > /tmp/pip-outdated.json
+
+          # The resolved tree as exact pins, which is the only shape
+          # skylos --sca can actually read.
+          mkdir -p /tmp/cadence/resolved
+          pip freeze > /tmp/cadence/resolved/requirements.txt
+
+          set +e
+          skylos /tmp/cadence --sca --gate --format concise > /tmp/sca.txt 2>&1
+          code=$?
+          set -e
+          # 0 clean, 1 advisories found. Anything else means the scanner
+          # failed, and a failed scan must never render as "no advisories".
+          if [ "$code" -le 1 ]; then
+            echo ok > /tmp/scan-status
+          else
+            echo failed > /tmp/scan-status
+            echo "skylos --sca exited ${code}:"
+            cat /tmp/sca.txt
+          fi
+
+      - name: Write the report to the standing issue
+        run: |
+          FORGE_TOKEN="$DEPS_CADENCE_TOKEN"
+          [ -n "$FORGE_TOKEN" ] || FORGE_TOKEN="$GITHUB_TOKEN"
+          export FORGE_TOKEN
+          dependency-cadence report \
+            --ecosystem python \
+            --manifest pyproject.toml \
+            --outdated /tmp/pip-outdated.json \
+            --advisories /tmp/sca.txt \
+            --scan-status "$(cat /tmp/scan-status)"
