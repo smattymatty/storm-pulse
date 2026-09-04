@@ -19,7 +19,11 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=1.0",
-    "mypy>=1.13",
+    # Ceiling, not just a floor: mypy 2.0 tightened bare generics and
+    # arrived on its own because this line had no upper bound, which
+    # turned a routine push red for a reason no commit explained.
+    # Lift it deliberately, having read the 3.0 release notes.
+    "mypy>=1.13,<3.0",
     "types-psutil>=6.0",
     "import-linter>=2.0",
     "ruff>=0.8.0",

@@ -168,7 +168,7 @@ def _operator_installed(units: list[str]) -> list[str]:
     return keep
 
 
-def detect_candidate_units(configured: set) -> list[str]:
+def detect_candidate_units(configured: set[str]) -> list[str]:
     """Units worth offering: operator-installed, not the agent itself, not
     already configured. Empty is a normal answer, not a failure."""
     candidates = [
@@ -225,7 +225,7 @@ def probe_unit_journal(unit: str) -> 'str | None':
     return None
 
 
-def _existing_group_names(config_path: Path) -> set:
+def _existing_group_names(config_path: Path) -> set[str]:
     """Group names already in the config. An unreadable or malformed config
     yields the empty set: detection then offers everything, and the per-unit
     duplicate check still refuses to write a second block for a name that is
