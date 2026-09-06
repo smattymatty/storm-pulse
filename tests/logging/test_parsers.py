@@ -158,9 +158,55 @@ class TestParseGarageS3:
         assert parse_garage_s3(line) is None
 
     def test_response_error_line_rejected(self) -> None:
+        # The pre-2.3.0 shape names no request, so it attributes nothing.
         line = (
             "2026-04-13T23:32:00.155423Z  INFO garage_api_common::generic_server: "
             "Response: error 403 Forbidden, Forbidden: Operation is not allowed for this key."
+        )
+        assert parse_garage_s3(line) is None
+
+    def test_self_sufficient_error_line_carries_the_status(self) -> None:
+        # Garage v2.3.0 echoes the request on the error line. It is the
+        # only line that says whether the signature verified: the request
+        # line is logged first, off the Authorization header alone.
+        line = (
+            "2026-09-06T14:00:00.000000Z  INFO garage_api_common::generic_server: "
+            "error 404 Not Found, Key not found in response to "
+            "1.2.3.4 (via [::1]:1234) (key GKabc123) HEAD /bucket/storm-recovery-deadbeef"
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["response_code"] == 404
+        assert result["key_id"] == "GKabc123"
+        assert result["method"] == "HEAD"
+        assert result["bucket"] == "bucket"
+        assert result["object_key"] == "storm-recovery-deadbeef"
+        assert result["client_ip"] == "1.2.3.4"
+        assert result["level"] == "info"
+        assert result["message"] == "HEAD bucket/storm-recovery-deadbeef -> 404"
+
+    def test_error_line_status_is_the_garage_status(self) -> None:
+        forbidden = (
+            "2026-09-06T14:00:00.000000Z  INFO garage_api_common::generic_server: "
+            "error 403 Forbidden, Forbidden: Invalid signature in response to "
+            "1.2.3.4 (via [::1]:1234) (key GKabc123) GET /bucket/storm-recovery-deadbeef"
+        )
+        assert parse_garage_s3(forbidden)["response_code"] == 403
+        server_error = (
+            "2026-09-06T14:00:00.000000Z  WARN garage_api_common::generic_server: "
+            "error 500 Internal Server Error, Internal error in response to "
+            "1.2.3.4 (via [::1]:1234) (key GKabc123) GET /bucket/obj"
+        )
+        result = parse_garage_s3(server_error)
+        assert result["response_code"] == 500
+        assert result["level"] == "warning"
+
+    def test_error_line_without_a_key_is_dropped(self) -> None:
+        # An unsigned request names no key, so it attributes to no account.
+        line = (
+            "2026-09-06T14:00:00.000000Z  INFO garage_api_common::generic_server: "
+            "error 403 Forbidden, Forbidden: No signature in response to "
+            "1.2.3.4 (via [::1]:1234) GET /bucket/obj"
         )
         assert parse_garage_s3(line) is None
 

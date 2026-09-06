@@ -32,6 +32,21 @@ _GARAGE_S3_RE = re.compile(
     r"(?P<path>\S+)\s*$"
 )
 
+# Garage's error line (v2.3.0+, "log api error in one self-sufficient line"):
+#   2026-04-10T13:23:52.001Z  INFO garage_api_common::generic_server: error 404 Not Found, Key not found in response to 71.19.243.102 (via [::1]:37780) (key GK...) HEAD /bucket/object
+# Written AFTER the request line, once the handler has answered. The status
+# is what makes it worth a row of its own: the request line is logged before
+# the signature is checked, so only this line says whether the key that
+# signed was the key that was named. Server errors log at WARN.
+_GARAGE_S3_ERROR_RE = re.compile(
+    r"(?P<ts>\S+)\s+(?:INFO|WARN)\s+garage_api_common::generic_server:\s+"
+    r"error\s+(?P<status>\d{3})\b.*\s+in response to\s+"
+    r"(?P<ip>\S+)\s+\(via\s+(?P<proxy>[^)]+)\)\s+"
+    r"\(key\s+(?P<key_id>[A-Za-z0-9]+)\)\s+"
+    r"(?P<method>[A-Z]+)\s+"
+    r"(?P<path>\S+)\s*$"
+)
+
 _GARAGE_ADMIN_RE = re.compile(
     r"(?P<ts>\S+)\s+INFO\s+garage_api_admin::api_server:\s+"
     r"(?:Proxied|Internal)\s+admin\s+API\s+request:\s+"
@@ -70,8 +85,15 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
         stripped = docker_prefix.group(2)
     truncated_line, truncated = _truncate(stripped)
 
-    # Try the S3 access log format first (customer-facing requests).
+    # The S3 access log format first (customer-facing requests), then the
+    # error line the same request leaves when it failed: one row each, the
+    # second carrying the status the first cannot know yet.
     m = _GARAGE_S3_RE.fullmatch(truncated_line)
+    status: int | None = None
+    if m is None:
+        m = _GARAGE_S3_ERROR_RE.fullmatch(truncated_line)
+        if m is not None:
+            status = int(m.group("status"))
     if m is not None:
         path = m.group("path")
         bucket = ""
@@ -89,10 +111,12 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
             message = f"{method} {bucket}"
         else:
             message = f"{method} {path}"
+        if status is not None:
+            message = f"{message} -> {status}"
 
         return {
             "ts": m.group("ts"),
-            "level": "info",
+            "level": "info" if status is None or status < 500 else "warning",
             "message": message,
             "client_ip": m.group("ip"),
             "proxy": m.group("proxy"),
@@ -101,7 +125,7 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
             "path": path,
             "bucket": bucket,
             "object_key": object_key,
-            "response_code": None,
+            "response_code": status,
             "truncated": truncated,
         }
 
