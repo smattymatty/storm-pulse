@@ -184,19 +184,27 @@ A control plane that receives sentences has no contract, only a habit. It also
 forecloses the second door, because a renderer that receives finished prose
 cannot render it any other way.
 
-### 9. Emitting the CaseFile puts it under CORE-008, and that is new
+### 9. A case file on the wire is a CORE-008 question, and this ADR does not answer it
 
 Today `CaseFile`, `SuspectReport` and `Verdict` are CLI-local: nothing pushes
 them, so nothing declares them.
-[CORE-008](008-declared-wire-shape-for-emitted-state.md) decision 1 governs
-emitted dataclasses, and the moment a case file reaches the dashboard these
-three become emitted shape. They enter `wire-contract.json`, they enter the
-digest, and renaming `SuspectReport.evidence` becomes a contract diff rather
-than a refactor.
+[CORE-008](008-declared-wire-shape-for-emitted-state.md) governs the shape this
+agent emits -- per emitted dataclass, the field names and their nesting, with
+the digest advertised on register and its scope explicitly limited to names and
+nesting, not types and not meaning. The moment a case file crosses the wire,
+these three types are emitted shape and CORE-008 has jurisdiction over them.
 
-Named here because it is a consequence the brief did not carry, and because it
-is cheap now and expensive later: the artifact is generated from live
-dataclasses, so the cost is one regeneration in the commit that first emits one.
+**That is the whole of what is decided here: the jurisdiction, not the answer.**
+Whether the case-file types are declared wholesale into `wire-contract.json` and
+the digest, or whether the wire carries a narrower projection of them and the
+rich types stay CLI-local, is a real fork with real consequences for every
+future field a check wants to report. It is not settled by a draft, and it is
+not settled as a side effect of an ADR about a probe. **It is owed its own
+grill, and the node comes first there as it does here.**
+
+Named rather than answered because it is a consequence the brief did not carry,
+and a consequence found in the draft is a question for the grill, never a
+decision the draft may take on its own authority.
 
 ## Consequences
 
@@ -208,8 +216,8 @@ dataclasses, so the cost is one regeneration in the commit that first emits one.
 - A node with no `[investigate.deploy.*]` table answers INCONCLUSIVE, so rolling
   this out is a config change per node, visible and refusable, not a silent
   fleet-wide capability gain.
-- `CaseFile` becomes a published contract (decision 9). The digest gains a
-  reason to change that has nothing to do with integration state.
+- Whether `CaseFile` becomes published contract is left open by decision 9, and
+  that fork gates the first emit rather than the first line of probe code.
 - The bound in decision 4 is a permanent, accepted blind spot. It is written
   down so that a future INCONCLUSIVE is read as the design working, not as the
   probe failing.
@@ -242,8 +250,9 @@ dataclasses, so the cost is one regeneration in the commit that first emits one.
   fixture that fails if the verdict reads CLEARED.
 - **Self-match suppression (code-enforced):** a judge-level test feeding `pgrep`
   output containing the probe's own pid.
-- **Declared shape (existing, inherited):** CORE-008 Function 9, once decision 9
-  lands the case-file types in `wire-contract.json`.
+- **Declared shape (existing, deferred):** CORE-008 Function 9 covers whatever
+  the grill in decision 9 settles as the emitted shape. Nothing to add here
+  until it does.
 - **Review-only, named as such:** decision 5's reading of an unexpected root as a
   *finding* rather than an error is a judgement about verdict semantics. No test
   distinguishes an honest IMPLICATED from a lazy one.
@@ -283,7 +292,8 @@ are, and this ADR owns its bounds. [CORE-005](005-integration-contract.md) is
 unchanged: this adds no Integration and no whitelisted command.
 [CORE-008](008-declared-wire-shape-for-emitted-state.md) owns the emitted shape
 and is not amended here; decision 9 records that the case-file types come under
-its rule when they are first emitted.
+its rule when they are first emitted, and defers how they are declared to its
+own grill.
 
 The control-plane half is deferred to a separate ADR (website
 `developer/020`), which gates on this one because the dashboard renders what the
