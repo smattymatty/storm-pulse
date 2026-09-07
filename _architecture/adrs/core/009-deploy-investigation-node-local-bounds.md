@@ -2,7 +2,7 @@
 adr:
   id: "CORE-009"
   title: "The deploy investigation: a core probe, bounded by node-local config"
-  status: "Proposed"
+  status: "Accepted"
   date: "2026-09-07"
   authors:
     - "Mathew Storm (operator, decisions)"
@@ -17,7 +17,11 @@ it may say back. No live figures, no path inventory. Verify against
 `stormpulse/cli/investigate/__init__.py`, `stormpulse/sdk/investigate.py`, and
 `config/stormpulse.example.toml`.
 
-**Status: Proposed.** Not sealed, not built, no commit.
+**Status: ACCEPTED 2026-09-07 (operator seal), at `c47cd99`.** Decisions 1 to 8
+are sealed and NOT BUILT: no probe code exists, no config section is read, and
+no node answers `stormpulse investigate deploy`. Decision 9 settles nothing and
+says so: how a case file is declared on the wire defers to its own grill, and
+that fork gates the first emit, not the first line of probe code.
 
 ## Context
 
