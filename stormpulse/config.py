@@ -218,8 +218,47 @@ class LogGroupConfig:
 # table is an Integration's raw config section, keyed by id and parsed by that
 # Integration's own module (CORE-005 decision 4: Foundation stops naming
 # Integrations). ``log_groups`` is an array, not a table, so it is excluded.
+_SUBJECT_PATTERN = re.compile(r"[a-zA-Z0-9_.-]{1,64}")
+
+# Bounds for the deploy probe's filesystem walk (CORE-009 decision 4). These
+# are the ceiling the config may ask for, not the default: a node may narrow
+# them and may not widen them. An unbounded walk of $HOME reads the
+# neighbourhood of every secret on the box to answer a question about one
+# binary, which is the refusal the ADR turns on.
+_DEPLOY_MAX_DEPTH_CEILING = 8
+_DEPLOY_MAX_BYTES_CEILING = 1_048_576
+_DEPLOY_DEFAULT_DEPTH = 3
+_DEPLOY_DEFAULT_BYTES = 65_536
+
+
+@dataclass(frozen=True, slots=True)
+class DeployProbeConfig:
+    """One subject the `deploy` investigation can answer for on this node.
+
+    Every parameter the probe uses resolves from here and from nowhere else
+    (CORE-009 decision 3). Nothing about what to look for crosses the wire, so
+    the control plane cannot point this node at a path of its choosing.
+
+    ``expected_root`` is where the unit installs the thing. ``search_roots``
+    are the bounded places the probe may look. A binary found in a search root
+    but outside the expected root is the finding, not an error (decision 5):
+    that is the shape of the 2026-09-07 alpha residue, where every install site
+    in the repo named /home/storm/guard and the disk held
+    /home/storm/buckets-guard.
+    """
+
+    subject: str
+    units: tuple[str, ...]
+    expected_root: Path
+    search_roots: tuple[Path, ...]
+    ports: tuple[int, ...] = ()
+    max_depth: int = _DEPLOY_DEFAULT_DEPTH
+    max_bytes: int = _DEPLOY_DEFAULT_BYTES
+
+
 _CORE_SECTIONS: frozenset[str] = frozenset(
-    {"agent", "dashboard", "tls", "auth", "metrics", "project", "storage", "commands"}
+    {"agent", "dashboard", "tls", "auth", "metrics", "project", "storage",
+     "commands", "investigate"}
 )
 
 
@@ -242,6 +281,9 @@ class Config:
     commands: dict[str, CommandSpec] = dataclasses.field(default_factory=dict)
     integrations: dict[str, dict[str, Any]] = dataclasses.field(default_factory=dict)
     log_groups: list[LogGroupConfig] = dataclasses.field(default_factory=list)
+    deploy_probes: dict[str, DeployProbeConfig] = dataclasses.field(
+        default_factory=dict,
+    )
 
     def validate_paths(self) -> None:
         """Check that all referenced core file paths exist and are readable.
@@ -541,6 +583,147 @@ def _parse_integrations(raw: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+def _parse_deploy_probes(raw: dict[str, Any]) -> dict[str, DeployProbeConfig]:
+    """Parse the optional ``[investigate.deploy.<subject>]`` tables.
+
+    Soft, per the ``[[log_groups]]`` precedent: an invalid subject is skipped
+    with a loud warning rather than aborting boot. This section feeds a
+    diagnostic, never the agent's ability to run, so a typo in it must not take
+    metrics and liveness down on a systemd restart loop. A skipped subject is
+    not a silent one either - the investigation reports INCONCLUSIVE naming the
+    section it lacks, never CLEARED (CORE-009 decision 3).
+
+    Only a structurally-wrong container ([investigate] or [investigate.deploy]
+    not a table) is fatal, because that shape means the operator's intent is
+    unreadable rather than one entry being wrong.
+    """
+    investigate = raw.get("investigate", {})
+    if not isinstance(investigate, dict):
+        raise ConfigError("'investigate' must be a table")
+    subjects = investigate.get("deploy", {})
+    if not isinstance(subjects, dict):
+        raise ConfigError("'investigate.deploy' must be a table of subjects")
+
+    out: dict[str, DeployProbeConfig] = {}
+    for subject, entry in subjects.items():
+        try:
+            out[subject] = _parse_one_deploy_probe(subject, entry)
+        except ConfigError as exc:
+            logger.warning(
+                "Skipping invalid [investigate.deploy.%s]: %s. `stormpulse "
+                "investigate deploy` reports INCONCLUSIVE for this subject "
+                "until it is fixed.",
+                subject, exc,
+            )
+    return out
+
+
+def _parse_one_deploy_probe(subject: str, entry: Any) -> DeployProbeConfig:
+    """Validate one subject table; raise ConfigError on any problem."""
+    ctx = f"investigate.deploy.{subject}"
+    if not isinstance(entry, dict):
+        raise ConfigError(f"[{ctx}] must be a table")
+    if not _SUBJECT_PATTERN.fullmatch(subject):
+        raise ConfigError(
+            f"subject name must be alphanumeric/underscore/hyphen/dot, "
+            f"1-64 chars, got {subject!r}"
+        )
+
+    units = _require_str_list(entry, "units", ctx)
+    for unit in units:
+        if "/" in unit:
+            raise ConfigError(
+                f"'units' in [{ctx}] holds systemd unit names, not paths; "
+                f"got {unit!r}"
+            )
+
+    expected_root = _require_abs_path(entry, "expected_root", ctx)
+    search_roots = tuple(
+        _abs_path(value, "search_roots", ctx)
+        for value in _require_str_list(entry, "search_roots", ctx)
+    )
+    # An expected_root outside every search root means the probe cannot look
+    # where the unit installs, so every verdict it reaches is about somewhere
+    # else. Refused at load rather than reported as an absence on the box.
+    if not any(_is_within(expected_root, root) for root in search_roots):
+        raise ConfigError(
+            f"'expected_root' {str(expected_root)!r} in [{ctx}] is not inside "
+            f"any of 'search_roots'; the probe could never look at it"
+        )
+
+    ports = tuple(
+        _check_port(value, ctx)
+        for value in optional_key(entry, "ports", list, [], ctx)
+    )
+    max_depth = _bounded_int(
+        entry, "max_depth", ctx, _DEPLOY_DEFAULT_DEPTH, 1, _DEPLOY_MAX_DEPTH_CEILING,
+    )
+    max_bytes = _bounded_int(
+        entry, "max_bytes", ctx, _DEPLOY_DEFAULT_BYTES, 1024, _DEPLOY_MAX_BYTES_CEILING,
+    )
+    return DeployProbeConfig(
+        subject=subject,
+        units=tuple(units),
+        expected_root=expected_root,
+        search_roots=search_roots,
+        ports=ports,
+        max_depth=max_depth,
+        max_bytes=max_bytes,
+    )
+
+
+def _require_str_list(entry: dict[str, Any], key: str, ctx: str) -> list[str]:
+    values = require_key(entry, key, list, ctx)
+    if not values:
+        raise ConfigError(f"'{key}' in [{ctx}] must not be empty")
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigError(
+                f"'{key}' in [{ctx}] must be a list of non-empty strings, "
+                f"got {value!r}"
+            )
+    return [str(value) for value in values]
+
+
+def _abs_path(value: str, key: str, ctx: str) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        raise ConfigError(f"'{key}' in [{ctx}] must be absolute, got {value!r}")
+    # A traversal segment makes a declared bound unreadable: "/home/storm/.."
+    # is / wearing a costume, and the walk's containment check would honour it.
+    if ".." in path.parts:
+        raise ConfigError(
+            f"'{key}' in [{ctx}] must not contain '..', got {value!r}"
+        )
+    return path
+
+
+def _require_abs_path(entry: dict[str, Any], key: str, ctx: str) -> Path:
+    return _abs_path(require_key(entry, key, str, ctx), key, ctx)
+
+
+def _is_within(candidate: Path, root: Path) -> bool:
+    """True when ``candidate`` is ``root`` or sits underneath it."""
+    return candidate == root or root in candidate.parents
+
+
+def _check_port(value: Any, ctx: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise ConfigError(f"'ports' in [{ctx}] must be integers, got {value!r}")
+    if not 1 <= value <= 65535:
+        raise ConfigError(f"'ports' in [{ctx}] must be 1-65535, got {value}")
+    return value
+
+
+def _bounded_int(
+    entry: dict[str, Any], key: str, ctx: str, default: int, low: int, high: int,
+) -> int:
+    value = optional_key(entry, key, int, default, ctx)
+    if isinstance(value, bool) or not low <= value <= high:
+        raise ConfigError(f"'{key}' in [{ctx}] must be {low}-{high}, got {value!r}")
+    return int(value)
+
+
 def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
     """Parse the optional [[log_groups]] array.
 
@@ -708,4 +891,5 @@ def load_config(path: Path) -> Config:
         commands=_parse_commands(raw),
         integrations=_parse_integrations(raw),
         log_groups=_parse_log_groups(raw),
+        deploy_probes=_parse_deploy_probes(raw),
     )

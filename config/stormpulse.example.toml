@@ -124,3 +124,36 @@ db_path = "/home/deploy/.local/share/stormpulse/stormpulse.db"
 # admin_url = "http://localhost:2019"
 # main_caddyfile = "/etc/caddy/Caddyfile"
 # drop_in_path = "/etc/caddy/conf.d/buckets-custom-domains.caddy"
+
+# ---------------------------------------------------------------------------
+# Deploy investigation (optional) - what `stormpulse investigate deploy` may
+# look for on THIS node. ADR CORE-009.
+#
+# Every parameter the probe uses resolves from here and from nowhere else: the
+# dashboard cannot inject a path, a glob, or a unit name. A node with no
+# section here reports INCONCLUSIVE naming the section it lacks, never CLEARED,
+# because silence about a subject is not evidence that the subject is absent.
+#
+# One table per subject. The subject name is also the string matched against
+# process arguments and artifact filenames.
+#
+# `expected_root` is where the unit installs the thing; `search_roots` are the
+# bounded places the probe may look and must contain expected_root. A binary
+# found in a search root but OUTSIDE expected_root is the finding, not an
+# error: that is the 2026-09-07 alpha shape, where every install site in the
+# repo named /home/storm/guard and the disk held /home/storm/buckets-guard.
+#
+# The walk never leaves these roots, never follows a symlink, and never
+# descends past max_depth (1-8, default 3). It reports a file's existence,
+# size and mtime and never opens it. The cost of that bound is real: residue
+# in a root you do not name here is not found, and the case file says so and
+# prints the one-off `find` that would settle it.
+# ---------------------------------------------------------------------------
+#
+# [investigate.deploy.storm-buckets-guard]
+# units = ["storm-buckets-guard.service"]   # checked in BOTH managers
+# expected_root = "/home/storm/guard"
+# search_roots = ["/home/storm", "/opt/storm"]
+# ports = [6188]
+# max_depth = 3
+# max_bytes = 65536

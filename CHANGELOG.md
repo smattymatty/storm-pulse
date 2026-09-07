@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`stormpulse investigate deploy`: a core investigation that answers whether a thing is actually deployed on this node** (ADR CORE-009). Every other investigation explains a system that is running; this one reports absence, which is the single fact a node structurally cannot volunteer - a box with no guard has no guard to speak, and residue in a directory nobody expected has nothing that reports it. Generic over any node (Main Site, Forgejo, Garage, Buckets, runners), not guard-specific, because the question is loudest exactly where the thing is not installed, which is the box that could not host an Integration to declare the check. Per subject it reports: unit presence and active state in BOTH the system and user managers (a system-only check on a rootless box reports "no unit" for a unit that is running, which is a false CLEARED), a process check matching the program name with the probe's own pid, process group and ancestry excluded, listeners on the declared ports, and a bounded artifact walk. A binary inside a search root but outside the expected root is reported as a finding, not an error: that is the 2026-09-07 shape where every install site in the repo named `/home/storm/guard` and the alpha disk held `/home/storm/buckets-guard`.
+
+- **`[investigate.deploy.<subject>]` config section.** Units, expected root, search roots, ports, depth and byte caps resolve from the node's own TOML and from nowhere else: no path, glob or unit name can arrive over the wire, so the control plane cannot point a node at a file of its choosing. The walk never leaves the declared roots, never follows a symlink, and never descends past `max_depth` (1-8, default 3); it reports a file's existence, size and mtime and never opens it. The bound has a real cost and the case file states it: residue in a root nobody declared is not found, and the verdict is INCONCLUSIVE naming the one-off `find` that would settle it, rather than the probe widening itself. An invalid subject is skipped with a warning rather than aborting boot (the `[[log_groups]]` precedent), and a node with no section reports INCONCLUSIVE, never CLEARED.
+
 ## [0.4.2] - 2026-08-22
 
 ### Added

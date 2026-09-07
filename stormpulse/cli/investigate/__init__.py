@@ -31,6 +31,7 @@ from pathlib import Path
 from stormpulse.sdk.investigate import CaseFile, SuspectReport, Verdict, Window
 
 from .box import run_box
+from .deploy import run_deploy
 from .flaps import run_flaps
 from .logs_pipeline import run_logs_pipeline
 
@@ -139,6 +140,16 @@ _CORE: dict[str, _CoreInvestigation] = {
                 "one suspect that day, and scheduled reboots stopped "
                 "reading as anomalies.",
         run=run_box,
+    ),
+    "deploy": _CoreInvestigation(
+        title="is this thing actually deployed on this node",
+        receipt="earned 2026-09-07: the audit firm hand-assembled this "
+                "battery over SSH, burned two rounds on pgrep self-match, "
+                "and found a guard binary at /home/storm/buckets-guard while "
+                "every install site in the repo named /home/storm/guard. The "
+                "2026-08-26 measurement had checked a path that has never "
+                "existed on that box.",
+        run=run_deploy,
     ),
     "logs-pipeline": _CoreInvestigation(
         title="per-group shipping health and parser drift",
