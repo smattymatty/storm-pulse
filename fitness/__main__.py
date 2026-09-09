@@ -22,6 +22,7 @@ from fitness.dependency_allowlist import check_dependencies
 from fitness.external_loader_p1 import check_external_loader_no_execution
 from fitness.integration_contract import check_integration_contract
 from fitness.merge_fence import check_merge_fence
+from fitness.no_listener import check_no_listener
 from fitness.no_shell import check_no_shell
 from fitness.private_imports import check_private_imports
 from fitness.wire_contract import check_wire_contract
@@ -53,6 +54,7 @@ def main() -> int:
         ("Function 7 - external loader no-execution", check_external_loader_no_execution),
         ("Function 8 - wizard SDK purity and topology", check_wizard_sdk),
         ("Function 9 - declared wire shape", check_wire_contract),
+        ("Function 10 - no listening socket", check_no_listener),
     ]:
         violations = [v for v in check() if v not in baseline]
         findings.append((label, violations))

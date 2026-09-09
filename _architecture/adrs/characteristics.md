@@ -130,8 +130,19 @@ this repo's enforcement is a single enumerated runner. CORE-001's table, as of
 | 7 | External-loader no-execution | CORE-007 (P1 loader imports no package code) | `fitness/` runner |
 | 8 | Wizard SDK purity and topology | CORE-007 (`sdk/` pure Foundation, `wizard/` imports no Feature) | `fitness/` runner |
 | 9 | Declared wire shape | CORE-008 (`wire-contract.json` matches the emitting dataclasses) | `fitness/` runner |
+| 10 | No listening socket | Security Architecture, Layer 1, and the published wiki claim | `fitness/` runner |
 
-Read against the five: functions 3 and 4 are security; 5, 6, 7, 8 are
+Function 10 was added 2026-09-09 for a reason worth stating, because it is
+the pattern this index exists to encourage. The Pulse wiki publishes "the
+agent never listens on a port; all connections are outbound to the
+dashboard". That is a claim a customer or a reviewer can check by reading
+this tree, and it was true by discipline with nothing defending it. An
+audit register carried it as an untested row. Rather than test it once,
+it was mechanized: a claim on a public page should be defended by a check,
+not by care. The tell for the next one is the same shape, a published
+sentence with no function behind it.
+
+Read against the five: functions 3, 4 and 10 are security; 5, 6, 7, 8 are
 extendability held under security (the seams exist, and each has a check that
 they are used only through the contract); 1, 2 and 9 are maintainability. No
 function names auditability or testability directly; CORE-004's sealed-by-
