@@ -215,3 +215,20 @@ consumer, resolved these decisions:
   clash with a built-in quarantines the **whole** external package with a named
   error (built-ins always win). Ordinary import/parse/precondition exceptions
   soft-disable that one adapter; the agent and its siblings stay up.
+
+## Amendment (2026-09-12) — the pre-flight resolves sealed adapters as boot does
+
+`stormpulse config check` registered built-ins only and told the operator a
+sealed adapter's `[section]` was "unknown ... will be ignored at boot" while
+`build_agent_dependencies` went on to load it. Found on staging 2026-09-12: the
+pre-flight named `[buckets_gate]` unknown; the next boot logged it live. A
+warning identical for "fine" and "broken" is the dead knob CONTEXT.md forbids.
+
+Fixed in `f59b9db`: the pre-flight calls `load_and_register_external` with the
+same state dir boot uses (`storage.db_path.parent`), prints the loader's
+soft-disable reason inline for a granted adapter it cannot load, tags a sealed
+adapter's line as such, and the unknown-section line now claims only what it
+checked. Loading reads the grant tree and imports the package (D1) and writes
+nothing; host preconditions still run at boot only (CORE-005 decision 6). Pinned
+by `tests/integrations/external/test_config_check.py`, three outcomes, each
+proven by mutation.
