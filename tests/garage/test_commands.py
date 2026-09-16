@@ -334,7 +334,7 @@ class TestBuildGarageCommands:
         assert pattern is not None
         for bad in ("--help", "-c"):
             assert re.fullmatch(pattern, bad) is None
-        for good in ("usr-1-media-all", "key_admin"):
+        for good in ("usr-0-example-all", "key_admin"):
             assert re.fullmatch(pattern, good) is not None
 
     def test_walk_bucket_stats_prefix_accepts_real_s3_keys(self) -> None:

@@ -106,7 +106,7 @@ _ListResult = tuple[list[dict[str, Any]] | None, str]
 
 _STATUS_OK: _StatusResult = ({"nodes": [_node()]}, "")
 _STATS_OK: _StatsResult = ({"totalObjectCount": 5, "bucketCount": 1}, "")
-_KEYS_OK: _KeysResult = ([{"id": "GK5e6fb0b4fa406ace8126a7db", "name": "obsidian-key"}], "")
+_KEYS_OK: _KeysResult = ([{"id": "GKfeedface0987654321fedcba", "name": "example-key"}], "")
 
 
 @contextmanager
@@ -142,8 +142,8 @@ class TestCollectGarageState:
             FULL_ID,
             bytes_=5800,
             objects=2,
-            global_aliases=("obsidian-vault",),
-            keys=(_admin_key("GK5e6fb0b4fa406ace8126a7db", "obsidian-key"),),
+            global_aliases=("example-vault",),
+            keys=(_admin_key("GKfeedface0987654321fedcba", "example-key"),),
         )
         with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
@@ -160,16 +160,16 @@ class TestCollectGarageState:
         # Bucket from GetBucketInfo, exact integers.
         bucket = state.buckets[0]
         assert bucket.id == FULL_ID
-        assert bucket.alias == "obsidian-vault"
+        assert bucket.alias == "example-vault"
         assert bucket.size_bytes == 5800
         assert bucket.object_count == 2
-        assert bucket.keys[0].key_id == "GK5e6fb0b4fa406ace8126a7db"
-        assert bucket.keys[0].key_name == "obsidian-key"
+        assert bucket.keys[0].key_id == "GKfeedface0987654321fedcba"
+        assert bucket.keys[0].key_name == "example-key"
         assert bucket.keys[0].permissions == "RWO"
         # Top-level key inventory from ListKeys.
         assert len(state.keys) == 1
-        assert state.keys[0].key_id == "GK5e6fb0b4fa406ace8126a7db"
-        assert state.keys[0].key_name == "obsidian-key"
+        assert state.keys[0].key_id == "GKfeedface0987654321fedcba"
+        assert state.keys[0].key_name == "example-key"
         assert state.keys[0].permissions == ""
         # Peers from GetClusterStatus, with exact byte->GB conversion.
         assert len(state.peers) == 1
@@ -358,7 +358,7 @@ class TestCollectGarageState:
             bytes_=1,
             objects=1,
             global_aliases=("vault",),
-            keys=(_admin_key("GK5e6fb0b4fa406ace8126a7db", "obsidian-key"),),
+            keys=(_admin_key("GKfeedface0987654321fedcba", "example-key"),),
         )
         with _patched(
             keys=(None, "HTTP 500"),
@@ -368,7 +368,7 @@ class TestCollectGarageState:
             state = collect_garage_state(cfg)
         assert state is not None
         assert state.keys == []
-        assert state.buckets[0].keys[0].key_name == "obsidian-key"
+        assert state.buckets[0].keys[0].key_name == "example-key"
 
     def test_multi_node_all_peers_collected(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
@@ -396,7 +396,7 @@ class TestCollectGarageState:
         cfg = _make_config(tmp_path)
         keys = (
             [
-                {"id": "GK5e6fb0b4fa406ace8126a7db", "name": "obsidian-key"},
+                {"id": "GKfeedface0987654321fedcba", "name": "example-key"},
                 {"id": "GKbackup0000000000000000", "name": "backup-key"},
             ],
             "",
@@ -406,7 +406,7 @@ class TestCollectGarageState:
             bytes_=1,
             objects=1,
             global_aliases=("vault",),
-            keys=(_admin_key("GK5e6fb0b4fa406ace8126a7db", "obsidian-key"),),
+            keys=(_admin_key("GKfeedface0987654321fedcba", "example-key"),),
         )
         with _patched(
             keys=keys, list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")},
@@ -414,12 +414,12 @@ class TestCollectGarageState:
             state = collect_garage_state(cfg)
         assert state is not None
         assert len(state.buckets[0].keys) == 1
-        assert {k.key_name for k in state.keys} == {"obsidian-key", "backup-key"}
+        assert {k.key_name for k in state.keys} == {"example-key", "backup-key"}
 
     def test_to_dict(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         info = _admin_info(
-            FULL_ID, bytes_=5800, objects=2, global_aliases=("obsidian-vault",),
+            FULL_ID, bytes_=5800, objects=2, global_aliases=("example-vault",),
         )
         with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
             state = collect_garage_state(cfg)
@@ -430,7 +430,7 @@ class TestCollectGarageState:
         assert d["version"] == "v2.3.0"
         assert "db_engine" not in d
         assert "block_count" not in d
-        assert d["buckets"][0]["alias"] == "obsidian-vault"
+        assert d["buckets"][0]["alias"] == "example-vault"
         assert d["buckets"][0]["size_bytes"] == 5800
         assert len(d["peers"]) == 1
         assert d["peers"][0]["node_id"] == NODE_ID

@@ -228,7 +228,7 @@ from stormpulse.garage.bucket_resolver import BucketIdResolver  # noqa: E402
 
 _GARAGE_LINE = (
     "2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: "
-    "71.19.243.102 (via [::1]:37780) (key {key}) HEAD /{bucket}\n"
+    "192.0.2.10 (via [::1]:37780) (key {key}) HEAD /{bucket}\n"
 )
 
 

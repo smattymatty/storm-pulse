@@ -53,15 +53,19 @@ SHIPPER_ADDED: dict[str, tuple[str, ...]] = {
     "garage_s3": ("bucket_id",),
 }
 
-# One representative raw line per parser variant. Real captured shapes, not
-# invented ones: an invented sample can pass a parser while missing the branch
-# a real line takes. The test runs the parser on each of these.
+# One representative raw line per parser variant. The SHAPE is taken from real
+# captured output, because an invented shape can pass a parser while missing the
+# branch a real line takes. Every VALUE is synthetic: a documentation address
+# (RFC 5737), an obviously-fake key id, and a placeholder bucket. A golden
+# fixture is published in every wheel, so a captured value here is a client IP,
+# an account's key id and a customer's bucket name shipped to the world.
+# The test runs the parser on each of these.
 GOLDEN_LINES: dict[str, dict[str, str]] = {
     "garage_s3": {
         "request": (
             "2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: "
-            "71.19.243.102 (via [::1]:37780) (key GKc8a2eafe464b4754187172d0) "
-            "HEAD /usr-1-obsidian-vault/some/key.txt"
+            "192.0.2.10 (via [::1]:37780) (key GKdeadbeef1234567890abcdef) "
+            "HEAD /usr-0-example-bucket/some/key.txt"
         ),
     },
     "caddy_json": {

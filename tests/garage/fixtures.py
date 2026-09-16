@@ -1,4 +1,11 @@
-"""Real stdout captured from Garage CLI commands - used as test fixtures."""
+"""Garage CLI output shapes, used as test fixtures.
+
+The SHAPE of each block is taken from real captured stdout, because an invented
+shape can pass a parser while missing the branch a real line takes. Every VALUE
+is synthetic: bucket aliases, key ids and addresses name nothing that exists.
+A captured key id or bucket alias here would be an account identifier published
+in every wheel.
+"""
 
 STATUS_OUTPUT = """\
 ==== HEALTHY NODES ====
@@ -76,10 +83,10 @@ Created:         2026-04-07 16:06:34.587 +00:00
 Size:            5.7 kiB (5.8 KB)
 Objects:         2
 Website access:  false
-Global alias:    obsidian-vault
+Global alias:    example-vault
 ==== KEYS FOR THIS BUCKET ====
 Permissions  Access key                                Local aliases
-RWO          GK5e6fb0b4fa406ace8126a7db  obsidian-key  \n\
+RWO          GKfeedface0987654321fedcba  example-key  \n\
 """
 
 BUCKET_INFO_OUTPUT_NO_GLOBAL_ALIAS = """\
@@ -91,7 +98,7 @@ Objects:         2
 Website access:  false
 ==== KEYS FOR THIS BUCKET ====
 Permissions  Access key                                Local aliases
-RWO          GK5e6fb0b4fa406ace8126a7db  customer-bucket-display  \n\
+RWO          GKfeedface0987654321fedcba  customer-bucket-display  \n\
 """
 
 BUCKET_INFO_OUTPUT_NO_KEYS = """\
@@ -120,11 +127,11 @@ Quotas:                       enabled
   maximum size:               953.7 MiB (1000.0 MB)
   maximum number of objects:  1000
 
-Global alias:                 obsidian-vault
+Global alias:                 example-vault
 
 ==== KEYS FOR THIS BUCKET ====
 Permissions  Access key                                Local aliases
-RWO          GK5e6fb0b4fa406ace8126a7db  obsidian-key  \n\
+RWO          GKfeedface0987654321fedcba  example-key  \n\
 """
 
 BUCKET_INFO_OUTPUT_QUOTA_SIZE_ONLY = """\
@@ -140,11 +147,11 @@ Website access:  false
 Quotas:          enabled
   maximum size:  953.7 MiB (1000.0 MB)
 
-Global alias:    obsidian-vault
+Global alias:    example-vault
 
 ==== KEYS FOR THIS BUCKET ====
 Permissions  Access key                                Local aliases
-RWO          GK5e6fb0b4fa406ace8126a7db  obsidian-key  \n\
+RWO          GKfeedface0987654321fedcba  example-key  \n\
 """
 
 BUCKET_INFO_OUTPUT_WEBSITE_ENABLED = """\
@@ -159,11 +166,11 @@ Website access:    true
   index document:  index.html
   error document:  (not defined)
 
-Global alias:    obsidian-vault
+Global alias:    example-vault
 
 ==== KEYS FOR THIS BUCKET ====
 Permissions  Access key                                Local aliases
-RWO          GK5e6fb0b4fa406ace8126a7db  obsidian-key  \n\
+RWO          GKfeedface0987654321fedcba  example-key  \n\
 """
 
 BUCKET_INFO_OUTPUT_WEBSITE_CUSTOM_ERROR = """\
@@ -178,21 +185,21 @@ Website access:    true
   index document:  index.html
   error document:  404.html
 
-Global alias:    obsidian-vault
+Global alias:    example-vault
 
 ==== KEYS FOR THIS BUCKET ====
 Permissions  Access key                                Local aliases
-RWO          GK5e6fb0b4fa406ace8126a7db  obsidian-key  \n\
+RWO          GKfeedface0987654321fedcba  example-key  \n\
 """
 
 KEY_LIST_OUTPUT = """\
 ID                          Created     Name          Expiration
-GK5e6fb0b4fa406ace8126a7db  2026-04-07  obsidian-key  never
+GKfeedface0987654321fedcba  2026-04-07  example-key  never
 """
 
 KEY_LIST_OUTPUT_MULTI = """\
 ID                          Created     Name          Expiration
-GK5e6fb0b4fa406ace8126a7db  2026-04-07  obsidian-key  never
+GKfeedface0987654321fedcba  2026-04-07  example-key  never
 GKa1b2c3d4e5f6a7b8c9d0e1f2  2026-04-07  backup-key    never
 """
 

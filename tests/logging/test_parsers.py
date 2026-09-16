@@ -19,18 +19,18 @@ class TestParseGarageS3:
     def test_valid_line(self) -> None:
         line = (
             "2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: "
-            "71.19.243.102 (via [::1]:37780) (key GKc8a2eafe464b4754187172d0) "
-            "HEAD /usr-1-obsidian-vault"
+            "192.0.2.10 (via [::1]:37780) (key GKdeadbeef1234567890abcdef) "
+            "HEAD /usr-0-example-bucket"
         )
         result = parse_garage_s3(line)
         assert result is not None
         assert result["ts"] == "2026-04-10T13:23:51.766230Z"
-        assert result["client_ip"] == "71.19.243.102"
+        assert result["client_ip"] == "192.0.2.10"
         assert result["proxy"] == "[::1]:37780"
-        assert result["key_id"] == "GKc8a2eafe464b4754187172d0"
+        assert result["key_id"] == "GKdeadbeef1234567890abcdef"
         assert result["method"] == "HEAD"
-        assert result["path"] == "/usr-1-obsidian-vault"
-        assert result["bucket"] == "usr-1-obsidian-vault"
+        assert result["path"] == "/usr-0-example-bucket"
+        assert result["bucket"] == "usr-0-example-bucket"
         assert result["object_key"] == ""
         assert result["truncated"] is False
 

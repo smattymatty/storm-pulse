@@ -29,7 +29,7 @@ _FULL_ID = "f1dc32249aa1d80a" + "0" * 48
 GOLDEN: dict[str, Any] = {
     "id": _FULL_ID,
     "created": "2026-04-07T12:00:00.000Z",
-    "globalAliases": ["obsidian-vault"],
+    "globalAliases": ["example-vault"],
     "websiteAccess": True,
     "websiteConfig": {
         "indexDocument": "index.html",
@@ -38,8 +38,8 @@ GOLDEN: dict[str, Any] = {
     },
     "keys": [
         {
-            "accessKeyId": "GK5e6fb0b4fa406ace8126a7db",
-            "name": "obsidian-key",
+            "accessKeyId": "GKfeedface0987654321fedcba",
+            "name": "example-key",
             "permissions": {"read": True, "write": True, "owner": True},
             "bucketLocalAliases": ["obsidian"],
         },
@@ -66,7 +66,7 @@ class TestGoldenMapping:
     def test_maps_every_field(self) -> None:
         b = _bucket_from_admin_info(GOLDEN)
         assert b.id == _FULL_ID
-        assert b.alias == "obsidian-vault"
+        assert b.alias == "example-vault"
         assert b.size_bytes == 5_800_000_000
         assert b.object_count == 42
         assert b.website_access is True
@@ -75,7 +75,7 @@ class TestGoldenMapping:
         assert b.quota_max_size_bytes == 10_000_000_000
         assert b.quota_max_objects is None
         assert [(k.key_id, k.key_name, k.permissions) for k in b.keys] == [
-            ("GK5e6fb0b4fa406ace8126a7db", "obsidian-key", "RWO"),
+            ("GKfeedface0987654321fedcba", "example-key", "RWO"),
             ("GKreadonly000000000000000", "ro-key", "R"),
         ]
 

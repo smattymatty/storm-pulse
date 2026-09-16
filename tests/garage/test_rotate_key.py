@@ -170,7 +170,7 @@ async def _run(
         progress=_ProgressRecorder(),
         garage_config=config or _make_config(),
         old_key_id=_OLD_KEY_ID,
-        new_key_name="usr-1-media-rw",
+        new_key_name="usr-0-example-rw",
         bucket_id=_BUCKET_ID,
         local_alias="media-rotated",
         key_tier=key_tier,
@@ -195,7 +195,7 @@ async def test_happy_path_returns_new_secret(
     new_key_id = outcome.extras["new_key_id"]
     assert new_key_id is not None and new_key_id.startswith("GK")
     assert outcome.extras["new_secret"]
-    assert outcome.extras["new_key_name"] == "usr-1-media-rw"
+    assert outcome.extras["new_key_name"] == "usr-0-example-rw"
     assert outcome.extras["step_completed"] == "old_key_delete"
     assert outcome.extras["step_failed"] is None
     assert outcome.extras["rollback_status"] == "not_required"

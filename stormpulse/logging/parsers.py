@@ -23,7 +23,7 @@ def _truncate(line: str, max_bytes: int = MAX_LINE_BYTES) -> tuple[str, bool]:
 
 
 # Garage S3 access log format:
-#   2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: 71.19.243.102 (via [::1]:37780) (key GKc8a2eafe464b4754187172d0) HEAD /usr-1-obsidian-vault
+#   2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: 192.0.2.10 (via [::1]:37780) (key GKdeadbeef1234567890abcdef) HEAD /usr-0-example-bucket
 _GARAGE_S3_RE = re.compile(
     r"(?P<ts>\S+)\s+INFO\s+garage_api_common::generic_server:\s+"
     r"(?P<ip>\S+)\s+\(via\s+(?P<proxy>[^)]+)\)\s+"
@@ -33,7 +33,7 @@ _GARAGE_S3_RE = re.compile(
 )
 
 # Garage's error line (v2.3.0+, "log api error in one self-sufficient line"):
-#   2026-04-10T13:23:52.001Z  INFO garage_api_common::generic_server: error 404 Not Found, Key not found in response to 71.19.243.102 (via [::1]:37780) (key GK...) HEAD /bucket/object
+#   2026-04-10T13:23:52.001Z  INFO garage_api_common::generic_server: error 404 Not Found, Key not found in response to 192.0.2.10 (via [::1]:37780) (key GK...) HEAD /bucket/object
 # Written AFTER the request line, once the handler has answered. The status
 # is what makes it worth a row of its own: the request line is logged before
 # the signature is checked, so only this line says whether the key that
