@@ -92,20 +92,15 @@ Status: Accepted · 2026-09-07 · [ADR](core/009-deploy-investigation-node-local
   bend is the named blind spot, not a silent one.
 - **Testability** is what the fetch/judge split buys and decision 2 protects: every
   verdict in this investigation is a pure function over fetched text, so the
-  judges are mutation-testable with no box in the loop. That is the seam
-  `/test-hunt` gets pointed at when this grows code.
+  judges are mutation-testable with no box in the loop. That is the seam to
+  point a test-writing pass at when this grows code.
 - **Simplicity**: one instrument, one vocabulary, no second probe. The
   investigation is a fourth core check, not a subsystem.
-- **Simplicity paid for without spending security, at decisions 10 and 11**
-  (added 2026-09-07). The corpus's most-adjudicated pair is simplicity against
-  security, and the first live run put it here: every node had to be
-  hand-edited. The bend goes the usual way at decision 10's refusal (contributed
-  subjects are defaults, not decrees, because authoritative ones would let a
-  package widen a search root with no local brake) and nowhere else. Everything
-  else in the amendment removes typing while leaving the bound where it was:
+- **Simplicity paid for without spending security, at decisions 10 and 11.**
+  The bend goes the usual way once, at decision 10's refusal, and nowhere else:
   the subject still resolves from something installed on the box, never from the
-  wire. Simplicity gained without a security concession is not a trade-off, and
-  it is worth saying so rather than recording a bend that did not happen.
+  wire. Recorded because a reader should not have to infer that no security
+  concession was made.
 
 Extraction note: CORE-009 names simplicity, which is not one of this repo's
 five. It was written two days before the five were named for the agent, when

@@ -23,34 +23,43 @@ node with nothing declared answered INCONCLUSIVE naming the section it lacked.
 Decision 9 settles nothing and says so: how a case file is declared on the wire
 defers to its own grill, and that fork gates the first emit, not the probe.
 
-**Amended 2026-09-07** (decisions 10 and 11, and decision 3 widened) after the
-first live run: every node carrying a subject had to be hand-edited to declare
-a fact the node already knew about itself. Nothing is reversed; the amendment
-removes typing, not bounds.
+**Amended 2026-09-07** (decisions 10 and 11, decision 3 widened), landed at
+`af83171`: the first live run had every node hand-edited to declare a fact it
+already knew about itself. Nothing reversed; typing removed, bounds kept.
+
+**Amended 2026-09-16** (decision 12, sealed on the commit that lands this line:
+find it with `git log -S"### 12. A node may expose" -- <this file>`): a node may
+expose this investigation over a road the node itself bounds. The Context's
+first ssh objection is amended and one Consequence is struck; every decision
+1 to 11 stands unchanged.
+
+*Compacted 2026-09-16. Shipped implementation narrative was removed, not lost:
+`git log -p` on this path carries the full text.*
 
 ## Context
 
-On 2026-09-07 Storm's audit firm hit a wall on PBC-1: settling whether a guard
-is deployed on the alpha node. The staff agent hand-assembled an SSH battery out
-of README prose, spent two rounds disclosing `pgrep` self-match artifacts, and
-filed the firm's first-ever tool wish. The wish asked for an SSH probe.
+On 2026-09-07 an audit of this estate could not settle a question that should
+have been trivial: whether a particular service was deployed on a particular
+node. Answering it by hand meant assembling an ad-hoc SSH battery from prose in
+a README, then spending two rounds disclosing `pgrep` self-match artifacts. The
+request that came out of it was for an SSH probe.
 
-An SSH probe is the wrong answer twice. It gives the auditor a credentialed road
-onto the box it audits, making it a control-plane actor over its own subject.
-And it builds a second instrument beside one that already exists:
+An SSH probe is the wrong answer twice. ~~It gives the auditor a credentialed
+road onto the box it audits, making it a control-plane actor over its own
+subject.~~ **First half amended 2026-09-16 by decision 12: a road may exist when
+the node holds the bound.** The objection was to an unbounded road, and it is
+answered by a forced command rather than by refusing the road. The second half
+stands unchanged and is the one that still refuses the wish as written: it
+builds a second instrument beside one that already exists:
 `stormpulse investigate` is one-shot, non-interactive, and already splits every
 check fetch/judge so verdicts are testable without a box.
 
 **What the battery found is why this ADR exists.** A guard binary *is* on alpha,
-at `/home/storm/buckets-guard/storm-buckets-guard`: 16,917,304 bytes, modified
-2026-07-17 18:25:02 UTC, residue from the July spike. Not wired, not running,
-no unit. Every install site in the repo names `/home/storm/guard/` -- the
-systemd unit's `WorkingDirectory`, `ExecStart`, `EnvironmentFile` and
-`ReadWritePaths`, `storm-buckets-guard/CLAUDE.md`, `scripts/supervision-lib.sh`,
-the pulse-adapter README, the `state_report.rs` tests. That path has never
-existed on alpha. So the 2026-08-26 measurement checked a location that could
-not have been right, and only three of its four legs were load-bearing. A repo
-grep could never have settled this. The node did.
+one directory sideways from the path every install site in the repo names, left
+as residue from the July spike: not wired, not running, no unit. The path the
+repo agrees on has never existed on that box, so the 2026-08-26 measurement
+checked a location that could not have been right. A repo grep could never have
+settled this. The node did.
 
 **The legitimacy question, and it is the sentence this ADR turns on.**
 BUCKETS-033 decision 1 refused a whitelisted command that reads `guard.env`,
@@ -133,7 +142,7 @@ Precedence, in one line: descriptor default, then the node's table, field by
 field. The operator is the last word on his own box, so a package update can
 widen nothing he has narrowed.
 
-**Refused: a wire-supplied `artifact_glob`.** The tool wish asked for one; the
+**Refused: a wire-supplied `artifact_glob`.** The original request asked for one; the
 firm's signature has it as a parameter. Two reasons it cannot be one. `ParamDef`
 (Security Architecture, Layer 3) rejects any declaration carrying neither a
 `pattern` nor a `max_bytes`, and a glob's blast radius is not a property of its
@@ -186,15 +195,15 @@ System and user, every time, never one.
 [CORE-003](003-rootless-install-mode.md) makes rootless the production default,
 so the units that matter are frequently `--user` units. A system-only check on a
 rootless box reports "no unit" for a unit that is running, which is a false
-CLEARED: absence of evidence turned into permission, the precise thing
-BUCKETS-032 refuses. Checking one manager is not a cheaper version of this
-check. It is a wrong one.
+CLEARED: absence of evidence turned into permission, which is exactly what an
+evidence rule exists to refuse. Checking one manager is not a cheaper version of
+this check. It is a wrong one.
 
 ### 7. `pgrep` self-match suppression is the contract's problem, not the caller's
 
-The process scan excludes the probe's own pid and its process group. The firm
-burned two rounds on this by hand on 2026-09-07; a probe that hands its caller
-an artifact to disclose has moved work rather than removed it.
+The process scan excludes the probe's own pid and its process group. Two rounds
+were burned on this by hand on 2026-09-07; a probe that hands its caller an
+artifact to disclose has moved work rather than removed it.
 
 ### 8. Only structure crosses the wire
 
@@ -262,29 +271,21 @@ Added 2026-09-07, for boxes with no Integration: Main Site, Forgejo, a bare VPS.
 Authoring config is the wizard engine's job (CORE-007 decision 5), and it already
 owns preview, ordered apply, per-step verify, receipt and rollback.
 
-The flow enumerates the box's operator-installed units -- the shape shipped
-2026-08-21 for log groups, "offer the box's operator-installed units instead of
-asking for a name" -- and on a pick reads `WorkingDirectory`, `ExecStart` and
-`FragmentPath` to propose `expected_root`, `search_roots` and the subject name.
-You confirm or edit.
+The flow offers the box's operator-installed units rather than asking for a
+name, and on a pick reads `WorkingDirectory`, `ExecStart` and `FragmentPath` to
+propose `expected_root`, `search_roots` and the subject name. You confirm or
+edit.
 
-The reason this is the right read and not just the convenient one: a unit file
+The reason this is the right read and not merely the convenient one: a unit file
 *is* the declaration of where its thing lives. Deriving `expected_root` from it
 is what makes decision 5's finding possible, because anything outside it is then
 outside by the node's own account rather than by a path someone remembered.
 
-**Where the flow lives, found while building it (2026-09-07).** The derivation
-is pure and sits in `wizard/deploy_subject.py`. The enumeration cannot sit
-beside it: an operator-installed-unit lister already exists at
-`init/journald_logs.py:detect_candidate_units`, and `.importlinter` puts
-`init` and `wizard` on the same Framework line, where `|` means these modules
-do not import each other. So the flow that joins them is composed one layer up,
-in `cli`, which may import both. Nothing is duplicated and no layer bends.
-
-Stated because the obvious reading of this decision -- "the wizard package owns
-the flow" -- writes a second unit lister that must track systemd's output format
-forever. CORE-007 decision 5 gives the wizard engine the *apply*, not the
-gathering.
+**The flow is composed in `cli`, not in `wizard`.** `.importlinter` puts `init`
+and `wizard` on the same Framework line, so the existing unit lister in `init`
+and the pure derivation in `wizard` cannot import each other; `cli` may import
+both. The obvious reading -- that the wizard package owns the flow -- writes a
+second systemd parser to be maintained forever.
 
 **Derivation refuses rather than guesses.** A unit that names no
 `WorkingDirectory` and no absolute `ExecStart` yields no subject, and `/` is
@@ -295,13 +296,49 @@ one of the two branches until an isolated mutation test exposed the other
 (2026-09-07); the test that should have caught it was passing for a different
 reason.
 
+### 12. A node may expose this investigation over a road it bounds itself
+
+Added 2026-09-16. An operator may put a dedicated key in a node's
+`authorized_keys` behind `command=`, with `no-pty`, `no-agent-forwarding`,
+`no-port-forwarding` and `no-X11-forwarding`, pointing at a runner that accepts
+only `investigate`. A caller holding that key can run investigations on that
+node and nothing else.
+
+**The bound lives on the node, which is the whole decision.** An allowlist in
+the caller is a promise the caller makes about itself, and a bypassed or buggy
+caller keeps whatever access its key has. A forced command is enforced by the
+subject, survives a compromised caller, and is revoked by deleting one line
+without touching anyone else's access.
+
+**The runner accepts what the installed CLI has, not a list it carries.** It
+asks `stormpulse` which investigations exist and refuses every name and every
+flag outside that answer. A new investigation is therefore reachable the moment
+the agent that has it is installed, with no runner change and no fleet redeploy.
+The node stays the authority on its own surface, the same rule decision 3
+already applies to subjects.
+
+**Refused: a caller-supplied window, pattern or config path.** `--grep` reaches
+into journal content and `--config` repoints the probe at another subject,
+which are the wire-supplied-path refusals of decisions 3 and 4 arriving by
+another door.
+
+**Refused: a run-everything mode.** A caller names the investigations it wants.
+Nothing offers "all", because a shotgun default is how a bounded road becomes an
+unbounded one without anyone deciding to widen it.
+
 ## Consequences
 
 - storm-pulse gains a check whose whole purpose is to report absence. Every
   other investigation explains a system that is running.
-- The estate gains one instrument instead of two. The firm never gets a
+- The estate gains one instrument instead of two. ~~The firm never gets a
   credential, a socket, or a road onto a box; it reads what the operator's own
-  tooling already produced.
+  tooling already produced.~~ **Struck 2026-09-16 by decision 12.** An auditor
+  may now hold a key restricted to this investigation. Auditor independence is
+  the characteristic that bent: an auditor able to act on its own subject is
+  weaker than one that cannot, and what buys the trade back is that the subject
+  holds the bound. What was bought is an audit that does not stall waiting for a
+  human to run a command, which on a solo-operated estate is the difference
+  between a question answered today and one answered next week.
 - A node with no `[investigate.deploy.*]` table answers INCONCLUSIVE, so rolling
   this out is a config change per node, visible and refusable, not a silent
   fleet-wide capability gain.
@@ -320,23 +357,29 @@ reason.
   bend is the named blind spot, not a silent one.
 - **Testability** is what the fetch/judge split buys and decision 2 protects: every
   verdict in this investigation is a pure function over fetched text, so the
-  judges are mutation-testable with no box in the loop. That is the seam
-  `/test-hunt` gets pointed at when this grows code.
+  judges are mutation-testable with no box in the loop. That is the seam to
+  point a test-writing pass at when this grows code.
 - **Simplicity**: one instrument, one vocabulary, no second probe. The
   investigation is a fourth core check, not a subsystem.
-- **Simplicity paid for without spending security, at decisions 10 and 11**
-  (added 2026-09-07). The corpus's most-adjudicated pair is simplicity against
-  security, and the first live run put it here: every node had to be
-  hand-edited. The bend goes the usual way at decision 10's refusal (contributed
-  subjects are defaults, not decrees, because authoritative ones would let a
-  package widen a search root with no local brake) and nowhere else. Everything
-  else in the amendment removes typing while leaving the bound where it was:
+- **Simplicity paid for without spending security, at decisions 10 and 11.**
+  The bend goes the usual way once, at decision 10's refusal, and nowhere else:
   the subject still resolves from something installed on the box, never from the
-  wire. Simplicity gained without a security concession is not a trade-off, and
-  it is worth saying so rather than recording a bend that did not happen.
+  wire. Recorded because a reader should not have to infer that no security
+  concession was made.
 
 **Fitness Functions:**
 
+- **The runner refuses what the CLI does not have (code-enforced, decision 12):**
+  a test handing the runner a name the installed CLI does not list, and a second
+  handing it `--grep` and `--config`, failing if either reaches a subprocess. A
+  forced command whose only defence is the runner author remembering it is not
+  defended.
+- **The node's road is what it should be (operator-run, decision 12):** a
+  pre-flight that reads a node's own restricted-key line and compares it to the
+  expected runner and options, rather than assuming the arrangement survived the
+  last time someone edited that file. Check it, do not assume it: the 2026-09-16
+  re-seal gate read green for the previous move's command because nothing
+  compared the control to what it was guarding.
 - **Bounded search (code-enforced, and the one that must exist before any code
   merges):** a test asserting the walk never leaves `search_roots` and never
   descends past `max_depth`, given a fixture tree that contains a match outside
@@ -369,7 +412,7 @@ reason.
 This stanza is written although the answer is "no personal information", against
 `adrs/README.md`'s no-empty-stanza rule and by the operator's resolution
 (brief amendment, 2026-09-07). The reason: the *exclusion* here is a decision
-with an enforcing bound, not an absence. BUCKETS-043 is the precedent.
+with an enforcing bound, not an absence.
 
 - **What data.** Unit names and their manager, absolute paths inside the
   configured roots, file sizes and mtimes, listener state per configured port,
