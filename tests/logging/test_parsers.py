@@ -191,13 +191,16 @@ class TestParseGarageS3:
             "error 403 Forbidden, Forbidden: Invalid signature in response to "
             "1.2.3.4 (via [::1]:1234) (key GKabc123) GET /bucket/storm-recovery-deadbeef"
         )
-        assert parse_garage_s3(forbidden)["response_code"] == 403
+        denied = parse_garage_s3(forbidden)
+        assert denied is not None
+        assert denied["response_code"] == 403
         server_error = (
             "2026-09-06T14:00:00.000000Z  WARN garage_api_common::generic_server: "
             "error 500 Internal Server Error, Internal error in response to "
             "1.2.3.4 (via [::1]:1234) (key GKabc123) GET /bucket/obj"
         )
         result = parse_garage_s3(server_error)
+        assert result is not None
         assert result["response_code"] == 500
         assert result["level"] == "warning"
 

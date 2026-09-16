@@ -11,6 +11,8 @@ Two halves, and the split is the ADR's fitness-function seam:
 
 from __future__ import annotations
 
+from typing import Any
+
 import os
 from datetime import datetime
 from pathlib import Path
@@ -30,9 +32,10 @@ from stormpulse.cli.investigate.deploy import (
     walk_artifacts,
 )
 from stormpulse.config import ConfigError, _parse_deploy_probes
+from stormpulse.sdk import SdkDeploySubject
 
 
-def _raw(**subject_tables: dict) -> dict:
+def _raw(**subject_tables: dict[str, Any]) -> dict[str, Any]:
     return {"investigate": {"deploy": subject_tables}}
 
 
@@ -317,7 +320,7 @@ class TestTruncationIsNeverSilent:
             "stormpulse.cli.investigate.deploy.run_evidence",
             lambda argv: "1 1 /usr/bin/something-else\n" * 500,
         )
-        reports: list = []
+        reports: list[Any] = []
         _report_processes("guard", _probe(max_bytes=32), reports,
                           frozenset(), 0)
         assert [r.verdict.name for r in reports] == ["INCONCLUSIVE"]
@@ -330,7 +333,7 @@ class TestTruncationIsNeverSilent:
             "stormpulse.cli.investigate.deploy.run_evidence",
             lambda argv: "1 1 /usr/bin/something-else",
         )
-        reports: list = []
+        reports: list[Any] = []
         _report_processes("guard", _probe(), reports, frozenset(), 0)
         assert [r.verdict.name for r in reports] == ["IMPLICATED"]
 
@@ -341,7 +344,7 @@ class TestTruncationIsNeverSilent:
             "stormpulse.cli.investigate.deploy.run_evidence",
             lambda argv: "7 7 /home/storm/guard/guard --serve\n" + "x" * 4000,
         )
-        reports: list = []
+        reports: list[Any] = []
         _report_processes("guard", _probe(max_bytes=64), reports,
                           frozenset(), 0)
         assert [r.verdict.name for r in reports] == ["CLEARED"]
@@ -353,7 +356,7 @@ class TestTruncationIsNeverSilent:
             "stormpulse.cli.investigate.deploy.run_evidence",
             lambda argv: "tcp LISTEN 0 4096 127.0.0.1:9999 0.0.0.0:*\n" * 200,
         )
-        reports: list = []
+        reports: list[Any] = []
         _report_listeners("guard", _probe(ports=(6188,), max_bytes=48), reports)
         assert [r.verdict.name for r in reports] == ["INCONCLUSIVE"]
 
@@ -398,17 +401,14 @@ class TestContributedSubjects:
     contributed subject is allowed to exist.
     """
 
-    def _sdk(self, **over):
-        from stormpulse.sdk import SdkDeploySubject
-        base = dict(
+    def _sdk(self) -> SdkDeploySubject:
+        return SdkDeploySubject(
             subject="storm-buckets-guard",
             units=("storm-buckets-guard.service",),
             expected_root="/home/storm/guard",
             search_roots=("/home/storm", "/opt/storm"),
             ports=(6188,),
         )
-        base.update(over)
-        return SdkDeploySubject(**base)
 
     def test_a_contributed_subject_needs_no_node_table(self) -> None:
         from stormpulse.config import merge_deploy_probes

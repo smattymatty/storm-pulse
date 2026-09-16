@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from stormpulse.cli import deploy_subject_init as dsi
+from stormpulse.wizard.deploy_subject import parse_unit_properties
 
 _UNIT_SHOW = (
     "FragmentPath=/etc/systemd/system/storm-buckets-guard.service\n"
@@ -70,7 +71,7 @@ class TestRunInit:
         self._drive(
             monkeypatch,
             units=["storm-buckets-guard.service"],
-            show=dsi.parse_unit_properties(_UNIT_SHOW),
+            show=parse_unit_properties(_UNIT_SHOW),
             answer="1",
         )
         assert dsi.run_init(cfg) == 0
@@ -95,7 +96,7 @@ class TestRunInit:
         self._drive(
             monkeypatch,
             units=["storm-buckets-guard.service"],
-            show=dsi.parse_unit_properties(_UNIT_SHOW),
+            show=parse_unit_properties(_UNIT_SHOW),
             answer="1",
             confirm=False,
         )
