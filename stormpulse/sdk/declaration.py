@@ -149,6 +149,34 @@ class SdkCommandSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class SdkDeploySubject:
+    """A deploy subject an Integration contributes (CORE-005 D14, CORE-009 D10).
+
+    What `stormpulse investigate deploy` may look for on a node that enables
+    this Integration, so the node is not hand-told a fact it already knows about
+    itself. Field names mirror the `[investigate.deploy.<subject>]` table
+    exactly, because the node's own table overrides this one field by field and
+    two different vocabularies for one merge is how a precedence rule rots.
+
+    **Data, not a command.** No control-plane allow rule binds to a subject, so
+    this is deliberately absent from `command_specs_digest`: contributing one
+    moves no pin and forces no release order. `specs` is digest-covered because
+    a grant binds to it; this is not, because nothing does.
+
+    A default, never a decree. The operator's table wins, `enabled = false`
+    switches this off, and neither is negotiable from a package.
+    """
+
+    subject: str
+    units: tuple[str, ...]
+    expected_root: str
+    search_roots: tuple[str, ...]
+    ports: tuple[int, ...] = ()
+    max_depth: int | None = None
+    max_bytes: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SdkIntegration:
     """A declared external integration (CORE-007). Required core is ``id``,
     ``parse_config``, ``enabled``; every other capability is opt-in. The loader
@@ -168,6 +196,11 @@ class SdkIntegration:
     # preview -> transactional apply), so an external adapter is configured with
     # the same quality as a built-in, not hand-edited into stormpulse.toml.
     wizard: IntegrationWizard | None = None
+    # Optional deploy subjects (CORE-005 D14). Takes the Integration's own parsed
+    # config, so a subject can be derived from what the operator actually
+    # configured rather than guessed. Data only: never digest-covered, always
+    # overridable by the node's own [investigate.deploy.<subject>] table.
+    deploy_subjects: Callable[[Any], tuple[SdkDeploySubject, ...]] | None = None
 
 
 def canonical_digest(payload: Any) -> str:

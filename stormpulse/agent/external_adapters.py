@@ -92,6 +92,10 @@ def _translate(sdk: SdkIntegration, grant: SealedGrantV1) -> Integration:
         specs=_gated_specs_builder(sdk, grant) if sdk.specs is not None else None,
         capabilities=sdk.capabilities,
         readiness=sdk.readiness,
+        # Ungated, unlike specs: a deploy subject is data no allow rule binds
+        # to, so it needs no command-contributor grant and moves no digest
+        # (CORE-005 D14). The node's own table still overrides whatever it says.
+        deploy_subjects=sdk.deploy_subjects,
     )
 
 

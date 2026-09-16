@@ -23,6 +23,7 @@ measurement had checked a path that has never existed on that box.
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import re
 from collections.abc import Callable, Iterator
@@ -34,6 +35,8 @@ from stormpulse.config import DeployProbeConfig
 from stormpulse.sdk.investigate import CaseFile, SuspectReport, Verdict, Window
 
 from ._journal import run_evidence
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Observations: what a fetch produces and a judge consumes
@@ -381,17 +384,61 @@ def _fetch_listeners(max_bytes: int) -> Fetched | None:
 # ---------------------------------------------------------------------------
 
 
+def contributed_subjects(cfg: object) -> tuple[object, ...]:
+    """Deploy subjects declared by the Integrations this node has ENABLED.
+
+    CORE-009 decision 10: a node that runs an Integration should not be
+    hand-told a fact it already knows about itself. The descriptor supplies the
+    default; the node's own table still overrides it field by field, which is
+    why this returns subjects rather than finished probes.
+
+    Enabled is the gate, not merely configured. Probing for a thing whose
+    integration is switched off would manufacture IMPLICATED rows about
+    something the operator deliberately does not run, and a board that cries
+    about a subject nobody asked for teaches the operator to stop reading it.
+
+    A descriptor that raises is skipped with a warning, never fatal: this feeds
+    a diagnostic, and one bad package may not take `investigate deploy` down for
+    every other subject on the box.
+    """
+    import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
+    from stormpulse.integrations import registered_integrations
+
+    out: list[object] = []
+    sections = getattr(cfg, "integrations", {}) or {}
+    for integ in registered_integrations():
+        build = getattr(integ, "deploy_subjects", None)
+        raw = sections.get(integ.id)
+        if build is None or raw is None:
+            continue
+        try:
+            own = integ.parse_config(raw)
+            if not integ.enabled(own):
+                continue
+            out.extend(build(own))
+        except Exception as exc:  # noqa: BLE001 - a diagnostic never fails closed
+            logger.warning(
+                "Integration %s could not contribute deploy subjects: %s. Its "
+                "subjects are absent; anything the node declares itself is "
+                "unaffected.", integ.id, exc,
+            )
+    return tuple(out)
+
+
 def run_deploy(args: argparse.Namespace, window: Window) -> CaseFile:
     """``stormpulse investigate deploy`` - what is actually on this node."""
     from stormpulse.cli.investigate import make_case
-    from stormpulse.config import ConfigError, load_config
+    from stormpulse.config import ConfigError, load_config, merge_deploy_probes
 
     reports: list[SuspectReport] = []
     next_moves: list[str] = []
     open_questions: list[str] = []
 
     try:
-        probes = load_config(Path(args.config)).deploy_probes
+        cfg = load_config(Path(args.config))
+        probes = merge_deploy_probes(
+            cfg.deploy_probe_tables, contributed_subjects(cfg),
+        )
     except ConfigError as exc:
         return make_case(
             "deploy", window,

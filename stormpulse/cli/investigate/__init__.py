@@ -225,6 +225,12 @@ def add_investigate_args(parser: argparse.ArgumentParser) -> None:
         default=default_config_path(),
         help="path to config file (only investigations that need it read it)",
     )
+    parser.add_argument(
+        "--init",
+        action="store_true",
+        help="author a subject instead of running: offer this box's units and "
+             "derive one from the unit file (deploy only)",
+    )
 
 
 def cmd_investigate(args: argparse.Namespace) -> None:
@@ -232,6 +238,20 @@ def cmd_investigate(args: argparse.Namespace) -> None:
     if not args.name:
         sys.stdout.write(_list_investigations())
         return
+    # --init authors config; it never runs a probe. The investigation itself
+    # stays one-shot and non-interactive (CONTEXT.md's sealed Investigation
+    # term), so the interactive half lives on this flag and nowhere inside a
+    # case file. Only `deploy` has a subject to author.
+    if getattr(args, "init", False):
+        if args.name != "deploy":
+            print(
+                f"--init authors a deploy subject; {args.name!r} has nothing "
+                "to author. Run: stormpulse investigate deploy --init",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        from stormpulse.cli.deploy_subject_init import run_init
+        sys.exit(run_init(Path(args.config)))
     core = _CORE.get(args.name)
     if core is None:
         print(

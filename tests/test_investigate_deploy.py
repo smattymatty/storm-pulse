@@ -387,3 +387,143 @@ def _probe(
         max_depth=3,
         max_bytes=max_bytes,
     )
+
+
+class TestContributedSubjects:
+    """CORE-009 decision 10: an Integration contributes a default, the node
+    overrides it, and precedence only ever points one way.
+
+    The property under test is not "merging works". It is that a package can
+    widen nothing the operator has narrowed, which is the only reason a
+    contributed subject is allowed to exist.
+    """
+
+    def _sdk(self, **over):
+        from stormpulse.sdk import SdkDeploySubject
+        base = dict(
+            subject="storm-buckets-guard",
+            units=("storm-buckets-guard.service",),
+            expected_root="/home/storm/guard",
+            search_roots=("/home/storm", "/opt/storm"),
+            ports=(6188,),
+        )
+        base.update(over)
+        return SdkDeploySubject(**base)
+
+    def test_a_contributed_subject_needs_no_node_table(self) -> None:
+        from stormpulse.config import merge_deploy_probes
+        probes = merge_deploy_probes({}, (self._sdk(),))
+        assert set(probes) == {"storm-buckets-guard"}
+        assert probes["storm-buckets-guard"].ports == (6188,)
+
+    def test_the_node_narrows_one_field_and_keeps_the_rest(self) -> None:
+        from stormpulse.config import merge_deploy_probes
+        probes = merge_deploy_probes(
+            {"storm-buckets-guard": {"search_roots": ["/home/storm"]}},
+            (self._sdk(),),
+        )
+        probe = probes["storm-buckets-guard"]
+        assert probe.search_roots == (Path("/home/storm"),), (
+            "the operator's narrowing must survive the merge"
+        )
+        assert probe.units == ("storm-buckets-guard.service",), (
+            "unnamed fields must still come from the contributed default"
+        )
+
+    def test_a_partial_node_table_is_legal_as_an_override(self) -> None:
+        """Alone it is not a valid subject; over a default it is a narrowing.
+
+        This is why the merge happens before validation, and it fails loudly if
+        anyone moves validation earlier.
+        """
+        from stormpulse.config import merge_deploy_probes
+        probes = merge_deploy_probes(
+            {"storm-buckets-guard": {"max_depth": 1}}, (self._sdk(),),
+        )
+        assert probes["storm-buckets-guard"].max_depth == 1
+
+    def test_enabled_false_switches_a_contributed_subject_off(self) -> None:
+        from stormpulse.config import merge_deploy_probes
+        probes = merge_deploy_probes(
+            {"storm-buckets-guard": {"enabled": False}}, (self._sdk(),),
+        )
+        assert probes == {}, "the operator's brake must remove the subject"
+
+    def test_a_node_only_subject_still_works_with_no_contribution(self) -> None:
+        from stormpulse.config import merge_deploy_probes
+        probes = merge_deploy_probes({"solo": dict(_GOOD)}, ())
+        assert set(probes) == {"solo"}
+
+    def test_an_invalid_merge_is_skipped_not_fatal(self) -> None:
+        """One broken subject may not take the others down, matching the
+        [[log_groups]] precedent the loader already follows."""
+        from stormpulse.config import merge_deploy_probes
+        probes = merge_deploy_probes(
+            {"storm-buckets-guard": {"expected_root": "/somewhere/else"}},
+            (self._sdk(),),
+        )
+        assert probes == {}
+
+
+class TestContributionGate:
+    """`contributed_subjects` asks only ENABLED integrations, and never dies.
+
+    Probing for a thing whose integration is switched off manufactures
+    IMPLICATED rows about something the operator deliberately does not run, and
+    a board that cries about a subject nobody asked for teaches him to stop
+    reading it. That is the failure ADR BUCKETS-043 decision 4 already names.
+    """
+
+    def _integ(self, *, enabled: bool, raises: bool = False):
+        from stormpulse.sdk import SdkDeploySubject
+        subject = SdkDeploySubject(
+            subject="guard",
+            units=("guard.service",),
+            expected_root="/home/storm/guard",
+            search_roots=("/home/storm",),
+        )
+
+        class FakeIntegration:
+            id = "fake"
+
+            @staticmethod
+            def parse_config(raw):
+                return raw
+
+            @staticmethod
+            def enabled(_own):
+                return enabled
+
+            @staticmethod
+            def deploy_subjects(_own):
+                if raises:
+                    raise RuntimeError("descriptor exploded")
+                return (subject,)
+
+        return FakeIntegration()
+
+    def _cfg(self):
+        class FakeConfig:
+            integrations = {"fake": {"some": "value"}}
+        return FakeConfig()
+
+    def _patch(self, monkeypatch, integ):
+        import stormpulse.integrations
+        monkeypatch.setattr(
+            stormpulse.integrations, "registered_integrations", lambda: [integ],
+        )
+
+    def test_an_enabled_integration_contributes(self, monkeypatch) -> None:
+        from stormpulse.cli.investigate.deploy import contributed_subjects
+        self._patch(monkeypatch, self._integ(enabled=True))
+        assert len(contributed_subjects(self._cfg())) == 1
+
+    def test_a_disabled_integration_contributes_nothing(self, monkeypatch) -> None:
+        from stormpulse.cli.investigate.deploy import contributed_subjects
+        self._patch(monkeypatch, self._integ(enabled=False))
+        assert contributed_subjects(self._cfg()) == ()
+
+    def test_a_raising_descriptor_is_skipped_not_fatal(self, monkeypatch) -> None:
+        from stormpulse.cli.investigate.deploy import contributed_subjects
+        self._patch(monkeypatch, self._integ(enabled=True, raises=True))
+        assert contributed_subjects(self._cfg()) == ()

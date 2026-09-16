@@ -284,6 +284,11 @@ class Config:
     deploy_probes: dict[str, DeployProbeConfig] = dataclasses.field(
         default_factory=dict,
     )
+    # The same tables, unparsed. Kept because precedence (CORE-009 D10) is
+    # field-by-field, and a parsed DeployProbeConfig cannot distinguish a value
+    # the operator wrote from a default that filled in. Merging has to happen
+    # before validation, so the merged result is validated as one whole.
+    deploy_probe_tables: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def validate_paths(self) -> None:
         """Check that all referenced core file paths exist and are readable.
@@ -618,6 +623,83 @@ def _parse_deploy_probes(raw: dict[str, Any]) -> dict[str, DeployProbeConfig]:
     return out
 
 
+def _deploy_probe_tables(raw: dict[str, Any]) -> dict[str, Any]:
+    """The node's own `[investigate.deploy.*]` tables, unvalidated.
+
+    Structural refusals only: a non-table container is the operator's intent
+    being unreadable, which is fatal. Per-subject validity is decided after the
+    merge, because a table that is invalid alone may be a legal override of a
+    contributed default.
+    """
+    investigate = raw.get("investigate", {})
+    if not isinstance(investigate, dict):
+        raise ConfigError("'investigate' must be a table")
+    subjects = investigate.get("deploy", {})
+    if not isinstance(subjects, dict):
+        raise ConfigError("'investigate.deploy' must be a table of subjects")
+    return {k: v for k, v in subjects.items() if isinstance(v, dict)}
+
+
+def _subject_as_table(subject: Any) -> dict[str, Any]:
+    """An SdkDeploySubject flattened into the shape its config table has.
+
+    One vocabulary for both sources: the descriptor's field names ARE the
+    table's key names, so the overlay below is a plain dict update and there is
+    no translation layer to drift.
+    """
+    table: dict[str, Any] = {
+        "units": list(subject.units),
+        "expected_root": subject.expected_root,
+        "search_roots": list(subject.search_roots),
+        "ports": list(subject.ports),
+    }
+    if subject.max_depth is not None:
+        table["max_depth"] = subject.max_depth
+    if subject.max_bytes is not None:
+        table["max_bytes"] = subject.max_bytes
+    return table
+
+
+def merge_deploy_probes(
+    tables: dict[str, Any],
+    contributed: tuple[Any, ...] = (),
+) -> dict[str, DeployProbeConfig]:
+    """Contributed subjects overlaid by the node's own tables (CORE-009 D10).
+
+    Precedence, and it only points one way: a descriptor supplies a default, the
+    operator's table overrides it key by key, and `enabled = false` on either
+    side removes the subject entirely. A package can widen nothing the operator
+    has narrowed, which is the whole reason contributed subjects are allowed to
+    exist at all.
+
+    Merging before validation is deliberate. A node table carrying only
+    `search_roots` is not a valid subject by itself, but it is a perfectly legal
+    narrowing of one, and validating each source separately would refuse it.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    for subject in contributed:
+        merged[subject.subject] = _subject_as_table(subject)
+    for name, table in tables.items():
+        merged.setdefault(name, {}).update(table)
+
+    out: dict[str, DeployProbeConfig] = {}
+    for name, table in merged.items():
+        if table.get("enabled") is False:
+            continue
+        try:
+            out[name] = _parse_one_deploy_probe(
+                name, {k: v for k, v in table.items() if k != "enabled"},
+            )
+        except ConfigError as exc:
+            logger.warning(
+                "Skipping invalid [investigate.deploy.%s]: %s. `stormpulse "
+                "investigate deploy` reports INCONCLUSIVE for this subject "
+                "until it is fixed.",
+                name, exc,
+            )
+    return out
+
+
 def _parse_one_deploy_probe(subject: str, entry: Any) -> DeployProbeConfig:
     """Validate one subject table; raise ConfigError on any problem."""
     ctx = f"investigate.deploy.{subject}"
@@ -892,4 +974,5 @@ def load_config(path: Path) -> Config:
         integrations=_parse_integrations(raw),
         log_groups=_parse_log_groups(raw),
         deploy_probes=_parse_deploy_probes(raw),
+        deploy_probe_tables=_deploy_probe_tables(raw),
     )

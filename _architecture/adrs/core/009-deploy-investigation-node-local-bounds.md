@@ -18,10 +18,15 @@ it may say back. No live figures, no path inventory. Verify against
 `config/stormpulse.example.toml`.
 
 **Status: ACCEPTED 2026-09-07 (operator seal), at `c47cd99`.** Decisions 1 to 8
-are sealed and NOT BUILT: no probe code exists, no config section is read, and
-no node answers `stormpulse investigate deploy`. Decision 9 settles nothing and
-says so: how a case file is declared on the wire defers to its own grill, and
-that fork gates the first emit, not the first line of probe code.
+are BUILT at `1c73324` and first ran on the staging node 2026-09-07, where a
+node with nothing declared answered INCONCLUSIVE naming the section it lacked.
+Decision 9 settles nothing and says so: how a case file is declared on the wire
+defers to its own grill, and that fork gates the first emit, not the probe.
+
+**Amended 2026-09-07** (decisions 10 and 11, and decision 3 widened) after the
+first live run: every node carrying a subject had to be hand-edited to declare
+a fact the node already knew about itself. Nothing is reversed; the amendment
+removes typing, not bounds.
 
 ## Context
 
@@ -109,8 +114,24 @@ max_bytes = 65536
 ```
 
 Keyed by subject, so one node can answer for more than one thing and a node with
-no `[investigate.deploy.*]` table answers `INCONCLUSIVE` naming the section it
-lacks -- never `CLEARED`.
+no subject from any source answers `INCONCLUSIVE` naming what it lacks -- never
+`CLEARED`.
+
+**Widened 2026-09-07 after the first live run: two sources, one rule.** The
+original wording made this table the only source, which meant hand-editing every
+node to declare a fact the node already knew about itself. An Integration
+descriptor may now contribute a subject, and the table above overrides it field
+by field, including `enabled = false` to switch one off.
+
+The security property is untouched, and this is the test to apply to any third
+source: **the subject resolves from something installed on the box, never from
+the wire.** A descriptor ships in a package and sits on disk beside the config;
+the control plane still cannot name a path, a unit or a glob. What changed is
+who typed it, not where it lives.
+
+Precedence, in one line: descriptor default, then the node's table, field by
+field. The operator is the last word on his own box, so a package update can
+widen nothing he has narrowed.
 
 **Refused: a wire-supplied `artifact_glob`.** The tool wish asked for one; the
 firm's signature has it as a parameter. Two reasons it cannot be one. `ParamDef`
@@ -210,6 +231,70 @@ Named rather than answered because it is a consequence the brief did not carry,
 and a consequence found in the draft is a question for the grill, never a
 decision the draft may take on its own authority.
 
+### 10. An Integration contributes its subject; the node still overrides it
+
+Added 2026-09-07. A descriptor declares a deploy subject the way
+[CORE-005](005-integration-contract.md) already lets it declare commands,
+detectors and investigations. Enabling `[buckets_gate]` yields the guard subject
+with nothing typed.
+
+**This does not move `command_specs_digest`.** That digest covers the command
+surface only -- name, group, argv, timeout, mode, flags, param validators, "every
+field a control-plane allow rule binds to". A subject is data, not a command, so
+no allow rule binds to it and no pin has to move. Checked before this was
+written, because the opposite assumption would have made this a fleet-wide
+deploy-order problem instead of a package change.
+
+Decision 1 is unchanged and this is a different axis: `deploy` stays a CORE
+investigation because it must answer on boxes carrying no Integration at all.
+An Integration contributing a subject to it is not the same as owning it.
+
+**Refused: contributed subjects being authoritative.** It reads simpler, and it
+would let a package update widen a search root on every node carrying that
+integration with no local brake. Simplicity yields to security here, per the
+ranked five and the conflict the corpus names most often.
+
+### 11. The wizard derives the subject from the unit file; it does not interview
+
+Added 2026-09-07, for boxes with no Integration: Main Site, Forgejo, a bare VPS.
+`stormpulse investigate deploy` stays one-shot and non-interactive, per
+`CONTEXT.md`'s sealed Investigation term, which explicitly avoids "wizard".
+Authoring config is the wizard engine's job (CORE-007 decision 5), and it already
+owns preview, ordered apply, per-step verify, receipt and rollback.
+
+The flow enumerates the box's operator-installed units -- the shape shipped
+2026-08-21 for log groups, "offer the box's operator-installed units instead of
+asking for a name" -- and on a pick reads `WorkingDirectory`, `ExecStart` and
+`FragmentPath` to propose `expected_root`, `search_roots` and the subject name.
+You confirm or edit.
+
+The reason this is the right read and not just the convenient one: a unit file
+*is* the declaration of where its thing lives. Deriving `expected_root` from it
+is what makes decision 5's finding possible, because anything outside it is then
+outside by the node's own account rather than by a path someone remembered.
+
+**Where the flow lives, found while building it (2026-09-07).** The derivation
+is pure and sits in `wizard/deploy_subject.py`. The enumeration cannot sit
+beside it: an operator-installed-unit lister already exists at
+`init/journald_logs.py:detect_candidate_units`, and `.importlinter` puts
+`init` and `wizard` on the same Framework line, where `|` means these modules
+do not import each other. So the flow that joins them is composed one layer up,
+in `cli`, which may import both. Nothing is duplicated and no layer bends.
+
+Stated because the obvious reading of this decision -- "the wizard package owns
+the flow" -- writes a second unit lister that must track systemd's output format
+forever. CORE-007 decision 5 gives the wizard engine the *apply*, not the
+gathering.
+
+**Derivation refuses rather than guesses.** A unit that names no
+`WorkingDirectory` and no absolute `ExecStart` yields no subject, and `/` is
+never an `expected_root` whichever property produced it. An invented root gives
+a probe that reports cleanly about a place nothing was installed, which on
+screen is indistinguishable from health. Receipt: the `/` guard existed on only
+one of the two branches until an isolated mutation test exposed the other
+(2026-09-07); the test that should have caught it was passing for a different
+reason.
+
 ## Consequences
 
 - storm-pulse gains a check whose whole purpose is to report absence. Every
@@ -239,6 +324,16 @@ decision the draft may take on its own authority.
   `/test-hunt` gets pointed at when this grows code.
 - **Simplicity**: one instrument, one vocabulary, no second probe. The
   investigation is a fourth core check, not a subsystem.
+- **Simplicity paid for without spending security, at decisions 10 and 11**
+  (added 2026-09-07). The corpus's most-adjudicated pair is simplicity against
+  security, and the first live run put it here: every node had to be
+  hand-edited. The bend goes the usual way at decision 10's refusal (contributed
+  subjects are defaults, not decrees, because authoritative ones would let a
+  package widen a search root with no local brake) and nowhere else. Everything
+  else in the amendment removes typing while leaving the bound where it was:
+  the subject still resolves from something installed on the box, never from the
+  wire. Simplicity gained without a security concession is not a trade-off, and
+  it is worth saying so rather than recording a bend that did not happen.
 
 **Fitness Functions:**
 
@@ -257,6 +352,14 @@ decision the draft may take on its own authority.
 - **Declared shape (existing, deferred):** CORE-008 Function 9 covers whatever
   the grill in decision 9 settles as the emitted shape. Nothing to add here
   until it does.
+- **The node table wins (code-enforced, added 2026-09-07):** a test giving one
+  subject from a descriptor and a narrower `search_roots` in the node's table,
+  failing if the merged config carries the descriptor's roots. Decision 10's
+  refusal is only real if precedence is tested; an override rule defended by
+  the author remembering it is the same as no rule.
+- **`enabled = false` switches a contributed subject off (code-enforced, added
+  2026-09-07):** the disable path is the operator's brake and is easy to leave
+  half-wired, since nothing else exercises it.
 - **Review-only, named as such:** decision 5's reading of an unexpected root as a
   *finding* rather than an error is a judgement about verdict semantics. No test
   distinguishes an honest IMPLICATED from a lazy one.
@@ -292,8 +395,15 @@ data directory, that review runs first.
 ## Governance
 
 The `deploy` investigation is registered where the other core investigations
-are, and this ADR owns its bounds. [CORE-005](005-integration-contract.md) is
-unchanged: this adds no Integration and no whitelisted command.
+are, and this ADR owns its bounds.
+
+~~[CORE-005](005-integration-contract.md) is unchanged: this adds no Integration
+and no whitelisted command.~~ **Corrected 2026-09-07 by decision 10:** this
+still adds no Integration and no whitelisted command, but CORE-005's descriptor
+gains a deploy-subject declaration alongside the commands, detectors and
+investigations it already carries. That is a contract-surface addition and
+CORE-005 is amended to name it. No allow rule binds to it, so
+`command_specs_digest` does not move.
 [CORE-008](008-declared-wire-shape-for-emitted-state.md) owns the emitted shape
 and is not amended here; decision 9 records that the case-file types come under
 its rule when they are first emitted, and defers how they are declared to its

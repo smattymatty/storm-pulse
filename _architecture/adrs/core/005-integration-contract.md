@@ -227,6 +227,28 @@ enricher rule; [CORE-007](007-external-integration-loader-and-command-contributo
 Bootstrap enforces decision 12 (group == id) and the merge site
 enforces decision 11's `MergeableState` requirement, both loudly.
 
+**Decision 14, added 2026-09-07: an Integration may declare deploy subjects.**
+`SdkIntegration` gains an optional `deploy_subjects`, alongside `specs`,
+`capabilities`, `readiness` and `wizard`, in the same opt-in shape. A node that
+enables an Integration gets that Integration's `[investigate.deploy.<subject>]`
+defaults without hand-editing config, which is the whole reason it exists:
+before this, every node had to be told a fact it already knew about itself.
+
+Two fences, and they are what keep this from being decision 8 by a quieter door:
+
+- **It is data, not a command.** No allow rule binds to a subject, so
+  `command_specs_digest` does not move and no control-plane pin has to follow a
+  release. Contrast `specs`, which is digest-covered precisely because a
+  control-plane grant binds to it.
+- **The node overrides it.** A contributed subject is a default; the operator's
+  own `[investigate.deploy.<subject>]` table wins field by field and
+  `enabled = false` switches one off. A package update can widen nothing the
+  operator has narrowed.
+
+Bounds, refusals and precedence live in
+[CORE-009](009-deploy-investigation-node-local-bounds.md) decisions 3 and 10;
+this ADR owns only the fact that the descriptor carries the field.
+
 The command-registry fence stays manual-review plus decision 8's gate.
 [CORE-007](007-external-integration-loader-and-command-contributor-grant.md) is
 the ADR that gate named: it authorizes loading an operator-sealed, first-party
@@ -260,3 +282,7 @@ future supply-chain concern), [CORE-004](004-signoff-verify-hatch-and-seal.md)
 [Garage Integration](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Garage-Integration)
 wiki guide (the rehomed garage foundation + admin-HTTP-API-over-CLI decisions; garage
 as the reference Integration).
+- 2026-09-07: decision 14 added - the descriptor may declare deploy subjects for
+  `stormpulse investigate deploy` (CORE-009 decision 10). Data, not commands, so
+  `command_specs_digest` is unmoved and decision 8's first-party command fence is
+  untouched.

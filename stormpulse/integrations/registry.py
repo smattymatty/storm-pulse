@@ -55,6 +55,10 @@ DetectInterval = Callable[[Any], float]
 # Post-mutation targeted re-read: given config, the current snapshot (id planning
 # only), and the mutation's params, return only the freshly re-read items.
 ReadAffected = Callable[[Any, Any, Mapping[str, str]], list[Any]]
+# Deploy subjects an Integration contributes (CORE-005 D14). Returns SDK
+# SdkDeploySubject values; typed loosely here so Framework does not reach
+# sideways into a Feature's shapes.
+DeploySubjects = Callable[[Any], tuple[Any, ...]]
 # Log-line enrichment: (key_id, name) -> resolved id. Built tick-fresh from the
 # integration's current state blob; must accept None (no state yet) and stay honest.
 LogEnricher = Callable[[str, str], str]
@@ -134,6 +138,13 @@ class Integration:
     # Optional one-shot diagnostic investigations (`stormpulse <id> investigate`).
     # Read-only by contract: an investigation observes and reports, never mutates.
     investigations: tuple[InvestigationSpec, ...] | None = None
+    # Optional deploy subjects this Integration contributes to the core `deploy`
+    # investigation (CORE-005 D14, CORE-009 D10). Takes this Integration's own
+    # parsed config, so a subject reflects what the operator configured rather
+    # than a guess. Data, never a command: no allow rule binds to it, so it is
+    # outside `command_specs_digest` and moves no control-plane pin. The node's
+    # own [investigate.deploy.<subject>] table overrides whatever it returns.
+    deploy_subjects: DeploySubjects | None = None
 
 
 _integrations: list[Integration] = []

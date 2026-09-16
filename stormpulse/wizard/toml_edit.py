@@ -13,6 +13,8 @@ import re
 import tomllib
 from pathlib import Path
 
+from typing import Any
+
 from stormpulse.sdk import TomlScalar
 from stormpulse.wizard.errors import WizardError
 
@@ -33,11 +35,29 @@ def render_scalar(value: TomlScalar) -> str:
     raise WizardError(f"unsupported TOML scalar type: {type(value).__name__}")
 
 
-def render_section(section: str, content: dict[str, TomlScalar]) -> str:
+def render_array(values: list[TomlScalar]) -> str:
+    """Render a single-line array of v1 scalars.
+
+    Added for deploy subjects (CORE-009 D11), whose `units` and `search_roots`
+    are lists. Single-line on purpose: these arrays are two or three short
+    paths, and a multi-line rendering would make `remove_section`'s line-based
+    replacement care about where an array ends.
+    """
+    return "[" + ", ".join(render_scalar(v) for v in values) + "]"
+
+
+def render_value(value: TomlScalar | list[TomlScalar]) -> str:
+    """A scalar or an array of scalars."""
+    if isinstance(value, list):
+        return render_array(value)
+    return render_scalar(value)
+
+
+def render_section(section: str, content: dict[str, Any]) -> str:
     """Render ``[section]`` with a leading blank line and a trailing newline, the
     shape the feature init templates use (so a port is byte-identical)."""
     lines = [f"\n[{section}]"]
-    lines.extend(f"{key} = {render_scalar(value)}" for key, value in content.items())
+    lines.extend(f"{key} = {render_value(value)}" for key, value in content.items())
     return "\n".join(lines) + "\n"
 
 
@@ -101,7 +121,7 @@ def restore_or_remove(path: Path, pre_image: bytes | None, mode: int = 0o644) ->
     atomic_write_bytes(path, pre_image, mode)
 
 
-def claim_section(config_path: Path, section: str, content: dict[str, TomlScalar]) -> None:
+def claim_section(config_path: Path, section: str, content: dict[str, Any]) -> None:
     """Create or replace the integration's own ``[section]`` in ``config_path``."""
     text = config_path.read_text(encoding="utf-8") if config_path.is_file() else ""
     kept = remove_section(text.splitlines(keepends=True), section)
@@ -109,7 +129,7 @@ def claim_section(config_path: Path, section: str, content: dict[str, TomlScalar
     atomic_write_bytes(config_path, new_text.encode("utf-8"))
 
 
-def section_equals(config_path: Path, section: str, content: dict[str, TomlScalar]) -> bool:
+def section_equals(config_path: Path, section: str, content: dict[str, Any]) -> bool:
     """Whether ``config_path`` parses and its ``[section]`` equals ``content``."""
     try:
         parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
