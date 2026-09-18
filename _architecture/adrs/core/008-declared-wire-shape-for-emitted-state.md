@@ -42,7 +42,14 @@ belief that goes stale without a symptom.
 
 **1. The emitted shape is declared, not implied.** A generated
 `wire-contract.json` at the repo root lists, per emitted dataclass, the field
-names and their nesting. It is checked in, reviewed like source, and published
+names and their nesting. *Scope widened 2026-09-18:* the artifact began as
+integration `state` only (`digest_covers: integrations`); it now also lists
+the protocol payloads a consumer reads field-by-field, starting with
+`CommandProgressPayload`. A consumer's local simulator had emitted a
+`command.progress` shape this agent does not produce, for two months, with
+every test on both sides green, because that payload sat outside the
+declared artifact and so outside the digest. Widening the scope is what
+makes that class of drift loud at connect time. It is checked in, reviewed like source, and published
 alongside the [Protocol Specification](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Protocol-Specification)
 so a consumer can read the contract without reading our source.
 
@@ -81,6 +88,12 @@ for.
 
 A rename is now a two-file change and a visible contract diff. That is the
 entire point, and it is a small tax on a rare operation.
+
+Widening the artifact's scope (decision 1, 2026-09-18) moves the digest
+once, on the release that carries it. A consumer holding the previous copy
+sees an unrecognised digest from every upgraded agent until it refreshes;
+that is the designed signal, not a fault, and the rollout order is the
+artifact first, the consumer's copy second, the agent release third.
 
 The artifact is public, stable and machine-readable, so a consumer can pin
 against it instead of against prose. The prose in the wiki stays the
