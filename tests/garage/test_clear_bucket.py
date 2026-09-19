@@ -790,3 +790,44 @@ async def test_an_unreachable_upload_check_reports_unknown_not_zero() -> None:
     assert outcome.success
     assert outcome.extras["unfinished_uploads"] is None
     assert "could not check" in outcome.stdout
+
+
+# ---------------------------------------------------------------------------
+# wall clock
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_backstop_is_thirty_minutes() -> None:
+    # The number a customer reads in the give-up message. Ten minutes was
+    # short for a bucket in the tens of thousands of objects; thirty is the
+    # deliberate window, and the give-up shape must survive the change.
+    from stormpulse.garage.jobs import clear_bucket as mod
+
+    assert mod._MAX_WALL_SECONDS == 1800
+
+
+@pytest.mark.asyncio
+async def test_wall_clock_gives_up_with_the_freed_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The clock reads "just started" for the first round and "past the cap"
+    # from then on, so exactly one round runs before the backstop trips. The
+    # outcome is the stalled shape naming the real cap, and it carries the
+    # count freed by the round in flight (freed stays freed; a re-run
+    # resumes), not a crash and not a success. The reading is faked rather
+    # than the cap lowered: a cap of zero raced the wall clock and passed or
+    # failed on how fast the machine was.
+    from stormpulse.garage.jobs import clear_bucket as mod
+
+    readings = iter([0.0])
+    monkeypatch.setattr(mod, "_elapsed", lambda started_at: next(readings, 99_999.0))
+    client = _FakeS3Client(objects={"a": 1, "b": 1})
+    progress = _ProgressRecorder()
+
+    outcome = await run_clear_bucket(progress, client, "test-bucket")  # type: ignore[arg-type]
+
+    assert outcome.success is False
+    assert outcome.failure_reason == "clear_stalled"
+    assert "clear exceeded 1800s" in outcome.extras["error"]
+    assert outcome.extras["deleted_count"] == 2
+    assert outcome.extras["bytes_freed"] == 2
+    assert len(client.delete_calls) == 1

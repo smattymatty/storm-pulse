@@ -49,7 +49,19 @@ logger = logging.getLogger(__name__)
 _DELETE_BATCH_SIZE = 250  # Keep each DeleteObjects well under the 30s socket read.
 _MAX_REPORTED_ERRORS = 10  # Trim the errors array on the wire to keep messages small.
 _MAX_NO_PROGRESS_ROUNDS = 3  # Consecutive rounds freeing zero objects before giving up.
-_MAX_WALL_SECONDS = 600  # Hard backstop: a clear never runs longer than this.
+# TODO: this hand-rolled drain loop exists only because Garage has no native
+# clear. Direction: the customer-credential mode leaves the ``garage`` group and
+# becomes an rclone-backed job (``rclone size`` for an exact total, ``rclone
+# delete`` never ``purge``, ``rclone size`` again as the convergence proof) on a
+# box that advertises ``rclone``. The credential-less mode splits: this node keeps
+# only the mint-a-throwaway-key / delete-it steps over the admin API, and the
+# delete itself runs on that same rclone job, on a key this node minted for it,
+# so no customer credential ever reaches a job. Behaviours the rclone job must
+# keep: no wall clock (the cap here only ever bounded custody of a credential),
+# a no-progress kill reported as ``clear_stalled`` with the window measured on a
+# real run rather than copied from _MAX_NO_PROGRESS_ROUNDS, and that window as a
+# parameter so a harness reaches the stalled outcome in seconds.
+_MAX_WALL_SECONDS = 1800  # Hard backstop: a clear never runs longer than this (600 until 0.5.1).
 
 
 def make_clear_bucket_handler(

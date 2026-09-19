@@ -64,6 +64,10 @@ def check_wire_contract() -> list[str]:
     # The digest a consumer reproduces from the file's own bytes. If this is
     # wrong the file is unusable to the far end even when the shape is right,
     # and nothing on this side would look broken.
+    # TODO(CORE-008 decision 1, widened 2026-09-18): the artifact grows from
+    # integration state to the protocol payloads a consumer reads field-by-field,
+    # starting with CommandProgressPayload. digest_covers and the digest move with
+    # it; rollout is artifact first, consumer copy second, agent release third.
     covers = on_disk.get("digest_covers")
     if covers != DIGEST_COVERS:
         violations.append(

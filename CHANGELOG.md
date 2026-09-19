@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `garage_bucket_clear` now runs for up to thirty minutes before giving up
+  (was ten). The backstop exists because the job holds the caller's
+  credential in memory for its duration; a larger bucket needs the longer
+  window, and the give-up result (`clear_stalled`) is unchanged in shape.
+
 ## [0.5.0] - 2026-09-16
 
 ### Added
