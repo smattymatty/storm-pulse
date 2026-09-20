@@ -54,15 +54,28 @@ class AuthError(Exception):
 _CLOCK_SKEW_TOLERANCE_SECONDS = 5
 
 
+# Length of the raw key enrolment writes: HKDF-SHA256 output on the dashboard.
+RAW_KEY_LEN = 32
+
+
 def load_hmac_secret(path: Path) -> bytes:
     """Read the shared HMAC secret from a file.
 
-    The file should contain the raw key bytes. Leading/trailing
-    whitespace is stripped. Raises AuthError if missing or empty.
+    Two forms exist. Enrolment writes the raw 32-byte key HKDF derived
+    on the dashboard (``RAW_KEY_LEN``); that form is returned untouched.
+    Anything else is treated as a hand-written text secret and has its
+    surrounding whitespace stripped. The distinction matters: a raw key
+    whose first or last byte happens to be one of the six ASCII
+    whitespace values (about one agent id in twenty) used to lose that
+    byte to ``strip()``, and every dispatch to that agent then failed
+    HMAC verification while registration still succeeded.
+    Raises AuthError if missing or empty.
     """
     if not path.is_file():
         raise AuthError(f"HMAC secret file not found: {path}", reason="secret_missing")
-    raw = path.read_bytes().strip()
+    raw = path.read_bytes()
+    if len(raw) != RAW_KEY_LEN:
+        raw = raw.strip()
     if not raw:
         raise AuthError(f"HMAC secret file is empty: {path}", reason="secret_empty")
     return raw

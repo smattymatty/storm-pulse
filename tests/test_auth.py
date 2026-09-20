@@ -153,6 +153,19 @@ def test_load_hmac_secret_strips_whitespace(tmp_path: Path) -> None:
     assert key == b"my-secret-key"
 
 
+def test_load_hmac_secret_keeps_raw_key_whitespace_bytes(tmp_path: Path) -> None:
+    """A raw 32-byte key is returned byte for byte, even when its first or
+    last byte is an ASCII whitespace value. Enrolment writes raw HKDF
+    output, so about one agent id in twenty produces such a key; stripping
+    it made every dispatch to that agent fail HMAC while registration
+    (mTLS + pulse token) still succeeded. Found on forgejo_w_1, 2026-09-20."""
+    raw = b"\n" + bytes(range(1, 31)) + b" "
+    assert len(raw) == 32
+    p = tmp_path / "hmac.key"
+    p.write_bytes(raw)
+    assert load_hmac_secret(p) == raw
+
+
 # ---------------------------------------------------------------------------
 # Canonical message construction
 # ---------------------------------------------------------------------------

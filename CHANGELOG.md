@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `load_hmac_secret` no longer strips a raw 32-byte key. Enrolment writes
+  raw HKDF output, and when its first or last byte was an ASCII whitespace
+  value (about one agent id in twenty) the agent verified with a 31-byte
+  key: registration succeeded, every dispatch failed
+  `HMAC verification failed`, and re-enrolling could not help because the
+  key is derived from the agent id. Text-form secrets are still stripped.
+
 ## [0.5.1] - 2026-09-19
 
 ### Changed
