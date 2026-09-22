@@ -1,17 +1,10 @@
-"""Garage admin HTTP API client (default port 3903, ``/v2/`` operations).
+"""Garage admin HTTP client for /v2/ operations (default port 3903).
 
-The agent's other Garage operations go through the CLI over RPC; this is the
-one typed HTTP path, used for the quota write (``UpdateBucket``).
+Callers supply the node-local admin token; keep it off the WebSocket and out
+of the website database. Requests authenticate with a Bearer header.
+Resolve Storm's 16-character bucket prefixes before writes: the API requires
+full 64-character IDs, unlike the CLI."""
 
-The admin token is a node secret. Per ADR buckets/000 it lives on the cluster,
-in the agent's host environment by virtue of the agent running there, never in
-Storm's website DB and never on the WebSocket. The caller resolves the token
-and passes it in; this module only uses it as a Bearer header against loopback.
-
-The admin API addresses buckets by their **full 64-char id** and rejects the
-16-char prefix Storm stores in ``garage_bucket_id`` (unlike the CLI, which does
-prefix matching). So the prefix is resolved to the full id first.
-"""
 from __future__ import annotations
 
 import http.client
@@ -29,20 +22,9 @@ _TIMEOUT_SECONDS = 15.0
 _FULL_BUCKET_ID_LEN = 64
 
 
-# --- Admin-API call meter (observability) ----------------------------------
-# Every admin call routes through ``_request``, so wrapping it once meters 100%
-# of admin traffic - state reads, the detector, and command-driven mutations
-# alike. The meter holds a trailing time window of per-call latencies keyed by
-# target endpoint, so the agent reports admin-API call-rate and p95 latency per
-# target node on the metrics push.
-#
-# This is the signal the 2026-06-27 saturation incident had no graph for: the
-# saturating resource was admin-API request serialization while CPU/RAM/disk all
-# read healthy. The meter is a process singleton (admin load is a property of the
-# process talking to the node, and rightly survives a websocket reconnect like
-# the state reader's topology cache). It records, never blocks, and meters
-# failures too: a timed-out call still consumed admin time and is the most
-# important latency to see under saturation.
+# Meter all admin calls, including failures, for endpoint rates and p95 latency.
+# The process-wide rolling window survives WebSocket reconnects and exposes
+# admin request saturation even when CPU, RAM, and disk look healthy.
 _ADMIN_METER_WINDOW_SECONDS = 300.0
 
 
@@ -56,12 +38,10 @@ class AdminCallStats:
 
 
 def _percentile(sorted_vals: list[float], q: float) -> float:
-    """Nearest-rank percentile of a pre-sorted list (``q`` in [0, 1]); 0.0 if empty.
+    """Return the nearest-rank percentile for sorted values; zero if empty.
 
-    Nearest-rank, not interpolated: with the handful of admin calls per window a
-    small agent makes, an interpolated p95 buys false precision. The rank is
-    ``ceil(q * n)`` clamped into range, so p95 of 20 samples is the 19th.
-    """
+    For q in [0, 1], use ceil(q * n), clamped to the available ranks.
+    Avoid interpolation's false precision with small samples."""
     if not sorted_vals:
         return 0.0
     rank = max(1, math.ceil(q * len(sorted_vals)))
@@ -69,13 +49,9 @@ def _percentile(sorted_vals: list[float], q: float) -> float:
 
 
 class _AdminCallMeter:
-    """Trailing-window admin-API latency samples, keyed by endpoint (``admin_url``).
+    """Track rolling latency samples by admin endpoint for the process lifetime.
 
-    Per endpoint a deque of ``(monotonic_ts, duration_ms)``; samples older than
-    the window are evicted on every record and snapshot, so memory is bounded by
-    the call rate, not by uptime. Stateless across nothing: one process-lifetime
-    instance, never reset on read (the window is rolling, evicted by age).
-    """
+    Evict aged samples on record and snapshot; reads never reset the window."""
 
     def __init__(self, window_seconds: float = _ADMIN_METER_WINDOW_SECONDS) -> None:
         self._window = window_seconds
@@ -95,13 +71,9 @@ class _AdminCallMeter:
             dq.popleft()
 
     def snapshot(self, now: float) -> dict[str, AdminCallStats]:
-        """Read the current window per endpoint. Eviction-only; never clears.
+        """Return per-endpoint rates and p95 latency after evicting old samples.
 
-        ``calls_per_sec`` is the window's sample count over the FULL window span,
-        so it averages over the trailing window (a cold-started agent ramps to
-        the true rate over one window, never spikes). ``p95`` is over the same
-        surviving samples.
-        """
+        Divide counts by the full window duration, so rates ramp up after startup."""
         out: dict[str, AdminCallStats] = {}
         for url, dq in self._samples.items():
             self._evict(dq, now)
@@ -120,24 +92,21 @@ _METER = _AdminCallMeter()
 
 
 def admin_call_stats() -> dict[str, AdminCallStats]:
-    """Snapshot the admin-API meter, keyed by endpoint.
-
-    The garage state read folds this into the per-node ``admin_metrics`` it puts
-    on the metrics push (``state.GarageState.admin_metrics``).
-    """
+    """Snapshot endpoint statistics for GarageState.admin_metrics."""
     return _METER.snapshot(time.monotonic())
 
 
 def set_bucket_quota(
-    *, admin_url: str, admin_token: str, bucket_id: str, max_size_bytes: int,
+    *,
+    admin_url: str,
+    admin_token: str,
+    bucket_id: str,
+    max_size_bytes: int,
 ) -> tuple[bool, str]:
-    """Set a bucket's max-size quota via ``POST /v2/UpdateBucket``.
+    """Set a bucket's byte quota via POST /v2/UpdateBucket.
 
-    Resolves Storm's 16-char ``bucket_id`` to Garage's full id first, then sets
-    the quota (``max_objects`` left unlimited). ``max_size_bytes`` is decimal
-    bytes, passed through unchanged. Returns ``(success, error_message)``; the
-    message rides to the operator via the JobOutcome, never customer-facing.
-    """
+    Resolve the bucket prefix first; leave max_objects unlimited.
+    Return (success, error_message) for the operator's JobOutcome."""
     auth = {"Authorization": f"Bearer {admin_token}"}
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_id)
     if not full_id:
@@ -161,15 +130,13 @@ def set_bucket_quota(
 
 
 def list_buckets(
-    *, admin_url: str, admin_token: str,
+    *,
+    admin_url: str,
+    admin_token: str,
 ) -> tuple[list[dict[str, Any]] | None, str]:
-    """List every bucket via ``GET /v2/ListBuckets``.
+    """GET /v2/ListBuckets; return (items, "") or (None, error).
 
-    Returns ``(items, "")`` where each item carries at least ``id`` and
-    ``globalAliases`` (per the v2 ``ListBucketsResponseItem`` schema), or
-    ``(None, error)`` when the endpoint can't be reached or returns non-2xx.
-    The caller fetches per-bucket detail via :func:`get_bucket_info`.
-    """
+    Items include id and globalAliases; use get_bucket_info for details."""
     data, err = _get_json(admin_url, admin_token, "/v2/ListBuckets")
     if data is None:
         return None, err
@@ -179,19 +146,15 @@ def list_buckets(
 
 
 def get_bucket_info(
-    *, admin_url: str, admin_token: str, bucket_ref: str,
+    *,
+    admin_url: str,
+    admin_token: str,
+    bucket_ref: str,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Fetch one bucket's full info via ``GET /v2/GetBucketInfo``.
+    """GET /v2/GetBucketInfo; return (info, "") or (None, error).
 
-    ``bucket_ref`` may be Garage's full 64-char id (looked up exactly via
-    ``?id=``) or Storm's 16-char prefix (resolved via ``?search=``). When the
-    prefix path is used we verify the returned ``id`` actually starts with it,
-    so a partial-match collision can never return the wrong bucket's stats.
-
-    Returns the parsed ``GetBucketInfoResponse`` dict (exact integer
-    ``bytes``/``objects`` and ``quotas.maxSize``/``maxObjects``, JSON, never
-    scraped text), or ``(None, error)``.
-    """
+    Use id for full IDs and search for prefixes; verify the returned ID matches.
+    Info includes integer bytes/objects and quotas.maxSize/maxObjects."""
     if len(bucket_ref) == _FULL_BUCKET_ID_LEN:
         path = "/v2/GetBucketInfo?" + urlencode({"id": bucket_ref})
     else:
@@ -211,14 +174,13 @@ def get_bucket_info(
 
 
 def get_cluster_status(
-    *, admin_url: str, admin_token: str,
+    *,
+    admin_url: str,
+    admin_token: str,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Cluster node list via ``GET /v2/GetClusterStatus``.
+    """GET /v2/GetClusterStatus; return (response, "") or (None, error).
 
-    Returns the response dict (``nodes`` array of ``NodeResp``: ``id``,
-    ``hostname``, ``addr``, ``garageVersion``, ``isUp``, ``role.zone`` /
-    ``role.capacity``, ``dataPartition``), or ``(None, error)``.
-    """
+    The nodes array includes identity, version, health, role, and partition data."""
     data, err = _get_json(admin_url, admin_token, "/v2/GetClusterStatus")
     if data is None:
         return None, err
@@ -228,14 +190,14 @@ def get_cluster_status(
 
 
 def get_cluster_statistics(
-    *, admin_url: str, admin_token: str,
+    *,
+    admin_url: str,
+    admin_token: str,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Cluster statistics via ``GET /v2/GetClusterStatistics``.
+    """GET /v2/GetClusterStatistics; return (response, "") or (None, error).
 
-    Returns the response dict (structured ``bucketCount`` / ``totalObjectCount`` /
-    ``totalObjectBytes`` / ``dataAvail`` plus a ``freeform`` text blob), or
-    ``(None, error)``. The agent reads the structured ``totalObjectCount``.
-    """
+    Includes structured counts, byte totals, dataAvail, and freeform text.
+    The agent reads totalObjectCount."""
     data, err = _get_json(admin_url, admin_token, "/v2/GetClusterStatistics")
     if data is None:
         return None, err
@@ -245,13 +207,13 @@ def get_cluster_statistics(
 
 
 def list_keys(
-    *, admin_url: str, admin_token: str,
+    *,
+    admin_url: str,
+    admin_token: str,
 ) -> tuple[list[dict[str, Any]] | None, str]:
-    """List access keys via ``GET /v2/ListKeys``.
+    """GET /v2/ListKeys; return (items, "") or (None, error).
 
-    Returns ``(items, "")`` where each item carries ``id`` and ``name``, or
-    ``(None, error)``. Secrets are never in this response.
-    """
+    Items contain id and name, never secrets."""
     data, err = _get_json(admin_url, admin_token, "/v2/ListKeys")
     if data is None:
         return None, err
@@ -261,14 +223,14 @@ def list_keys(
 
 
 def get_key_info(
-    *, admin_url: str, admin_token: str, access_key_id: str,
+    *,
+    admin_url: str,
+    admin_token: str,
+    access_key_id: str,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Fetch one access key's info via ``GET /v2/GetKeyInfo?id=<access_key_id>``.
+    """GET /v2/GetKeyInfo by access key ID; return (info, "") or (None, error).
 
-    Returns the ``GetKeyInfoResponse`` dict (carrying a ``buckets`` array of
-    every bucket this key has permissions on), or ``(None, error)``. The secret
-    is not requested (``showSecretKey`` omitted), so it is never in the response.
-    """
+    Includes bucket permissions; omit showSecretKey to avoid returning secrets."""
     path = "/v2/GetKeyInfo?" + urlencode({"id": access_key_id})
     data, err = _get_json(admin_url, admin_token, path)
     if data is None:
@@ -279,18 +241,17 @@ def get_key_info(
 
 
 def create_key(
-    *, admin_url: str, admin_token: str, name: str,
+    *,
+    admin_url: str,
+    admin_token: str,
+    name: str,
     allow_create_bucket: bool = False,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Create an access key via ``POST /v2/CreateKey``.
+    """POST /v2/CreateKey; return (info, "") or (None, error).
 
-    Returns the ``GetKeyInfoResponse`` dict, carrying ``accessKeyId`` and the
-    one-time ``secretAccessKey`` (returned only at creation), or ``(None,
-    error)``. The secret is never logged here; the caller hands it to the
-    operator via the JobOutcome. ``allow_create_bucket`` sets the key-level
-    S3 CreateBucket capability at mint (the account key); the
-    default of off matches Garage.
-    """
+    Info includes accessKeyId and secretAccessKey; never log the secret.
+    The caller delivers it to the operator through JobOutcome.
+    S3 CreateBucket permission defaults to disabled."""
     payload: dict[str, Any] = {"name": name}
     if allow_create_bucket:
         payload["allow"] = {"createBucket": True}
@@ -304,17 +265,15 @@ def create_key(
 
 
 def update_key(
-    *, admin_url: str, admin_token: str, access_key_id: str,
+    *,
+    admin_url: str,
+    admin_token: str,
+    access_key_id: str,
     allow_create_bucket: bool,
 ) -> tuple[bool, str]:
-    """Toggle a key's S3 CreateBucket capability via ``POST /v2/UpdateKey``.
+    """Toggle S3 CreateBucket via POST /v2/UpdateKey; return (success, error).
 
-    Sends ``allow.createBucket`` when ``allow_create_bucket`` is True, else
-    ``deny.createBucket`` (Garage's allow/deny block sets the key-level
-    ``allow_create_bucket`` flag). This is the count-backstop
-    lever: flipped off past the bucket-count rail, back on when room opens.
-    Returns ``(success, error)``.
-    """
+    Send allow.createBucket or deny.createBucket to enforce the bucket-count limit."""
     block = "allow" if allow_create_bucket else "deny"
     body = json.dumps({block: {"createBucket": True}}).encode("utf-8")
     path = "/v2/UpdateKey?" + urlencode({"id": access_key_id})
@@ -328,14 +287,11 @@ def create_bucket(
     local_alias: dict[str, Any] | None = None,
     global_alias: str | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Create a bucket via ``POST /v2/CreateBucket``.
+    """POST /v2/CreateBucket; return (info, "") or (None, error).
 
-    Both aliases are optional; omit both for an alias-less bucket. A
-    ``local_alias`` of ``{"accessKeyId", "alias", "allow": {read,write,owner}}``
-    makes Garage atomically create the bucket, bind that key's local alias, and
-    grant its permissions in one call. Returns the ``GetBucketInfoResponse``
-    dict (carrying the full ``id``), or ``(None, error)``.
-    """
+    Aliases are optional. local_alias supplies accessKeyId, alias, and
+    allow permissions (read/write/owner) for atomic creation and key binding.
+    The response includes the full bucket ID."""
     payload: dict[str, Any] = {}
     if global_alias is not None:
         payload["globalAlias"] = global_alias
@@ -351,15 +307,14 @@ def create_bucket(
 
 
 def delete_bucket(
-    *, admin_url: str, admin_token: str, bucket_ref: str,
+    *,
+    admin_url: str,
+    admin_token: str,
+    bucket_ref: str,
 ) -> tuple[bool, str]:
-    """Delete a bucket via ``POST /v2/DeleteBucket?id=<full_id>``.
+    """POST /v2/DeleteBucket after resolving the full ID; return (success, error).
 
-    Resolves ``bucket_ref`` to the full id first (the admin API rejects the
-    16-char prefix). DeleteBucket removes the bucket together with **all** its
-    aliases (global and local) in one call, and Garage rejects it unless the
-    bucket is empty. Returns ``(success, error)``.
-    """
+    Garage requires an empty bucket and removes all global and local aliases."""
     auth = {"Authorization": f"Bearer {admin_token}"}
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
     if not full_id:
@@ -369,32 +324,30 @@ def delete_bucket(
 
 
 def delete_key(
-    *, admin_url: str, admin_token: str, access_key_id: str,
+    *,
+    admin_url: str,
+    admin_token: str,
+    access_key_id: str,
 ) -> tuple[bool, str]:
-    """Delete an access key via ``POST /v2/DeleteKey?id=<access_key_id>``.
+    """POST /v2/DeleteKey; return (success, error).
 
-    Returns ``(success, error)``. Used by the provisioning rollback paths, so a
-    transport or non-2xx failure surfaces as ``(False, error)``, never raises.
-    """
+    Provisioning rollback receives transport and HTTP failures as (False, error)."""
     path = "/v2/DeleteKey?" + urlencode({"id": access_key_id})
     return _post(admin_url, admin_token, path)
 
 
 def cleanup_incomplete_uploads(
-    *, admin_url: str, admin_token: str, bucket_ref: str, older_than_secs: int,
+    *,
+    admin_url: str,
+    admin_token: str,
+    bucket_ref: str,
+    older_than_secs: int,
 ) -> tuple[int | None, str]:
-    """Abort a bucket's incomplete multipart uploads older than a cutoff.
+    """Abort multipart uploads older than older_than_secs.
 
-    ``POST /v2/CleanupIncompleteUploads`` with ``{bucketId, olderThanSecs}``
-    (both required by Garage); returns ``(uploadsDeleted, "")`` or
-    ``(None, error)``.
-
-    The age cutoff is the whole safety of this call. An in-flight upload from
-    seconds ago is a live customer operation; one from days ago is garbage
-    holding disk. Aborting by age keeps the fail-safe direction (data it cannot
-    classify as garbage is kept), which is why there is no "abort everything"
-    convenience here.
-    """
+    POST /v2/CleanupIncompleteUploads requires bucketId and olderThanSecs.
+    Return (uploadsDeleted, "") or (None, error). The age cutoff protects
+    recent uploads; there is deliberately no abort-all shortcut."""
     auth = {"Authorization": f"Bearer {admin_token}"}
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
     if not full_id:
@@ -402,9 +355,7 @@ def cleanup_incomplete_uploads(
     body = json.dumps(
         {"bucketId": full_id, "olderThanSecs": int(older_than_secs)}
     ).encode("utf-8")
-    data, err = _post_json(
-        admin_url, admin_token, "/v2/CleanupIncompleteUploads", body
-    )
+    data, err = _post_json(admin_url, admin_token, "/v2/CleanupIncompleteUploads", body)
     if data is None:
         return None, err
     if not isinstance(data, dict) or "uploadsDeleted" not in data:
@@ -413,14 +364,9 @@ def cleanup_incomplete_uploads(
 
 
 def is_not_found(err: str) -> bool:
-    """True if an admin-API error string means the resource is already gone.
+    """Recognize 404, not found, NoSuchBucket, or NoSuchKey error strings.
 
-    A 404 surfaces from :func:`_post` as ``"HTTP 404: ..."``; Garage's own
-    bodies use ``NoSuchBucket`` / ``NoSuchKey``. Callers that treat
-    already-absent as success (idempotent deletes, the credential-kill
-    tombstone sweep) use this to tell "confirmed gone" from a transient
-    error.
-    """
+    Used by idempotent deletes and tombstone cleanup to accept absent resources."""
     low = err.lower()
     return any(s in low for s in ("404", "not found", "nosuchbucket", "nosuchkey"))
 
@@ -435,15 +381,18 @@ def allow_bucket_key(
     write: bool,
     owner: bool = False,
 ) -> tuple[bool, str]:
-    """Grant a key permissions on a bucket via ``POST /v2/AllowBucketKey``.
+    """POST /v2/AllowBucketKey after resolving the full bucket ID.
 
-    ``bucket_ref`` is Storm's 16-char prefix (or a full id); it is resolved to
-    Garage's full 64-char id first, since the admin API rejects the prefix.
-    Returns ``(success, error)``.
-    """
+    Return (success, error)."""
     return _bucket_key_perm_change(
-        "/v2/AllowBucketKey", admin_url, admin_token, bucket_ref,
-        access_key_id, read, write, owner,
+        "/v2/AllowBucketKey",
+        admin_url,
+        admin_token,
+        bucket_ref,
+        access_key_id,
+        read,
+        write,
+        owner,
     )
 
 
@@ -457,14 +406,16 @@ def deny_bucket_key(
     write: bool,
     owner: bool = False,
 ) -> tuple[bool, str]:
-    """Revoke a key's permissions on a bucket via ``POST /v2/DenyBucketKey``.
-
-    Same shape as :func:`allow_bucket_key`; used by provisioning rollback to
-    undo a grant. Returns ``(success, error)``.
-    """
+    """POST /v2/DenyBucketKey to revoke permissions; return (success, error)."""
     return _bucket_key_perm_change(
-        "/v2/DenyBucketKey", admin_url, admin_token, bucket_ref,
-        access_key_id, read, write, owner,
+        "/v2/DenyBucketKey",
+        admin_url,
+        admin_token,
+        bucket_ref,
+        access_key_id,
+        read,
+        write,
+        owner,
     )
 
 
@@ -476,15 +427,16 @@ def add_bucket_alias_local(
     access_key_id: str,
     local_alias: str,
 ) -> tuple[bool, str]:
-    """Attach a local alias to a bucket in a key's namespace, via the local
-    variant of ``POST /v2/AddBucketAlias``.
+    """POST /v2/AddBucketAlias to bind an alias in a key's namespace.
 
-    ``bucket_ref`` is resolved to the full id first. Returns ``(success,
-    error)``.
-    """
+    Resolve the full bucket ID first; return (success, error)."""
     return _bucket_alias_local_change(
-        "/v2/AddBucketAlias", admin_url, admin_token, bucket_ref,
-        access_key_id, local_alias,
+        "/v2/AddBucketAlias",
+        admin_url,
+        admin_token,
+        bucket_ref,
+        access_key_id,
+        local_alias,
     )
 
 
@@ -496,15 +448,16 @@ def remove_bucket_alias_local(
     access_key_id: str,
     local_alias: str,
 ) -> tuple[bool, str]:
-    """Detach a local alias from a bucket in a key's namespace, via the local
-    variant of ``POST /v2/RemoveBucketAlias``.
+    """POST /v2/RemoveBucketAlias to unbind a key's local alias.
 
-    Same shape as :func:`add_bucket_alias_local`; used by provisioning rollback
-    to undo an attached alias. Returns ``(success, error)``.
-    """
+    Used by provisioning rollback; return (success, error)."""
     return _bucket_alias_local_change(
-        "/v2/RemoveBucketAlias", admin_url, admin_token, bucket_ref,
-        access_key_id, local_alias,
+        "/v2/RemoveBucketAlias",
+        admin_url,
+        admin_token,
+        bucket_ref,
+        access_key_id,
+        local_alias,
     )
 
 
@@ -553,7 +506,9 @@ def _bucket_key_perm_change(
 
 
 def _get_json(
-    admin_url: str, admin_token: str, path: str,
+    admin_url: str,
+    admin_token: str,
+    path: str,
 ) -> tuple[object | None, str]:
     """GET ``path`` and parse a JSON body. Returns ``(parsed, "")`` or
     ``(None, error)`` on transport, status, or decode failure."""
@@ -570,7 +525,10 @@ def _get_json(
 
 
 def _post(
-    admin_url: str, admin_token: str, path: str, body: bytes | None = None,
+    admin_url: str,
+    admin_token: str,
+    path: str,
+    body: bytes | None = None,
 ) -> tuple[bool, str]:
     """POST ``path`` (optionally with a JSON ``body``) and check the status.
 
@@ -590,7 +548,10 @@ def _post(
 
 
 def _post_json(
-    admin_url: str, admin_token: str, path: str, body: bytes,
+    admin_url: str,
+    admin_token: str,
+    path: str,
+    body: bytes,
 ) -> tuple[object | None, str]:
     """POST ``body`` to ``path`` and parse a JSON response. Returns
     ``(parsed, "")`` or ``(None, error)`` on transport, status, or decode
@@ -612,15 +573,14 @@ def _post_json(
 
 
 def _resolve_full_bucket_id(
-    admin_url: str, auth: dict[str, str], bucket_id: str,
+    admin_url: str,
+    auth: dict[str, str],
+    bucket_id: str,
 ) -> tuple[str, str]:
-    """Resolve Storm's 16-char ``garage_bucket_id`` to Garage's full 64-char id.
+    """Resolve a bucket prefix to a full ID; pass full IDs through unchanged.
 
-    ``GetBucketInfo``'s ``search`` param does a partial match; we verify the
-    returned id actually starts with the prefix, so an alias collision can never
-    redirect the write to the wrong bucket. A full id passes straight through.
-    Returns ``(full_id, "")`` or ``("", error)``.
-    """
+    Verify search results start with the prefix to reject alias collisions.
+    Return (full_id, "") or ("", error)."""
     if len(bucket_id) == _FULL_BUCKET_ID_LEN:
         return bucket_id, ""
     path = "/v2/GetBucketInfo?" + urlencode({"search": bucket_id})
@@ -628,7 +588,10 @@ def _resolve_full_bucket_id(
     if status is None:
         return "", resp
     if not (200 <= status < 300):
-        return "", f"resolve bucket id {bucket_id!r}: HTTP {status}: {resp.strip()[:300]}"
+        return (
+            "",
+            f"resolve bucket id {bucket_id!r}: HTTP {status}: {resp.strip()[:300]}",
+        )
     try:
         info = json.loads(resp)
     except json.JSONDecodeError:
@@ -640,13 +603,9 @@ def _resolve_full_bucket_id(
 
 
 def _event_target(endpoint: str, path: str) -> dict[str, str]:
-    """The admin call's target resource, as event fields.
+    """Map a request's id query parameter to bucket_id or key_id event fields.
 
-    Per-resource endpoints carry their target as ``?id=``; attribute it
-    to the right typed column by endpoint family, so events answer
-    "which bucket (or key) was this call about". Endpoints without an
-    id (list/cluster calls) contribute nothing.
-    """
+    Return no fields for endpoints without a recognized resource ID."""
     target_id = parse_qs(urlparse(path).query).get("id", [""])[0]
     if not target_id:
         return {}
@@ -679,9 +638,7 @@ def _request(
     )
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
-    # Meter every real call attempt (past URL validation), success or failure:
-    # a timeout consumed admin time and is the saturation signal. Timed across
-    # the whole request/response so latency reflects what the admin API took.
+    # Time the full request/response, including failures, after URL validation.
     start = time.monotonic()
     try:
         conn = conn_class(parsed.hostname, port, timeout=_TIMEOUT_SECONDS)
@@ -697,10 +654,7 @@ def _request(
         now = time.monotonic()
         duration_ms = (now - start) * 1000.0
         _METER.record(admin_url, duration_ms, now)
-        # One wide event per call: the raw record the meter's aggregate is
-        # derived FROM, control-plane side, at read time. The meter freezes
-        # the questions it was built to answer; the event answers the ones
-        # nobody has asked yet (write-time-aggregation scar, 2026-06-27).
+        # Emit raw call details so the control plane can compute other aggregates.
         endpoint = path.split("?", 1)[0].rsplit("/", 1)[-1]
         events.emit(
             "admin_call",

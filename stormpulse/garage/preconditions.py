@@ -1,32 +1,9 @@
-"""Agent-start preconditions for the Garage Feature.
+"""Check Garage CLI version and RPC access before registering commands.
 
-Two checks run in order before the agent registers garage commands.
-The first failure short-circuits and returns a named reason. The reason
-is published on ``GarageState.disabled_reason`` so the dashboard sees a
-clear cause rather than a missing-feature mystery.
-
-Reasons (closed set):
-
-- ``garage_version_unsupported`` - the configured garage CLI does not
-  report v2.x.
-- ``rpc_secret_unauthenticated`` - ``garage status`` exited non-zero
-  with an auth-shaped stderr.
-- ``garage_unreachable`` - docker, the Garage container, or the CLI
-  is not callable. Covers the FileNotFoundError, TimeoutExpired, and
-  non-auth non-zero exit cases.
-
-An earlier version asserted that ``/var/lib/garage/{meta,data}`` were
-ZFS mounts. That check is gone: a multi-disk LVM ext4 root, which is
-what most managed hosts deliver, makes ZFS-on-clean-disk unworkable,
-so a mount-type gate at startup refuses hosts that are otherwise fine.
-Metadata durability belongs in garage.toml (``metadata_fsync = true``
-plus ``metadata_auto_snapshot_interval``), which is a deployment
-decision rather than something this agent gates on.
-
-These checks are synchronous so the bootstrap code path can run them
-without spinning an event loop. Each one wraps its subprocess in a
-timeout and never raises; the worst case is a named reason.
-"""
+Return the first failure as GarageState.disabled_reason:
+garage_version_unsupported, rpc_secret_unauthenticated, or garage_unreachable.
+Checks are synchronous with subprocess timeouts. Storage type is not gated;
+configure metadata durability in garage.toml at deployment."""
 
 from __future__ import annotations
 
@@ -42,22 +19,12 @@ _TIMEOUT_SECONDS = 15
 
 
 def warn_if_s3_root_domain_set(config: GarageConfig) -> None:
-    """Loud boot warning if garage.toml enables S3 virtual-host addressing.
+    """Warn, without blocking startup, when S3 virtual-host addressing is enabled.
 
-    Not a gate: ``s3_api.root_domain`` being set is legal. But it is the
-    2026-06-05 trap. If any S3 API endpoint host is a subdomain of
-    ``s3_api.root_domain``, Garage parses the endpoint's own label as a
-    virtual-host bucket name and returns NoSuchBucket for *every* request
-    (the website's HeadBucket preflight then 503s, CORS and rotate fail).
-    The agent cannot see the per-request endpoints at boot, so it cannot
-    compare them here; the request-time hard catch lives on the website
-    side (a Storm-known bucket returning NoSuchBucket logs a named
-    endpoint/root_domain alarm). This warning makes the dangerous config
-    impossible to reintroduce *silently*.
-
-    Path-only stacks should leave ``s3_api.root_domain`` unset. See
-    ``core/buckets-customer-truth.md``.
-    """
+    Endpoints beneath s3_api.root_domain can be mistaken for bucket names, causing
+    NoSuchBucket errors. Path-only stacks should leave root_domain unset.
+    The website checks endpoint collisions at request time; see
+    core/buckets-customer-truth.md."""
     try:
         with open(config.config_path, "rb") as fh:
             raw = tomllib.load(fh)
@@ -97,9 +64,7 @@ def check_garage_version(config: GarageConfig) -> str | None:
         return "garage_unreachable"
     if proc.returncode != 0:
         return "garage_unreachable"
-    # Garage v2 CLI prints either "garage v2.x.y" or "v2.x.y" depending
-    # on subcommand. Substring check is sufficient for the major-version
-    # gate this precondition enforces.
+    # Accept both "garage v2.x.y" and "v2.x.y" CLI output.
     out = (proc.stdout or "").strip().lower()
     if "v2." not in out:
         return "garage_version_unsupported"
@@ -107,12 +72,9 @@ def check_garage_version(config: GarageConfig) -> str | None:
 
 
 def check_rpc_secret(config: GarageConfig) -> str | None:
-    """`garage status` must exit 0. Returns reason or None on pass.
+    """Require garage status to exit zero; return None on success.
 
-    Distinguishes auth failure (shape-matched in stderr) from generic
-    unreachability so the operator gets a more specific reason when the
-    container is up but the secret is wrong.
-    """
+    Report auth-shaped stderr separately from generic unreachability."""
     cmd = [
         config.docker_binary,
         "exec",
@@ -144,16 +106,10 @@ def check_rpc_secret(config: GarageConfig) -> str | None:
 
 
 def run_preconditions(config: GarageConfig) -> str | None:
-    """Run all checks in order. Returns first failing reason or None.
+    """Warn about root_domain, then check CLI version and RPC authentication.
 
-    Order: version (Garage CLI handshake) → rpc_secret (full auth
-    round-trip). Both run through ``docker exec``, so the container
-    being up + reachable is implicitly required; ``garage_unreachable``
-    covers that path.
-
-    Also emits the informational ``root_domain`` trap warning (never
-    gates) so a re-introduced vhost-collision config screams at boot.
-    """
+    Return the first failure reason or None. Both checks use docker exec;
+    container access failures return garage_unreachable."""
     warn_if_s3_root_domain_set(config)
     reason = check_garage_version(config)
     if reason:

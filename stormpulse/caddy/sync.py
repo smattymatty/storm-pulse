@@ -1,13 +1,8 @@
-"""Caddy sync handler + boot-time drop-in import verification.
+"""Reconcile Caddy drop-ins and verify their main Caddyfile import at boot.
 
-Sync writes the fragment atomically (disk-authoritative), then POSTs the
-absolutised main Caddyfile to ``/load`` so Caddy re-adapts. Persist failure
-leaves Caddy untouched; reload failure leaves disk newer than live,
-eventually consistent on the next successful sync.
-
-The verifier catches the silent failure where the main Caddyfile doesn't
-import the drop-in path - fragments would land on disk but never serve.
-"""
+Persist files before posting the composed config to /adapt, then /load.
+Persistence failure leaves live Caddy untouched. Reload failure leaves disk
+newer than live until a successful sync or operator reload."""
 
 from __future__ import annotations
 
@@ -30,30 +25,19 @@ logger = logging.getLogger(__name__)
 
 _LOAD_TIMEOUT_SECONDS = 20
 
-# Managed per-bucket drop-in files are named site-<id>.caddy and globbed
-# as a set. The prefix/suffix are the agent's contract: only files matching
-# this shape are reconciled, so an operator's hand-written drop-in in the
-# same directory is never touched.
+# Reconcile only site-<id>.caddy files; leave other operator drop-ins alone.
 _MANAGED_PREFIX = "site-"
 _MANAGED_SUFFIX = ".caddy"
 _MANAGED_GLOB = f"{_MANAGED_PREFIX}*{_MANAGED_SUFFIX}"
 
-# A tenant id keys a filename, so it must not carry a path separator or a
-# dot run. Garage ids are hex hashes; this charset (hex plus the safe id
-# punctuation) blocks traversal while staying forgiving of the exact slice
-# Storm sends.
+# Tenant IDs become filenames; restrict characters and length to block traversal.
 _TENANT_KEY_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
-# A single bucket's fragment: its assigned-subdomain block plus any
-# custom-domain blocks. 16KB is far above a real bucket (a few hundred
-# bytes per block) and exists to catch a pathological Storm-side render
-# before it lands on disk.
+# Cap each bucket fragment at 16 KiB to reject pathological renders.
 _PER_TENANT_MAX_BYTES = 16_384
 
-# Inline delete cadence. A normal state change disables at most one site,
-# so at most one managed file (plus, once, the legacy single-file drop-in)
-# should disappear per sync. A delete count above this without
-# authorize_bulk is the suspicious-mass-delete signal the rail guards.
+# More than one deletion per sync requires authorize_bulk.
+# Count the legacy drop-in removal too.
 _INLINE_DELETE_CADENCE = 1
 
 
@@ -61,19 +45,10 @@ def verify_drop_in_imported(
     main_caddyfile: Path,
     drop_in_path: Path,
 ) -> str | None:
-    """Check that the main Caddyfile imports the drop-in path.
+    """Return None for a matching drop-in import, otherwise a boot-blocking error.
 
-    Returns ``None`` if a matching import directive is found. Returns
-    a human-readable error message if not. Called at agent boot - a
-    non-None result must hard-fail the agent so the operator fixes
-    Caddy before the agent is ever asked to sync.
-
-    Matches both exact paths and globs. Imports are resolved relative
-    to the main Caddyfile's directory (per Caddy's documented behavior).
-    Glob matching uses ``fnmatch`` against the drop-in filename - we
-    deliberately don't require the drop-in file to exist on disk, so
-    the boot check works before the first cert lifecycle event fires.
-    """
+    Resolve relative imports against the main Caddyfile's directory.
+    Accept exact paths or filename globs without requiring the drop-in to exist."""
     if not main_caddyfile.is_file():
         return f"Main Caddyfile not found: {main_caddyfile}"
 
@@ -123,16 +98,10 @@ def verify_drop_in_imported(
 
 @dataclass(frozen=True)
 class ReconcilePlan:
-    """The disk mutations a manifest implies, with the delete direction
-    already rail-checked.
+    """Planned writes and deletes after enforcing the bulk-delete guard.
 
-    ``writes`` maps managed filename -> fragment and is always applied: an
-    add or update that briefly proxies to nothing self-heals on the next
-    sync, never an outage. ``deletes`` are the managed filenames to remove;
-    it is empty when the rail tripped. ``skipped_deletes`` records what the
-    rail refused so the failure can name them. ``rail_tripped`` is true when
-    a delete-beyond-cadence was refused for lack of ``authorize_bulk``.
-    """
+    Writes always apply. If unauthorized deletes exceed cadence, deletes is empty,
+    skipped_deletes lists the refused files, and rail_tripped is True."""
 
     writes: dict[str, str] = field(default_factory=dict)
     deletes: list[str] = field(default_factory=list)
@@ -141,15 +110,10 @@ class ReconcilePlan:
 
 
 def _decode_manifest(raw: str) -> tuple[dict[str, str] | None, str | None]:
-    """Parse and validate the tenants manifest JSON.
+    """Validate tenant JSON; return (manifest, None) or (None, error).
 
-    Returns ``(manifest, None)`` on success or ``(None, error)`` on any
-    problem: malformed JSON, a non-object, a non-string key or value, a key
-    that could escape the drop-in directory (a filename is built from it),
-    or a fragment over the per-bucket cap. A bad manifest is a Storm-side
-    render bug, so the whole sync is rejected rather than a partial set
-    written.
-    """
+    Reject the whole manifest for invalid JSON, non-string entries, unsafe filename
+    keys, or oversized fragments. Never persist a partially valid manifest."""
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -184,23 +148,12 @@ def _plan_reconcile(
     authorize_bulk: bool,
     cadence: int = _INLINE_DELETE_CADENCE,
 ) -> ReconcilePlan:
-    """Turn a manifest plus the on-disk managed file set into the writes and
-    deletes to apply, guarding the delete direction. Pure: no I/O.
+    """Plan writes and guarded deletes from the manifest and disk; no I/O.
 
-    The reference is the agent's OWN on-disk set, never a count Storm sends.
-    Storm's query cannot audit Storm's query, so only the agent, blind to
-    what the query returned, is an independent witness to an under-return.
-
-    Writes always flow. Deletes are the managed files no longer named in the
-    manifest, plus, on first cutover, the legacy single-file drop-in: it
-    does not match the managed glob, so it would otherwise linger and
-    collide on /adapt with the new per-bucket files declaring the same
-    sites. If the delete count exceeds ``cadence`` and ``authorize_bulk`` is
-    false, ALL deletes are skipped, not an arbitrary subset: picking which
-    of a suspicious batch to delete would still risk darkening a live site,
-    which is the exact failure the rail exists to prevent. The old files
-    keep serving and the plan is marked tripped.
-    """
+    Use the agent's on-disk set as an independent check on Storm's manifest.
+    Always plan writes; delete obsolete managed files and the legacy drop-in.
+    If deletes exceed cadence without authorize_bulk, skip all deletes and mark
+    the guard tripped so existing sites keep serving."""
     writes = {
         f"{_MANAGED_PREFIX}{tid}{_MANAGED_SUFFIX}": frag
         for tid, frag in tenants.items()
@@ -221,17 +174,8 @@ def _plan_reconcile(
     return ReconcilePlan(writes=writes, deletes=delete_names)
 
 
-# One reconcile per drop-in DIRECTORY at a time, per agent process. Each
-# sync is a full read-modify-write of that directory's site-*.caddy set
-# (scan -> plan -> apply -> reload), so two running concurrently race on
-# the shared file set: the 2026-07-04 persist_failed in the events plane's
-# first live minutes was two same-second syncs sharing site-<id>.caddy.tmp,
-# the loser's os.replace hitting Errno 2. Bursts of dispatches are
-# legitimate website behavior (per-bucket closure sweeps), so the
-# serialization lives here, at the invariant's home. The lock keys on the
-# directory (the resource actually shared), never the caller-supplied
-# region param: two dispatches naming different regions - or omitting the
-# param - still reconcile the same directory and must serialize.
+# Serialize scan, plan, persist, and reload per directory within this process.
+# Region names cannot isolate shared files; concurrent syncs race on temp paths.
 _DIR_LOCKS: dict[str, asyncio.Lock] = {}
 
 
@@ -254,29 +198,13 @@ def make_caddy_sync_handler(
     caddy: CaddyConfig,
     params: dict[str, str],
 ) -> JobHandler:
-    """Build a long-running handler for buckets_custom_domain_caddy_sync.
+    """Build a sync handler serialized per drop-in directory.
 
-    Workflow, one ``_*`` step function per numbered phase below; a step
-    aborts the sync by raising ``_SyncFailure`` with its failed outcome:
-
-    1. Decode + validate the tenants manifest (a Storm-side render guard:
-       bad JSON, an unsafe key, or an oversized fragment rejects the sync
-       before anything touches disk).
-    2. Plan the reconcile against the agent's own on-disk ``site-*.caddy``
-       set, rail-guarding the delete direction.
-    3. Apply all disk mutations (writes then deletes, write-to-tmp +
-       ``os.replace``) BEFORE the preflight, so the config Caddy adapts is
-       the final composed state, never a transient superset. Disk is now
-       authoritative.
-    4. POST the main Caddyfile (relative ``import`` paths absolutised) to
-       ``{admin_url}/adapt`` as a dry run, then ``/load`` to apply. Caddy
-       re-adapts the composed config from source, picking up the per-bucket
-       files alongside everything else the operator declared.
-
-    A reload-after-persist failure surfaces as a failed sync with the disk
-    in the new state and the running Caddy in the old state. The next
-    successful sync (or operator-initiated reload) restores consistency.
-    """
+    Validate the manifest, plan guarded reconciliation, then persist writes and
+    deletes before /adapt preflight and /load. Send the main Caddyfile with
+    absolute imports so Caddy loads the complete configuration.
+    Steps raise _SyncFailure with a failed JobOutcome. Reload failure leaves disk
+    newer than live until a successful sync or operator reload."""
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         async with _dir_lock(str(caddy.drop_in_path.parent)):
@@ -334,7 +262,9 @@ def make_caddy_sync_handler(
             "finalizing",
             5,
             5,
-            "sync applied, delete rail tripped" if plan.rail_tripped else "sync complete",
+            "sync applied, delete rail tripped"
+            if plan.rail_tripped
+            else "sync complete",
         )
         return _terminal_outcome(region, plan)
 
@@ -401,17 +331,11 @@ def _scan_and_plan(
     )
 
 
-async def _persist_plan(
-    caddy: CaddyConfig, region: str, plan: ReconcilePlan
-) -> None:
-    """Step 3: apply disk mutations, writes then deletes, atomically per file.
+async def _persist_plan(caddy: CaddyConfig, region: str, plan: ReconcilePlan) -> None:
+    """Apply writes then deletes, atomically per file, before /adapt.
 
-    All mutations happen before the /adapt preflight so the composed
-    state Caddy adapts is the final set, never a transient superset.
-    A leftover legacy file colliding with a new per-bucket file
-    declaring the same site would otherwise fail /adapt on a duplicate
-    site address.
-    """
+    Preflight must see the final file set; leftover legacy files can duplicate
+    sites declared by new per-bucket files."""
     drop_in_dir = caddy.drop_in_path.parent
     try:
         for name, frag in plan.writes.items():
@@ -444,16 +368,9 @@ async def _persist_plan(
 
 
 async def _preflight_composed(caddy: CaddyConfig, region: str) -> str:
-    """Step 4: preflight the composed config via admin /adapt; returns the load body.
+    """Dry-run the composed Caddyfile through /adapt; return the load body.
 
-    /adapt runs the Caddyfile adapter WITHOUT loading, so a
-    broken composed config (missing import target, two files
-    declaring the same site) surfaces as a named failure here
-    while the running Caddy keeps serving untouched. Both bugs
-    of the 2026-06-11 incident were adapter errors that a /load
-    400 reported into a log nobody read; this step is what turns
-    that into a self-diagnosing command result.
-    """
+    Report missing imports or duplicate sites without changing live Caddy."""
     try:
         load_body = await asyncio.to_thread(
             _read_and_absolutize_imports,
@@ -481,8 +398,7 @@ async def _preflight_composed(caddy: CaddyConfig, region: str) -> str:
     )
     if not ok:
         logger.warning(
-            "caddy_sync: composed config failed /adapt preflight "
-            "for region=%s: %s",
+            "caddy_sync: composed config failed /adapt preflight for region=%s: %s",
             region,
             err,
         )
@@ -504,14 +420,9 @@ async def _preflight_composed(caddy: CaddyConfig, region: str) -> str:
 
 
 async def _reload_caddy(caddy: CaddyConfig, region: str, load_body: str) -> None:
-    """Step 5: reload Caddy via admin /load.
+    """Reload the complete main Caddyfile through /load.
 
-    POST the main Caddyfile so Caddy re-adapts the composed
-    config from disk. Posting just a fragment would replace
-    the entire running config (Caddy /load is a full-config
-    endpoint), wiping every other site the main Caddyfile
-    declares until the next operator-initiated restart.
-    """
+    /load replaces the entire live config; sending only a fragment loses other sites."""
     ok, err = await asyncio.to_thread(
         _post_caddy_load,
         caddy.admin_url,
@@ -519,8 +430,7 @@ async def _reload_caddy(caddy: CaddyConfig, region: str, load_body: str) -> None
     )
     if not ok:
         logger.warning(
-            "caddy_sync: drop-ins persisted but Caddy reload "
-            "failed for region=%s: %s",
+            "caddy_sync: drop-ins persisted but Caddy reload failed for region=%s: %s",
             region,
             err,
         )
@@ -535,13 +445,10 @@ async def _reload_caddy(caddy: CaddyConfig, region: str, load_body: str) -> None
 
 
 def _terminal_outcome(region: str, plan: ReconcilePlan) -> JobOutcome:
-    """Build the terminal outcome once the writes are live.
+    """Return the sync result after writes are live.
 
-    If the rail tripped, the writes still applied (adds/updates are safe)
-    but the suspicious deletes were refused and those files keep serving;
-    return a named failure so the operator sees it, rather than a silent
-    partial apply.
-    """
+    Report a named failure if the delete guard refused removals, even though
+    writes succeeded; the skipped files remain on disk."""
     extras = {
         "region": region,
         "tenants": len(plan.writes),
@@ -579,29 +486,23 @@ def _terminal_outcome(region: str, plan: ReconcilePlan) -> JobOutcome:
 
 
 def _post_caddy_adapt(admin_url: str, fragment: str) -> tuple[bool, str]:
-    """POST the composed Caddyfile to admin /adapt as a dry run.
+    """POST the composed Caddyfile to /adapt without changing live config.
 
-    /adapt runs the caddyfile adapter and returns the JSON config
-    without applying it, so adapter-level errors (missing import
-    targets, ambiguous site definitions) are caught while the running
-    Caddy stays untouched. Same transport contract as
-    ``_post_caddy_load``.
-    """
+    Return (success, error_message), using the same transport as /load."""
     return _post_caddyfile(admin_url, "/adapt", fragment)
 
 
 def _post_caddy_load(admin_url: str, fragment: str) -> tuple[bool, str]:
-    """POST a Caddyfile fragment to Caddy's admin /load endpoint.
+    """POST Caddyfile text to /load; return (success, error_message).
 
-    Returns ``(success, error_message)``. The error message on failure
-    rides through to the operator via the JobOutcome.stderr field;
-    it is not customer-facing.
-    """
+    Failures reach the operator through JobOutcome.stderr."""
     return _post_caddyfile(admin_url, "/load", fragment)
 
 
 def _post_caddyfile(
-    admin_url: str, endpoint: str, fragment: str,
+    admin_url: str,
+    endpoint: str,
+    fragment: str,
 ) -> tuple[bool, str]:
     """Shared transport: POST text/caddyfile to a Caddy admin endpoint."""
     parsed = urlparse(admin_url)
@@ -643,13 +544,7 @@ def _post_caddyfile(
 
 
 def _atomic_write_or_remove(drop_in_path: Path, fragment: str) -> None:
-    """Write fragment atomically, or remove the file if fragment is empty.
-
-    The reconcile uses both directions: a non-empty fragment writes (or
-    updates) a per-bucket file; an empty fragment is how a delete is
-    expressed, so a removed bucket's file does not linger as a stale
-    import target.
-    """
+    """Atomically write a nonempty fragment; delete the file for an empty one."""
     if not fragment:
         try:
             drop_in_path.unlink()
@@ -663,12 +558,9 @@ def _atomic_write_or_remove(drop_in_path: Path, fragment: str) -> None:
 
 
 def _snippet_names(content: str) -> set[str]:
-    """Collect Caddyfile snippet names: top-level ``(name) { ... }`` blocks.
+    """Collect (name) snippet definitions that must remain named imports.
 
-    ``import`` resolves a snippet name before it is ever treated as a
-    file path, so any import target matching one of these names must be
-    left untouched by absolutisation.
-    """
+    Caddy resolves snippets before treating import targets as file paths."""
     names: set[str] = set()
     for raw_line in content.splitlines():
         line = raw_line.split("#", 1)[0].strip()
@@ -680,24 +572,10 @@ def _snippet_names(content: str) -> set[str]:
 
 
 def _read_and_absolutize_imports(main_caddyfile: Path) -> str:
-    """Read the main Caddyfile and absolutise any relative ``import`` paths.
+    """Resolve relative import paths against the main Caddyfile's directory.
 
-    Caddy's /load endpoint resolves relative imports against Caddy's
-    current working directory, not the source file's location. When
-    we POST a Caddyfile that was authored to be read from disk
-    (where imports resolve relative to the file), relative targets
-    may resolve to the wrong place. Absolutising them in place
-    sidesteps this - the running Caddy sees the same import targets
-    it would resolve on a disk-based load.
-
-    Snippet imports are exempt: ``import security-headers`` referencing
-    a ``(security-headers)`` block is a name, not a path. Rewriting it
-    to ``/etc/caddy/security-headers`` makes Caddy reject the whole
-    /load with "File to import not found" - which silently broke every
-    sync against a hardened Caddyfile until 2026-06-11. Targets are
-    checked against the file's own snippet definitions, mirroring
-    Caddy's snippet-before-file resolution order.
-    """
+    Posted Caddyfiles otherwise resolve paths against Caddy's working directory.
+    Preserve snippet names: Caddy resolves them before file imports."""
     content = main_caddyfile.read_text(encoding="utf-8")
     base_dir = main_caddyfile.parent
     snippets = _snippet_names(content)
@@ -712,11 +590,7 @@ def _read_and_absolutize_imports(main_caddyfile: Path) -> str:
             out.append(line)
             continue
         target = code_part[len("import ") :].strip()
-        if (
-            not target
-            or target in snippets
-            or Path(target).is_absolute()
-        ):
+        if not target or target in snippets or Path(target).is_absolute():
             out.append(line)
             continue
         abs_target = (base_dir / target).as_posix()
