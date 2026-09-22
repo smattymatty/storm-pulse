@@ -91,7 +91,7 @@ def test_docstring_continuation_gates_full_block(repo):
 
 def test_fixture_strings_do_not_fail(repo):
     stage(repo, 'fixture.py', 'DATA = """\n' + '# data\n' * 41 + '"""\n')
-    assert changed_blocks(repo, True, None) == []
+    assert changed_blocks(repo, staged=True, base=None) == []
 
 
 def test_todo_context_outside_diff_hunk(repo):

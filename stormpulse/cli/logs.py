@@ -36,6 +36,7 @@ from stormpulse.init.mode import InstallMode, detect_mode
 def _journalctl_argv(
     mode: InstallMode,
     lines: int | None,
+    *,
     follow: bool,
     since: str | None = None,
     until: str | None = None,

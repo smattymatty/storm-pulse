@@ -260,9 +260,9 @@ def sign_command_sequence(
     canonical = canonical_command_sequence(
         sequence_id,
         commands,
-        stop_on_failure,
-        nonce,
-        ts_str,
+        stop_on_failure=stop_on_failure,
+        nonce=nonce,
+        timestamp=ts_str,
     )
     sig = sign(canonical, secret)
     envelope = Envelope(

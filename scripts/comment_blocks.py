@@ -128,7 +128,7 @@ def added_lines(diff: str) -> set[int]:
 
 
 def changed_blocks(
-    root: Path, staged: bool, base: str | None
+    root: Path, *, staged: bool, base: str | None
 ) -> list[tuple[str, Block]]:
     """Gate whole blocks touched by additions, reading exactly the index or HEAD snapshot."""
     if staged:
@@ -197,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.all:
             report(inventory(args.root), 'whole tree')
         if args.staged or args.diff:
-            found = changed_blocks(args.root, args.staged, args.diff)
+            found = changed_blocks(args.root, staged=args.staged, base=args.diff)
             report(found, 'staged' if args.staged else f'changed since {args.diff}')
             bad = [(p, b) for p, b in found if b.length > b.limit]
             for path, block in bad:

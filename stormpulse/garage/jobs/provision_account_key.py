@@ -41,7 +41,9 @@ def make_provision_account_key_handler(
     """
     new_key_name = params.get("new_key_name")
     if not new_key_name:
-        logger.error("garage_provision_account_key missing required param: new_key_name")
+        logger.error(
+            "garage_provision_account_key missing required param: new_key_name"
+        )
         return None
 
     # the account-key tier governs create capability. An Admin key
@@ -78,6 +80,7 @@ async def run_provision_account_key(
     progress: ProgressCallback,
     garage_config: GarageConfig,
     new_key_name: str,
+    *,
     allow_create_bucket: bool = True,
 ) -> JobOutcome:
     """Create one account key, return its one-time secret. Single step, no

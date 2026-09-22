@@ -85,6 +85,7 @@ class PulseLogger:
     def log_command_result(
         self,
         command: str,
+        *,
         success: bool,
         duration_ms: int,
         sensitive: bool,

@@ -390,9 +390,9 @@ def allow_bucket_key(
         admin_token,
         bucket_ref,
         access_key_id,
-        read,
-        write,
-        owner,
+        read=read,
+        write=write,
+        owner=owner,
     )
 
 
@@ -413,9 +413,9 @@ def deny_bucket_key(
         admin_token,
         bucket_ref,
         access_key_id,
-        read,
-        write,
-        owner,
+        read=read,
+        write=write,
+        owner=owner,
     )
 
 
@@ -486,6 +486,7 @@ def _bucket_key_perm_change(
     admin_token: str,
     bucket_ref: str,
     access_key_id: str,
+    *,
     read: bool,
     write: bool,
     owner: bool,

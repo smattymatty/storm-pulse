@@ -105,7 +105,11 @@ def _make_signed_sequence(
         nonce = generate_nonce()
     ts_str = format_timestamp(ts)
     canonical = canonical_command_sequence(
-        sequence_id, commands, stop_on_failure, nonce, ts_str
+        sequence_id,
+        commands,
+        stop_on_failure=stop_on_failure,
+        nonce=nonce,
+        timestamp=ts_str,
     )
     sig = sign(canonical, secret)
     return Envelope(
@@ -196,7 +200,11 @@ def test_canonical_command_request_v1_prefix() -> None:
 
 def test_canonical_command_sequence_format() -> None:
     result = canonical_command_sequence(
-        "seq-001", ["git_pull", "docker_logs"], True, "nonce-2", "2026-02-21T12:00:00Z"
+        "seq-001",
+        ["git_pull", "docker_logs"],
+        stop_on_failure=True,
+        nonce="nonce-2",
+        timestamp="2026-02-21T12:00:00Z",
     )
     assert (
         result
@@ -205,12 +213,16 @@ def test_canonical_command_sequence_format() -> None:
 
 
 def test_canonical_command_sequence_stop_on_failure_false() -> None:
-    result = canonical_command_sequence("s", ["a"], False, "n", "t")
+    result = canonical_command_sequence(
+        "s", ["a"], stop_on_failure=False, nonce="n", timestamp="t"
+    )
     assert "\nfalse\n" in result
 
 
 def test_canonical_command_sequence_single_command() -> None:
-    result = canonical_command_sequence("s", ["git_pull"], True, "n", "t")
+    result = canonical_command_sequence(
+        "s", ["git_pull"], stop_on_failure=True, nonce="n", timestamp="t"
+    )
     assert "\ngit_pull\n" in result
 
 

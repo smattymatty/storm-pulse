@@ -230,7 +230,7 @@ def make_caddy_sync_handler(
                 4,
                 "reconciling drop-in file set",
             )
-            plan = _scan_and_plan(caddy, region, tenants, authorize_bulk)
+            plan = _scan_and_plan(caddy, region, tenants, authorize_bulk=authorize_bulk)
 
             await progress(
                 "running",
@@ -298,6 +298,7 @@ def _scan_and_plan(
     caddy: CaddyConfig,
     region: str,
     tenants: dict[str, str],
+    *,
     authorize_bulk: bool,
 ) -> ReconcilePlan:
     """Step 2: plan the reconcile against the agent's own on-disk managed set."""

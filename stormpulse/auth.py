@@ -32,16 +32,18 @@ class AuthError(Exception):
     """
 
     #: Every value ``reason`` may take. A refusal outside this set is a bug.
-    REASONS = frozenset({  # skylos: ignore - documented closed enum; the contract, not a consumer
-        "secret_missing",
-        "secret_empty",
-        "wrong_type",
-        "future_dated",
-        "too_old",
-        "bad_signature",
-        "replayed_nonce",
-        "unspecified",
-    })
+    REASONS = frozenset(  # skylos: ignore - documented closed enum; the contract, not a consumer
+        {
+            "secret_missing",
+            "secret_empty",
+            "wrong_type",
+            "future_dated",
+            "too_old",
+            "bad_signature",
+            "replayed_nonce",
+            "unspecified",
+        }
+    )
 
     def __init__(self, message: str, *, reason: str = "unspecified") -> None:
         super().__init__(message)
@@ -105,6 +107,7 @@ def canonical_command_request(
 def canonical_command_sequence(
     sequence_id: str,
     commands: list[str],
+    *,
     stop_on_failure: bool,
     nonce: str,
     timestamp: str,
@@ -170,7 +173,9 @@ class NonceStore:
                 if row is not None:
                     # Raising here rolls back both the DELETE and any INSERT.
                     # Pruning work is lost but harmless - next call re-prunes.
-                    raise AuthError(f"Nonce already seen: {nonce!r}", reason="replayed_nonce")
+                    raise AuthError(
+                        f"Nonce already seen: {nonce!r}", reason="replayed_nonce"
+                    )
                 self._conn.execute(
                     "INSERT INTO seen_nonces (nonce, seen_at) VALUES (?, ?)",
                     (nonce, time.time()),
@@ -247,9 +252,9 @@ def verify_envelope(
         canonical = canonical_command_sequence(
             seq_payload.sequence_id,
             seq_payload.commands,
-            seq_payload.stop_on_failure,
-            seq_payload.nonce,
-            ts_str,
+            stop_on_failure=seq_payload.stop_on_failure,
+            nonce=seq_payload.nonce,
+            timestamp=ts_str,
         )
         expected_hmac = seq_payload.hmac
         nonce = seq_payload.nonce

@@ -24,7 +24,7 @@ def cfg(tmp_path: Path) -> Path:
     return p
 
 
-def _patch_log_path_exists(exists: bool) -> Any:
+def _patch_log_path_exists(*, exists: bool) -> Any:
     return patch.object(
         type(DEFAULT_CADDY_ACCESS_LOG), "exists", return_value=exists, autospec=False
     )
@@ -32,7 +32,7 @@ def _patch_log_path_exists(exists: bool) -> Any:
 
 def test_no_signal_no_offer(cfg: Path) -> None:
     """No [caddy] section and no access log file → silent no-op, returns False."""
-    with _patch_log_path_exists(False):
+    with _patch_log_path_exists(exists=False):
         assert offer_caddy_log_group(cfg) is False
     assert "log_groups" not in cfg.read_text()
 
@@ -40,7 +40,7 @@ def test_no_signal_no_offer(cfg: Path) -> None:
 def test_log_file_signal_appends_on_confirm(cfg: Path) -> None:
     """Log file exists, no [caddy] section → prompt, append on yes."""
     with (
-        _patch_log_path_exists(True),
+        _patch_log_path_exists(exists=True),
         patch("stormpulse.init.host_native_logs.prompt_confirm", return_value=True),
     ):
         assert offer_caddy_log_group(cfg) is True
@@ -65,7 +65,7 @@ def test_section_signal_appends_on_confirm(cfg: Path) -> None:
         'drop_in_path = "/etc/caddy/conf.d/x.caddy"\n'
     )
     with (
-        _patch_log_path_exists(False),
+        _patch_log_path_exists(exists=False),
         patch("stormpulse.init.host_native_logs.prompt_confirm", return_value=True),
     ):
         assert offer_caddy_log_group(cfg) is True
@@ -76,7 +76,7 @@ def test_section_signal_appends_on_confirm(cfg: Path) -> None:
 def test_decline_does_not_append(cfg: Path) -> None:
     """Signal present, operator declines → returns False, no append."""
     with (
-        _patch_log_path_exists(True),
+        _patch_log_path_exists(exists=True),
         patch("stormpulse.init.host_native_logs.prompt_confirm", return_value=False),
     ):
         assert offer_caddy_log_group(cfg) is False
@@ -91,7 +91,7 @@ def test_idempotent_skip_when_already_present(cfg: Path) -> None:
         "ship_interval_seconds = 10\nmax_lines_per_batch = 200\n"
     )
     with (
-        _patch_log_path_exists(True),
+        _patch_log_path_exists(exists=True),
         patch("stormpulse.init.host_native_logs.prompt_confirm") as mock_prompt,
     ):
         assert offer_caddy_log_group(cfg) is False
@@ -109,7 +109,7 @@ def test_idempotent_skip_when_already_present(cfg: Path) -> None:
 
 def test_events_no_signal_no_offer(cfg: Path) -> None:
     """No [caddy] section and no events log file → silent no-op."""
-    with _patch_log_path_exists(False):
+    with _patch_log_path_exists(exists=False):
         assert offer_caddy_events_log_group(cfg) is False
     assert "caddy-events" not in cfg.read_text()
 
@@ -117,7 +117,7 @@ def test_events_no_signal_no_offer(cfg: Path) -> None:
 def test_events_file_signal_appends_on_confirm(cfg: Path) -> None:
     """events.log exists → prompt, append on yes, schema keys correct."""
     with (
-        _patch_log_path_exists(True),
+        _patch_log_path_exists(exists=True),
         patch("stormpulse.init.host_native_logs.prompt_confirm", return_value=True),
     ):
         assert offer_caddy_events_log_group(cfg) is True
@@ -138,7 +138,7 @@ def test_events_section_signal_appends_on_confirm(cfg: Path) -> None:
         'drop_in_path = "/etc/caddy/conf.d/x.caddy"\n'
     )
     with (
-        _patch_log_path_exists(False),
+        _patch_log_path_exists(exists=False),
         patch("stormpulse.init.host_native_logs.prompt_confirm", return_value=True),
     ):
         assert offer_caddy_events_log_group(cfg) is True
@@ -148,7 +148,7 @@ def test_events_section_signal_appends_on_confirm(cfg: Path) -> None:
 
 def test_events_decline_does_not_append(cfg: Path) -> None:
     with (
-        _patch_log_path_exists(True),
+        _patch_log_path_exists(exists=True),
         patch("stormpulse.init.host_native_logs.prompt_confirm", return_value=False),
     ):
         assert offer_caddy_events_log_group(cfg) is False
@@ -163,7 +163,7 @@ def test_events_idempotent_skip_when_already_present(cfg: Path) -> None:
         "max_lines_per_batch = 200\n"
     )
     with (
-        _patch_log_path_exists(True),
+        _patch_log_path_exists(exists=True),
         patch("stormpulse.init.host_native_logs.prompt_confirm") as mock_prompt,
     ):
         assert offer_caddy_events_log_group(cfg) is False
@@ -174,7 +174,7 @@ def test_events_independent_of_access_group(cfg: Path) -> None:
     """An existing access-log group does not satisfy the events check -
     both groups coexist after both offers run."""
     with (
-        _patch_log_path_exists(True),
+        _patch_log_path_exists(exists=True),
         patch("stormpulse.init.host_native_logs.prompt_confirm", return_value=True),
     ):
         assert offer_caddy_log_group(cfg) is True

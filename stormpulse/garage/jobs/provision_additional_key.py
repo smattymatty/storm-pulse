@@ -141,7 +141,9 @@ async def run_provision_additional_key(
     await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
     info, err = await asyncio.to_thread(
         admin_api.create_key,
-        admin_url=admin_url, admin_token=admin_token, name=new_key_name,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        name=new_key_name,
     )
     if info is None:
         return _failure(
@@ -282,7 +284,9 @@ async def _rollback(
             owner=owner,
         )
         if not ok:
-            manual.extend(_remaining_after_perm_halt(state, read, write, owner))
+            manual.extend(
+                _remaining_after_perm_halt(state, read=read, write=write, owner=owner)
+            )
             return _RollbackResult(status="partial", manual_cleanup=manual)
 
     # 2. Delete new key
@@ -302,6 +306,7 @@ async def _rollback(
 
 def _remaining_after_perm_halt(
     state: _AdditionalKeyState,
+    *,
     read: bool,
     write: bool,
     owner: bool,
