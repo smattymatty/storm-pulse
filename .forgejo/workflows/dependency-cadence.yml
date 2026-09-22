@@ -1,39 +1,22 @@
-# Weekly dependency cadence.
-#
-# Reports dependency staleness and known advisories into one standing
-# issue. It never changes a pin: the report is read, pins move by hand,
-# and the security job on every push is what actually blocks a merge.
-#
-# Why this exists here specifically. `skylos --sca` resolves EXACT pins
-# only, and this project declares nine floor-only constraints, one capped
-# range and a single exact pin. That leaves the push-time advisory scan
-# nearly blind: it can see `skylos` and nothing else. This job installs
-# the project, freezes the RESOLVED tree into exact pins, and scans that
-# instead, which is the only way a CVE in websockets, psutil or
-# cryptography would ever be noticed here.
-#
-# Sunday 10:00 UTC, an hour behind the website's cadence job: both repos
-# share one single-core runner and there is no reason to make them queue.
+# Weekly staleness and advisory report in one standing issue.
+# Pins change manually; push-time security checks gate merges.
+# Scan resolved pins because skylos --sca skips version ranges.
 
 name: Dependency cadence
 
 on:
   schedule:
+    # Sunday 10:00 UTC: an hour after the website job on our shared runner.
     - cron: '0 10 * * 0'
-  # Permanent, not a development leftover: a cron cannot be fired on
-  # demand, so this is the only way to prove the job still works without
-  # waiting a week.
+  # Allow on-demand checks between weekly runs.
   workflow_dispatch:
 
 jobs:
   python-deps:
     runs-on: docker
     container:
-      # The one job here that does not use python:3.12-slim. It needs the
-      # `dependency-cadence` tool, which ships inside this image so that a
-      # single copy serves both repos rather than a vendored second one
-      # drifting out of step. Registry auth for it is host-level on the
-      # runner, not declared here.
+      # Both repos share the dependency-cadence tool through this image.
+      # Registry authentication is configured on the runner.
       image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
       volumes:
         - pip-cache:/pip-cache
@@ -64,8 +47,7 @@ jobs:
           set -u
           pip list --outdated --format=json > /tmp/pip-outdated.json
 
-          # The resolved tree as exact pins, which is the only shape
-          # skylos --sca can actually read.
+          # Freeze exact pins for skylos --sca.
           mkdir -p /tmp/cadence/resolved
           pip freeze > /tmp/cadence/resolved/requirements.txt
 
@@ -73,8 +55,7 @@ jobs:
           skylos /tmp/cadence --sca --gate --format concise > /tmp/sca.txt 2>&1
           code=$?
           set -e
-          # 0 clean, 1 advisories found. Anything else means the scanner
-          # failed, and a failed scan must never render as "no advisories".
+          # 0 = clean, 1 = advisories; report other exits as scan failures.
           if [ "$code" -le 1 ]; then
             echo ok > /tmp/scan-status
           else

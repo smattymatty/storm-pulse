@@ -132,6 +132,22 @@ jobs:
           git clone --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
           git fetch origin main
 
+      - name: Comment and docstring lengths
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE=$(git merge-base origin/main HEAD)
+          elif [ -z "${EVENT_BEFORE:-}" ] || [ -z "$(printf '%s' "$EVENT_BEFORE" | tr -d 0)" ]; then
+            BASE=$(git hash-object -t tree /dev/null)
+          else
+            BASE="$EVENT_BEFORE"
+            git cat-file -e "${BASE}^{commit}" 2>/dev/null || git fetch origin "$BASE"
+            git cat-file -e "${BASE}^{commit}"
+          fi
+          python scripts/comment_blocks.py --all --diff "$BASE"
+
       - name: Install skylos
         run: pip install --cache-dir /pip-cache "skylos==4.35.0"
 

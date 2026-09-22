@@ -17,7 +17,7 @@ GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
 # Umbrella: every check in one command. No Docker, no network (except
 # `security`, whose AI-defect checks may consult the PyPI registry).
-check: test mypy fitness deadcode security quality
+check: test mypy fitness deadcode security quality comments-diff
 
 # Dead-code gate (Skylos), scoped to unused functions / imports / variables /
 # classes / files (SKY-U001..U005). SKY-U006 (unused parameters) stays out:
@@ -113,3 +113,15 @@ pre-release-check:
 clean:
 	rm -rf .mypy_cache .pytest_cache .import_linter_cache dist/
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
+
+# Comment inventory is advisory; staged/committed gates reject changed oversized blocks.
+COMMENT_BASE ?= origin/main
+.PHONY: comments comments-staged comments-diff
+comments:
+	$(PYTHON) scripts/comment_blocks.py --all
+
+comments-staged:
+	$(PYTHON) scripts/comment_blocks.py --staged
+
+comments-diff:
+	$(PYTHON) scripts/comment_blocks.py --diff $(COMMENT_BASE)
