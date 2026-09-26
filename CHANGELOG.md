@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `garage_delete_provisioned_bucket` no longer deletes access keys. It
+  deleted every key the bucket delete left attached to no bucket, which
+  included account-level keys that are meant to outlive their buckets: a
+  customer deleting their last bucket lost the key their tooling used. The
+  agent cannot tell a bucket's own key from an account key, so key deletion
+  belongs to the control plane, which names the keys it owns. The result no
+  longer carries `keys_deleted` or `keys_skipped`, and `step_completed` is
+  `bucket_delete`.
 - `load_hmac_secret` no longer strips a raw 32-byte key. Enrolment writes
   raw HKDF output, and when its first or last byte was an ASCII whitespace
   value (about one agent id in twenty) the agent verified with a 31-byte

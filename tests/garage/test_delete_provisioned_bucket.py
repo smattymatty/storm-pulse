@@ -1,14 +1,7 @@
-"""Tests for stormpulse.garage.jobs.delete_provisioned_bucket.
-
-Deletes an empty bucket via the admin HTTP API (ADR garage/001):
-
-  1. GetBucketInfo (idempotent on a missing bucket; refuses a non-empty one)
-  2. DeleteBucket by id (removes the bucket and ALL its aliases atomically)
-  3. best-effort cleanup of keys the deletion left unmoored
-
-There is no rollback (DeleteBucket is the only mutation). As in the other
-migrated handlers, we patch the ``admin_api`` functions and assert on the
-recorded calls.
+"""Tests for stormpulse.garage.jobs.delete_provisioned_bucket: GetBucketInfo
+(idempotent on a missing bucket, refuses a non-empty one), then DeleteBucket by
+id. It deletes no keys; the control plane names and deletes the keys it owns.
+We patch the ``admin_api`` functions and assert on the recorded calls.
 """
 
 from __future__ import annotations
@@ -46,7 +39,11 @@ class _ProgressRecorder:
         self.events: list[tuple[str, int, int | None, str]] = []
 
     async def __call__(
-        self, stage: str, current: int, total: int | None, message: str,
+        self,
+        stage: str,
+        current: int,
+        total: int | None,
+        message: str,
         *,
         transfer: object | None = None,
         bytes_freed: object | None = None,
@@ -69,27 +66,44 @@ class _FakeAdmin:
         self.delete_key_result: dict[str, tuple[bool, str]] = {}
 
     def get_bucket_info(
-        self, *, admin_url: str, admin_token: str, bucket_ref: str,
+        self,
+        *,
+        admin_url: str,
+        admin_token: str,
+        bucket_ref: str,
     ) -> tuple[dict[str, Any] | None, str]:
         self.calls.append(("get_bucket_info", {"bucket_ref": bucket_ref}))
         return self.bucket_info
 
     def delete_bucket(
-        self, *, admin_url: str, admin_token: str, bucket_ref: str,
+        self,
+        *,
+        admin_url: str,
+        admin_token: str,
+        bucket_ref: str,
     ) -> tuple[bool, str]:
         self.calls.append(("delete_bucket", {"bucket_ref": bucket_ref}))
         return self.delete_bucket_result
 
     def get_key_info(
-        self, *, admin_url: str, admin_token: str, access_key_id: str,
+        self,
+        *,
+        admin_url: str,
+        admin_token: str,
+        access_key_id: str,
     ) -> tuple[dict[str, Any] | None, str]:
         self.calls.append(("get_key_info", {"access_key_id": access_key_id}))
         return self.key_info.get(
-            access_key_id, ({"accessKeyId": access_key_id, "buckets": []}, ""),
+            access_key_id,
+            ({"accessKeyId": access_key_id, "buckets": []}, ""),
         )
 
     def delete_key(
-        self, *, admin_url: str, admin_token: str, access_key_id: str,
+        self,
+        *,
+        admin_url: str,
+        admin_token: str,
+        access_key_id: str,
     ) -> tuple[bool, str]:
         self.calls.append(("delete_key", {"access_key_id": access_key_id}))
         return self.delete_key_result.get(access_key_id, (True, ""))
@@ -109,7 +123,9 @@ def _install(monkeypatch: pytest.MonkeyPatch) -> _FakeAdmin:
 
 
 async def _run(
-    fake: _FakeAdmin, *, config: GarageConfig | None = None,
+    fake: _FakeAdmin,
+    *,
+    config: GarageConfig | None = None,
 ) -> JobOutcome:
     return await run_delete_provisioned_bucket(
         progress=_ProgressRecorder(),
@@ -138,89 +154,29 @@ async def test_happy_path_no_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert outcome.success is True
     assert outcome.extras["bucket_id"] == _PREFIX
-    assert outcome.extras["step_completed"] == "key_cleanup"
+    assert outcome.extras["step_completed"] == "bucket_delete"
     assert outcome.extras["rollback_status"] == "not_required"
     assert outcome.extras["manual_cleanup_required"] == []
-    assert outcome.extras["keys_deleted"] == []
-    assert outcome.extras["keys_skipped"] == []
     assert fake.ops() == ["get_bucket_info", "delete_bucket"]
     # DeleteBucket is addressed by the full id from GetBucketInfo.
     assert fake.calls[1][1] == {"bucket_ref": _FULL_ID}
 
 
 @pytest.mark.asyncio
-async def test_unmoored_key_is_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _install(monkeypatch)
-    fake.bucket_info = (_info(key_ids=("GKa",)), "")
-    fake.key_info = {"GKa": ({"accessKeyId": "GKa", "buckets": []}, "")}
-
-    outcome = await _run(fake)
-
-    assert outcome.success is True
-    assert outcome.extras["keys_deleted"] == ["GKa"]
-    assert outcome.extras["keys_skipped"] == []
-    assert fake.ops() == [
-        "get_bucket_info", "delete_bucket", "get_key_info", "delete_key",
-    ]
-    assert fake.calls[-1][1] == {"access_key_id": "GKa"}
-
-
-@pytest.mark.asyncio
-async def test_shared_key_is_preserved(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _install(monkeypatch)
-    fake.bucket_info = (_info(key_ids=("GKa",)), "")
-    fake.key_info = {"GKa": ({"accessKeyId": "GKa", "buckets": [{"id": "other"}]}, "")}
-
-    outcome = await _run(fake)
-
-    assert outcome.success is True
-    assert outcome.extras["keys_skipped"] == ["GKa"]
-    assert outcome.extras["keys_deleted"] == []
-    # No delete_key for a key still attached elsewhere.
-    assert "delete_key" not in fake.ops()
-
-
-@pytest.mark.asyncio
-async def test_already_gone_key_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake = _install(monkeypatch)
-    fake.bucket_info = (_info(key_ids=("GKa",)), "")
-    fake.key_info = {"GKa": (None, "HTTP 404: NoSuchKey")}
-
-    outcome = await _run(fake)
-
-    assert outcome.success is True
-    assert outcome.extras["keys_skipped"] == ["GKa"]
-    assert outcome.extras["manual_cleanup_required"] == []
-    assert "delete_key" not in fake.ops()
-
-
-@pytest.mark.asyncio
-async def test_key_info_error_flags_manual_cleanup(
+async def test_a_key_left_with_no_buckets_is_never_deleted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # An account key outlives its buckets; only the control plane can tell it
+    # from a bucket's own key, so this command must not delete either.
     fake = _install(monkeypatch)
-    fake.bucket_info = (_info(key_ids=("GKa",)), "")
-    fake.key_info = {"GKa": (None, "HTTP 500: server error")}
+    fake.bucket_info = (_info(key_ids=("GKaccount",)), "")
+    fake.key_info = {"GKaccount": ({"accessKeyId": "GKaccount", "buckets": []}, "")}
 
     outcome = await _run(fake)
 
     assert outcome.success is True
-    assert outcome.extras["manual_cleanup_required"] == [{"type": "key", "id": "GKa"}]
-
-
-@pytest.mark.asyncio
-async def test_key_delete_failure_flags_manual_cleanup(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake = _install(monkeypatch)
-    fake.bucket_info = (_info(key_ids=("GKa",)), "")
-    fake.delete_key_result = {"GKa": (False, "HTTP 500")}
-
-    outcome = await _run(fake)
-
-    assert outcome.success is True
-    assert outcome.extras["keys_deleted"] == []
-    assert outcome.extras["manual_cleanup_required"] == [{"type": "key", "id": "GKa"}]
+    assert fake.ops() == ["get_bucket_info", "delete_bucket"]
+    assert "keys_deleted" not in outcome.extras
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +282,8 @@ def test_handler_factory_returns_none_on_missing_bucket_id() -> None:
 
 def test_handler_factory_returns_handler_when_complete() -> None:
     handler = make_delete_provisioned_bucket_handler(
-        _make_config(), params={"bucket_id": _PREFIX},
+        _make_config(),
+        params={"bucket_id": _PREFIX},
     )
     assert handler is not None
     assert callable(handler)
