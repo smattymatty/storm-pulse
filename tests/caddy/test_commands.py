@@ -33,24 +33,18 @@ class TestBuildCaddyCommands:
         assert BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC in commands
 
     def test_sync_is_long_running(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         assert cmd.long_running is True
         assert cmd.group == "caddy"
 
     def test_region_param_uses_regex(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         region = cmd.params["region"]
         assert region.pattern is not None
         assert region.max_bytes is None
 
     def test_tenants_param_uses_byte_cap(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         tenants = cmd.params["tenants"]
         # The manifest is opaque JSON content: capped by bytes, not regex.
         assert tenants.pattern is None
@@ -60,9 +54,7 @@ class TestBuildCaddyCommands:
         assert tenants.default == "{}"
 
     def test_authorize_bulk_param_uses_regex(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         authorize_bulk = cmd.params["authorize_bulk"]
         assert authorize_bulk.pattern is not None
         assert authorize_bulk.default == "false"
@@ -100,9 +92,7 @@ class TestValidateParams:
     """
 
     def test_valid_region_tenants_and_flag(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         # Multi-line fragments with braces (would break a regex) are fine
         # inside the JSON because the tenants param has no pattern, only a
         # byte cap.
@@ -124,18 +114,14 @@ class TestValidateParams:
         assert validated["authorize_bulk"] == "false"
 
     def test_omitted_params_use_defaults(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         validated = validate_params(cmd, {"region": "vancouver-1"})
         # Empty object = "remove the managed files"; flag defaults off.
         assert validated["tenants"] == "{}"
         assert validated["authorize_bulk"] == "false"
 
     def test_bad_region_rejected(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         with pytest.raises(ParamValidationError):
             validate_params(
                 cmd,
@@ -143,9 +129,7 @@ class TestValidateParams:
             )
 
     def test_bad_authorize_bulk_rejected(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         # Only the literals 'true'/'false' cross the wire; anything else is
         # a malformed flag and must be refused.
         with pytest.raises(ParamValidationError):
@@ -154,10 +138,20 @@ class TestValidateParams:
                 {"region": "vancouver-1", "authorize_bulk": "yes"},
             )
 
+    def test_manifest_must_be_an_object_of_safe_keys_and_string_fragments(self) -> None:
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
+        for tenants, fragment in [
+            ("[]", "$: expected object, got list"),
+            ('{"../etc": "x"}', "key '../etc' does not match key_pattern"),
+            ('{"abc": 1}', "$.abc: expected string, got int"),
+            ('{"abc": "' + "a" * 16_385 + '"}', "$.abc: exceeds max_bytes=16384"),
+        ]:
+            with pytest.raises(ParamValidationError) as exc_info:
+                validate_params(cmd, {"region": "vancouver-1", "tenants": tenants})
+            assert fragment in str(exc_info.value), tenants[:40]
+
     def test_oversize_manifest_rejected(self) -> None:
-        cmd = build_caddy_specs(_make_caddy_config())[
-            BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC
-        ]
+        cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         oversize = '{"x": "' + "a" * 1_100_000 + '"}'  # over the 1MB cap
         with pytest.raises(ParamValidationError) as exc_info:
             validate_params(

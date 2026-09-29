@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import subprocess
@@ -9,6 +10,7 @@ import time
 from typing import Any
 
 from stormpulse.config import CommandSpec, ParamDef, ProjectConfig
+from stormpulse.config.param_schema import ParamSchema, schema_violation
 from stormpulse.protocol import CommandResultPayload
 
 logger = logging.getLogger(__name__)
@@ -177,9 +179,28 @@ def validate_params(
                     f"Param {name!r} is {byte_size} bytes, "
                     f"exceeds max_bytes={pdef.max_bytes}"
                 )
+        # Shape validation: a JSON blob decoded (after the byte cap) and walked
+        # against its declared schema. Detail carries paths and rules, no values.
+        if pdef.schema is not None:
+            problem = _schema_problem(value, pdef.schema)
+            if problem is not None:
+                detail = "withheld: secret" if pdef.secret else problem
+                raise ParamValidationError(f"Param {name!r} {detail}")
         merged[name] = value
 
     return merged
+
+
+def _schema_problem(value: str, schema: ParamSchema) -> str | None:
+    # JSONDecodeError's text is a reason plus a position, never the document.
+    try:
+        decoded = json.loads(value)
+    except ValueError as exc:
+        return f"is not valid JSON: {exc}"
+    except RecursionError:
+        return "is not valid JSON: nesting too deep"
+    violation = schema_violation(decoded, schema)
+    return None if violation is None else f"does not match schema: {violation}"
 
 
 def non_secret_params(

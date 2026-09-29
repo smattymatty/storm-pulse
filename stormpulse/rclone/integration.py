@@ -24,6 +24,7 @@ RCLONE_INTEGRATION = Integration(
     enabled=_enabled,
     preconditions=_preconditions,
     specs=build_rclone_specs,
+    declared_config={"enabled": True},
 )
 
 register_integration(RCLONE_INTEGRATION)

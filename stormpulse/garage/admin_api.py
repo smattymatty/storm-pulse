@@ -107,26 +107,43 @@ def set_bucket_quota(
 
     Resolve the bucket prefix first; leave max_objects unlimited.
     Return (success, error_message) for the operator's JobOutcome."""
+    return _update_bucket(
+        admin_url,
+        admin_token,
+        bucket_id,
+        {"quotas": {"maxSize": int(max_size_bytes), "maxObjects": None}},
+    )
+
+
+def set_bucket_cors(
+    *,
+    admin_url: str,
+    admin_token: str,
+    bucket_id: str,
+    rules: list[dict[str, Any]],
+) -> tuple[bool, str]:
+    """Replace a bucket's CORS rules via POST /v2/UpdateBucket.
+
+    Rules use Garage's own JSON shape (the S3 XML names: ``AllowedOrigin``,
+    ``AllowedMethod``, ...). An empty list clears the configuration.
+    Return (success, error_message)."""
+    return _update_bucket(admin_url, admin_token, bucket_id, {"corsRules": rules})
+
+
+def _update_bucket(
+    admin_url: str,
+    admin_token: str,
+    bucket_id: str,
+    payload: dict[str, Any],
+) -> tuple[bool, str]:
+    """Resolve ``bucket_id`` to the full id and POST one UpdateBucket ``payload``."""
     auth = {"Authorization": f"Bearer {admin_token}"}
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_id)
     if not full_id:
         return False, err
-
-    body = json.dumps(
-        {"quotas": {"maxSize": int(max_size_bytes), "maxObjects": None}}
-    ).encode("utf-8")
-    headers = {
-        **auth,
-        "Content-Type": "application/json",
-        "Content-Length": str(len(body)),
-    }
+    body = json.dumps(payload).encode("utf-8")
     path = "/v2/UpdateBucket?" + urlencode({"id": full_id})
-    status, resp = _request(admin_url, "POST", path, headers, body)
-    if status is None:
-        return False, resp
-    if 200 <= status < 300:
-        return True, ""
-    return False, f"HTTP {status}: {resp.strip()[:500]}"
+    return _post(admin_url, admin_token, path, body)
 
 
 def list_buckets(

@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
+from stormpulse.commands.registry import ParamValidationError, validate_params
 from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.state import _BUCKET_ID_PARAMS, _KEY_ID_PARAMS
@@ -31,6 +34,8 @@ class TestBuildGarageCommands:
             "garage_bucket_create",
             "garage_bucket_delete",
             "garage_bucket_set_quota",
+            "garage_bucket_cors_get",
+            "garage_bucket_cors_set",
             "garage_bucket_cleanup_uploads",
             "garage_set_account_key_create_bucket",
             "garage_key_create",
@@ -129,6 +134,22 @@ class TestBuildGarageCommands:
         assert cmds["garage_bucket_set_quota"].long_running is True
         assert cmds["garage_bucket_set_quota"].command == ["garage_bucket_set_quota"]
 
+    def test_cors_commands_are_admin_plane_jobs_without_secrets(self) -> None:
+        # Both ride the admin token bound at build time: no S3 credential in params.
+        cmds = build_garage_specs(_make_config())
+        for name in ("garage_bucket_cors_get", "garage_bucket_cors_set"):
+            spec = cmds[name]
+            assert spec.long_running is True and spec.command == [name]
+            assert not any(p.secret for p in spec.params.values()), name
+            assert spec.sensitive_output is False
+        assert cmds["garage_bucket_cors_get"].read_only is True
+        assert cmds["garage_bucket_cors_set"].read_only is False
+        assert set(cmds["garage_bucket_cors_set"].params) == {
+            "bucket_id",
+            "rules",
+            "expected_rules",
+        }
+
     def test_self_reconciling_flag_wiring(self) -> None:
         # The post-success refresh hook skips self_reconciling commands. Exactly the
         # two reconciliation-loop commands carry the flag; one-shot mutations (whose
@@ -138,7 +159,9 @@ class TestBuildGarageCommands:
             "garage_bucket_set_quota",
             "garage_converge_account_key_rotation",
         ):
-            assert cmds[name].self_reconciling is True, f"{name} should be self_reconciling"
+            assert cmds[name].self_reconciling is True, (
+                f"{name} should be self_reconciling"
+            )
         for name in (
             "garage_delete_key",
             "garage_snapshot_and_reap_account_key",
@@ -301,6 +324,8 @@ class TestBuildGarageCommands:
             "garage_provision_additional_key",
             "garage_rotate_customer_key",
             "garage_bucket_set_quota",
+            "garage_bucket_cors_get",
+            "garage_bucket_cors_set",
         ):
             pattern = cmds[cmd_name].params["bucket_id"].pattern
             assert pattern is not None
@@ -455,3 +480,99 @@ class TestBuildGarageCommands:
         assert cmd[-1] == "{alias_name}"
         params = cmds["garage_bucket_alias_local_remove"].params
         assert set(params.keys()) == {"key_id", "alias_name"}
+
+
+class TestBucketSnapshotSchema:
+    """``bucket_snapshot`` is the reap command's ``snapshot`` fed back in."""
+
+    _KEYS = {"old_key_id": "GKold", "new_key_id": "GKnew"}
+
+    def _validate(self, snapshot: str) -> dict[str, str]:
+        cmd = build_garage_specs(_make_config())["garage_converge_account_key_rotation"]
+        return validate_params(cmd, {**self._KEYS, "bucket_snapshot": snapshot})
+
+    def test_accepts_the_reap_shape(self) -> None:
+        blob = (
+            '[{"id": "'
+            + "ab" * 32
+            + '", "alias": "vault", "perms": [true, false, true]}, {"id": "0123456789abcdef", "alias": ""}]'
+        )
+        assert self._validate(blob)["bucket_snapshot"] == blob
+
+    def test_rejects_anything_but_a_list_of_bucket_records(self) -> None:
+        for blob, fragment in [
+            ("{}", "$: expected array, got dict"),
+            ('[{"alias": "vault"}]', "$[0]: missing required key 'id'"),
+            ('[{"id": "not-hex"}]', "$[0].id: does not match pattern"),
+            (
+                '[{"id": "0123456789abcdef", "owner": true}]',
+                "$[0]: unexpected key 'owner'",
+            ),
+            (
+                '[{"id": "0123456789abcdef", "perms": [1, 0, 1]}]',
+                "$[0].perms[0]: expected boolean",
+            ),
+        ]:
+            with pytest.raises(ParamValidationError) as exc_info:
+                self._validate(blob)
+            assert fragment in str(exc_info.value), blob
+
+
+class TestCorsRulesSchema:
+    """``rules`` and ``expected_rules`` carry Garage's rule shape, exactly its keys."""
+
+    _LIVE = '[{"ID": "web", "MaxAgeSeconds": 3600, "AllowedOrigin": ["https://example.com"], "AllowedMethod": ["GET", "PUT"], "AllowedHeader": ["*"], "ExposeHeader": ["ETag"]}]'
+
+    def _validate(self, rules: str, expected: str = "[]") -> dict[str, str]:
+        cmd = build_garage_specs(_make_config())["garage_bucket_cors_set"]
+        return validate_params(
+            cmd, {"bucket_id": "ab" * 8, "rules": rules, "expected_rules": expected}
+        )
+
+    def test_accepts_the_live_shape_on_both_params(self) -> None:
+        merged = self._validate(self._LIVE, self._LIVE)
+        assert merged["rules"] == merged["expected_rules"] == self._LIVE
+        # Optional lists may be null or absent; [] clears.
+        self._validate(
+            '[{"AllowedOrigin": ["*"], "AllowedMethod": ["GET"], "ExposeHeader": null, "ID": null}]'
+        )
+        # `*` is a method to Garage's matcher, and a rule set over S3 may carry it.
+        self._validate('[{"AllowedOrigin": ["*"], "AllowedMethod": ["*"]}]')
+        self._validate("[]")
+
+    def test_rejects_other_key_spellings_and_missing_required(self) -> None:
+        for blob, fragment in [
+            (
+                '[{"AllowedOrigin": ["*"], "AllowedMethod": ["GET"], "allowedHeaders": ["*"]}]',
+                "$[0]: unexpected key 'allowedHeaders'",
+            ),
+            (
+                '[{"AllowedOrigin": ["*"]}]',
+                "$[0]: missing required key 'AllowedMethod'",
+            ),
+            (
+                '[{"AllowedMethod": ["GET"]}]',
+                "$[0]: missing required key 'AllowedOrigin'",
+            ),
+            (
+                '[{"AllowedOrigin": null, "AllowedMethod": ["GET"]}]',
+                "$[0].AllowedOrigin: expected array, got null",
+            ),
+            (
+                '[{"AllowedOrigin": ["*"], "AllowedMethod": ["PATCH"]}]',
+                "$[0].AllowedMethod[0]: does not match pattern",
+            ),
+            (
+                '[{"AllowedOrigin": ["*"], "AllowedMethod": ["GET"], "MaxAgeSeconds": -1}]',
+                "$[0].MaxAgeSeconds: below min=0",
+            ),
+            (
+                '{"AllowedOrigin": ["*"], "AllowedMethod": ["GET"]}',
+                "$: expected array, got dict",
+            ),
+        ]:
+            with pytest.raises(ParamValidationError) as exc_info:
+                self._validate(blob)
+            assert fragment in str(exc_info.value), blob
+        with pytest.raises(ParamValidationError, match="'expected_rules'"):
+            self._validate("[]", '[{"AllowedOrigin": ["*"]}]')

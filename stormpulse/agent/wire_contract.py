@@ -1,38 +1,32 @@
 """The declared wire contract this agent emits, and the digest it advertises.
 
-Every Integration that publishes a ``state`` blob declares its shape in its own
-package; this module is the one place that can see all of them at once, because
-sibling Integrations may not import each other (CORE-000). It assembles them
-into the artifact published at the repo root and digests the result.
-
-**This module never touches the filesystem, and that is load-bearing.** The
-digest the agent advertises is derived from the live classes in the running
-process (CORE-008 decision 4). A digest read from a file can be stale with
-respect to the process that sends it, and an advertisement that is not true of
-the sender is worse than none: a consumer would trust it. Reading the artifact
-is the job of the generator and the fitness check, both of which run in a
-checkout, never on a host. ``tests/test_wire_contract.py`` asserts this module
-has no way to open a file, so restoring one fails the suite rather than shipping
-a stale advertisement.
+Every publishing Integration declares its state shape in its own package; this
+module assembles them (siblings never import each other, CORE-000), lists the
+command surface a consumer dispatches into, and digests the state shape from
+the live classes, never the filesystem (CORE-008 decision 4).
 """
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
+import stormpulse.agent.integrations_manifest  # noqa: F401  (registers in-tree Integrations)
+from stormpulse.commands.registry import COMMAND_REGISTRY
+from stormpulse.config import CommandSpec, ParamDef
 from stormpulse.garage.wire_shape import garage_wire_shape
+from stormpulse.integrations import integration_command_specs, registered_integrations
 from stormpulse.sdk.declaration import canonical_digest
 
-# Version of the ARTIFACT's own envelope, not of the shape it carries. Bumped
-# only if the file's top-level keys change, which is a consumer-breaking event.
-# The shape changing is what the digest is for; this is deliberately not it.
-SCHEMA = 1
+# Version of the ARTIFACT's own envelope, not of the shape it carries: bumped only
+# when a top-level key changes (a consumer-breaking event), which the digest is
+# deliberately not for. 2: the ``commands`` section joined the envelope.
+SCHEMA = 2
 
 # Which top-level key the digest covers, carried IN the artifact so a consumer
-# holding only the file can reproduce the digest without being told the rule out
-# of band. Everything outside it (the schema number, the digest itself) is
-# envelope, and an envelope change must not read as a shape change.
+# holding only the file can reproduce it. Everything else (schema, digest, the
+# command surface) is envelope; deployed agents compare this digest at connect.
 DIGEST_COVERS = "integrations"
 
 
@@ -44,6 +38,47 @@ def wire_contract_integrations() -> dict[str, Any]:
     digest, and a consumer finds out at the next connect.
     """
     return {"garage": garage_wire_shape()}
+
+
+def wire_contract_commands() -> dict[str, Any]:
+    """Every command the registry could build, keyed by name.
+
+    Built-ins plus each in-tree Integration's surface plus its synthesized
+    refresh, ignoring the seal and ``disabled_commands``: this is what the
+    agent CAN accept, not what one node does. Node-local ``[commands]`` and
+    external adapters are per host and stay out. Outside the digest on purpose.
+    """
+    specs: dict[str, CommandSpec] = dict(COMMAND_REGISTRY)
+    for integ in registered_integrations():
+        if integ.declared_config is None:
+            raise LookupError(
+                f"Integration {integ.id!r} declares no declared_config, so its "
+                "commands cannot be listed without a host (Function 5 pins this)"
+            )
+        parsed = integ.parse_config(dict(integ.declared_config))
+        specs.update(integration_command_specs(integ, parsed))
+    return {name: command_wire_entry(spec) for name, spec in sorted(specs.items())}
+
+
+def command_wire_entry(spec: CommandSpec) -> dict[str, Any]:
+    """One command's declared surface: its params and their validators, no argv."""
+    return {
+        "params": {name: _param_entry(p) for name, p in sorted(spec.params.items())}
+    }
+
+
+def _param_entry(pdef: ParamDef) -> dict[str, Any]:
+    # A secret's default would put the secret in a public file; it never rides.
+    # The schema is copied: the artifact must never alias a live declaration.
+    entry: dict[str, Any] = {
+        "pattern": pdef.pattern,
+        "max_bytes": pdef.max_bytes,
+        "schema": copy.deepcopy(pdef.schema),
+        "secret": pdef.secret,
+    }
+    if pdef.default is not None and not pdef.secret:
+        entry["default"] = pdef.default
+    return entry
 
 
 def wire_contract_digest() -> str:
@@ -63,6 +98,7 @@ def build_wire_contract() -> dict[str, Any]:
         "digest": canonical_digest(integrations),
         "digest_covers": DIGEST_COVERS,
         "integrations": integrations,
+        "commands": wire_contract_commands(),
     }
 
 
@@ -74,4 +110,7 @@ def render_wire_contract() -> str:
     timestamp: a generated-at stamp would churn the file on every regeneration
     and force the fitness check to learn to ignore a field.
     """
-    return json.dumps(build_wire_contract(), indent=2, sort_keys=True, ensure_ascii=True) + "\n"
+    return (
+        json.dumps(build_wire_contract(), indent=2, sort_keys=True, ensure_ascii=True)
+        + "\n"
+    )

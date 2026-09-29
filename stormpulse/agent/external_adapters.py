@@ -28,7 +28,11 @@ from typing import Any
 
 from stormpulse.commands.jobs import JobOutcome, ProgressCallback
 from stormpulse.config import CommandSpec, ConfigError, ParamDef
-from stormpulse.integrations import Integration, register_integration, registered_integrations
+from stormpulse.integrations import (
+    Integration,
+    register_integration,
+    registered_integrations,
+)
 from stormpulse.integrations.external import grants, loader
 from stormpulse.integrations.external.model import CapabilityRequest, SealedGrantV1
 from stormpulse.sdk import (
@@ -61,7 +65,9 @@ def load_and_register_external(state_dir: Path) -> frozenset[str]:
             registered.add(sdk.id)
         except Exception as exc:  # noqa: BLE001 - one bad adapter must never crash the agent
             logger.warning(
-                "external adapter %r failed to register (soft-disabled): %s", sdk.id, exc
+                "external adapter %r failed to register (soft-disabled): %s",
+                sdk.id,
+                exc,
             )
     return frozenset(registered)
 
@@ -105,14 +111,18 @@ def _gated_specs_builder(sdk: SdkIntegration, grant: SealedGrantV1) -> Any:
 
     def build(parsed: Any) -> dict[str, CommandSpec]:
         sdk_specs = dict(sdk_specs_of(parsed))
-        if CapabilityRequest.COMMAND_CONTRIBUTOR not in grants.effective_capabilities(grant):
+        if CapabilityRequest.COMMAND_CONTRIBUTOR not in grants.effective_capabilities(
+            grant
+        ):
             logger.warning(
-                "external adapter %r: command_contributor not granted; commands fenced", sdk.id
+                "external adapter %r: command_contributor not granted; commands fenced",
+                sdk.id,
             )
             return {}
         if command_specs_digest(sdk_specs) != grant.command_specs_digest:
             logger.warning(
-                "external adapter %r: command_specs_digest mismatch; commands fenced", sdk.id
+                "external adapter %r: command_specs_digest mismatch; commands fenced",
+                sdk.id,
             )
             return {}
         return {name: _translate_command_spec(spec) for name, spec in sdk_specs.items()}
@@ -144,6 +154,7 @@ def _translate_param(param: SdkParamDef) -> ParamDef:
         description=param.description,
         max_bytes=param.max_bytes,
         secret=param.secret,
+        schema=param.schema,
     )
 
 

@@ -12,6 +12,8 @@ from stormpulse.integrations.registry import (
     LogEnricher,
     MergeableState,
     StateBlob,
+    integration_command_specs,
+    refresh_spec,
     register_integration,
     registered_integrations,
 )
@@ -23,6 +25,8 @@ __all__ = [
     "LogEnricher",
     "MergeableState",
     "StateBlob",
+    "integration_command_specs",
+    "refresh_spec",
     "register_integration",
     "registered_integrations",
 ]

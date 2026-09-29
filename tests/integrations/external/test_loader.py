@@ -13,7 +13,10 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import stormpulse.integrations.registry as reg
-from stormpulse.agent.external_adapters import load_and_register_external
+from stormpulse.agent.external_adapters import (
+    _translate_param,
+    load_and_register_external,
+)
 from stormpulse.integrations import Integration, register_integration
 from stormpulse.integrations.external import digest, grants, install, trust
 from stormpulse.integrations.external.model import CapabilityRequest
@@ -130,17 +133,23 @@ def _install_and_seal(
                 "algorithm": "ed25519",
                 "publisher_fingerprint": fingerprint,
                 "package_digest": package_digest,
-                "signature_b64": base64.b64encode(private.sign(payload)).decode("ascii"),
+                "signature_b64": base64.b64encode(private.sign(payload)).decode(
+                    "ascii"
+                ),
             }
         ).encode()
     )
-    installed = install.commit_install(pkg, state_dir=state, agent_id=_AGENT).package_digest
+    installed = install.commit_install(
+        pkg, state_dir=state, agent_id=_AGENT
+    ).package_digest
     grants.seal(state, package_digest=installed)
     return installed
 
 
 def _registered(integration_id: str) -> Integration | None:
-    return next((i for i in reg.registered_integrations() if i.id == integration_id), None)
+    return next(
+        (i for i in reg.registered_integrations() if i.id == integration_id), None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +178,9 @@ def test_command_contributor_revoked_loads_command_less(tmp_path: Path) -> None:
     state = state_dir(tmp_path)
     approve(state, tmp_path, private)
     d = _install_and_seal(tmp_path, state, private, fp, integration_id="adfenced")
-    grants.revoke(state, package_digest=d, capability=CapabilityRequest.COMMAND_CONTRIBUTOR)
+    grants.revoke(
+        state, package_digest=d, capability=CapabilityRequest.COMMAND_CONTRIBUTOR
+    )
 
     ids = load_and_register_external(state)
     assert "adfenced" in ids  # still loads for state/health
@@ -184,7 +195,11 @@ def test_digest_mismatch_loads_command_less(tmp_path: Path) -> None:
     approve(state, tmp_path, private)
     # Manifest declares a command_specs_digest that does not match the code.
     _install_and_seal(
-        tmp_path, state, private, fp, integration_id="adliar",
+        tmp_path,
+        state,
+        private,
+        fp,
+        integration_id="adliar",
         command_specs_digest_value="sha256:" + "0" * 64,
     )
     ids = load_and_register_external(state)
@@ -199,7 +214,9 @@ def test_id_collision_with_builtin_is_quarantined(tmp_path: Path) -> None:
     state = state_dir(tmp_path)
     approve(state, tmp_path, private)
     # A stand-in built-in owns the id first.
-    register_integration(Integration(id="collideme", parse_config=lambda s: s, enabled=lambda c: True))
+    register_integration(
+        Integration(id="collideme", parse_config=lambda s: s, enabled=lambda c: True)
+    )
     _install_and_seal(tmp_path, state, private, fp, integration_id="collideme")
 
     ids = load_and_register_external(state)
@@ -214,8 +231,13 @@ def test_import_error_soft_disables(tmp_path: Path) -> None:
     state = state_dir(tmp_path)
     approve(state, tmp_path, private)
     _install_and_seal(
-        tmp_path, state, private, fp, integration_id="adboom",
-        capabilities=("integration_load",), raise_on_import=True,
+        tmp_path,
+        state,
+        private,
+        fp,
+        integration_id="adboom",
+        capabilities=("integration_load",),
+        raise_on_import=True,
     )
     ids = load_and_register_external(state)  # must not raise
     assert "adboom" not in ids
@@ -231,17 +253,25 @@ def test_external_command_name_collision_quarantines() -> None:
     from stormpulse.config import CommandSpec
 
     # A built-in already owns "shared_cmd".
-    commands = {"shared_cmd": CommandSpec(group="builtin", command=["/bin/true"], timeout=5)}
+    commands = {
+        "shared_cmd": CommandSpec(group="builtin", command=["/bin/true"], timeout=5)
+    }
 
     def specs(_cfg: object) -> dict[str, CommandSpec]:
-        return {"shared_cmd": CommandSpec(group="ext", command=["/bin/true"], timeout=5)}
+        return {
+            "shared_cmd": CommandSpec(group="ext", command=["/bin/true"], timeout=5)
+        }
 
-    integ = Integration(id="ext", parse_config=lambda s: s, enabled=lambda c: True, specs=specs)
+    integ = Integration(
+        id="ext", parse_config=lambda s: s, enabled=lambda c: True, specs=specs
+    )
     runtime = _resolve_integration(integ, {}, commands, frozenset({"ext"}))
 
     assert runtime.status == STATUS_DISABLED_ERROR
     assert "collide" in (runtime.disabled_reason or "")
-    assert commands["shared_cmd"].group == "builtin"  # built-in untouched, external lost
+    assert (
+        commands["shared_cmd"].group == "builtin"
+    )  # built-in untouched, external lost
 
 
 def test_wrap_parse_config_maps_adapter_errors_to_config_error() -> None:
@@ -260,3 +290,16 @@ def test_wrap_parse_config_maps_adapter_errors_to_config_error() -> None:
 
     with pytest.raises(ConfigError):  # any parse failure soft-disables, never crashes
         _wrap_parse_config(boom)({})
+
+
+def test_translate_param_carries_the_schema_and_walks_it() -> None:
+    shape = {"type": "array", "items": {"type": "string"}}
+    sdk = SdkParamDef(placeholder="x", default=None, max_bytes=100, schema=shape)
+    assert _translate_param(sdk).schema == shape
+    # The host walks well-formedness; bootstrap turns this into a soft-disable.
+    with pytest.raises(ValueError, match="type must be one of"):
+        _translate_param(
+            SdkParamDef(
+                placeholder="x", default=None, max_bytes=100, schema={"type": "nope"}
+            )
+        )

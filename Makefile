@@ -67,7 +67,7 @@ fitness:
 	$(LINT_IMPORTS)
 	$(PYTHON) -m fitness
 
-# CORE-008: regenerate after changing Integration dataclasses; review and commit.
+# CORE-008: regenerate after changing Integration dataclasses or command params; review and commit.
 # Exits 1 when the artifact changes; fitness rejects stale contracts.
 wire-contract:
 	$(PYTHON) -m scripts.generate_wire_contract

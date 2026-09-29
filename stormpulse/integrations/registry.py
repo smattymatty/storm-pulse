@@ -28,7 +28,7 @@ class StateBlob(Protocol):
 class MergeableState(StateBlob, Protocol):
     """State supporting the targeted upsert merge; required iff ``detect`` or ``read_affected`` is declared."""
 
-    def with_items(self, items: Iterable[Any], /) -> "MergeableState": ...
+    def with_items(self, items: Iterable[Any], /) -> MergeableState: ...
 
 
 # Capability signatures. The parsed config is integration-owned, so it types as
@@ -145,6 +145,47 @@ class Integration:
     # outside `command_specs_digest` and moves no control-plane pin. The node's
     # own [investigate.deploy.<subject>] table overrides whatever it returns.
     deploy_subjects: DeploySubjects | None = None
+    # A raw table ``parse_config`` accepts with no host, filesystem or seal, so
+    # the wire contract can build this Integration's commands in any process.
+    # Required with ``specs`` or ``collect_state`` (Function 5); values are placeholders.
+    declared_config: Mapping[str, Any] | None = None
+
+
+# Kept byte-identical to the pre-single-source ``garage_refresh`` entry so the
+# advertised wire manifest is unchanged. The text is integration-agnostic.
+_REFRESH_DESCRIPTION = (
+    "Internal command - triggers immediate state collection and metrics push"
+)
+
+
+def refresh_spec(integ_id: str) -> CommandSpec:
+    """Synthesize the generic ``{id}_refresh`` command for a state-collecting Integration.
+
+    An agent-owned capability, not a per-integration handler: any Integration
+    declaring ``collect_state`` gets it on equal terms, dispatched by the one
+    generic routine in ``stormpulse.agent.refresh``. ``mode="refresh"`` carries
+    no handler.
+    """
+    name = f"{integ_id}_refresh"
+    return CommandSpec(
+        group=integ_id,
+        command=[name],
+        timeout=30,
+        mode="refresh",
+        description=_REFRESH_DESCRIPTION,
+    )
+
+
+def integration_command_specs(
+    integ: Integration, parsed: Any
+) -> dict[str, CommandSpec]:
+    """Every command ``integ`` contributes for ``parsed``: its ``specs`` plus the
+    synthesized refresh. The one owner of that rule; bootstrap registers the
+    result and the wire contract declares it, so neither can drift from the other."""
+    specs = dict(integ.specs(parsed)) if integ.specs is not None else {}
+    if integ.collect_state is not None:
+        specs[f"{integ.id}_refresh"] = refresh_spec(integ.id)
+    return specs
 
 
 _integrations: list[Integration] = []

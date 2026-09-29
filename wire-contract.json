@@ -1,4 +1,977 @@
 {
+  "commands": {
+    "buckets_custom_domain_caddy_sync": {
+      "params": {
+        "authorize_bulk": {
+          "default": "false",
+          "max_bytes": null,
+          "pattern": "true|false",
+          "schema": null,
+          "secret": false
+        },
+        "region": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{0,40}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "tenants": {
+          "default": "{}",
+          "max_bytes": 1000000,
+          "pattern": null,
+          "schema": {
+            "entries": {
+              "key_pattern": "[A-Za-z0-9_-]{1,64}",
+              "value": {
+                "max_bytes": 16384,
+                "type": "string"
+              }
+            },
+            "type": "object"
+          },
+          "secret": false
+        }
+      }
+    },
+    "caddy_cert_status": {
+      "params": {
+        "domain": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9.-]{1,253}",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "docker_logs": {
+      "params": {
+        "docker_service_name": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "tail_lines": {
+          "default": "100",
+          "max_bytes": null,
+          "pattern": "[0-9]{1,5}",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_attach_account_key": {
+      "params": {
+        "account_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "local_alias": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "tier": {
+          "max_bytes": null,
+          "pattern": "(?:ro|rw|owner)",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_alias_global_add": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "new_alias": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_alias_global_remove": {
+      "params": {
+        "alias_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_alias_local_add": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "new_alias": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_alias_local_remove": {
+      "params": {
+        "alias_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_allow": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_allow_ro": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_allow_rw": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_cleanup_uploads": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "older_than_secs": {
+          "max_bytes": null,
+          "pattern": "[0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_clear": {
+      "params": {
+        "access_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "region": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "s3_endpoint": {
+          "max_bytes": null,
+          "pattern": "^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+          "schema": null,
+          "secret": false
+        },
+        "secret_access_key": {
+          "max_bytes": null,
+          "pattern": ".+",
+          "schema": null,
+          "secret": true
+        }
+      }
+    },
+    "garage_bucket_cors_get": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_cors_set": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "expected_rules": {
+          "max_bytes": 65536,
+          "pattern": null,
+          "schema": {
+            "items": {
+              "keys": {
+                "AllowedHeader": {
+                  "items": {
+                    "max_bytes": 1024,
+                    "type": "string"
+                  },
+                  "max_items": 100,
+                  "nullable": true,
+                  "type": "array"
+                },
+                "AllowedMethod": {
+                  "items": {
+                    "pattern": "\\*|GET|PUT|POST|DELETE|HEAD",
+                    "type": "string"
+                  },
+                  "max_items": 6,
+                  "type": "array"
+                },
+                "AllowedOrigin": {
+                  "items": {
+                    "max_bytes": 1024,
+                    "type": "string"
+                  },
+                  "max_items": 100,
+                  "type": "array"
+                },
+                "ExposeHeader": {
+                  "items": {
+                    "max_bytes": 1024,
+                    "type": "string"
+                  },
+                  "max_items": 100,
+                  "nullable": true,
+                  "type": "array"
+                },
+                "ID": {
+                  "max_bytes": 1024,
+                  "nullable": true,
+                  "type": "string"
+                },
+                "MaxAgeSeconds": {
+                  "min": 0,
+                  "nullable": true,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "AllowedOrigin",
+                "AllowedMethod"
+              ],
+              "type": "object"
+            },
+            "max_items": 100,
+            "type": "array"
+          },
+          "secret": false
+        },
+        "rules": {
+          "max_bytes": 65536,
+          "pattern": null,
+          "schema": {
+            "items": {
+              "keys": {
+                "AllowedHeader": {
+                  "items": {
+                    "max_bytes": 1024,
+                    "type": "string"
+                  },
+                  "max_items": 100,
+                  "nullable": true,
+                  "type": "array"
+                },
+                "AllowedMethod": {
+                  "items": {
+                    "pattern": "\\*|GET|PUT|POST|DELETE|HEAD",
+                    "type": "string"
+                  },
+                  "max_items": 6,
+                  "type": "array"
+                },
+                "AllowedOrigin": {
+                  "items": {
+                    "max_bytes": 1024,
+                    "type": "string"
+                  },
+                  "max_items": 100,
+                  "type": "array"
+                },
+                "ExposeHeader": {
+                  "items": {
+                    "max_bytes": 1024,
+                    "type": "string"
+                  },
+                  "max_items": 100,
+                  "nullable": true,
+                  "type": "array"
+                },
+                "ID": {
+                  "max_bytes": 1024,
+                  "nullable": true,
+                  "type": "string"
+                },
+                "MaxAgeSeconds": {
+                  "min": 0,
+                  "nullable": true,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "AllowedOrigin",
+                "AllowedMethod"
+              ],
+              "type": "object"
+            },
+            "max_items": 100,
+            "type": "array"
+          },
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_create": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_delete": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_deny": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_info": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_list": {
+      "params": {}
+    },
+    "garage_bucket_set_quota": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "max_size": {
+          "max_bytes": null,
+          "pattern": "[0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_website_allow": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "error_document": {
+          "default": "404.html",
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9._/-]+",
+          "schema": null,
+          "secret": false
+        },
+        "index_document": {
+          "default": "index.html",
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9._/-]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_bucket_website_deny": {
+      "params": {
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_converge_account_key_rotation": {
+      "params": {
+        "bucket_snapshot": {
+          "max_bytes": 65536,
+          "pattern": null,
+          "schema": {
+            "items": {
+              "keys": {
+                "alias": {
+                  "pattern": "[a-z0-9.-]{0,63}",
+                  "type": "string"
+                },
+                "id": {
+                  "pattern": "[a-f0-9]{16,64}",
+                  "type": "string"
+                },
+                "perms": {
+                  "items": {
+                    "type": "boolean"
+                  },
+                  "max_items": 3,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "type": "object"
+            },
+            "max_items": 1000,
+            "type": "array"
+          },
+          "secret": false
+        },
+        "new_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "old_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_delete_key": {
+      "params": {
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_delete_provisioned_bucket": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_detach_account_key": {
+      "params": {
+        "account_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "local_alias": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_enforce_account_key_tier": {
+      "params": {
+        "account_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "tier": {
+          "max_bytes": null,
+          "pattern": "(?:all|rw|ro)",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_get_bucket_owners": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_get_key_buckets": {
+      "params": {
+        "key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_key_create": {
+      "params": {
+        "key_name": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_key_list": {
+      "params": {}
+    },
+    "garage_provision_account_key": {
+      "params": {
+        "allow_create_bucket": {
+          "default": "false",
+          "max_bytes": null,
+          "pattern": "(?:true|false)",
+          "schema": null,
+          "secret": false
+        },
+        "new_key_name": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_provision_additional_key": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "key_tier": {
+          "max_bytes": null,
+          "pattern": "(?:all|rw|ro)",
+          "schema": null,
+          "secret": false
+        },
+        "local_alias": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "new_key_name": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_provision_customer_bucket": {
+      "params": {
+        "display_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "key_name_admin": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_refresh": {
+      "params": {}
+    },
+    "garage_rotate_customer_key": {
+      "params": {
+        "bucket_id": {
+          "max_bytes": null,
+          "pattern": "[a-f0-9]{16,64}",
+          "schema": null,
+          "secret": false
+        },
+        "key_tier": {
+          "max_bytes": null,
+          "pattern": "(?:all|rw|ro)",
+          "schema": null,
+          "secret": false
+        },
+        "local_alias": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "new_key_name": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
+          "schema": null,
+          "secret": false
+        },
+        "old_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_set_account_key_create_bucket": {
+      "params": {
+        "access_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "enable": {
+          "max_bytes": null,
+          "pattern": "(?:true|false)",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_snapshot_and_reap_account_key": {
+      "params": {
+        "old_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "garage_stats": {
+      "params": {}
+    },
+    "garage_status": {
+      "params": {}
+    },
+    "garage_walk_bucket_stats": {
+      "params": {
+        "access_key_id": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9]+",
+          "schema": null,
+          "secret": false
+        },
+        "bucket_name": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "max_objects": {
+          "default": "100000",
+          "max_bytes": null,
+          "pattern": "[0-9]{1,7}",
+          "schema": null,
+          "secret": false
+        },
+        "prefix": {
+          "default": "",
+          "max_bytes": null,
+          "pattern": "|[^/\\x00-\\x1f\\x7f-\\x9f][^\\x00-\\x1f\\x7f-\\x9f]*/",
+          "schema": null,
+          "secret": false
+        },
+        "region": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "s3_endpoint": {
+          "max_bytes": null,
+          "pattern": "^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+          "schema": null,
+          "secret": false
+        },
+        "secret_access_key": {
+          "max_bytes": null,
+          "pattern": ".+",
+          "schema": null,
+          "secret": true
+        }
+      }
+    },
+    "git_pull": {
+      "params": {}
+    },
+    "rclone_estimate": {
+      "params": {
+        "src_access_key_id": {
+          "max_bytes": null,
+          "pattern": "[A-Za-z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "src_bucket": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "src_endpoint": {
+          "max_bytes": null,
+          "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+          "schema": null,
+          "secret": false
+        },
+        "src_region": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "src_secret_access_key": {
+          "max_bytes": 256,
+          "pattern": null,
+          "schema": null,
+          "secret": true
+        }
+      }
+    },
+    "rclone_migrate": {
+      "params": {
+        "dst_access_key_id": {
+          "max_bytes": null,
+          "pattern": "[A-Za-z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "dst_bucket": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "dst_endpoint": {
+          "max_bytes": null,
+          "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+          "schema": null,
+          "secret": false
+        },
+        "dst_region": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "dst_secret_access_key": {
+          "max_bytes": 256,
+          "pattern": null,
+          "schema": null,
+          "secret": true
+        },
+        "src_access_key_id": {
+          "max_bytes": null,
+          "pattern": "[A-Za-z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "src_bucket": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "src_endpoint": {
+          "max_bytes": null,
+          "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+          "schema": null,
+          "secret": false
+        },
+        "src_region": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "src_secret_access_key": {
+          "max_bytes": 256,
+          "pattern": null,
+          "schema": null,
+          "secret": true
+        }
+      }
+    },
+    "rclone_restore_test": {
+      "params": {
+        "dst_access_key_id": {
+          "max_bytes": null,
+          "pattern": "[A-Za-z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "dst_bucket": {
+          "max_bytes": null,
+          "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
+          "schema": null,
+          "secret": false
+        },
+        "dst_endpoint": {
+          "max_bytes": null,
+          "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
+          "schema": null,
+          "secret": false
+        },
+        "dst_region": {
+          "max_bytes": null,
+          "pattern": "[a-zA-Z0-9_-]+",
+          "schema": null,
+          "secret": false
+        },
+        "dst_secret_access_key": {
+          "max_bytes": 256,
+          "pattern": null,
+          "schema": null,
+          "secret": true
+        }
+      }
+    },
+    "run_apply_block": {
+      "params": {
+        "apply_command": {
+          "max_bytes": 16384,
+          "pattern": null,
+          "schema": null,
+          "secret": false
+        }
+      }
+    },
+    "run_verify_block": {
+      "params": {
+        "verify_command": {
+          "max_bytes": 4096,
+          "pattern": null,
+          "schema": null,
+          "secret": false
+        }
+      }
+    }
+  },
   "digest": "sha256:f7ba4418f3d174c758c9e10449d9127b1c8b8765f2f9c21c4f9d349279451e55",
   "digest_covers": "integrations",
   "integrations": {
@@ -59,5 +1032,5 @@
       "root": "GarageState"
     }
   },
-  "schema": 1
+  "schema": 2
 }

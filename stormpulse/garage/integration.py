@@ -10,9 +10,9 @@ from stormpulse.garage import state as garage_state
 from stormpulse.garage.bucket_resolver import BucketIdResolver
 from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig, parse_garage_config
+from stormpulse.garage.investigate import run_health
 from stormpulse.garage.preconditions import run_preconditions
 from stormpulse.garage.state import GarageBucket, GarageState
-from stormpulse.garage.investigate import run_health
 from stormpulse.integrations import (
     Detector,
     Integration,
@@ -53,7 +53,9 @@ def _discover(config: GarageConfig) -> GarageState | None:
     return garage_discover.discover_garage(config)
 
 
-def _detect(config: GarageConfig, current_state: GarageState | None) -> list[GarageBucket]:
+def _detect(
+    config: GarageConfig, current_state: GarageState | None
+) -> list[GarageBucket]:
     return garage_state.detect_new_buckets(config, current_state)
 
 
@@ -74,8 +76,10 @@ def _read_affected(
 
 def _log_enricher(state: object) -> BucketIdResolver:
     """Tick-fresh ``(key_id, name) -> bucket_id`` map for ``garage_s3`` lines
-   ; a None/foreign state builds the honest empty resolver."""
-    return BucketIdResolver.from_state(state if isinstance(state, GarageState) else None)
+    ; a None/foreign state builds the honest empty resolver."""
+    return BucketIdResolver.from_state(
+        state if isinstance(state, GarageState) else None
+    )
 
 
 GARAGE_INTEGRATION = Integration(
@@ -98,6 +102,13 @@ GARAGE_INTEGRATION = Integration(
             run=run_health,
         ),
     ),
+    declared_config={
+        "enabled": True,
+        "container_name": "garage",
+        "garage_binary": "/garage",
+        "docker_binary": "/usr/bin/docker",
+        "config_path": "/etc/garage/garage.toml",
+    },
 )
 
 register_integration(GARAGE_INTEGRATION)

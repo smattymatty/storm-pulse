@@ -15,14 +15,18 @@ from stormpulse.agent.integrations_runtime import (
 )
 from stormpulse.commands import build_registry
 from stormpulse.config import CommandSpec, Config, ConfigError
-from stormpulse.integrations import Integration, registered_integrations
+from stormpulse.integrations import (
+    Integration,
+    integration_command_specs,
+    registered_integrations,
+)
 from stormpulse.integrations.readiness import capability_provider_conflicts
 from stormpulse.logging import (
     DockerTailer,
+    JournaldTailer,
     LogPositionStore,
     LogShipper,
     LogTailer,
-    JournaldTailer,
     StreamingDockerTailer,
 )
 
@@ -37,32 +41,6 @@ class AgentDependencies:
     shippers: dict[str, LogShipper]
     streaming_tailers: list[StreamingDockerTailer]
     integrations: dict[str, IntegrationRuntime]
-
-
-# Kept byte-identical to the pre-single-source ``garage_refresh`` entry so the
-# advertised wire manifest is unchanged. The text is integration-agnostic.
-_REFRESH_DESCRIPTION = (
-    "Internal command - triggers immediate state collection and metrics push"
-)
-
-
-def _refresh_spec(integ_id: str) -> CommandSpec:
-    """Synthesize the generic ``{id}_refresh`` command for a state-collecting Integration.
-
-    "Refresh my state now" is an agent-owned capability, not a per-integration
-    handler: any Integration that declares ``collect_state`` gets it on equal
-    terms (garage as much as a third party), dispatched by the one generic
-    routine in ``stormpulse.agent.refresh``. ``mode="refresh"`` carries no
-    handler.
-    """
-    name = f"{integ_id}_refresh"
-    return CommandSpec(
-        group=integ_id,
-        command=[name],
-        timeout=30,
-        mode="refresh",
-        description=_REFRESH_DESCRIPTION,
-    )
 
 
 def _resolve_integration(
@@ -81,16 +59,18 @@ def _resolve_integration(
     try:
         parsed = integ.parse_config(raw)
     except ConfigError as exc:
-        return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, str(exc), None, integ)
+        return IntegrationRuntime(
+            integ.id, STATUS_DISABLED_ERROR, str(exc), None, integ
+        )
     if not integ.enabled(parsed):
         return IntegrationRuntime(integ.id, STATUS_DISABLED_CHOICE, None, parsed, integ)
     reason = integ.preconditions(parsed) if integ.preconditions is not None else None
     if reason is not None:
-        return IntegrationRuntime(integ.id, STATUS_DISABLED_ERROR, reason, parsed, integ)
+        return IntegrationRuntime(
+            integ.id, STATUS_DISABLED_ERROR, reason, parsed, integ
+        )
     try:
-        integ_specs = dict(integ.specs(parsed)) if integ.specs is not None else {}
-        if integ.collect_state is not None:
-            integ_specs[f"{integ.id}_refresh"] = _refresh_spec(integ.id)
+        integ_specs = integration_command_specs(integ, parsed)
     except Exception as exc:  # noqa: BLE001 - any build failure is a soft-disable, never a crash
         return IntegrationRuntime(
             integ.id,
@@ -161,7 +141,8 @@ def build_agent_dependencies(
             if integ.id in enricher_losers:
                 logger.warning(
                     "Integration %r: %s. Not configured here; first declarer wins.",
-                    integ.id, enricher_losers[integ.id],
+                    integ.id,
+                    enricher_losers[integ.id],
                 )
             continue
         reason = enricher_losers.get(integ.id) or capability_losers.get(integ.id)
@@ -175,7 +156,8 @@ def build_agent_dependencies(
             logger.warning(
                 "Integration %r disabled (error): %s. The agent and other "
                 "integrations stay up; fix and restart to re-enable.",
-                runtime.id, runtime.disabled_reason,
+                runtime.id,
+                runtime.disabled_reason,
             )
         elif runtime.status == STATUS_DISABLED_CHOICE:
             logger.info("Integration %r present but disabled by config.", runtime.id)

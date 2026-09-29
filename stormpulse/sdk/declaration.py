@@ -47,7 +47,10 @@ class SdkConfigError(Exception):
 class SdkParamDef:
     """An overridable command placeholder. Mirror of ``config.ParamDef``: either
     ``pattern`` or ``max_bytes`` must be set, and a credential-shaped name must
-    set ``secret=True`` (which redacts the value from event and log context)."""
+    set ``secret=True`` (which redacts the value from event and log context).
+    ``schema`` is a JSON blob's declared shape in the host's vocabulary; the host
+    walks it at load (a bad one soft-disables the adapter) and keeps it out of
+    ``command_specs_digest``."""
 
     placeholder: str
     default: str | None
@@ -55,12 +58,19 @@ class SdkParamDef:
     description: str = ""
     max_bytes: int | None = None
     secret: bool = False
+    schema: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.pattern is None and self.max_bytes is None:
             raise ValueError(
                 f"SdkParamDef {self.placeholder!r}: must set pattern or max_bytes "
                 "(unvalidated params are a footgun)"
+            )
+        if self.schema is not None and (
+            self.pattern is not None or self.max_bytes is None
+        ):
+            raise ValueError(
+                f"SdkParamDef {self.placeholder!r}: schema needs max_bytes and excludes pattern"
             )
         if not self.secret and _CREDENTIAL_NAME_RE.search(self.placeholder):
             raise ValueError(

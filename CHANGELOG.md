@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `wire-contract.json` now declares the command surface: a `commands`
+  section lists every command the registry can build (the sealed sign-off
+  hatches included, `disabled_commands` ignored) with each param's
+  validator (`pattern`, `max_bytes`, `schema`, `secret`, and a `default` when
+  one is set and not secret). A dispatcher can pin what it sends against what the
+  agent accepts. The section sits outside the digest, so no deployed agent's
+  advertised digest moves; the artifact's `schema` is 2 because the
+  envelope gained a top-level key. Fitness Function 9 holds the section to
+  the registry: a missing, extra, or drifted param fails the suite.
+- A `schema` validator for JSON-valued command params. Alongside `pattern`
+  and `max_bytes`, a param can declare its decoded shape (object keys and
+  which are required, map entries with a key pattern, list items and a
+  cap, string patterns and byte caps, integer bounds, booleans, nullable),
+  and the agent checks it at dispatch after the byte cap, before any handler
+  runs. Violations name the JSON path and the rule, never the value, and a
+  secret's detail is withheld. `buckets_custom_domain_caddy_sync.tenants`
+  and `garage_converge_account_key_rotation.bucket_snapshot`, both
+  size-checked only until now, declare schemas. SDK adapters declare
+  `SdkParamDef.schema` the same way; it is published in `wire-contract.json`
+  and stays outside `command_specs_digest`, so no sealed grant moves.
+- Per-bucket CORS rules via the admin API: `garage_bucket_cors_get` returns
+  a bucket's rules in Garage's own JSON shape (the S3 XML names: `ID`,
+  `MaxAgeSeconds`, `AllowedOrigin`, `AllowedMethod`, `AllowedHeader`,
+  `ExposeHeader`), and `garage_bucket_cors_set` replaces them through
+  `UpdateBucket` as a compare-and-swap: the caller sends the rules it loaded
+  as `expected_rules`, and when the live rules differ the write is refused
+  with `cors_rules_stale` and the current rules, so nothing is written over
+  a change the caller has not seen. An empty `rules` list clears the
+  config. Both params are `schema`-checked to exactly those keys. Neither
+  command takes an S3 credential: the node's admin token does the work.
+
 ### Fixed
 
 - `garage_delete_provisioned_bucket` no longer deletes access keys. It

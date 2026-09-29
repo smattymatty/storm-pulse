@@ -13,9 +13,11 @@ from stormpulse.agent.integrations_runtime import (
     IntegrationRuntime,
     build_integrations_payload,
 )
+from stormpulse.agent.wire_contract import wire_contract_commands
 from stormpulse.config import CommandSpec
 from stormpulse.integrations import (
     Integration,
+    integration_command_specs,
     register_integration,
     registered_integrations,
 )
@@ -60,7 +62,9 @@ def test_register_integration_is_idempotent_by_id(isolated_registry: None) -> No
 
 
 def _desc(integ_id: str) -> Integration:
-    return Integration(id=integ_id, parse_config=lambda raw: raw, enabled=lambda c: True)
+    return Integration(
+        id=integ_id, parse_config=lambda raw: raw, enabled=lambda c: True
+    )
 
 
 def test_envelope_live_carries_state_blob() -> None:
@@ -82,13 +86,85 @@ def test_envelope_live_without_state_is_empty_object() -> None:
 def test_envelope_disabled_error_has_reason_and_null_state() -> None:
     rt = IntegrationRuntime("x", "disabled_error", "boom", {}, _desc("x"))
     out = build_integrations_payload({"x": rt})
-    assert out["x"] == {"status": "disabled_error", "disabled_reason": "boom", "state": None}
+    assert out["x"] == {
+        "status": "disabled_error",
+        "disabled_reason": "boom",
+        "state": None,
+    }
 
 
 def test_envelope_disabled_choice_has_null_reason_and_state() -> None:
     rt = IntegrationRuntime("x", "disabled_choice", None, {}, _desc("x"))
     out = build_integrations_payload({"x": rt})
-    assert out["x"] == {"status": "disabled_choice", "disabled_reason": None, "state": None}
+    assert out["x"] == {
+        "status": "disabled_choice",
+        "disabled_reason": None,
+        "state": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# The command surface an Integration contributes: one owner, declared for the wire
+# ---------------------------------------------------------------------------
+
+_PING = CommandSpec(group="notional", command=["/bin/true"], timeout=5)
+
+
+def test_integration_command_specs_adds_refresh_only_for_a_state_collector() -> None:
+    stateless = Integration(
+        id="notional",
+        parse_config=lambda raw: raw,
+        enabled=lambda c: True,
+        specs=lambda cfg: {"notional_ping": _PING},
+    )
+    assert set(integration_command_specs(stateless, {})) == {"notional_ping"}
+    stateful = Integration(
+        id="notional",
+        parse_config=lambda raw: raw,
+        enabled=lambda c: True,
+        specs=lambda cfg: {"notional_ping": _PING},
+        collect_state=lambda cfg: None,
+    )
+    specs = integration_command_specs(stateful, {})
+    assert set(specs) == {"notional_ping", "notional_refresh"}
+    assert specs["notional_refresh"].mode == "refresh"
+
+
+def test_command_contributor_without_declared_config_is_a_contract_violation(
+    isolated_registry: None,
+) -> None:
+    """Function 5: a contributor with no host-free config cannot be declared in
+    the wire contract, and the contract itself refuses to guess one."""
+    from fitness.integration_contract import check_integration_contract
+
+    register_integration(
+        Integration(
+            id="notional",
+            parse_config=lambda raw: raw,
+            enabled=lambda c: True,
+            specs=lambda cfg: {"notional_ping": _PING},
+        )
+    )
+    assert any(
+        "notional" in v and "declared_config" in v for v in check_integration_contract()
+    )
+    with pytest.raises(LookupError, match="notional"):
+        wire_contract_commands()
+
+
+def test_declared_config_puts_a_contributor_in_the_wire_contract(
+    isolated_registry: None,
+) -> None:
+    register_integration(
+        Integration(
+            id="notional",
+            parse_config=lambda raw: raw,
+            enabled=lambda c: True,
+            specs=lambda cfg: {"notional_ping": _PING},
+            declared_config={"enabled": True},
+        )
+    )
+    assert "notional_ping" in wire_contract_commands()
 
 
 # ---------------------------------------------------------------------------
@@ -121,9 +197,7 @@ def test_notional_third_integration_resolves_through_bootstrap(
         )
     )
     cfg = build_config(tmp_path, integrations={"notional": {"enabled": True}})
-    deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None
-    )
+    deps = build_agent_dependencies(cfg, signoff_sealed=False, log_position_store=None)
     assert deps.integrations["notional"].status == "live"
     assert "notional_ping" in deps.registry
 
@@ -153,9 +227,7 @@ def test_spec_group_must_equal_integration_id(
         )
     )
     cfg = build_config(tmp_path, integrations={"rogue": {}})
-    deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None
-    )
+    deps = build_agent_dependencies(cfg, signoff_sealed=False, log_position_store=None)
     rt = deps.integrations["rogue"]
     assert rt.status == "disabled_error"
     assert rt.disabled_reason is not None
@@ -199,9 +271,7 @@ def test_duplicate_enricher_parser_soft_disables_later_declarer(
         )
     )
     cfg = build_config(tmp_path, integrations={"rival": {}})
-    deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None
-    )
+    deps = build_agent_dependencies(cfg, signoff_sealed=False, log_position_store=None)
     rival = deps.integrations["rival"]
     assert rival.status == "disabled_error"
     assert rival.disabled_reason is not None
@@ -212,7 +282,27 @@ def test_absent_integration_not_reported(tmp_path: Path) -> None:
     # garage/caddy are registered but absent from this config: they must not
     # appear in the runtime set (spec: absent from config => not on the wire).
     cfg = build_config(tmp_path)
-    deps = build_agent_dependencies(
-        cfg, signoff_sealed=False, log_position_store=None
-    )
+    deps = build_agent_dependencies(cfg, signoff_sealed=False, log_position_store=None)
     assert deps.integrations == {}
+
+
+def test_state_collector_without_declared_config_is_a_contract_violation(
+    isolated_registry: None,
+) -> None:
+    """A collector with no ``specs`` still contributes ``<id>_refresh``, so it
+    needs a declared_config too, or the contract has a command it cannot list."""
+    from fitness.integration_contract import check_integration_contract
+
+    register_integration(
+        Integration(
+            id="notional",
+            parse_config=lambda raw: raw,
+            enabled=lambda c: True,
+            collect_state=lambda cfg: None,
+        )
+    )
+    assert any(
+        "notional" in v and "declared_config" in v for v in check_integration_contract()
+    )
+    with pytest.raises(LookupError, match="notional"):
+        wire_contract_commands()

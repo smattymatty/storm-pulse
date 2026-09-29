@@ -1,12 +1,9 @@
 """Write ``wire-contract.json`` from the live dataclasses.
 
-Run after changing anything an Integration emits: `make wire-contract`. The
-generated file is checked in and reviewed like source.
-
-Always exits 0, including when it rewrote the file. Detecting drift is Function
-9's job and it already fails the suite; a generator that also failed on drift
-would be a second gate on one condition, and the operator would learn to ignore
-whichever one cried first.
+Run after changing anything an Integration emits, or any command's params:
+`make wire-contract`. The file is checked in and reviewed like source. Always
+exits 0, even after rewriting: drift detection is Function 9's job, and a
+second gate on the same condition teaches the operator to ignore one of them.
 """
 
 from __future__ import annotations

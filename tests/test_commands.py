@@ -9,10 +9,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from stormpulse.agent.wire_contract import wire_contract_commands
 from stormpulse.commands import (
     COMMAND_REGISTRY,
-    CommandSpec,
     CommandError,
+    CommandSpec,
     ParamValidationError,
     build_registry,
     execute_command,
@@ -729,7 +730,10 @@ def test_validate_params_secret_pattern_mismatch_withholds_value() -> None:
     """A failing secret value never rides the error message (it lands in logs)."""
     cmd = _cmd_with_params(
         secret_access_key=ParamDef(
-            placeholder="secret_access_key", default=None, pattern=r".+", secret=True,
+            placeholder="secret_access_key",
+            default=None,
+            pattern=r".+",
+            secret=True,
         ),
     )
     leaked = "SuperSecretValue123\n"
@@ -755,6 +759,97 @@ def test_validate_params_none_default_with_override() -> None:
         service=ParamDef(placeholder="service", default=None, pattern="[a-z]+"),
     )
     assert validate_params(cmd, {"service": "celery"}) == {"service": "celery"}
+
+
+# ---------------------------------------------------------------------------
+# Schema validation (JSON blobs)
+# ---------------------------------------------------------------------------
+
+_RULES_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "keys": {"AllowedOrigin": {"type": "array", "items": {"type": "string"}}},
+        "required": ["AllowedOrigin"],
+    },
+}
+
+
+def _rules_cmd(**overrides: Any) -> CommandSpec:
+    return _cmd_with_params(
+        rules=ParamDef(
+            placeholder="rules",
+            default=None,
+            max_bytes=4096,
+            schema=_RULES_SCHEMA,
+            **overrides,
+        ),
+    )
+
+
+def test_validate_params_schema_accepts_a_conforming_blob_verbatim() -> None:
+    blob = '[{"AllowedOrigin": ["*"]}]'
+    assert validate_params(_rules_cmd(), {"rules": blob}) == {"rules": blob}
+
+
+@pytest.mark.parametrize(
+    ("blob", "fragment"),
+    [
+        ("[{", "is not valid JSON"),
+        (
+            '[{"ID": "x"}]',
+            "does not match schema: $[0]: missing required key 'AllowedOrigin'",
+        ),
+    ],
+)
+def test_validate_params_schema_names_the_decode_or_shape_failure(
+    blob: str, fragment: str
+) -> None:
+    # The walker's own table lives in tests/test_param_schema.py; this pins the seam.
+    with pytest.raises(ParamValidationError, match="Param 'rules' ") as excinfo:
+        validate_params(_rules_cmd(), {"rules": blob})
+    assert fragment in str(excinfo.value)
+
+
+def test_validate_params_schema_runs_after_the_byte_cap() -> None:
+    with pytest.raises(ParamValidationError, match="exceeds max_bytes=4096"):
+        validate_params(_rules_cmd(), {"rules": "[" * 5000})
+
+
+def test_validate_params_secret_schema_failure_withholds_detail() -> None:
+    """Neither the value nor the path into it rides the error for a secret blob."""
+    cmd = _cmd_with_params(
+        secret_blob=ParamDef(
+            placeholder="secret_blob",
+            default=None,
+            max_bytes=4096,
+            secret=True,
+            schema={"type": "object", "keys": {"k": {"type": "string"}}},
+        ),
+    )
+    with pytest.raises(ParamValidationError, match="withheld: secret") as excinfo:
+        validate_params(cmd, {"secret_blob": '{"LeakedKeyName": "LeakedValue"}'})
+    text = str(excinfo.value)
+    assert "LeakedKeyName" not in text and "LeakedValue" not in text and "$" not in text
+
+
+def test_pattern_less_schema_less_params_are_the_known_opaque_six() -> None:
+    """Shell text and the rclone secrets are opaque by design. Every other param
+    declares a pattern or a schema; a new opaque one must be added here by name."""
+    opaque = {
+        (command, param)
+        for command, entry in wire_contract_commands().items()
+        for param, validator in entry["params"].items()
+        if validator["pattern"] is None and validator["schema"] is None
+    }
+    assert opaque == {
+        ("run_verify_block", "verify_command"),
+        ("run_apply_block", "apply_command"),
+        ("rclone_estimate", "src_secret_access_key"),
+        ("rclone_migrate", "src_secret_access_key"),
+        ("rclone_migrate", "dst_secret_access_key"),
+        ("rclone_restore_test", "dst_secret_access_key"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -944,7 +1039,9 @@ def test_non_secret_params_drops_secret_flagged() -> None:
 
 def test_non_secret_params_passes_all_when_none_secret() -> None:
     cmd = CommandSpec(
-        group="deploy", command=["/bin/git", "pull"], timeout=60,
+        group="deploy",
+        command=["/bin/git", "pull"],
+        timeout=60,
         params={"branch": ParamDef("branch", default=None, pattern=r".+")},
     )
     assert non_secret_params(cmd, {"branch": "main"}) == {"branch": "main"}

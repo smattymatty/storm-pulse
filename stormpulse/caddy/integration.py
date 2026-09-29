@@ -27,6 +27,12 @@ CADDY_INTEGRATION = Integration(
     preconditions=run_preconditions,
     specs=build_caddy_specs,
     capabilities=(Capability("caddy.drop_in.v1", "caddy"),),
+    declared_config={
+        "enabled": True,
+        "admin_url": "http://localhost:2019",
+        "main_caddyfile": "/etc/caddy/Caddyfile",
+        "drop_in_path": "/etc/caddy/conf.d/buckets.caddy",
+    },
 )
 
 register_integration(CADDY_INTEGRATION)

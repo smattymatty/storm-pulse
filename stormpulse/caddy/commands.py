@@ -37,6 +37,22 @@ _BOOL_PATTERN = r"true|false"
 # well beyond solo-founder-scale ops.
 _MANIFEST_MAX_BYTES = 1_000_000
 
+# Tenant IDs become filenames; restrict characters and length to block traversal.
+TENANT_KEY_PATTERN = r"[A-Za-z0-9_-]{1,64}"
+
+# Cap each bucket fragment at 16 KiB to reject pathological renders.
+PER_TENANT_MAX_BYTES = 16_384
+
+# The manifest's shape: {tenant id: Caddy fragment}. Checked at dispatch, before
+# the handler runs; sync.py re-checks the decoded dict on its own path.
+_MANIFEST_SCHEMA = {
+    "type": "object",
+    "entries": {
+        "key_pattern": TENANT_KEY_PATTERN,
+        "value": {"type": "string", "max_bytes": PER_TENANT_MAX_BYTES},
+    },
+}
+
 
 def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
     """Build the Caddy command registry, binding each job's handler to ``config``.
@@ -70,8 +86,8 @@ def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
                 "tenants": ParamDef(
                     placeholder="tenants",
                     default="{}",
-                    pattern=None,
                     max_bytes=_MANIFEST_MAX_BYTES,
+                    schema=_MANIFEST_SCHEMA,
                     description=(
                         "JSON object mapping each serving bucket's id to its "
                         "Caddy fragment. The agent writes one site-<id>.caddy "

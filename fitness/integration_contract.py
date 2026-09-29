@@ -26,7 +26,9 @@ def check_integration_contract() -> list[str]:
                 f"Integration with a non-empty string id required, got {integ.id!r}"
             )
         if not callable(integ.parse_config):
-            violations.append(f"Integration {integ.id!r}: parse_config must be callable")
+            violations.append(
+                f"Integration {integ.id!r}: parse_config must be callable"
+            )
         if not callable(integ.enabled):
             violations.append(f"Integration {integ.id!r}: enabled must be callable")
         if integ.specs is not None:
@@ -38,6 +40,14 @@ def check_integration_contract() -> list[str]:
                     "CORE-007: a built-in contributor is first-party; an external "
                     "one is gated by its command_contributor grant at load)"
                 )
+        if (integ.specs is not None or integ.collect_state is not None) and (
+            integ.declared_config is None
+        ):
+            violations.append(
+                f"Integration {integ.id!r}: contributes commands but declares no "
+                "declared_config, so the wire contract cannot list them without "
+                "a host (CORE-008: every accepted command is declared)"
+            )
         for parser in integ.log_enrichers or {}:
             owner = enricher_owners.setdefault(parser, integ.id)
             if owner != integ.id:

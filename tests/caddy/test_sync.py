@@ -19,9 +19,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from stormpulse.caddy.commands import PER_TENANT_MAX_BYTES
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.caddy.sync import (
-    _PER_TENANT_MAX_BYTES,
     _atomic_write_or_remove,
     _decode_manifest,
     _plan_reconcile,
@@ -31,14 +31,19 @@ from stormpulse.caddy.sync import (
 )
 
 
-def _params(tenants: dict[str, str], *, region: str = "vancouver-1",
-            authorize_bulk: bool = False) -> dict[str, str]:
+def _params(
+    tenants: dict[str, str],
+    *,
+    region: str = "vancouver-1",
+    authorize_bulk: bool = False,
+) -> dict[str, str]:
     """Build the string-valued param dict the handler receives off the wire."""
     return {
         "region": region,
         "tenants": json.dumps(tenants),
         "authorize_bulk": "true" if authorize_bulk else "false",
     }
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -297,10 +302,13 @@ class TestCaddySyncHandler:
             h2 = make_caddy_sync_handler(cfg, params)
             return await asyncio.gather(_run_handler(h1), _run_handler(h2))
 
-        with patch(
-            "stormpulse.caddy.sync.http.client.HTTPConnection",
-            return_value=_make_mock_connection(status=200),
-        ), patch.object(sync_module, "_atomic_write_or_remove", slow_write):
+        with (
+            patch(
+                "stormpulse.caddy.sync.http.client.HTTPConnection",
+                return_value=_make_mock_connection(status=200),
+            ),
+            patch.object(sync_module, "_atomic_write_or_remove", slow_write),
+        ):
             out1, out2 = asyncio.run(run_two())
 
         assert out1.success is True
@@ -343,10 +351,13 @@ class TestCaddySyncHandler:
             h2 = make_caddy_sync_handler(cfg, _params(tenants, region="toronto-1"))
             return await asyncio.gather(_run_handler(h1), _run_handler(h2))
 
-        with patch(
-            "stormpulse.caddy.sync.http.client.HTTPConnection",
-            return_value=_make_mock_connection(status=200),
-        ), patch.object(sync_module, "_atomic_write_or_remove", slow_write):
+        with (
+            patch(
+                "stormpulse.caddy.sync.http.client.HTTPConnection",
+                return_value=_make_mock_connection(status=200),
+            ),
+            patch.object(sync_module, "_atomic_write_or_remove", slow_write),
+        ):
             out1, out2 = asyncio.run(run_two())
 
         assert out1.success is True
@@ -354,7 +365,8 @@ class TestCaddySyncHandler:
         assert max_active == 1
 
     def test_empty_manifest_removes_single_managed_file(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """An empty manifest with one managed file on disk removes it: a
         single delete is within the inline cadence, so the rail allows it."""
@@ -423,7 +435,7 @@ class TestCaddySyncHandler:
         drop_in_dir.mkdir()
 
         mock_conn = _make_mock_connection_sequence(
-            (200, "{}"),              # /adapt accepts
+            (200, "{}"),  # /adapt accepts
             (500, "loader exploded"),  # /load rejects
         )
         with patch(
@@ -592,7 +604,7 @@ class TestDecodeManifest:
         assert err is not None and "safe filename" in err
 
     def test_oversize_fragment_rejected(self) -> None:
-        oversize = "a" * (_PER_TENANT_MAX_BYTES + 1)
+        oversize = "a" * (PER_TENANT_MAX_BYTES + 1)
         manifest, err = _decode_manifest(json.dumps({"abc": oversize}))
         assert manifest is None
         assert err is not None and "exceeds per-bucket cap" in err
@@ -699,7 +711,8 @@ class TestDeleteRailHandler:
             (drop_in_dir / f"site-{tid}.caddy").write_text(f"{tid} block\n")
 
     def test_mass_delete_trips_named_failure_files_keep_serving(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         cfg = _make_config(tmp_path)
         drop_in_dir = cfg.drop_in_path.parent
@@ -738,7 +751,8 @@ class TestDeleteRailHandler:
         assert endpoints == ["/adapt", "/load"]
 
     def test_authorize_bulk_performs_the_mass_delete(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         cfg = _make_config(tmp_path)
         drop_in_dir = cfg.drop_in_path.parent
@@ -859,7 +873,8 @@ class TestReadAndAbsolutizeImports:
         assert f"import {tmp_path.as_posix()}/conf.d/*.caddy\n" in result
 
     def test_relative_file_matching_no_snippet_still_absolutized(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         # A bare relative name with no matching snippet definition is a
         # file path and still gets absolutised.

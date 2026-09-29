@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from stormpulse.caddy.commands import PER_TENANT_MAX_BYTES, TENANT_KEY_PATTERN
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 
@@ -30,11 +31,9 @@ _MANAGED_PREFIX = "site-"
 _MANAGED_SUFFIX = ".caddy"
 _MANAGED_GLOB = f"{_MANAGED_PREFIX}*{_MANAGED_SUFFIX}"
 
-# Tenant IDs become filenames; restrict characters and length to block traversal.
-_TENANT_KEY_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
-
-# Cap each bucket fragment at 16 KiB to reject pathological renders.
-_PER_TENANT_MAX_BYTES = 16_384
+# The tenants param's schema rejects these at dispatch; the handler re-checks
+# so a direct caller gets the same refusal.
+_TENANT_KEY_RE = re.compile(TENANT_KEY_PATTERN)
 
 # More than one deletion per sync requires authorize_bulk.
 # Count the legacy drop-in removal too.
@@ -131,10 +130,10 @@ def _decode_manifest(raw: str) -> tuple[dict[str, str] | None, str | None]:
                 "(allowed: letters, digits, '_', '-'; 1-64 chars)"
             )
         frag_bytes = len(frag.encode("utf-8"))
-        if frag_bytes > _PER_TENANT_MAX_BYTES:
+        if frag_bytes > PER_TENANT_MAX_BYTES:
             return None, (
                 f"tenant {key!r} fragment is {frag_bytes} bytes, exceeds "
-                f"per-bucket cap {_PER_TENANT_MAX_BYTES}"
+                f"per-bucket cap {PER_TENANT_MAX_BYTES}"
             )
     return parsed, None
 

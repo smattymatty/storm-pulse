@@ -1,18 +1,9 @@
-"""Function 9: the declared wire shape matches the classes that emit it.
+"""Function 9: the declared wire contract matches the code that emits it.
 
-Regenerates the contract from the live dataclasses and compares it to the
-checked-in ``wire-contract.json``. They disagree, the suite fails.
-
-Renaming an emitted field is still allowed and always was. What changes is that
-the rename must update the declared artifact in the same commit, where a
-reviewer sees it as a diff to a contract rather than a diff to a struct. The
-asymmetry this closes: the inbound half of the boundary has had a golden fixture
-since the admin-API move, and the outbound half had nothing, so a rename passed
-mypy, passed every test here, and was breaking for every consumer.
-
-Mechanizes CORE-008 decision 2, authorized by CORE-001's extensibility clause.
-Standard library only, so CORE-001 Function 4's three-package runtime allowlist
-is untouched.
+Regenerates the artifact from the live dataclasses and command registry and
+compares it to the checked-in ``wire-contract.json``; a disagreement fails the
+suite, so a rename or a new param updates the contract in the same commit
+(CORE-008 decision 2, under CORE-001's extensibility clause). Stdlib only.
 """
 
 from __future__ import annotations
@@ -38,7 +29,9 @@ def check_wire_contract() -> list[str]:
     violations: list[str] = []
 
     if not WIRE_CONTRACT_PATH.is_file():
-        return [f"{WIRE_CONTRACT_PATH.name} is missing from the repo root; {_REGENERATE}"]
+        return [
+            f"{WIRE_CONTRACT_PATH.name} is missing from the repo root; {_REGENERATE}"
+        ]
 
     on_disk_text = WIRE_CONTRACT_PATH.read_text(encoding="utf-8")
     live = build_wire_contract()
@@ -60,6 +53,10 @@ def check_wire_contract() -> list[str]:
                 live_classes.get(integration, {}),
             )
         )
+
+    # The command surface a dispatcher pins against. Reported per command and
+    # per param so a validator change names the field, not two documents.
+    violations.extend(_diff_commands(on_disk.get("commands") or {}, live["commands"]))
 
     # The digest a consumer reproduces from the file's own bytes. If this is
     # wrong the file is unusable to the far end even when the shape is right,
@@ -141,5 +138,40 @@ def _diff_integration(
                     f"{integration}.{cls}.{field}: declared nesting "
                     f"{declared_fields[field]!r} != emitted {live_fields[field]!r}; "
                     f"{_REGENERATE}"
+                )
+    return violations
+
+
+def _diff_commands(on_disk: Any, live: dict[str, Any]) -> list[str]:
+    """Per-command, per-param differences in the declared command surface."""
+    if not isinstance(on_disk, dict):
+        return [f"commands is not an object; {_REGENERATE}"]
+    violations: list[str] = []
+    for name in sorted(set(on_disk) | set(live)):
+        if name not in live:
+            violations.append(
+                f"commands: declared command {name!r} is no longer registered; {_REGENERATE}"
+            )
+            continue
+        if name not in on_disk:
+            violations.append(
+                f"commands: command {name!r} is registered but not declared; {_REGENERATE}"
+            )
+            continue
+        declared = (on_disk[name] or {}).get("params") or {}
+        emitted = live[name]["params"]
+        for param in sorted(set(declared) - set(emitted)):
+            violations.append(
+                f"commands.{name}: declared param {param!r} no longer exists; {_REGENERATE}"
+            )
+        for param in sorted(set(emitted) - set(declared)):
+            violations.append(
+                f"commands.{name}: param {param!r} is accepted but not declared; {_REGENERATE}"
+            )
+        for param in sorted(set(declared) & set(emitted)):
+            if declared[param] != emitted[param]:
+                violations.append(
+                    f"commands.{name}.{param}: declared validator {declared[param]!r} "
+                    f"!= registered {emitted[param]!r}; {_REGENERATE}"
                 )
     return violations

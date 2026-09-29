@@ -20,7 +20,9 @@ async def _noop(_progress: SdkProgress) -> SdkJobOutcome:  # a stand-in job body
     return SdkJobOutcome(success=True)
 
 
-def _job(name: str, *, timeout: int = 30, params: dict[str, SdkParamDef] | None = None) -> SdkCommandSpec:
+def _job(
+    name: str, *, timeout: int = 30, params: dict[str, SdkParamDef] | None = None
+) -> SdkCommandSpec:
     return SdkCommandSpec(
         group="buckets_gate",
         command=[name],
@@ -41,6 +43,29 @@ def test_param_requires_a_validator() -> None:
         SdkParamDef(placeholder="x", default=None)
 
 
+def test_schema_needs_max_bytes_and_excludes_pattern() -> None:
+    shape = {"type": "array", "items": {"type": "string"}}
+    with pytest.raises(ValueError, match="schema needs max_bytes"):
+        SdkParamDef(placeholder="x", default=None, pattern=".*", schema=shape)
+    SdkParamDef(placeholder="x", default=None, max_bytes=16, schema=shape)
+
+
+def test_schema_does_not_move_the_digest() -> None:
+    """A sealed grant's digest is bound to the validator literal; ``schema`` is
+    outside it, so declaring one on a released adapter moves no digest."""
+    shape = {"type": "array", "items": {"type": "string"}}
+    plain = _job(
+        "one", params={"x": SdkParamDef(placeholder="x", default=None, max_bytes=16)}
+    )
+    shaped = _job(
+        "one",
+        params={
+            "x": SdkParamDef(placeholder="x", default=None, max_bytes=16, schema=shape)
+        },
+    )
+    assert command_specs_digest({"one": plain}) == command_specs_digest({"one": shaped})
+
+
 def test_credential_shaped_name_requires_secret() -> None:
     with pytest.raises(ValueError):
         SdkParamDef(placeholder="api_token", default=None, max_bytes=16)
@@ -56,7 +81,10 @@ def test_job_requires_handler() -> None:
 def test_non_job_must_not_carry_handler() -> None:
     with pytest.raises(ValueError):
         SdkCommandSpec(
-            group="g", command=["/usr/bin/true"], timeout=5, mode="subprocess",
+            group="g",
+            command=["/usr/bin/true"],
+            timeout=5,
+            mode="subprocess",
             handler=lambda _p: _noop,
         )
 
@@ -81,17 +109,28 @@ def test_digest_is_deterministic_and_order_independent() -> None:
 def test_digest_ignores_handler_identity_and_description() -> None:
     base = _job("one")
     other_handler = SdkCommandSpec(
-        group="buckets_gate", command=["one"], timeout=30, mode="job",
-        handler=lambda _p: _noop, description="a different description",
+        group="buckets_gate",
+        command=["one"],
+        timeout=30,
+        mode="job",
+        handler=lambda _p: _noop,
+        description="a different description",
     )
-    assert command_specs_digest({"one": base}) == command_specs_digest({"one": other_handler})
+    assert command_specs_digest({"one": base}) == command_specs_digest(
+        {"one": other_handler}
+    )
 
 
 def test_digest_is_sensitive_to_semantic_change() -> None:
     base = command_specs_digest({"one": _job("one", timeout=30)})
     assert base != command_specs_digest({"one": _job("one", timeout=31)})
     assert base != command_specs_digest(
-        {"one": _job("one", params={"p": SdkParamDef(placeholder="p", default=None, max_bytes=10)})}
+        {
+            "one": _job(
+                "one",
+                params={"p": SdkParamDef(placeholder="p", default=None, max_bytes=10)},
+            )
+        }
     )
 
 
@@ -110,7 +149,9 @@ def test_digest_bytes_are_frozen_against_a_recorded_value() -> None:
     """
     specs = {
         "demo_status": SdkCommandSpec(
-            group="demo", command=["/usr/bin/true"], timeout=30,
+            group="demo",
+            command=["/usr/bin/true"],
+            timeout=30,
             description="cosmetic, excluded from the digest",
             params={
                 "zzz": SdkParamDef(placeholder="{zzz}", default="d", pattern="^a$"),
@@ -118,9 +159,13 @@ def test_digest_bytes_are_frozen_against_a_recorded_value() -> None:
             },
         ),
         "demo_apply": SdkCommandSpec(
-            group="demo", command=["/usr/bin/false"], timeout=5,
-            requires_confirmation=True, sensitive_output=True,
-            read_only=True, self_reconciling=True,
+            group="demo",
+            command=["/usr/bin/false"],
+            timeout=5,
+            requires_confirmation=True,
+            sensitive_output=True,
+            read_only=True,
+            self_reconciling=True,
         ),
     }
     assert command_specs_digest(specs) == (
@@ -136,7 +181,19 @@ def test_integration_core_is_declarable() -> None:
         id="buckets_gate",
         parse_config=lambda section: section,
         enabled=lambda cfg: True,
-        specs=lambda cfg: {"buckets_gate_apply_policy": _job("buckets_gate_apply_policy")},
+        specs=lambda cfg: {
+            "buckets_gate_apply_policy": _job("buckets_gate_apply_policy")
+        },
     )
     assert integ.id == "buckets_gate"
     assert integ.specs is not None
+
+
+def test_schema_refuses_pattern_even_when_max_bytes_is_present() -> None:
+    # The blob is capped, decoded, then shaped: a regex on the raw text is the
+    # wrong tool and must not slip through beside a satisfied max_bytes.
+    shape = {"type": "array", "items": {"type": "string"}}
+    with pytest.raises(ValueError, match="excludes pattern"):
+        SdkParamDef(
+            placeholder="x", default=None, pattern=".*", max_bytes=16, schema=shape
+        )

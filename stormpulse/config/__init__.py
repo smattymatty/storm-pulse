@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from stormpulse.config.param_schema import ParamSchema, schema_declaration_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,10 +71,10 @@ class StorageConfig:
 class ParamDef:
     """Declares an overridable placeholder for a command.
 
-    Either ``pattern`` (regex for short identifiers) or ``max_bytes`` (size
-    cap for opaque content blobs like a Caddyfile fragment) must be set;
-    both can be set if a value must match both. Unvalidated params are
-    rejected at construction time to prevent footguns.
+    Validated by ``pattern`` (regex for short identifiers), ``max_bytes`` (size
+    cap for opaque blobs like shell text), or ``schema`` (a JSON blob's declared
+    shape, checked after decoding; needs ``max_bytes`` so the blob is capped
+    before it is parsed). Unvalidated params fail at construction.
     """
 
     placeholder: str
@@ -83,6 +85,7 @@ class ParamDef:
     # A secret input (an S3 secret key): the value reaches the handler but is
     # redacted from the wide-event context at dispatch, never a durable record.
     secret: bool = False
+    schema: ParamSchema | None = None
 
     def __post_init__(self) -> None:
         if self.pattern is None and self.max_bytes is None:
@@ -90,6 +93,15 @@ class ParamDef:
                 f"ParamDef {self.placeholder!r}: must set pattern or max_bytes "
                 f"(unvalidated params are a footgun)"
             )
+        if self.schema is not None:
+            if self.pattern is not None or self.max_bytes is None:
+                raise ValueError(
+                    f"ParamDef {self.placeholder!r}: schema needs max_bytes and "
+                    f"excludes pattern (the blob is capped, then decoded, then shaped)"
+                )
+            err = schema_declaration_error(self.schema)
+            if err is not None:
+                raise ValueError(f"ParamDef {self.placeholder!r}: {err}")
         # A new sink for command data must never meet an untagged credential:
         # a credential-shaped name without secret=True fails at construction.
         if not self.secret and re.search(
@@ -101,39 +113,27 @@ class ParamDef:
             )
 
 
-# Execution-mode discriminator the agent dispatcher routes on. The whole point
-# of carrying it explicitly: subprocess vs long-running-job vs agent-internal
-# refresh used to be smeared across a magic command name, a bool, and "fell
-# through to subprocess". Now it is one field, validated at construction.
+# Execution-mode discriminator the dispatcher routes on. Subprocess vs job vs
+# agent-internal refresh used to be smeared across a magic command name, a bool
+# and "fell through to subprocess"; now it is one field, validated at construction.
 CommandMode = Literal["subprocess", "job", "refresh"]
 
-# A "job" command's lazy handler thunk: given validated runtime params, build
-# the JobHandler (or None when unservable on this host). Typed loosely here
-# because the concrete JobHandler / LongRunningFactory live in the Framework
-# layer (commands/jobs.py), which Foundation (config) must not import per the
-# CORE-000 four-layer topology. The real type re-forms in commands/ and agent/.
+# A "job" command's lazy handler thunk: validated runtime params -> JobHandler,
+# or None when unservable on this host. Typed loosely: the concrete types live in
+# Framework (commands/jobs.py), which Foundation must not import (CORE-000).
 CommandHandler = Callable[[dict[str, str]], Any]
 
 
 @dataclass(frozen=True, slots=True)
 class CommandSpec:
     """A single whitelisted command: its schema and, for a job, its handler.
-
-    One spec per command is the registry's whole source of truth - there is no
-    parallel name->factory map to fall out of sync with, because there is no
-    second map. ``mode`` is the execution discriminator:
-
-    - ``subprocess``: ``command`` is a real argv run with ``shell=False``; the
-      first element must be an absolute binary path. No handler.
-    - ``job``: a long-running command handed to the JobManager. ``handler`` is a
-      lazy per-integration thunk; ``command`` is the sentinel ``[name]`` that
-      backs the advertised wire template.
-    - ``refresh``: an agent-owned "collect this integration's state now and push
-      metrics" command, synthesized for any Integration declaring
-      ``collect_state``. No handler (the agent owns the one generic routine).
-
-    Illegal combinations are rejected at construction, so half-registration is
-    structurally impossible rather than caught by a hand-maintained test.
+    One spec per command is the registry's whole source of truth; there is no
+    parallel name->factory map to drift. ``mode`` is the execution discriminator:
+    ``subprocess`` runs ``command`` as argv with ``shell=False`` (absolute binary
+    first, no handler); ``job`` hands a long-running command to the JobManager
+    through the lazy ``handler`` thunk, ``command`` being the sentinel ``[name]``;
+    ``refresh`` is the agent-owned collect-and-push, synthesized for any
+    Integration declaring ``collect_state``. Illegal mixes fail at construction.
     """
 
     group: str
@@ -143,7 +143,9 @@ class CommandSpec:
     requires_confirmation: bool = False
     description: str = ""
     sensitive_output: bool = False
-    read_only: bool = False  # no state mutation; skips the garage post-success refresh hook
+    read_only: bool = (
+        False  # no state mutation; skips the garage post-success refresh hook
+    )
     # mutates, but is dispatched repeatedly by a reconciliation loop, so no single
     # success is the "did it land" moment a push would serve; also skips the hook
     # (the periodic walk reflects it each cycle). Sibling of read_only.
@@ -214,17 +216,14 @@ class LogGroupConfig:
     unit: str = ""
 
 
-# Top-level TOML tables Foundation knows by name. Everything else that is a
-# table is an Integration's raw config section, keyed by id and parsed by that
-# Integration's own module (CORE-005 decision 4: Foundation stops naming
-# Integrations). ``log_groups`` is an array, not a table, so it is excluded.
+# Top-level TOML tables Foundation knows by name. Every other table is an
+# Integration's raw config section, parsed by its own module (CORE-005 decision
+# 4: Foundation stops naming Integrations). ``log_groups`` is an array, excluded.
 _SUBJECT_PATTERN = re.compile(r"[a-zA-Z0-9_.-]{1,64}")
 
-# Bounds for the deploy probe's filesystem walk (CORE-009 decision 4). These
-# are the ceiling the config may ask for, not the default: a node may narrow
-# them and may not widen them. An unbounded walk of $HOME reads the
-# neighbourhood of every secret on the box to answer a question about one
-# binary, which is the refusal the ADR turns on.
+# Ceilings for the deploy probe's filesystem walk (CORE-009 decision 4): a node
+# may narrow them, never widen them. An unbounded walk of $HOME reads the
+# neighbourhood of every secret on the box to find one binary; the ADR refuses.
 _DEPLOY_MAX_DEPTH_CEILING = 8
 _DEPLOY_MAX_BYTES_CEILING = 1_048_576
 _DEPLOY_DEFAULT_DEPTH = 3
@@ -235,16 +234,12 @@ _DEPLOY_DEFAULT_BYTES = 65_536
 class DeployProbeConfig:
     """One subject the `deploy` investigation can answer for on this node.
 
-    Every parameter the probe uses resolves from here and from nowhere else
-    (CORE-009 decision 3). Nothing about what to look for crosses the wire, so
-    the control plane cannot point this node at a path of its choosing.
-
-    ``expected_root`` is where the unit installs the thing. ``search_roots``
-    are the bounded places the probe may look. A binary found in a search root
-    but outside the expected root is the finding, not an error (decision 5):
-    that is the shape of the 2026-09-07 alpha residue, where every install site
-    in the repo named /home/storm/guard and the disk held
-    /home/storm/buckets-guard.
+    Every parameter the probe uses resolves from here and nowhere else (CORE-009
+    decision 3): nothing about what to look for crosses the wire, so the control
+    plane cannot point this node at a path of its choosing. ``expected_root`` is
+    where the unit installs the thing; ``search_roots`` are the bounded places
+    the probe may look. A binary found in a search root but outside the expected
+    root is the finding, not an error (decision 5): the 2026-09-07 residue shape.
     """
 
     subject: str
@@ -257,8 +252,17 @@ class DeployProbeConfig:
 
 
 _CORE_SECTIONS: frozenset[str] = frozenset(
-    {"agent", "dashboard", "tls", "auth", "metrics", "project", "storage",
-     "commands", "investigate"}
+    {
+        "agent",
+        "dashboard",
+        "tls",
+        "auth",
+        "metrics",
+        "project",
+        "storage",
+        "commands",
+        "investigate",
+    }
 )
 
 
@@ -284,10 +288,9 @@ class Config:
     deploy_probes: dict[str, DeployProbeConfig] = dataclasses.field(
         default_factory=dict,
     )
-    # The same tables, unparsed. Kept because precedence (CORE-009 D10) is
-    # field-by-field, and a parsed DeployProbeConfig cannot distinguish a value
-    # the operator wrote from a default that filled in. Merging has to happen
-    # before validation, so the merged result is validated as one whole.
+    # The same tables, unparsed: precedence (CORE-009 D10) is field-by-field and
+    # a parsed DeployProbeConfig cannot tell an operator value from a filled-in
+    # default. Merging happens before validation, on the whole.
     deploy_probe_tables: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     def validate_paths(self) -> None:
@@ -330,16 +333,26 @@ def require_section(raw: dict[str, Any], name: str) -> dict[str, Any]:
 
 
 _TYPE_NAMES: dict[type, str] = {
-    str: "string", int: "int", float: "float", bool: "bool", list: "list", dict: "table",
+    str: "string",
+    int: "int",
+    float: "float",
+    bool: "bool",
+    list: "list",
+    dict: "table",
 }
 
 
 def _check_type(
-    value: Any, key: str, expected_type: type | tuple[type, ...], section_name: str,
+    value: Any,
+    key: str,
+    expected_type: type | tuple[type, ...],
+    section_name: str,
 ) -> Any:
     """Type-check a present value; reject bool for numeric keys (bool is an int subclass)."""
     types = expected_type if isinstance(expected_type, tuple) else (expected_type,)
-    if not isinstance(value, expected_type) or (isinstance(value, bool) and bool not in types):
+    if not isinstance(value, expected_type) or (
+        isinstance(value, bool) and bool not in types
+    ):
         names = "/".join(_TYPE_NAMES.get(t, t.__name__) for t in types)
         raise ConfigError(
             f"Key '{key}' in [{section_name}] must be {names}, got {type(value).__name__}"
@@ -503,7 +516,9 @@ def _parse_one_command(name: str, entry: Any) -> CommandSpec:
     if timeout <= 0:
         raise ConfigError(f"'timeout' in [{label}] must be positive, got {timeout}")
 
-    requires_confirmation = optional_key(entry, "requires_confirmation", bool, False, label)
+    requires_confirmation = optional_key(
+        entry, "requires_confirmation", bool, False, label
+    )
     sensitive_output = optional_key(entry, "sensitive_output", bool, False, label)
     if optional_key(entry, "long_running", bool, False, label):
         raise ConfigError(
@@ -554,9 +569,7 @@ def _parse_one_param(pname: str, pentry: Any, label: str) -> ParamDef:
     try:
         re.compile(pattern)
     except re.error as exc:
-        raise ConfigError(
-            f"'pattern' in [{plabel}] is not valid regex: {exc}"
-        ) from exc
+        raise ConfigError(f"'pattern' in [{plabel}] is not valid regex: {exc}") from exc
     pdescription = optional_key(pentry, "description", str, "", plabel)
     psecret = optional_key(pentry, "secret", bool, False, plabel)
     try:
@@ -592,15 +605,11 @@ def _parse_deploy_probes(raw: dict[str, Any]) -> dict[str, DeployProbeConfig]:
     """Parse the optional ``[investigate.deploy.<subject>]`` tables.
 
     Soft, per the ``[[log_groups]]`` precedent: an invalid subject is skipped
-    with a loud warning rather than aborting boot. This section feeds a
-    diagnostic, never the agent's ability to run, so a typo in it must not take
-    metrics and liveness down on a systemd restart loop. A skipped subject is
-    not a silent one either - the investigation reports INCONCLUSIVE naming the
-    section it lacks, never CLEARED (CORE-009 decision 3).
-
-    Only a structurally-wrong container ([investigate] or [investigate.deploy]
-    not a table) is fatal, because that shape means the operator's intent is
-    unreadable rather than one entry being wrong.
+    with a loud warning, never aborting boot, because this feeds a diagnostic,
+    not the agent's ability to run. A skipped subject is not silent either: the
+    investigation reports INCONCLUSIVE naming the section it lacks, never
+    CLEARED (CORE-009 decision 3). Only a structurally-wrong container
+    ([investigate] or [investigate.deploy] not a table) is fatal.
     """
     investigate = raw.get("investigate", {})
     if not isinstance(investigate, dict):
@@ -618,7 +627,8 @@ def _parse_deploy_probes(raw: dict[str, Any]) -> dict[str, DeployProbeConfig]:
                 "Skipping invalid [investigate.deploy.%s]: %s. `stormpulse "
                 "investigate deploy` reports INCONCLUSIVE for this subject "
                 "until it is fixed.",
-                subject, exc,
+                subject,
+                exc,
             )
     return out
 
@@ -666,15 +676,12 @@ def merge_deploy_probes(
 ) -> dict[str, DeployProbeConfig]:
     """Contributed subjects overlaid by the node's own tables (CORE-009 D10).
 
-    Precedence, and it only points one way: a descriptor supplies a default, the
-    operator's table overrides it key by key, and `enabled = false` on either
-    side removes the subject entirely. A package can widen nothing the operator
-    has narrowed, which is the whole reason contributed subjects are allowed to
-    exist at all.
-
-    Merging before validation is deliberate. A node table carrying only
-    `search_roots` is not a valid subject by itself, but it is a perfectly legal
-    narrowing of one, and validating each source separately would refuse it.
+    Precedence points one way: a descriptor supplies a default, the operator's
+    table overrides it key by key, and `enabled = false` on either side removes
+    the subject. A package can widen nothing the operator has narrowed, which is
+    why contributed subjects may exist at all. Merging before validation is
+    deliberate: a node table carrying only `search_roots` is not a valid subject
+    by itself but a legal narrowing of one; validated alone it would be refused.
     """
     merged: dict[str, dict[str, Any]] = {}
     for subject in contributed:
@@ -688,14 +695,16 @@ def merge_deploy_probes(
             continue
         try:
             out[name] = _parse_one_deploy_probe(
-                name, {k: v for k, v in table.items() if k != "enabled"},
+                name,
+                {k: v for k, v in table.items() if k != "enabled"},
             )
         except ConfigError as exc:
             logger.warning(
                 "Skipping invalid [investigate.deploy.%s]: %s. `stormpulse "
                 "investigate deploy` reports INCONCLUSIVE for this subject "
                 "until it is fixed.",
-                name, exc,
+                name,
+                exc,
             )
     return out
 
@@ -715,8 +724,7 @@ def _parse_one_deploy_probe(subject: str, entry: Any) -> DeployProbeConfig:
     for unit in units:
         if "/" in unit:
             raise ConfigError(
-                f"'units' in [{ctx}] holds systemd unit names, not paths; "
-                f"got {unit!r}"
+                f"'units' in [{ctx}] holds systemd unit names, not paths; got {unit!r}"
             )
 
     expected_root = _require_abs_path(entry, "expected_root", ctx)
@@ -734,14 +742,23 @@ def _parse_one_deploy_probe(subject: str, entry: Any) -> DeployProbeConfig:
         )
 
     ports = tuple(
-        _check_port(value, ctx)
-        for value in optional_key(entry, "ports", list, [], ctx)
+        _check_port(value, ctx) for value in optional_key(entry, "ports", list, [], ctx)
     )
     max_depth = _bounded_int(
-        entry, "max_depth", ctx, _DEPLOY_DEFAULT_DEPTH, 1, _DEPLOY_MAX_DEPTH_CEILING,
+        entry,
+        "max_depth",
+        ctx,
+        _DEPLOY_DEFAULT_DEPTH,
+        1,
+        _DEPLOY_MAX_DEPTH_CEILING,
     )
     max_bytes = _bounded_int(
-        entry, "max_bytes", ctx, _DEPLOY_DEFAULT_BYTES, 1024, _DEPLOY_MAX_BYTES_CEILING,
+        entry,
+        "max_bytes",
+        ctx,
+        _DEPLOY_DEFAULT_BYTES,
+        1024,
+        _DEPLOY_MAX_BYTES_CEILING,
     )
     return DeployProbeConfig(
         subject=subject,
@@ -761,8 +778,7 @@ def _require_str_list(entry: dict[str, Any], key: str, ctx: str) -> list[str]:
     for value in values:
         if not isinstance(value, str) or not value.strip():
             raise ConfigError(
-                f"'{key}' in [{ctx}] must be a list of non-empty strings, "
-                f"got {value!r}"
+                f"'{key}' in [{ctx}] must be a list of non-empty strings, got {value!r}"
             )
     return [str(value) for value in values]
 
@@ -774,9 +790,7 @@ def _abs_path(value: str, key: str, ctx: str) -> Path:
     # A traversal segment makes a declared bound unreadable: "/home/storm/.."
     # is / wearing a costume, and the walk's containment check would honour it.
     if ".." in path.parts:
-        raise ConfigError(
-            f"'{key}' in [{ctx}] must not contain '..', got {value!r}"
-        )
+        raise ConfigError(f"'{key}' in [{ctx}] must not contain '..', got {value!r}")
     return path
 
 
@@ -798,7 +812,12 @@ def _check_port(value: Any, ctx: str) -> int:
 
 
 def _bounded_int(
-    entry: dict[str, Any], key: str, ctx: str, default: int, low: int, high: int,
+    entry: dict[str, Any],
+    key: str,
+    ctx: str,
+    default: int,
+    low: int,
+    high: int,
 ) -> int:
     value = optional_key(entry, key, int, default, ctx)
     if isinstance(value, bool) or not low <= value <= high:
@@ -809,13 +828,12 @@ def _bounded_int(
 def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
     """Parse the optional [[log_groups]] array.
 
-    A malformed *individual* entry is SKIPPED with a loud, actionable warning
-    rather than raising. Log shipping is the least-critical loop, and a single
-    bad ``[[log_groups]]`` block must never crash the whole agent, which would
-    take metrics, the Headroom quota loop, and liveness down with it on a systemd
+    A malformed *individual* entry is SKIPPED with a loud, actionable warning.
+    Log shipping is the least-critical loop, and one bad block must never take
+    metrics, the Headroom quota loop and liveness down with it on a systemd
     restart loop (the 2026-06-06 `path`-vs-`source_path` incident). The valid
-    groups still load; fix the bad block and restart to enable it. Only a
-    structurally-wrong top-level value (``log_groups`` not an array) is fatal.
+    groups still load; fix the bad block and restart. Only a structurally-wrong
+    top-level value (``log_groups`` not an array) is fatal.
     """
     entries = raw.get("log_groups", [])
     if not isinstance(entries, list):
@@ -830,7 +848,8 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
             logger.warning(
                 "Skipping invalid log group at index %d: %s. The agent runs "
                 "without it; fix this [[log_groups]] block and restart to enable.",
-                i, exc,
+                i,
+                exc,
             )
             continue
         seen_names.add(group.name)
@@ -839,7 +858,9 @@ def _parse_log_groups(raw: dict[str, Any]) -> list[LogGroupConfig]:
 
 
 def _parse_one_log_group(
-    i: int, entry: Any, seen_names: set[str],
+    i: int,
+    entry: Any,
+    seen_names: set[str],
 ) -> LogGroupConfig:
     """Validate one ``[[log_groups]]`` entry; raise ConfigError on any problem.
 
@@ -884,14 +905,18 @@ def _parse_one_log_group(
         if not unit.strip():
             raise ConfigError(f"'unit' in {ctx} must be non-empty for journald sources")
         if any(c.isspace() for c in unit):
-            raise ConfigError(f"'unit' in {ctx} must not contain whitespace, got {unit!r}")
+            raise ConfigError(
+                f"'unit' in {ctx} must not contain whitespace, got {unit!r}"
+            )
     else:  # docker, docker_stream
         container_name = require_key(entry, "container_name", str, ctx)
         if not container_name.strip():
             raise ConfigError(
                 f"'container_name' in {ctx} must be non-empty for docker sources"
             )
-        docker_binary = optional_key(entry, "docker_binary", str, _DEFAULT_DOCKER_BINARY, ctx)
+        docker_binary = optional_key(
+            entry, "docker_binary", str, _DEFAULT_DOCKER_BINARY, ctx
+        )
         if not docker_binary.startswith("/"):
             raise ConfigError(f"'docker_binary' in {ctx} must be an absolute path")
 
@@ -901,15 +926,10 @@ def _parse_one_log_group(
             f"'parser' in {ctx} must be one of {sorted(_LOG_PARSERS)}, got {parser!r}"
         )
 
-    interval = float(
-        require_key(entry, "ship_interval_seconds", (int, float), ctx)
-    )
-    # Floor is 2s so the activity feed can keep pace with the 2s metrics/state
-    # push and feel real-time alongside the storage bars. Logs are a heavier
-    # stream than a metric snapshot (one line per S3 request), but each ship is
-    # capped by max_lines_per_batch, so a tighter interval just flushes more
-    # often, it does not enlarge a batch. The `logging init` wizard still
-    # DEFAULTS to a slower interval; this only permits going tighter on purpose.
+    interval = float(require_key(entry, "ship_interval_seconds", (int, float), ctx))
+    # Floor is 2s so the activity feed keeps pace with the 2s metrics/state push.
+    # max_lines_per_batch caps each ship, so a tighter interval flushes more often
+    # without enlarging a batch; the `logging init` wizard still defaults slower.
     if interval < 2.0:
         raise ConfigError(
             f"'ship_interval_seconds' in {ctx} must be >= 2.0, got {interval}"
@@ -926,7 +946,8 @@ def _parse_one_log_group(
     if "retention_days" in entry:
         logger.warning(
             "'retention_days' in %s is deprecated and ignored; remove it "
-            "(the agent stores no logs to retain)", ctx,
+            "(the agent stores no logs to retain)",
+            ctx,
         )
 
     filter_contains = optional_key(entry, "filter_contains", str, "", ctx)

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from stormpulse.config import CommandSpec, ParamDef
 from stormpulse.garage.commands.params import (
+    BUCKET_ID_PATTERN,
     BUCKET_NAME_PATTERN,
     KEY_ID_PATTERN,
     KEY_NAME_PATTERN,
@@ -17,6 +18,58 @@ from stormpulse.garage.commands.params import (
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.tiers import ATTACH_TIER_PATTERN, TIER_PATTERN
 
+# The leak-path snapshot: what ``garage_snapshot_and_reap_account_key`` returns,
+# fed back in. ``perms`` is [read, write, owner]; ``alias`` may be empty.
+_BUCKET_SNAPSHOT_SCHEMA = {
+    "type": "array",
+    "max_items": 1000,
+    "items": {
+        "type": "object",
+        "keys": {
+            "id": {"type": "string", "pattern": BUCKET_ID_PATTERN},
+            "alias": {"type": "string", "pattern": r"[a-z0-9.-]{0,63}"},
+            "perms": {"type": "array", "items": {"type": "boolean"}, "max_items": 3},
+        },
+        "required": ["id"],
+    },
+}
+
+_CORS_STRING = {"type": "string", "max_bytes": 1024}
+_CORS_LIST = {"type": "array", "items": _CORS_STRING, "max_items": 100}
+# Garage's own rule shape (the S3 XML names). Origin and method are what
+# Garage itself requires; the other lists read back as [] when omitted.
+CORS_RULES_SCHEMA = {
+    "type": "array",
+    "max_items": 100,
+    "items": {
+        "type": "object",
+        "keys": {
+            "ID": {**_CORS_STRING, "nullable": True},
+            "MaxAgeSeconds": {"type": "integer", "min": 0, "nullable": True},
+            "AllowedOrigin": _CORS_LIST,
+            "AllowedMethod": {
+                "type": "array",
+                # `*` is what Garage's own matcher accepts as any method.
+                "items": {"type": "string", "pattern": r"\*|GET|PUT|POST|DELETE|HEAD"},
+                "max_items": 6,
+            },
+            "AllowedHeader": {**_CORS_LIST, "nullable": True},
+            "ExposeHeader": {**_CORS_LIST, "nullable": True},
+        },
+        "required": ["AllowedOrigin", "AllowedMethod"],
+    },
+}
+
+
+def _cors_rules_param(name: str, description: str) -> ParamDef:
+    return ParamDef(
+        placeholder=name,
+        default=None,
+        max_bytes=65536,
+        schema=CORS_RULES_SCHEMA,
+        description=description,
+    )
+
 
 def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     """Build the orchestrated job specs, binding each handler thunk to config."""
@@ -26,6 +79,11 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     from stormpulse.garage.jobs.attach_account_key import (
         make_attach_account_key_handler,
     )
+    from stormpulse.garage.jobs.bucket_cors import (
+        make_bucket_cors_get_handler,
+        make_bucket_cors_set_handler,
+    )
+    from stormpulse.garage.jobs.cleanup_uploads import make_cleanup_uploads_handler
     from stormpulse.garage.jobs.clear_bucket import make_clear_bucket_handler
     from stormpulse.garage.jobs.converge_account_key_rotation import (
         make_converge_account_key_rotation_handler,
@@ -55,7 +113,6 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     from stormpulse.garage.jobs.set_account_key_capability import (
         make_set_account_key_capability_handler,
     )
-    from stormpulse.garage.jobs.cleanup_uploads import make_cleanup_uploads_handler
     from stormpulse.garage.jobs.set_quota import make_set_quota_handler
     from stormpulse.garage.jobs.snapshot_and_reap_account_key import (
         make_snapshot_and_reap_account_key_handler,
@@ -80,7 +137,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             # change alters no customer-visible usage. No post-mutation refresh.
             self_reconciling=True,
             handler=lambda params: make_set_quota_handler(
-                params, admin_url=config.admin_url, admin_token=config.admin_token,
+                params,
+                admin_url=config.admin_url,
+                admin_token=config.admin_token,
             ),
             params={
                 "bucket_id": bucket_id_param(
@@ -94,14 +153,68 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 ),
             },
         ),
+        "garage_bucket_cors_get": CommandSpec(
+            group="garage",
+            command=["garage_bucket_cors_get"],  # internal - handled by JobManager
+            read_only=True,
+            timeout=30,
+            description=(
+                "Read-only: a bucket's CORS rules via GetBucketInfo, in Garage's "
+                "own rule shape. The caller feeds them back as expected_rules."
+            ),
+            mode="job",
+            handler=lambda params: make_bucket_cors_get_handler(
+                params,
+                admin_url=config.admin_url,
+                admin_token=config.admin_token,
+            ),
+            params={
+                "bucket_id": bucket_id_param(
+                    "Bucket id (garage_bucket_id), never the local alias"
+                ),
+            },
+        ),
+        "garage_bucket_cors_set": CommandSpec(
+            group="garage",
+            command=["garage_bucket_cors_set"],  # internal - handled by JobManager
+            timeout=30,
+            description=(
+                "Replace a bucket's CORS rules via UpdateBucket, compare-and-swap: "
+                "refused as cors_rules_stale (returning the current rules) when the "
+                "live rules differ from expected_rules. An empty rules list clears."
+            ),
+            mode="job",
+            handler=lambda params: make_bucket_cors_set_handler(
+                params,
+                admin_url=config.admin_url,
+                admin_token=config.admin_token,
+            ),
+            params={
+                "bucket_id": bucket_id_param(
+                    "Bucket id (garage_bucket_id), never the local alias"
+                ),
+                "rules": _cors_rules_param(
+                    "rules",
+                    "JSON list of CORS rules to write; [] clears the config",
+                ),
+                "expected_rules": _cors_rules_param(
+                    "expected_rules",
+                    "JSON list of the rules the caller loaded; a mismatch refuses the write",
+                ),
+            },
+        ),
         "garage_set_account_key_create_bucket": CommandSpec(
             group="garage",
-            command=["garage_set_account_key_create_bucket"],  # internal - handled by JobManager
+            command=[
+                "garage_set_account_key_create_bucket"
+            ],  # internal - handled by JobManager
             timeout=30,  # single admin API call; long_running ignores this for duration
             description="Set or clear an account key's allow_create_bucket capability via the Garage admin API.",
             mode="job",
             handler=lambda params: make_set_account_key_capability_handler(
-                params, admin_url=config.admin_url, admin_token=config.admin_token,
+                params,
+                admin_url=config.admin_url,
+                admin_token=config.admin_token,
             ),
             params={
                 "access_key_id": ParamDef(
@@ -120,12 +233,16 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
         ),
         "garage_provision_customer_bucket": CommandSpec(
             group="garage",
-            command=["garage_provision_customer_bucket"],  # internal - handled by JobManager
+            command=[
+                "garage_provision_customer_bucket"
+            ],  # internal - handled by JobManager
             timeout=600,  # per-step reference; long_running ignores it for total duration
             description="Orchestrated bucket + admin key provisioning. Atomic with rollback. The rw/ro keys are added on demand via garage_provision_additional_key.",
             sensitive_output=True,  # secrets ride in stdout/extras
             mode="job",
-            handler=lambda params: make_provision_customer_bucket_handler(config, params),
+            handler=lambda params: make_provision_customer_bucket_handler(
+                config, params
+            ),
             params={
                 "display_name": ParamDef(
                     placeholder="display_name",
@@ -143,12 +260,16 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
         ),
         "garage_delete_provisioned_bucket": CommandSpec(
             group="garage",
-            command=["garage_delete_provisioned_bucket"],  # internal - handled by JobManager
+            command=[
+                "garage_delete_provisioned_bucket"
+            ],  # internal - handled by JobManager
             timeout=120,
             requires_confirmation=True,
             description="Orchestrated bucket deletion: detaches all aliases (using a temp global to bypass the orphan-rule deadlock when only locals exist), then deletes. Atomic with rollback.",
             mode="job",
-            handler=lambda params: make_delete_provisioned_bucket_handler(config, params),
+            handler=lambda params: make_delete_provisioned_bucket_handler(
+                config, params
+            ),
             params={
                 "bucket_id": bucket_id_param(
                     "Bucket UUID (16 or 64-char Garage ID) to delete"
@@ -157,12 +278,16 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
         ),
         "garage_provision_additional_key": CommandSpec(
             group="garage",
-            command=["garage_provision_additional_key"],  # internal - handled by JobManager
+            command=[
+                "garage_provision_additional_key"
+            ],  # internal - handled by JobManager
             timeout=120,
             description="Orchestrated provisioning of an additional rw or ro key on an existing bucket. Atomic with rollback.",
             sensitive_output=True,  # the new secret rides in stdout/extras
             mode="job",
-            handler=lambda params: make_provision_additional_key_handler(config, params),
+            handler=lambda params: make_provision_additional_key_handler(
+                config, params
+            ),
             params={
                 "new_key_name": ParamDef(
                     placeholder="new_key_name",
@@ -186,7 +311,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
         ),
         "garage_provision_account_key": CommandSpec(
             group="garage",
-            command=["garage_provision_account_key"],  # internal - handled by JobManager
+            command=[
+                "garage_provision_account_key"
+            ],  # internal - handled by JobManager
             timeout=60,
             description="Orchestrated provisioning of an account key for customer aws cli / terraform bucket lifecycle. The tier governs create capability: an Admin key is minted with key-level allow_create_bucket, a Read-Write/Read-Only key with create disabled. One step, no rollback - owns no bucket until the customer creates one over S3.",
             sensitive_output=True,  # the one-time secret rides in stdout/extras
@@ -332,7 +459,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "idempotent when already enforced."
             ),
             mode="job",
-            handler=lambda params: make_enforce_account_key_tier_handler(config, params),
+            handler=lambda params: make_enforce_account_key_tier_handler(
+                config, params
+            ),
             params={
                 "account_key_id": ParamDef(
                     placeholder="account_key_id",
@@ -367,7 +496,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             # the "did it land" moment; each pass's grant changes ride the periodic
             # walk already. No post-mutation refresh.
             self_reconciling=True,
-            handler=lambda params: make_converge_account_key_rotation_handler(config, params),
+            handler=lambda params: make_converge_account_key_rotation_handler(
+                config, params
+            ),
             params={
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
@@ -384,8 +515,8 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "bucket_snapshot": ParamDef(
                     placeholder="bucket_snapshot",
                     default=None,
-                    pattern=None,
                     max_bytes=65536,
+                    schema=_BUCKET_SNAPSHOT_SCHEMA,
                     description=(
                         "Leak path only: JSON [{id, alias}] of the old key's "
                         "owned buckets captured before reap. When present, "
@@ -407,7 +538,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "buckets. The new key converges from the returned snapshot."
             ),
             mode="job",
-            handler=lambda params: make_snapshot_and_reap_account_key_handler(config, params),
+            handler=lambda params: make_snapshot_and_reap_account_key_handler(
+                config, params
+            ),
             params={
                 "old_key_id": ParamDef(
                     placeholder="old_key_id",
@@ -431,7 +564,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_get_key_buckets_handler(config, params),
             params={
-                "key_id": key_id_param("Account key Garage ID to list owned buckets for"),
+                "key_id": key_id_param(
+                    "Account key Garage ID to list owned buckets for"
+                ),
             },
         ),
         "garage_get_bucket_owners": CommandSpec(
@@ -453,7 +588,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
         ),
         "garage_bucket_clear": CommandSpec(
             group="garage",
-            command=["garage_bucket_clear"],  # internal - handled by JobManager, not a subprocess
+            command=[
+                "garage_bucket_clear"
+            ],  # internal - handled by JobManager, not a subprocess
             timeout=600,  # per-batch reference; long_running ignores it for total duration
             description=(
                 "Bulk-delete every object in a bucket via the local Garage "
@@ -466,7 +603,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=lambda params: make_clear_bucket_handler(config, params),
             params={
-                "bucket_name": bucket_name_param("Bucket to clear (customer-secret mode)"),
+                "bucket_name": bucket_name_param(
+                    "Bucket to clear (customer-secret mode)"
+                ),
                 "bucket_id": bucket_id_param(
                     "Bucket id (garage_bucket_id, never the local alias) "
                     "for the credential-less purge clear"
@@ -489,7 +628,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             requires_confirmation=True,
             mode="job",
             handler=lambda params: make_cleanup_uploads_handler(
-                params, admin_url=config.admin_url, admin_token=config.admin_token,
+                params,
+                admin_url=config.admin_url,
+                admin_token=config.admin_token,
             ),
             params={
                 "bucket_id": bucket_id_param(
@@ -522,7 +663,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             mode="job",
             handler=make_walk_bucket_stats_handler,
             params={
-                "bucket_name": bucket_name_param("Bucket to walk (local alias = display_name)"),
+                "bucket_name": bucket_name_param(
+                    "Bucket to walk (local alias = display_name)"
+                ),
                 **s3_credential_params("Customer S3 access key ID (any tier)"),
                 "prefix": ParamDef(
                     placeholder="prefix",
