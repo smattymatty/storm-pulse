@@ -23,7 +23,7 @@ def warn_if_s3_root_domain_set(config: GarageConfig) -> None:
 
     Endpoints beneath s3_api.root_domain can be mistaken for bucket names, causing
     NoSuchBucket errors. Path-only stacks should leave root_domain unset.
-    The website checks endpoint collisions at request time; see
+    The control plane checks endpoint collisions at request time; see
     core/buckets-customer-truth.md."""
     try:
         with open(config.config_path, "rb") as fh:

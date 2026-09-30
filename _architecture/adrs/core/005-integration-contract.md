@@ -101,7 +101,7 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
    cadence-aware reader serves the periodic loop and on-demand refresh alike; the
    command result, not the state manifest, is the synchronous answer to "did this
    land", and the manifest is a reconciliation view that tolerates a bounded topology
-   lag (see `core/buckets-capacity-model.md` in the website tree).
+   lag, which the control plane's capacity model tolerates by design.
 
 10. **A state reader's lifetime is the process, not the connection.** A reader that
     caches slowly-changing data between refreshes holds state whose natural lifetime

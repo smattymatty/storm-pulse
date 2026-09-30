@@ -44,7 +44,7 @@ Rootless Docker cannot bind ports below 1024 without lowering `net.ipv4.ip_unpri
 | Network | `/var/log/caddy/access.log`, fail2ban, ufw | Traffic gate decisions |
 | Activity | docker container stdout/stderr | App-level events |
 
-The agent already supports `file`-typed log sources (`stormpulse/config.py:_LOG_SOURCE_TYPES`), so this corollary is documentation + config, not new agent code. The website dashboard's `LogsPanel` tabs by stream.
+The agent already supports `file`-typed log sources (`stormpulse/config.py:_LOG_SOURCE_TYPES`), so this corollary is documentation + config, not new agent code. The control plane's log view tabs by stream.
 
 ## Consequences
 
@@ -64,7 +64,7 @@ The agent already supports `file`-typed log sources (`stormpulse/config.py:_LOG_
 
 ## Governance
 
-**Automated enforcement.** None. Mode mismatch is caught at init time; downstream validation (e.g. dashboard sign-off requiring an active agent) lives in the website repo.
+**Automated enforcement.** None. Mode mismatch is caught at init time; downstream validation (e.g. dashboard sign-off requiring an active agent) lives in the control plane.
 
 **Manual review.** A future ADR is required to: re-introduce a docker-group dependency on hardened boxes, ship a `--rootless` containerised Caddy variant, or lower `ip_unprivileged_port_start` system-wide.
 

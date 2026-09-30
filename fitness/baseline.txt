@@ -8,3 +8,27 @@
 #
 # Currently empty: the 23 violations found by the 2026-05-22 AST scan
 # were all cleared by follow-ups #1-#5 (see CORE-000 Governance).
+
+# Function 11 opening baseline (2026-09-29): lines inside long comments and
+# docstrings that point at another repository. Each leaves when its file is
+# rewritten to describe the behaviour instead. Only shrinks.
+stormpulse/commands/jobs.py:147 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/commands/jobs.py:294 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/commands/registry.py:73 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/bucket_resolver.py:6 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/bucket_resolver.py:55 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/bucket_resolver.py:80 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/commands/jobs.py:126 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/commands/jobs.py:674 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/jobs/attach_account_key.py:9 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/jobs/provision_account_key.py:50 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/jobs/set_account_key_capability.py:3 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/jobs/set_quota.py:3 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/state.py:44 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/garage/state.py:89 points at another repository; describe it, the far end is 'the control plane'
+stormpulse/logging/shipper.py:90 points at another repository; describe it, the far end is 'the control plane'
+tests/caddy/test_cert_status.py:93 points at another repository; describe it, the far end is 'the control plane'
+tests/garage/test_bucket_resolver.py:6 points at another repository; describe it, the far end is 'the control plane'
+tests/garage/test_commands.py:372 points at another repository; describe it, the far end is 'the control plane'
+tests/garage/test_detach_account_key.py:5 points at another repository; describe it, the far end is 'the control plane'
+tests/garage/test_state.py:221 points at another repository; describe it, the far end is 'the control plane'

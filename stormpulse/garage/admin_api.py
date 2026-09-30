@@ -1,7 +1,7 @@
 """Garage admin HTTP client for /v2/ operations (default port 3903).
 
 Callers supply the node-local admin token; keep it off the WebSocket and out
-of the website database. Requests authenticate with a Bearer header.
+of the control plane database. Requests authenticate with a Bearer header.
 Resolve Storm's 16-character bucket prefixes before writes: the API requires
 full 64-character IDs, unlike the CLI."""
 

@@ -6,7 +6,7 @@ name: Dependency cadence
 
 on:
   schedule:
-    # Sunday 10:00 UTC: an hour after the website job on our shared runner.
+    # Sunday 10:00 UTC, offset from the other scheduled jobs on the shared runner.
     - cron: '0 10 * * 0'
   # Allow on-demand checks between weekly runs.
   workflow_dispatch:

@@ -163,7 +163,7 @@ needs instead of sprawling into a general auth platform.
 ## Out of scope
 
 Website auth migration; MFA; the future Storm CLI / device flow; the
-in-process-vs-HTTP introspection fork (parked to the website ADR);
+in-process-vs-HTTP introspection fork (parked to the control plane's own decision record);
 customer-facing admin-key actions. Introducing any of these is the
 scope-creep tell.
 

@@ -24,11 +24,11 @@ Ranked by the operator 2026-09-09, in priority order: **1. Security,
 order is the tie-breaker a trade-off consults: when two of the five pull
 against each other, the lower number wins.
 
-The website's five put simplicity in the second seat. The agent swaps it for
-extendability, in the operator's words: "simplicity swapped out for
-extendability." The reason is structural. The website is one product surface
-Storm controls end to end. The agent is a substrate that runs on every host
-Storm operates and must grow new capability without a redeploy of the whole:
+Extendability takes the second seat, in the operator's words: "simplicity
+swapped out for extendability." The reason is structural. A control plane is
+one product surface its operator controls end to end and redeploys whole. The
+agent is a substrate that runs on every host Storm operates and must grow new
+capability without a redeploy of the whole:
 a Feature per external system (CORE-000, CORE-005), a signed and sealed
 external integration a private repository can contribute (CORE-007), a
 declared wire shape a control plane can consume without reading the code
@@ -104,14 +104,14 @@ Status: Accepted · 2026-09-07 · [ADR](core/009-deploy-investigation-node-local
 
 Extraction note: CORE-009 names simplicity, which is not one of this repo's
 five. It was written two days before the five were named for the agent, when
-the website's five (simplicity second) were the only stated set. The words
+simplicity still held the second seat. The words
 stand as written; a future amendment to CORE-009 may restate them against
 extendability, and this index is re-derived after.
 
 ## Enforcement status annex (derived, not extracted)
 
-Unlike the website, where enforcement is classified per bullet after the fact,
-this repo's enforcement is a single enumerated runner. CORE-001's table, as of
+This repo's enforcement is a single enumerated runner, not a per-bullet
+classification made after the fact. CORE-001's table, as of
 2026-09-09, is the whole annex:
 
 | # | Function | Enforces | Mechanism |
@@ -126,6 +126,7 @@ this repo's enforcement is a single enumerated runner. CORE-001's table, as of
 | 8 | Wizard SDK purity and topology | CORE-007 (`sdk/` pure Foundation, `wizard/` imports no Feature) | `fitness/` runner |
 | 9 | Declared wire shape | CORE-008 (`wire-contract.json` matches the emitting dataclasses) | `fitness/` runner |
 | 10 | No listening socket | Security Architecture, Layer 1, and the published wiki claim | `fitness/` runner |
+| 11 | Docs and comments stand on their own | A contributor reads this repository alone; a line that points at another repository instead of describing the behaviour fails | `fitness/` runner |
 
 Function 10 was added 2026-09-09 for a reason worth stating, because it is
 the pattern this index exists to encourage. The Pulse wiki publishes "the

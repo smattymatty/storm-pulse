@@ -1,16 +1,10 @@
-"""Fitness suite harness.
+"""Fitness suite harness: Functions 2 through 11, every check, every violation.
 
-Runs Functions 2 through 9 (CORE-001 defines 2-4; CORE-005 governance adds
-5 and 6; CORE-007 adds 7 and 8; CORE-008 adds 9). Function 1 (layer topology)
-is enforced separately by ``lint-imports`` (see Makefile target ``fitness``).
-
-Discipline: run every check, report every violation, exit non-zero
-on any. Never fail-fast - a run that stops at the first violation
-hides the others.
-
-Baseline: ``fitness/baseline.txt`` suppresses known violations by
-exact match. The rule is that the baseline only shrinks; new
-violations are fixed, not parked.
+CORE-001 defines 2-4, CORE-005 adds 5 and 6, CORE-007 adds 7 and 8, CORE-008
+adds 9; 10 and 11 guard what readers are told. Function 1 is ``lint-imports``.
+Never fail-fast: a run that stops at the first violation hides the others.
+``fitness/baseline.txt`` suppresses known violations by exact match and only
+shrinks; new violations are fixed, not parked.
 """
 
 from __future__ import annotations
@@ -25,6 +19,7 @@ from fitness.merge_fence import check_merge_fence
 from fitness.no_listener import check_no_listener
 from fitness.no_shell import check_no_shell
 from fitness.private_imports import check_private_imports
+from fitness.self_contained_docs import check_self_contained_docs
 from fitness.wire_contract import check_wire_contract
 from fitness.wizard_sdk_p2 import check_wizard_sdk
 
@@ -51,10 +46,17 @@ def main() -> int:
         ("Function 4 - runtime dependency allowlist", check_dependencies),
         ("Function 5 - integration contract", check_integration_contract),
         ("Function 6 - merge-primitive fence", check_merge_fence),
-        ("Function 7 - external loader no-execution", check_external_loader_no_execution),
+        (
+            "Function 7 - external loader no-execution",
+            check_external_loader_no_execution,
+        ),
         ("Function 8 - wizard SDK purity and topology", check_wizard_sdk),
         ("Function 9 - declared wire shape", check_wire_contract),
         ("Function 10 - no listening socket", check_no_listener),
+        (
+            "Function 11 - docs and comments stand on their own",
+            check_self_contained_docs,
+        ),
     ]:
         violations = [v for v in check() if v not in baseline]
         findings.append((label, violations))

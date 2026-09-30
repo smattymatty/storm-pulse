@@ -38,6 +38,8 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 | 7 | External-loader no-execution | CORE-007 (P1 loader imports no package code) | `fitness/` runner |
 | 8 | Wizard SDK purity & topology | CORE-007 (`sdk/` pure Foundation, `wizard/` imports no Feature) | `fitness/` runner |
 | 9 | Declared wire shape | CORE-008 (`wire-contract.json` matches the emitting dataclasses) | `fitness/` runner |
+| 10 | No listening socket | Security Architecture, Layer 1, and the published wiki claim | `fitness/` runner |
+| 11 | Docs and comments stand on their own | A contributor reads this repository alone; a line that points at another repository instead of describing the behaviour fails | `fitness/` runner |
 
 **Function 1 - Layer topology.** `import-linter` contracts in `.importlinter` express CORE-000's four-layer model as layered contracts: Foundation below Framework below Features below Entry, with Features forbidden from importing sibling Features. Same tool the sibling django repo uses; shared tooling across the two Storm codebases is deliberate.
 
@@ -50,6 +52,8 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 **Functions 5-8 - contract and boundary checks added by the integration ADRs.** Function 5 (CORE-005) asserts every registered Integration satisfies the required core and that command-contributing Integrations are first-party (inside `stormpulse/`). Function 6 (CORE-005) fences the state-merge primitive to its one legal call site. Function 7 (CORE-007) asserts the external-package loader never imports or executes package code. Function 8 (CORE-007) asserts the wizard SDK's boundaries: `sdk/` stays pure Foundation (it imports no other `stormpulse` module and no host-mutation primitive, so external plugin code can trust it) and the `wizard/` engine imports only Foundation, never a Feature - which is what makes its capability-provider dispatch (a lookup by token, invisible to Function 1) safe. Each cites the ADR it mechanizes, per the governance rule below.
 
 **Function 9 - Declared wire shape.** [CORE-008](008-declared-wire-shape-for-emitted-state.md) asserts the checked-in `wire-contract.json` matches the field names and nesting of the dataclasses that actually serialize onto the wire. It is the first function to defend an *outbound* contract: functions 2 through 8 all guard something internal to this repo, while this one guards a promise made to a consumer we do not control and cannot test against. A rename that the artifact does not also carry fails the suite, which is what turns a diff to a struct into a diff to a contract.
+
+**Function 11 - Docs and comments stand on their own.** Storm Pulse is read by contributors who do not have Storm's other repositories open beside it. A comment or ADR line that points at one of them instead of describing the behaviour leaves a hole in the text for that reader. The check walks every tracked text file for such references and fails on any; the glossary term for the far end of the wire is the control plane (CONTEXT.md). Added 2026-09-29, when a read of the ADRs as a newcomer found the pattern in fifteen files; those lines open the baseline and leave as each file is rewritten.
 
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 

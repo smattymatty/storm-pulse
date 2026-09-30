@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fitness Function 11: docs and comments stand on their own. A line that
+  points at another repository instead of describing the behaviour fails the
+  check; the glossary term for the far end of the wire is the control plane.
+
 - `wire-contract.json` now declares the command surface: a `commands`
   section lists every command the registry can build (the sealed sign-off
   hatches included, `disabled_commands` ignored) with each param's
