@@ -27,7 +27,7 @@ The `stormpulse/` package is organized into four layers. Every module and subpac
 |-------|---------|------------|
 | **Foundation** | `protocol.py`, `config/`, `events.py`, `sdk/` | nothing intra-package |
 | **Framework** | `commands/`, `init/`, `auth.py`, `integrations/`, `wizard/` | Foundation |
-| **Features** | `garage/`, `caddy/`, `logging/`, `signoff/`, `metrics.py`, `enroll.py`, `status.py`, `system_inventory.py` | Foundation, Framework; not sibling Features |
+| **Features** | `garage/`, `caddy/`, `rclone/`, `logging/`, `signoff/`, `metrics.py`, `enroll.py`, `status.py`, `system_inventory.py` | Foundation, Framework; not sibling Features |
 | **Entry** | `agent/`, `cli/`, `__main__.py` | any layer |
 
 - **Foundation** is the wire-format, config, and integration-contract substrate. `protocol.py` carries the message envelope and payload contracts; `config/` carries the TOML-backed dataclasses and, in `config/param_schema.py`, the JSON-shape validator a command param declares (a subpackage, so the layer entry and its import path are unchanged); `events.py` carries the wide-event emission buffer (Foundation-tier because every layer emits into it); `sdk/` carries the versioned integration-wizard contract, the typed `Question`/`Finding`/`InitPlan` data a private integration is written against ([CORE-007](007-external-integration-loader-and-command-contributor-grant.md)). Foundation imports nothing intra-package, so `sdk/` stays pure enough for external plugin code to depend on it.

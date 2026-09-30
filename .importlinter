@@ -26,6 +26,6 @@ name = CORE-000 four-layer topology
 type = layers
 layers =
     stormpulse.__main__ : stormpulse.cli : stormpulse.agent
-    stormpulse.status | stormpulse.enroll | stormpulse.metrics | stormpulse.logging | stormpulse.caddy | stormpulse.garage | stormpulse.signoff | stormpulse.system_inventory
+    stormpulse.status | stormpulse.enroll | stormpulse.metrics | stormpulse.logging | stormpulse.caddy | stormpulse.garage | stormpulse.rclone | stormpulse.signoff | stormpulse.system_inventory
     stormpulse.auth | stormpulse.init | stormpulse.commands | stormpulse.integrations | stormpulse.wizard
     stormpulse.config | stormpulse.protocol | stormpulse.events | stormpulse.sdk
