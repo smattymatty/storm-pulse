@@ -38,11 +38,15 @@ def check_self_contained_docs() -> list[str]:
             continue
         if SKIP_DIRS & set(path.relative_to(ROOT).parts):
             continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if ALLOW_LINE in line or not PRIVATE.search(line):
-                continue
-            rel = path.relative_to(ROOT)
-            violations.append(
-                f"{rel}:{number} points at another repository; describe it, the far end is 'the control plane'"
-            )
+        violations.extend(_lines_pointing_elsewhere(path))
     return violations
+
+
+def _lines_pointing_elsewhere(path: Path) -> list[str]:
+    """Every line of one file that names another repository, as a violation."""
+    rel = path.relative_to(ROOT)
+    return [
+        f"{rel}:{number} points at another repository; describe it, the far end is 'the control plane'"
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+        if ALLOW_LINE not in line and PRIVATE.search(line)
+    ]
