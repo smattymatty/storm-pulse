@@ -5,7 +5,7 @@ adr:
   status: "Accepted"
   date: "2026-09-07"
   authors:
-    - "Mathew Storm (operator, decisions)"
+    - "Mathew Storm (maintainer, decisions)"
     - "Claude (draft)"
   tags: ["architecture", "investigate", "contract", "deploy", "audit"]
 ---
@@ -17,11 +17,11 @@ it may say back. No live figures, no path inventory. Verify against
 `stormpulse/cli/investigate/__init__.py`, `stormpulse/sdk/investigate.py`, and
 `config/stormpulse.example.toml`.
 
-**Status: ACCEPTED 2026-09-07 (operator seal), at `c47cd99`.** Decisions 1 to 8
+**Status: ACCEPTED 2026-09-07 (maintainer seal), at `c47cd99`.** Decisions 1 to 8
 are BUILT at `1c73324` and first ran on the staging node 2026-09-07, where a
 node with nothing declared answered INCONCLUSIVE naming the section it lacked.
 Decision 9 settles nothing and says so: how a case file is declared on the wire
-defers to its own grill, and that fork gates the first emit, not the probe.
+defers to its own design review, and that fork gates the first emit, not the probe.
 
 **Amended 2026-09-07** (decisions 10 and 11, decision 3 widened), landed at
 `af83171`: the first live run had every node hand-edited to declare a fact it
@@ -139,8 +139,8 @@ the control plane still cannot name a path, a unit or a glob. What changed is
 who typed it, not where it lives.
 
 Precedence, in one line: descriptor default, then the node's table, field by
-field. The operator is the last word on his own box, so a package update can
-widen nothing he has narrowed.
+field. The operator is the last word on their own box, so a package update can
+widen nothing they have narrowed.
 
 **Refused: a wire-supplied `artifact_glob`.** The original request asked for one; the
 firm's signature has it as a parameter. Two reasons it cannot be one. `ParamDef`
@@ -234,10 +234,10 @@ the digest, or whether the wire carries a narrower projection of them and the
 rich types stay CLI-local, is a real fork with real consequences for every
 future field a check wants to report. It is not settled by a draft, and it is
 not settled as a side effect of an ADR about a probe. **It is owed its own
-grill, and the node comes first there as it does here.**
+design review, and the node comes first there as it does here.**
 
 Named rather than answered because it is a consequence the brief did not carry,
-and a consequence found in the draft is a question for the grill, never a
+and a consequence found in the draft is a question for the design review, never a
 decision the draft may take on its own authority.
 
 ### 10. An Integration contributes its subject; the node still overrides it
@@ -393,7 +393,7 @@ unbounded one without anyone deciding to widen it.
 - **Self-match suppression (code-enforced):** a judge-level test feeding `pgrep`
   output containing the probe's own pid.
 - **Declared shape (existing, deferred):** CORE-008 Function 9 covers whatever
-  the grill in decision 9 settles as the emitted shape. Nothing to add here
+  the design review in decision 9 settles as the emitted shape. Nothing to add here
   until it does.
 - **The node table wins (code-enforced, added 2026-09-07):** a test giving one
   subject from a descriptor and a narrower `search_roots` in the node's table,
@@ -410,7 +410,7 @@ unbounded one without anyone deciding to widen it.
 ## Privacy considerations
 
 This stanza is written although the answer is "no personal information", against
-`adrs/README.md`'s no-empty-stanza rule and by the operator's resolution
+`adrs/README.md`'s no-empty-stanza rule and by the maintainer's resolution
 (brief amendment, 2026-09-07). The reason: the *exclusion* here is a decision
 with an enforcing bound, not an absence.
 
@@ -450,7 +450,7 @@ CORE-005 is amended to name it. No allow rule binds to it, so
 [CORE-008](008-declared-wire-shape-for-emitted-state.md) owns the emitted shape
 and is not amended here; decision 9 records that the case-file types come under
 its rule when they are first emitted, and defers how they are declared to its
-own grill.
+own design review.
 
 The control-plane half is deferred to a separate ADR (website
 `developer/020`), which gates on this one because the dashboard renders what the

@@ -271,7 +271,7 @@ untrusted (non-first-party) in-process loader.
   named composition-root exception; the parser key made its semantics data, so it
   was promoted to the `log_enrichers` capability the same day.
 - 2026-07-19: decision 14 added (the `investigations` capability), design sealed
-  by operator grill the same day it was earned hunting an agent flap storm; garage
+  by the maintainer the same day it was earned hunting an agent flap storm; garage
   `health` is the reference investigation.
 
 **Related ADRs:** [CORE-000](000-internal-module-architecture.md) (Integration sub-types

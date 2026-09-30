@@ -5,7 +5,7 @@ adr:
   status: "Accepted"
   date: "2026-08-06"
   authors:
-    - "Mathew Storm (operator, seal)"
+    - "Mathew Storm (maintainer, seal)"
     - "Claude (draft)"
   tags: ["architecture", "protocol", "fitness-functions", "contract"]
 ---

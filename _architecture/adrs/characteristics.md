@@ -15,18 +15,18 @@ characteristics block. That is recorded here as a count, not corrected here:
 a characteristic is added by amending the ADR that owns it, and this index is
 re-derived after.
 
-## The system's five (operator-named, 2026-09-09)
+## The system's five (maintainer-named, 2026-09-09)
 
 **Security, extendability, auditability, maintainability, testability.**
 
-Ranked by the operator 2026-09-09, in priority order: **1. Security,
+Ranked by the maintainer 2026-09-09, in priority order: **1. Security,
 2. Extendability, 3. Auditability, 4. Maintainability, 5. Testability.** This
 order is the tie-breaker a trade-off consults: when two of the five pull
 against each other, the lower number wins.
 
-Extendability takes the second seat, in the operator's words: "simplicity
+Extendability takes the second seat, in the maintainer's words: "simplicity
 swapped out for extendability." The reason is structural. A control plane is
-one product surface its operator controls end to end and redeploys whole. The
+one product surface its owner controls end to end and redeploys whole. The
 agent is a substrate that runs on every host Storm operates and must grow new
 capability without a redeploy of the whole:
 a Feature per external system (CORE-000, CORE-005), a signed and sealed
@@ -79,9 +79,9 @@ invariant adds a function. The annex below is that runner's table.
 | [CORE-006](core/006-signoff-identity-gate.md) Signoff identity gate | Draft (decisions sealed 2026-06-24 and 06-26; nothing implemented) | 2026-06-24 | 0 |
 | [CORE-007](core/007-external-integration-loader-and-command-contributor-grant.md) External integration loader and the command-contributor trust grant | Accepted | 2026-07-15 | 0 |
 | [CORE-008](core/008-declared-wire-shape-for-emitted-state.md) Declared wire shape for emitted integration state | Accepted | 2026-08-06 | 0 |
-| [CORE-009](core/009-deploy-investigation-node-local-bounds.md) The deploy investigation | Accepted 2026-09-07 (operator seal, `c47cd99`) | 2026-09-07 | 4 |
+| [CORE-009](core/009-deploy-investigation-node-local-bounds.md) The deploy investigation | Accepted 2026-09-07 (maintainer seal, `c47cd99`) | 2026-09-07 | 4 |
 
-## CORE-009 — The deploy investigation
+## CORE-009: The deploy investigation
 
 Status: Accepted · 2026-09-07 · [ADR](core/009-deploy-investigation-node-local-bounds.md)
 

@@ -32,6 +32,19 @@ control plane, not by repo.
 _Avoid_: the website (points at the private repo), the dashboard (that is only its
 UI surface, wrong for server-side control-loop work)
 
+**Operator**:
+The person who runs a node: installs the agent, holds its host user, seals or
+unseals its hatches, narrows what a contributed package may touch. Every decision
+about one box is theirs. Not the project's decision-maker.
+_Avoid_: operator for a project decision (that is the **Maintainer**), admin.
+
+**Maintainer**:
+Whoever rules on this project's design: names the five characteristics, seals an
+ADR by commit, resolves a review. "Maintainer seal" and "maintainer-ruled" in an
+ADR mean that. One person today, a role by name so the docs read the same when it
+is not.
+_Avoid_: operator (the person running a node), owner, Storm.
+
 **Kernel**:
 Everything in the agent that is not an Integration: Foundation, Framework, the Core
 Features and Entry. It does the work every install shares (connect, prove identity,
