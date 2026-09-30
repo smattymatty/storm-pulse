@@ -32,19 +32,37 @@ control plane, not by repo.
 _Avoid_: the website (points at the private repo), the dashboard (that is only its
 UI surface, wrong for server-side control-loop work)
 
+**Kernel**:
+Everything in the agent that is not an Integration: Foundation, Framework, the Core
+Features and Entry. It does the work every install shares (connect, prove identity,
+dispatch commands, ship metrics and logs, run jobs) and names no Integration; it
+iterates whatever registered itself. "Storm Pulse is a kernel with Integrations
+plugged in" is the one-sentence architecture (CORE-000, wiki Architecture page).
+_Avoid_: core alone (ambiguous with Core Feature), the agent (that is the whole
+program, Integrations included).
+
 **Feature**:
 A capability surface in the CORE-000 import model: a module or subpackage in the
 Features layer that imports down only and never a sibling Feature. Size-agnostic
 (`metrics.py` and `garage/` are both Features). Defined by the import rule, not by
-what it talks to.
+what it talks to. Every Feature is either a Core Feature or an Integration.
 
 **Integration**:
 A Feature that drives an external system and implements the Integration contract
-(garage, caddy; later Nextcloud, Forgejo). A sub-type of Feature: every Integration
-is a Feature, not every Feature is an Integration (`metrics.py`, `status.py`,
-`enroll.py` are Features but not Integrations). Use "Feature" for import/layer talk,
-"Integration" for the contract that registers config, commands, and runtime surfaces.
+(garage, caddy, rclone; later Nextcloud, Forgejo). A sub-type of Feature: every
+Integration is a Feature, not every Feature is an Integration. The kernel reaches an
+Integration only through the contract registry, never by name. Use "Feature" for
+import/layer talk, "Integration" for the contract that registers config, commands,
+and runtime surfaces.
 _Avoid_: plugin (implies a third-party runtime loader, a separate unsealed decision)
+
+**Core Feature**:
+The other sub-type of Feature: one the kernel wires by name and every install
+carries (`logging/`, `signoff/`, `metrics.py`, `enroll.py`, `status.py`,
+`system_inventory.py`). Same import rule as an Integration, no contract, not
+pluggable. A Feature is one or the other, never both.
+_Avoid_: capability (CORE-005's word for a contract hook such as `log_enrichers`),
+service (a systemd unit or a Garage service on the node), built-in.
 
 **Runner**:
 A Pulse box whose configured Integration is rclone and nothing else: it runs
