@@ -141,7 +141,7 @@ def _update_bucket(
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_id)
     if not full_id:
         return False, err
-    body = json.dumps(payload).encode("utf-8")
+    body = _json_body(payload)
     path = "/v2/UpdateBucket?" + urlencode({"id": full_id})
     return _post(admin_url, admin_token, path, body)
 
@@ -272,7 +272,7 @@ def create_key(
     payload: dict[str, Any] = {"name": name}
     if allow_create_bucket:
         payload["allow"] = {"createBucket": True}
-    body = json.dumps(payload).encode("utf-8")
+    body = _json_body(payload)
     data, err = _post_json(admin_url, admin_token, "/v2/CreateKey", body)
     if data is None:
         return None, err
@@ -292,7 +292,7 @@ def update_key(
 
     Send allow.createBucket or deny.createBucket to enforce the bucket-count limit."""
     block = "allow" if allow_create_bucket else "deny"
-    body = json.dumps({block: {"createBucket": True}}).encode("utf-8")
+    body = _json_body({block: {"createBucket": True}})
     path = "/v2/UpdateKey?" + urlencode({"id": access_key_id})
     return _post(admin_url, admin_token, path, body)
 
@@ -314,7 +314,7 @@ def create_bucket(
         payload["globalAlias"] = global_alias
     if local_alias is not None:
         payload["localAlias"] = local_alias
-    body = json.dumps(payload).encode("utf-8")
+    body = _json_body(payload)
     data, err = _post_json(admin_url, admin_token, "/v2/CreateBucket", body)
     if data is None:
         return None, err
@@ -369,9 +369,7 @@ def cleanup_incomplete_uploads(
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
     if not full_id:
         return None, err
-    body = json.dumps(
-        {"bucketId": full_id, "olderThanSecs": int(older_than_secs)}
-    ).encode("utf-8")
+    body = _json_body({"bucketId": full_id, "olderThanSecs": int(older_than_secs)})
     data, err = _post_json(admin_url, admin_token, "/v2/CleanupIncompleteUploads", body)
     if data is None:
         return None, err
@@ -491,9 +489,9 @@ def _bucket_alias_local_change(
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
     if not full_id:
         return False, err
-    body = json.dumps(
+    body = _json_body(
         {"bucketId": full_id, "localAlias": local_alias, "accessKeyId": access_key_id}
-    ).encode("utf-8")
+    )
     return _post(admin_url, admin_token, path, body)
 
 
@@ -513,14 +511,19 @@ def _bucket_key_perm_change(
     full_id, err = _resolve_full_bucket_id(admin_url, auth, bucket_ref)
     if not full_id:
         return False, err
-    body = json.dumps(
+    body = _json_body(
         {
             "bucketId": full_id,
             "accessKeyId": access_key_id,
             "permissions": {"read": read, "write": write, "owner": owner},
         }
-    ).encode("utf-8")
+    )
     return _post(admin_url, admin_token, path, body)
+
+
+def _json_body(payload: Any) -> bytes:
+    """The one encoding every POST body shares."""
+    return json.dumps(payload).encode("utf-8")
 
 
 def _get_json(

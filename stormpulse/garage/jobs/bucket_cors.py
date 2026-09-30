@@ -24,6 +24,7 @@ CorsRules = list[dict[str, Any]]
 _LIST_KEYS = ("AllowedOrigin", "AllowedMethod", "AllowedHeader", "ExposeHeader")
 _SCALAR_KEYS = ("ID", "MaxAgeSeconds")
 _RULE_KEYS = frozenset(_LIST_KEYS + _SCALAR_KEYS)
+_BUCKET_ID = "bucket_id"
 
 
 def cors_rules_shape_problem(rules: object) -> str | None:
@@ -50,8 +51,7 @@ def normalize_cors_rules(rules: CorsRules) -> CorsRules:
         clean: dict[str, Any] = {
             k: rule[k] for k in _SCALAR_KEYS if rule.get(k) is not None
         }
-        for key in _LIST_KEYS:
-            clean[key] = list(rule.get(key) or [])
+        clean |= {k: list(rule.get(k) or []) for k in _LIST_KEYS}
         out.append(clean)
     return out
 
@@ -63,7 +63,7 @@ def make_bucket_cors_get_handler(
     admin_token: str,
 ) -> JobHandler | None:
     """Build the read handler. Required: ``bucket_id``; admin API configured."""
-    bucket_id = params.get("bucket_id", "")
+    bucket_id = params.get(_BUCKET_ID, "")
     if not bucket_id:
         logger.error("garage_bucket_cors_get missing required param: bucket_id")
         return None
@@ -89,12 +89,13 @@ def make_bucket_cors_set_handler(
 ) -> JobHandler | None:
     """Build the write handler. Required: ``bucket_id``, ``rules`` and
     ``expected_rules`` (JSON lists, shape-checked at dispatch)."""
-    bucket_id = params.get("bucket_id", "")
-    missing = [k for k in ("bucket_id", "rules", "expected_rules") if not params.get(k)]
+    bucket_id = params.get(_BUCKET_ID, "")
+    missing = [k for k in (_BUCKET_ID, "rules", "expected_rules") if not params.get(k)]
     if missing:
         logger.error("garage_bucket_cors_set missing required params: %s", missing)
-        return None
-    if not _admin_configured("garage_bucket_cors_set", admin_url, admin_token):
+    if missing or not _admin_configured(
+        "garage_bucket_cors_set", admin_url, admin_token
+    ):
         return None
     try:
         rules = json.loads(params["rules"])
@@ -137,13 +138,25 @@ async def run_bucket_cors_get(
     if failure is not None:
         return failure
     await progress("finalizing", 1, 1, "CORS rules read")
+    return _success(
+        bucket_id,
+        current,
+        started_at,
+        f"Bucket {bucket_id} has {len(current)} CORS rule(s)",
+    )
+
+
+def _success(
+    bucket_id: str, rules: CorsRules, started_at: float, stdout: str
+) -> JobOutcome:
+    """The outcome both commands end on: the rules as they now stand."""
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=f"Bucket {bucket_id} has {len(current)} CORS rule(s)",
+        stdout=stdout,
         extras={
             "bucket_id": bucket_id,
-            "rules": current,
+            "rules": rules,
             "duration_seconds": _elapsed(started_at),
         },
     )
@@ -194,16 +207,7 @@ async def run_bucket_cors_set(
         )
     await progress("finalizing", 2, 2, "CORS rules applied")
     verb = "Cleared CORS rules on" if not rules else f"Set {len(rules)} CORS rule(s) on"
-    return JobOutcome(
-        success=True,
-        exit_code=0,
-        stdout=f"{verb} {bucket_id}",
-        extras={
-            "bucket_id": bucket_id,
-            "rules": rules,
-            "duration_seconds": _elapsed(started_at),
-        },
-    )
+    return _success(bucket_id, rules, started_at, f"{verb} {bucket_id}")
 
 
 async def _read_current_rules(

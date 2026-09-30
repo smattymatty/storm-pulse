@@ -152,26 +152,36 @@ def _diff_commands(on_disk: Any, live: dict[str, Any]) -> list[str]:
             violations.append(
                 f"commands: declared command {name!r} is no longer registered; {_REGENERATE}"
             )
-            continue
-        if name not in on_disk:
+        elif name not in on_disk:
             violations.append(
                 f"commands: command {name!r} is registered but not declared; {_REGENERATE}"
             )
-            continue
-        declared = (on_disk[name] or {}).get("params") or {}
-        emitted = live[name]["params"]
-        for param in sorted(set(declared) - set(emitted)):
-            violations.append(
-                f"commands.{name}: declared param {param!r} no longer exists; {_REGENERATE}"
+        else:
+            declared = (on_disk[name] or {}).get("params") or {}
+            violations.extend(
+                _diff_params(f"commands.{name}", declared, live[name]["params"])
             )
-        for param in sorted(set(emitted) - set(declared)):
-            violations.append(
-                f"commands.{name}: param {param!r} is accepted but not declared; {_REGENERATE}"
-            )
-        for param in sorted(set(declared) & set(emitted)):
-            if declared[param] != emitted[param]:
-                violations.append(
-                    f"commands.{name}.{param}: declared validator {declared[param]!r} "
-                    f"!= registered {emitted[param]!r}; {_REGENERATE}"
-                )
     return violations
+
+
+def _diff_params(
+    at: str, declared: dict[str, Any], emitted: dict[str, Any]
+) -> list[str]:
+    """One line per param present on one side only, or validated differently."""
+    gone = sorted(set(declared) - set(emitted))
+    new = sorted(set(emitted) - set(declared))
+    drifted = [
+        p for p in sorted(set(declared) & set(emitted)) if declared[p] != emitted[p]
+    ]
+    return (
+        [f"{at}: declared param {p!r} no longer exists; {_REGENERATE}" for p in gone]
+        + [
+            f"{at}: param {p!r} is accepted but not declared; {_REGENERATE}"
+            for p in new
+        ]
+        + [
+            f"{at}.{p}: declared validator {declared[p]!r} != registered {emitted[p]!r}; "
+            f"{_REGENERATE}"
+            for p in drifted
+        ]
+    )

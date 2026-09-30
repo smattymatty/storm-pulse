@@ -12,8 +12,15 @@ would satisfy the check below anyway."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
 from stormpulse.integrations import registered_integrations
+
+
+def _about(integ: Any, what: str) -> str:
+    """One violation line, always naming the Integration it is about."""
+    return f"Integration {integ.id!r}: {what}"
 
 
 def check_integration_contract() -> list[str]:
@@ -26,27 +33,31 @@ def check_integration_contract() -> list[str]:
                 f"Integration with a non-empty string id required, got {integ.id!r}"
             )
         if not callable(integ.parse_config):
-            violations.append(
-                f"Integration {integ.id!r}: parse_config must be callable"
-            )
+            violations.append(_about(integ, "parse_config must be callable"))
         if not callable(integ.enabled):
-            violations.append(f"Integration {integ.id!r}: enabled must be callable")
+            violations.append(_about(integ, "enabled must be callable"))
         if integ.specs is not None:
             module = getattr(integ.specs, "__module__", "")
             if not module.startswith("stormpulse"):
                 violations.append(
-                    f"Integration {integ.id!r}: contributes commands from "
-                    f"non-first-party module {module!r} (CORE-005 decision 8 / "
-                    "CORE-007: a built-in contributor is first-party; an external "
-                    "one is gated by its command_contributor grant at load)"
+                    _about(
+                        integ,
+                        f"contributes commands from non-first-party module {module!r} "
+                        "(CORE-005 decision 8 / CORE-007: a built-in contributor is "
+                        "first-party; an external one is gated by its "
+                        "command_contributor grant at load)",
+                    )
                 )
         if (integ.specs is not None or integ.collect_state is not None) and (
             integ.declared_config is None
         ):
             violations.append(
-                f"Integration {integ.id!r}: contributes commands but declares no "
-                "declared_config, so the wire contract cannot list them without "
-                "a host (CORE-008: every accepted command is declared)"
+                _about(
+                    integ,
+                    "contributes commands but declares no declared_config, so the "
+                    "wire contract cannot list them without a host (CORE-008: every "
+                    "accepted command is declared)",
+                )
             )
         for parser in integ.log_enrichers or {}:
             owner = enricher_owners.setdefault(parser, integ.id)

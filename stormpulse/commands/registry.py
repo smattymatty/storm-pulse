@@ -192,13 +192,16 @@ def validate_params(
 
 
 def _schema_problem(value: str, schema: ParamSchema) -> str | None:
-    # JSONDecodeError's text is a reason plus a position, never the document.
+    # A decode error's position is all that rides out; the document never does.
+    where: str | None = None
     try:
         decoded = json.loads(value)
-    except ValueError as exc:
-        return f"is not valid JSON: {exc}"
+    except json.JSONDecodeError as exc:
+        where = f"line {exc.lineno} column {exc.colno}"
     except RecursionError:
-        return "is not valid JSON: nesting too deep"
+        where = "nesting too deep"
+    if where is not None:
+        return f"is not valid JSON: {where}"
     violation = schema_violation(decoded, schema)
     return None if violation is None else f"does not match schema: {violation}"
 
