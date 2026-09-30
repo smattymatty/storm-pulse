@@ -11,6 +11,87 @@ on:
 # its C binding. The built wheel lands in the shared pip cache, so the compile
 # is paid once per cache lifetime, not per run.
 jobs:
+  # Quality gate (Skylos) on changed lines only: new code meets the bar, legacy
+  # findings stay a baseline to burn down. PRs diff against origin/main, pushes
+  # against their before-SHA; full clone because --diff needs the base. `make quality`.
+  quality:
+    runs-on: docker
+    container:
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      volumes:
+        - pip-cache:/pip-cache
+
+    steps:
+      - name: Checkout code (full, with main)
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          git fetch origin main
+
+      - name: Comment and docstring lengths
+        env:
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -eu
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE=$(git merge-base origin/main HEAD)
+          elif [ -z "${EVENT_BEFORE:-}" ] || [ -z "$(printf '%s' "$EVENT_BEFORE" | tr -d 0)" ]; then
+            BASE=$(git hash-object -t tree /dev/null)
+          else
+            BASE="$EVENT_BEFORE"
+            git cat-file -e "${BASE}^{commit}" 2>/dev/null || git fetch origin "$BASE"
+            git cat-file -e "${BASE}^{commit}"
+          fi
+          python scripts/comment_blocks.py --all --diff "$BASE"
+
+      - name: Install skylos
+        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
+
+      - name: Quality scan, changed lines (skylos)
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            BASE="origin/main"
+          else
+            # The push event's before-SHA covers every commit in the push.
+            # Unusable (first push, force push) falls back to the last commit.
+            BASE="${{ github.event.before }}"
+            git cat-file -e "${BASE}^{commit}" 2>/dev/null || BASE="HEAD~1"
+          fi
+          # An empty changed set makes skylos fall back to a FULL scan, which
+          # is red on the legacy baseline. Skip loudly instead (the same guard
+          # the Makefile's quality target carries).
+          if [ -z "$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)" ]; then
+            echo "quality: no changed files vs ${BASE}, skipping"
+            exit 0
+          fi
+          echo "quality: gating changed lines vs ${BASE}"
+          skylos . --quality --diff "${BASE}" --gate --format concise
+
+
+  # Security + secrets + AI-defect gate (Skylos), its own signal: red means a
+  # security finding, a leaked credential or an AI-code defect. Exit code from the
+  # zero-tolerance [tool.skylos.gate] in pyproject.toml. `make security`, same pin.
+  security:
+    runs-on: docker
+    container:
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      volumes:
+        - pip-cache:/pip-cache
+
+    steps:
+      - name: Checkout code
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+
+      - name: Install skylos
+        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
+
+      - name: Security scan (skylos)
+        run: skylos . --danger --secrets --ai-defects --sca --gate --format concise
+
   test:
     runs-on: docker
     container:
@@ -85,88 +166,3 @@ jobs:
       # interface conformance, not dead code. Same command as `make deadcode`.
       - name: Dead-code scan (skylos)
         run: skylos . --select SKY-U001,SKY-U002,SKY-U003,SKY-U004,SKY-U005 --format concise
-
-  # Security + secrets + AI-defect gate (Skylos). Separate job for a separate
-  # signal: red here means a security-shaped finding, a leaked credential, or
-  # an evidence-backed AI-code defect. Exit code comes from the zero-tolerance
-  # [tool.skylos.gate] policy in pyproject.toml. Same command as
-  # `make security`; the pin matches the dev extra in pyproject.toml.
-  security:
-    runs-on: docker
-    container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
-      volumes:
-        - pip-cache:/pip-cache
-
-    steps:
-      - name: Checkout code
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
-
-      - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
-
-      - name: Security scan (skylos)
-        run: skylos . --danger --secrets --ai-defects --sca --gate --format concise
-
-  # Quality gate (Skylos), scoped to the changed lines only: new code meets
-  # the bar, the legacy findings stay a known baseline to burn down
-  # deliberately. A pull request diffs against origin/main; a push to main
-  # diffs against the push's own before-SHA, so direct-to-main commits (this
-  # repo's normal flow) are gated too. Full clone because --diff needs the
-  # base in history. Same scan as `make quality`.
-  quality:
-    runs-on: docker
-    container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
-      volumes:
-        - pip-cache:/pip-cache
-
-    steps:
-      - name: Checkout code (full, with main)
-        run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
-          git fetch origin main
-
-      - name: Comment and docstring lengths
-        env:
-          EVENT_BEFORE: ${{ github.event.before }}
-        run: |
-          set -eu
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            BASE=$(git merge-base origin/main HEAD)
-          elif [ -z "${EVENT_BEFORE:-}" ] || [ -z "$(printf '%s' "$EVENT_BEFORE" | tr -d 0)" ]; then
-            BASE=$(git hash-object -t tree /dev/null)
-          else
-            BASE="$EVENT_BEFORE"
-            git cat-file -e "${BASE}^{commit}" 2>/dev/null || git fetch origin "$BASE"
-            git cat-file -e "${BASE}^{commit}"
-          fi
-          python scripts/comment_blocks.py --all --diff "$BASE"
-
-      - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
-
-      - name: Quality scan, changed lines (skylos)
-        run: |
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            BASE="origin/main"
-          else
-            # The push event's before-SHA covers every commit in the push.
-            # Unusable (first push, force push) falls back to the last commit.
-            BASE="${{ github.event.before }}"
-            git cat-file -e "${BASE}^{commit}" 2>/dev/null || BASE="HEAD~1"
-          fi
-          # An empty changed set makes skylos fall back to a FULL scan, which
-          # is red on the legacy baseline. Skip loudly instead (the same guard
-          # the Makefile's quality target carries).
-          if [ -z "$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)" ]; then
-            echo "quality: no changed files vs ${BASE}, skipping"
-            exit 0
-          fi
-          echo "quality: gating changed lines vs ${BASE}"
-          skylos . --quality --diff "${BASE}" --gate --format concise

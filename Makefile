@@ -12,7 +12,7 @@ GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
 # Umbrella: every check in one command. No Docker, no network (except
 # `security`, whose AI-defect checks may consult the PyPI registry).
-check: test mypy fitness deadcode security quality comments-diff
+check: quality comments-diff security test mypy fitness deadcode
 
 # Check unused functions, imports, variables, classes, and files (SKY-U001..U005).
 # Exclude parameters: callbacks must preserve interface signatures.
