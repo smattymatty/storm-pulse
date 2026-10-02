@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fitness Function 12: CI runs what `make check` runs. A `make check` target
+  with no CI caller, a scan tool run directly from the workflow, a job off the
+  `docker` runner, or disagreeing CI image tags fails the check.
+
 - Fitness Function 11: docs and comments stand on their own. A line that
   points at another repository instead of describing the behaviour fails the
   check; the glossary term for the far end of the wire is the control plane.
@@ -45,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   command takes an S3 credential: the node's admin token does the work.
 
 ### Fixed
+
+- The push-time dependency scan reads the installed tree. Skylos `--sca`
+  sees exact pins only, and the manifest's ranges left it scanning 1 package;
+  `make security` now freezes the environment to pins first (93 packages).
 
 - `garage_delete_provisioned_bucket` no longer deletes access keys. It
   deleted every key the bucket delete left attached to no bucket, which

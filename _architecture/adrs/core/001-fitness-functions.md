@@ -55,6 +55,8 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 
 **Function 11 - Docs and comments stand on their own.** Storm Pulse is read by contributors who do not have Storm's other repositories open beside it. A comment or ADR line that points at one of them instead of describing the behaviour leaves a hole in the text for that reader. The check walks every tracked text file for such references and fails on any; the glossary term for the far end of the wire is the control plane (CONTEXT.md). Added 2026-09-29, when a read of the ADRs as a newcomer found the pattern in fifteen files; those lines open the baseline and leave as each file is rewritten.
 
+**Function 12 - CI runs what `make check` runs.** Every check is defined once, in the Makefile, and CI calls it by target. The check fails when a `make check` prerequisite has no CI caller, when the test workflow runs a scan tool directly instead of through make, when a job leaves the `docker` runner, or when the workflows disagree on the CI image tag. Added 2026-10-02, when the push-time dependency scan was found reading 1 exact pin of 98 locked packages while the YAML and the Makefile spelled the same commands twice; the scan now reads the installed tree, and this function keeps the YAML from forking from it again.
+
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**

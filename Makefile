@@ -1,9 +1,14 @@
 # Run make check before pushing; individual targets support focused checks.
-# Defaults to .venv; override tools as needed, e.g. PYTHON=python3 make check.
+# Defaults to .venv; CI passes VENV= to use the tools on PATH.
 
-PYTHON ?= .venv/bin/python
-LINT_IMPORTS ?= .venv/bin/lint-imports
-SKYLOS ?= .venv/bin/skylos
+VENV ?= .venv/bin/
+PYTHON ?= $(VENV)python
+LINT_IMPORTS ?= $(VENV)lint-imports
+SKYLOS ?= $(VENV)skylos
+
+# Diff base for quality and comments-diff; CI passes the push's base.
+BASE ?= origin/main
+SCA_DIR ?= /tmp/stormpulse-sca
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
@@ -20,19 +25,23 @@ check: quality comments-diff security test mypy fitness deadcode
 deadcode:
 	$(SKYLOS) . --select SKY-U001,SKY-U002,SKY-U003,SKY-U004,SKY-U005 --format concise
 
-# Security, secrets, and AI-defect gate; pyproject.toml defines zero tolerance.
-# See [tool.skylos] for exclusions; explain inline ignores with a reason.
+# Security, secrets, and AI-defect gate; pyproject.toml sets zero tolerance and exclusions.
+# SCA reads exact pins only, so it scans the installed tree frozen to pins,
+# minus the installer's own packages, as pip freeze does.
 security:
-	$(SKYLOS) . --danger --secrets --ai-defects --sca --gate --format concise
+	$(SKYLOS) . --danger --secrets --ai-defects --gate --format concise
+	rm -rf $(SCA_DIR) && mkdir -p $(SCA_DIR)/resolved
+	$(PYTHON) -c 'import importlib.metadata as m; print("\n".join(sorted({f"{d.name}=={d.version}" for d in m.distributions() if d.name not in {"pip", "setuptools", "wheel"}})))' > $(SCA_DIR)/resolved/requirements.txt
+	$(SKYLOS) $(SCA_DIR) --sca --gate --format concise
 
-# Check committed changes ahead of origin/main; uncommitted edits are excluded.
+# Check committed changes ahead of $(BASE); uncommitted edits are excluded.
 # Skip empty diffs because Skylos would scan the entire legacy baseline.
 # SKY-L009 (print) is ignored globally for CLI output and wizards.
 quality:
-	@if [ -z "$$(git diff --name-only origin/main...HEAD)" ]; then \
-		echo "quality: no commits ahead of origin/main, skipping"; \
+	@if [ -z "$$(git diff --name-only $(BASE)...HEAD)" ]; then \
+		echo "quality: no commits ahead of $(BASE), skipping"; \
 	else \
-		$(SKYLOS) . --quality --diff origin/main --gate --format concise; \
+		$(SKYLOS) . --quality --diff $(BASE) --gate --format concise; \
 	fi
 
 test:
@@ -87,7 +96,6 @@ clean:
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 
 # Comment inventory is advisory; staged/committed gates reject changed oversized blocks.
-COMMENT_BASE ?= origin/main
 .PHONY: comments comments-staged comments-diff
 comments:
 	$(PYTHON) scripts/comment_blocks.py --all
@@ -96,4 +104,4 @@ comments-staged:
 	$(PYTHON) scripts/comment_blocks.py --staged
 
 comments-diff:
-	$(PYTHON) scripts/comment_blocks.py --diff $(COMMENT_BASE)
+	$(PYTHON) scripts/comment_blocks.py --diff $(BASE)

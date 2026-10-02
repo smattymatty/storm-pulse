@@ -6,14 +6,11 @@ on:
   pull_request:
     branches: [main]
 
-# gcc + libc6-dev in every job: skylos (a dev dep and the scan tool) requires
-# tree-sitter-dart-orchard, which ships sdist-only on PyPI, so pip must compile
-# its C binding. The built wheel lands in the shared pip cache, so the compile
-# is paid once per cache lifetime, not per run.
+# Every job runs a Makefile target, so CI and `make check` share one definition.
+# VENV= points make at the tools on PATH. Fitness Function 12 holds both.
 jobs:
   # Quality gate (Skylos) on changed lines only: new code meets the bar, legacy
-  # findings stay a baseline to burn down. PRs diff against origin/main, pushes
-  # against their before-SHA; full clone because --diff needs the base. `make quality`.
+  # findings stay a baseline to burn down. Full clone because --diff needs the base.
   quality:
     runs-on: docker
     container:
@@ -29,49 +26,35 @@ jobs:
           git clone --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
           git fetch origin main
 
-      - name: Comment and docstring lengths
+      # PRs gate against their merge-base, pushes against the before-SHA. No usable
+      # before-SHA (first or force push) falls back to the last commit, loudly.
+      - name: Resolve the diff base
         env:
           EVENT_BEFORE: ${{ github.event.before }}
         run: |
           set -eu
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
             BASE=$(git merge-base origin/main HEAD)
-          elif [ -z "${EVENT_BEFORE:-}" ] || [ -z "$(printf '%s' "$EVENT_BEFORE" | tr -d 0)" ]; then
-            BASE=$(git hash-object -t tree /dev/null)
-          else
+          elif [ -n "$(printf '%s' "${EVENT_BEFORE:-}" | tr -d 0)" ] && git cat-file -e "${EVENT_BEFORE}^{commit}" 2>/dev/null; then
             BASE="$EVENT_BEFORE"
-            git cat-file -e "${BASE}^{commit}" 2>/dev/null || git fetch origin "$BASE"
-            git cat-file -e "${BASE}^{commit}"
+          else
+            echo "no usable before-SHA: gating the last commit only"
+            BASE=HEAD~1
           fi
-          python scripts/comment_blocks.py --all --diff "$BASE"
+          echo "BASE=${BASE}" >> "$GITHUB_ENV"
 
+      - name: Comment and docstring lengths
+        run: make VENV= BASE="$BASE" comments-diff
+
+      # The pin lives in pyproject.toml's dev extra; static analysis needs nothing else.
       - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
+        run: pip install --cache-dir /pip-cache "$(grep -o 'skylos==[0-9.]*' pyproject.toml)"
 
       - name: Quality scan, changed lines (skylos)
-        run: |
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            BASE="origin/main"
-          else
-            # The push event's before-SHA covers every commit in the push.
-            # Unusable (first push, force push) falls back to the last commit.
-            BASE="${{ github.event.before }}"
-            git cat-file -e "${BASE}^{commit}" 2>/dev/null || BASE="HEAD~1"
-          fi
-          # An empty changed set makes skylos fall back to a FULL scan, which
-          # is red on the legacy baseline. Skip loudly instead (the same guard
-          # the Makefile's quality target carries).
-          if [ -z "$(git diff --name-only "${BASE}...HEAD" 2>/dev/null)" ]; then
-            echo "quality: no changed files vs ${BASE}, skipping"
-            exit 0
-          fi
-          echo "quality: gating changed lines vs ${BASE}"
-          skylos . --quality --diff "${BASE}" --gate --format concise
+        run: make VENV= BASE="$BASE" quality
 
-
-  # Security + secrets + AI-defect gate (Skylos), its own signal: red means a
-  # security finding, a leaked credential or an AI-code defect. Exit code from the
-  # zero-tolerance [tool.skylos.gate] in pyproject.toml. `make security`, same pin.
+  # Security + secrets + AI-defect + dependency gate (Skylos), its own signal. The
+  # project is installed so the dependency scan reads the tree a host would get.
   security:
     runs-on: docker
     container:
@@ -86,11 +69,11 @@ jobs:
           BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
           git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
-      - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
+      - name: Install the project and its dev extra
+        run: pip install --cache-dir /pip-cache -e ".[dev]"
 
       - name: Security scan (skylos)
-        run: skylos . --danger --secrets --ai-defects --sca --gate --format concise
+        run: make VENV= security
 
   test:
     runs-on: docker
@@ -110,14 +93,13 @@ jobs:
         run: pip install --cache-dir /pip-cache -e ".[dev]"
 
       - name: Run tests
-        run: pytest -v
+        run: make VENV= test
 
       - name: Type check
-        run: mypy .
+        run: make VENV= mypy
 
-  # CORE-001 fitness suite. Separate job for a separate signal:
-  # a red `fitness` means an architectural or security invariant was
-  # crossed, distinct from a behavioural test failure.
+  # CORE-001 fitness suite, its own signal: red means an architectural or
+  # security invariant was crossed, not a behavioural test failure.
   fitness:
     runs-on: docker
     container:
@@ -135,16 +117,10 @@ jobs:
       - name: Install dependencies
         run: pip install --cache-dir /pip-cache -e ".[dev]"
 
-      - name: Layer topology (import-linter - Function 1)
-        run: lint-imports
+      - name: Layer topology and custom fitness checks
+        run: make VENV= fitness
 
-      - name: Custom fitness checks (Functions 2-4)
-        run: python -m fitness
-
-  # Dead-code gate (Skylos). Separate job for a separate signal: red here
-  # means the tree carries unused code, not a behavioural or architectural
-  # failure. Static analysis only, so the project itself is not installed;
-  # the pin matches the dev extra in pyproject.toml.
+  # Dead-code gate (Skylos), its own signal: red means unused code in the tree.
   deadcode:
     runs-on: docker
     container:
@@ -160,9 +136,7 @@ jobs:
           git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install skylos
-        run: pip install --cache-dir /pip-cache "skylos==4.35.0"
+        run: pip install --cache-dir /pip-cache "$(grep -o 'skylos==[0-9.]*' pyproject.toml)"
 
-      # SKY-U006 (unused parameters) stays out: callback signatures are
-      # interface conformance, not dead code. Same command as `make deadcode`.
       - name: Dead-code scan (skylos)
-        run: skylos . --select SKY-U001,SKY-U002,SKY-U003,SKY-U004,SKY-U005 --format concise
+        run: make VENV= deadcode

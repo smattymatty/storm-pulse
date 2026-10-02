@@ -32,4 +32,4 @@ Install the configured hooks once per clone:
 
 The checker needs only Python's standard library. `make comments` reports the
 inventory; `make comments-staged` gates the index; `make check` also checks
-committed changes against `COMMENT_BASE` (default `origin/main`).
+committed changes against `BASE` (default `origin/main`).
