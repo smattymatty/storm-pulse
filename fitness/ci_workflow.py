@@ -24,11 +24,15 @@ DIRECT_TOOL = re.compile(
 )
 
 
+def _text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
 def check_ci_workflow() -> list[str]:
     """Return violation strings; empty list means clean."""
     if not TEST_WORKFLOW.is_file():
         return [f"{TEST_WORKFLOW.relative_to(ROOT)} is missing"]
-    test_yml = TEST_WORKFLOW.read_text(encoding="utf-8")
+    test_yml = _text(TEST_WORKFLOW)
     rel = TEST_WORKFLOW.relative_to(ROOT)
     return [
         *_one_image(),
@@ -45,7 +49,7 @@ def _one_image() -> list[str]:
     tags = {
         f"{path.name}:{tag}"
         for path in sorted(WORKFLOWS.glob("*.yml"))
-        for tag in CI_IMAGE.findall(path.read_text(encoding="utf-8"))
+        for tag in CI_IMAGE.findall(_text(path))
     }
     distinct = {t.split(":", 1)[1] for t in tags}
     if not distinct:
@@ -67,9 +71,7 @@ def _one_runner(rel: Path, text: str) -> list[str]:
 
 
 def _every_check_target_runs(rel: Path, text: str) -> list[str]:
-    match = re.search(
-        r"^check:(.*)$", MAKEFILE.read_text(encoding="utf-8"), re.MULTILINE
-    )
+    match = re.search(r"^check:(.*)$", _text(MAKEFILE), re.MULTILINE)
     wanted = set(match.group(1).split()) if match else set()
     if not wanted:
         return ["Makefile: no `check:` prerequisites parsed"]
