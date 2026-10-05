@@ -753,6 +753,27 @@ def test_validate_params_secret_pattern_mismatch_withholds_value() -> None:
     assert "SuperSecretValue123" not in str(excinfo.value)
 
 
+def test_validate_params_refuses_value_folding_another_param() -> None:
+    """Folding a param into another's value signs identically, so it is refused."""
+    cmd = _cmd_with_params(
+        dst_key=ParamDef(
+            placeholder="dst_key", default=None, max_bytes=256, secret=True
+        ),
+        src_id=ParamDef(placeholder="src_id", default=None, pattern="[A-Z0-9]+"),
+    )
+    with pytest.raises(ParamValidationError, match="ambiguous") as excinfo:
+        validate_params(cmd, {"dst_key": "S3CR3T&src_id=GK123"})
+    assert "S3CR3T" not in str(excinfo.value)
+
+
+def test_validate_params_allows_ampersand_that_names_no_param() -> None:
+    cmd = _cmd_with_params(
+        apply=ParamDef(placeholder="apply", default=None, max_bytes=256),
+    )
+    value = "make build && make install&x=1"
+    assert validate_params(cmd, {"apply": value}) == {"apply": value}
+
+
 def test_validate_params_none_default_no_override_skips() -> None:
     """When default is None and no runtime override, the param is skipped.
 

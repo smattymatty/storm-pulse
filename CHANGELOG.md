@@ -59,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any step runs. The sequence path ran every step as a subprocess, so a job
   command's bare name went to a PATH lookup instead of an absolute binary.
   The refusal is a `validation_failed` result on the wire.
+- A command param whose value contains `&<another param of that command>=`
+  is refused. Params are signed as `k=v&k=v`, so such a value signed the
+  same as a different param set, and the signature could not tell them
+  apart. Other uses of `&` in a value are unaffected.
 
 - The push-time dependency scan reads the installed tree. Skylos `--sca`
   sees exact pins only, and the manifest's ranges left it scanning 1 package;
