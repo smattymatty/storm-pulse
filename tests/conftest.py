@@ -56,6 +56,20 @@ def _fresh_event_buffer(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _renewal_sees_user_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the install mode cert renewal reads to user mode.
+
+    Renewal refuses as root (CORE-010 decision 1) and CI runs tests as root,
+    so without this every renewal test would test the refusal. Tests of the
+    system-mode refusal patch ``stormpulse.enroll.detect_mode`` themselves.
+    """
+    import stormpulse.enroll as enroll_module
+    from stormpulse.init.mode import InstallMode
+
+    monkeypatch.setattr(enroll_module, "detect_mode", lambda: InstallMode.USER)
+
+
+@pytest.fixture(autouse=True)
 def _garage_preconditions_pass_in_tests() -> Generator[None, None, None]:
     """Default Garage preconditions to PASS in every test.
 

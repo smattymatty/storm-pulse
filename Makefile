@@ -13,7 +13,8 @@ SCA_DIR ?= /tmp/stormpulse-sca
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
 .PHONY: check test mypy fitness deadcode security quality pre-release-check clean \
-        wire-contract log-line-contract garage-up garage-down test-wire test-garage-wire
+        wire-contract log-line-contract garage-up garage-down test-wire test-garage-wire \
+        test-ci
 
 # Umbrella: every check in one command. No Docker, no network (except
 # `security`, whose AI-defect checks may consult the PyPI registry).
@@ -46,6 +47,14 @@ quality:
 
 test:
 	$(PYTHON) -m pytest -q
+
+# CI's test job as CI runs it: its image, as root, on a read-only copy of this tree.
+# Catches what a .venv run cannot (root-only failures); needs Docker, so not in check.
+CI_IMAGE ?= $(shell grep -om1 '[^ ]*/storm-ci-python:[^ "]*' .forgejo/workflows/test.yml)
+test-ci:
+	docker run --rm -v "$(CURDIR)":/src:ro $(CI_IMAGE) bash -c 'mkdir /w && \
+	  tar -C /src --exclude=.venv --exclude=.git --exclude=__pycache__ -cf - . | tar -xf - -C /w && \
+	  cd /w && pip install -q -e ".[dev]" >/dev/null && make VENV= test'
 
 # Wire tests use real containers under tests/wire/ and are excluded from make check.
 # Each integration supplies <name>-up and test-<name>-wire targets.

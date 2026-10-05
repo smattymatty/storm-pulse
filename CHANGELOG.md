@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fitness Function 14: no publisher signing key in the agent. `stormpulse/`
+  importing `authoring` or naming an Ed25519 private key fails the check. It
+  replaces a test that grepped for one function name and so also flagged the
+  agent's own mTLS key, which cert renewal loads.
+- `make test-ci` runs the test job the way CI does: the CI image, as root, on
+  a read-only copy of the tree. It needs Docker, so `make check` leaves it out.
+
 - The agent renews its own client cert (ADR CORE-010, decisions 1 to 5).
   Once a day, inside 30 days of `notAfter`, it writes a fresh pending key
   (`agent-key.pem.new`, 0600) before sending anything, then POSTs a CSR to
