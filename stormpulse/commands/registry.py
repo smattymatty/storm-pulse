@@ -134,6 +134,17 @@ def build_registry(
     }
 
 
+def _refuse_folded_values(cmd_def: CommandSpec, runtime_params: dict[str, str]) -> None:
+    # The signed form joins params as k=v&k=v, so a value holding "&<param>="
+    # would sign the same as a different param set. Refuse it.
+    for name, value in runtime_params.items():
+        folded = set(re.findall(r"&([^&=]+)=", value)) & cmd_def.params.keys()
+        if folded:
+            raise ParamValidationError(
+                f"Value of {name!r} holds '&{min(folded)}=', ambiguous once signed"
+            )
+
+
 def validate_params(
     cmd_def: CommandSpec,
     runtime_params: dict[str, str],
@@ -147,14 +158,7 @@ def validate_params(
     unknown = set(runtime_params) - set(cmd_def.params)
     if unknown:
         raise ParamValidationError(f"Unknown params: {', '.join(sorted(unknown))}")
-    # The signed form joins params as k=v&k=v, so a value holding "&<param>="
-    # would sign the same as a different param set. Refuse it.
-    for name, value in runtime_params.items():
-        for other in cmd_def.params:
-            if f"&{other}=" in value:
-                raise ParamValidationError(
-                    f"Param {name!r} contains '&{other}=', which is ambiguous when signed"
-                )
+    _refuse_folded_values(cmd_def, runtime_params)
 
     merged: dict[str, str] = {}
     for name, pdef in cmd_def.params.items():
