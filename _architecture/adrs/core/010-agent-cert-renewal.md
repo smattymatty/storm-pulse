@@ -2,7 +2,7 @@
 adr:
   id: "CORE-010"
   title: "Agent client-cert renewal: the agent renews itself over mTLS"
-  status: "Proposed"
+  status: "Accepted"
   date: "2026-10-05"
   authors:
     - "Mathew Storm (maintainer, decisions)"
@@ -14,10 +14,11 @@ adr:
 
 **Tier: timeless.** The shape of how an agent replaces its own client
 certificate. Verify against `stormpulse/agent/ssl_context.py`,
-`stormpulse/enroll.py` and the renew module this ADR adds.
+`stormpulse/enroll.py`, which carries the renewal path beside enrollment.
 
-**Status: PROPOSED 2026-10-05.** Decisions grilled and maintainer-ruled
-2026-10-05; nothing built. The agent half (decisions 1 to 5) is buildable now.
+**Status: ACCEPTED 2026-10-05 (maintainer seal), sealed on the commit that
+lands this line; proposed at `4fc6c49`.** Decisions grilled and
+maintainer-ruled 2026-10-05, read-back folded the same day; nothing built. The agent half (decisions 1 to 5) is buildable now.
 The renew endpoint (decision 6) belongs to the control plane and lands after it.
 
 **Architectural Characteristics:**
@@ -43,9 +44,17 @@ bearer value; it never checks which certificate was presented.
 
 ### 1. The running agent renews itself, 30 days before expiry
 
-The run loop checks the certificate's `notAfter` daily. From 30 days out it
-attempts a renewal, and on failure it retries the next day. `stormpulse renew`
-runs the same path by hand. Nothing extra is installed or scheduled on a node.
+A task that lives as long as the agent, outside any one connection, checks
+the certificate's `notAfter` daily. From 30 days out it attempts a renewal,
+and on failure it retries the next day. The same check compares the serial on
+disk with the one loaded and rebuilds the context when they differ, so a
+renewal done by hand with `stormpulse renew` goes live within a day. Nothing
+extra is installed or scheduled on a node.
+
+Renewal is for **user mode**, which every production node runs. A system-mode
+unit is read-only to the agent and keeps its credentials root-owned, so there
+an attempt fails up front with reason `creds_not_writable`: the warning still
+fires, and the node re-enrolls by hand.
 
 ### 2. A fresh keypair every renewal, written before the request
 
