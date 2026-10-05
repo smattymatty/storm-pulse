@@ -5,13 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from stormpulse.agent.signoff_guard import (
-    APPLY_BLOCK_COMMAND,
-    SEALED_COMMANDS,
-    VERIFY_BLOCK_COMMAND,
     is_blocked_by_seal,
     needs_restart_to_load,
     restart_pending_result,
     sealed_refusal_result,
+)
+from stormpulse.commands.registry import (
+    APPLY_BLOCK_COMMAND,
+    SEALED_COMMANDS,
+    VERIFY_BLOCK_COMMAND,
 )
 from stormpulse.config import CommandSpec
 from stormpulse.signoff import SignoffState

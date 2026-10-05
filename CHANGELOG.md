@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Fitness Function 13: every shell hatch ships sealed. A registered command
+  whose argv runs `sh -c` (or bash, dash, zsh) and is missing from
+  `SEALED_COMMANDS` fails the check, as does a sealed name with no command.
+  The hatch names now live once, in `stormpulse.commands.registry`.
+
 - Fitness Function 12: CI runs what `make check` runs. A `make check` target
   with no CI caller, a scan tool run directly from the workflow, a job off the
   `docker` runner, or disagreeing CI image tags fails the check.
@@ -47,6 +52,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a change the caller has not seen. An empty `rules` list clears the
   config. Both params are `schema`-checked to exactly those keys. Neither
   command takes an S3 credential: the node's admin token does the work.
+
+### Removed
+
+- `stormpulse.commands.run_deploy_sequence`. Nothing called it; the agent
+  runs `command.sequence` through its dispatcher alone.
 
 ### Fixed
 

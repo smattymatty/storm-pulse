@@ -48,6 +48,12 @@ def wire_contract_commands() -> dict[str, Any]:
     agent CAN accept, not what one node does. Node-local ``[commands]`` and
     external adapters are per host and stay out. Outside the digest on purpose.
     """
+    specs = all_command_specs()
+    return {name: command_wire_entry(spec) for name, spec in sorted(specs.items())}
+
+
+def all_command_specs() -> dict[str, CommandSpec]:
+    """Built-ins plus every in-tree Integration's specs, argv included."""
     specs: dict[str, CommandSpec] = dict(COMMAND_REGISTRY)
     for integ in registered_integrations():
         if integ.declared_config is None:
@@ -57,7 +63,7 @@ def wire_contract_commands() -> dict[str, Any]:
             )
         parsed = integ.parse_config(dict(integ.declared_config))
         specs.update(integration_command_specs(integ, parsed))
-    return {name: command_wire_entry(spec) for name, spec in sorted(specs.items())}
+    return specs
 
 
 def command_wire_entry(spec: CommandSpec) -> dict[str, Any]:

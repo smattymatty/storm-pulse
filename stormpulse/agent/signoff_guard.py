@@ -4,13 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+from stormpulse.commands.registry import SEALED_COMMANDS as SEALED_COMMANDS
 from stormpulse.config import CommandSpec
 from stormpulse.protocol import CommandResultPayload
 from stormpulse.signoff import SignoffState
-
-VERIFY_BLOCK_COMMAND = "run_verify_block"
-APPLY_BLOCK_COMMAND = "run_apply_block"
-SEALED_COMMANDS = frozenset({VERIFY_BLOCK_COMMAND, APPLY_BLOCK_COMMAND})
 
 
 def is_blocked_by_seal(

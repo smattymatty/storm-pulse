@@ -24,6 +24,13 @@ class ParamValidationError(Exception):
     """Raised when runtime params fail validation."""
 
 
+# The shell hatches: argv carries dashboard-supplied shell text, so the seal
+# excludes them (CORE-004). Fitness Function 13 holds every shell argv to this set.
+VERIFY_BLOCK_COMMAND = "run_verify_block"
+APPLY_BLOCK_COMMAND = "run_apply_block"
+SEALED_COMMANDS = frozenset({VERIFY_BLOCK_COMMAND, APPLY_BLOCK_COMMAND})
+
+
 COMMAND_REGISTRY: dict[str, CommandSpec] = {
     "git_pull": CommandSpec(
         group="deploy",
@@ -62,17 +69,10 @@ COMMAND_REGISTRY: dict[str, CommandSpec] = {
             ),
         },
     ),
-    # Dashboard-driven verify-block execution for the sign-off checklist
-    # feature in the Storm Developments website. Unlike the other entries
-    # in this registry whose shell templates are baked in here, this one
-    # takes the shell text as a parameter (HMAC-signed by the dashboard).
-    # The trust shift is intentional and documented in the storm-pulse
-    # 0.1.8 CHANGELOG: the agent's job is faithful execution of
-    # dashboard-signed commands, not to be a defense-in-depth layer
-    # against a compromised dashboard. Confined to read-only verify
-    # checks by the dashboard side (the website refuses to dispatch
-    # any block whose `kind != verify`).
-    "run_verify_block": CommandSpec(
+    # Unlike the baked templates above, this runs signed shell text from the
+    # control plane's sign-off checklist: faithful execution, not a defence
+    # against a compromised control plane. Hence the seal (CORE-004).
+    VERIFY_BLOCK_COMMAND: CommandSpec(
         group="signoff",
         command=["/bin/bash", "-c", "{verify_command}"],
         timeout=30,
@@ -93,7 +93,7 @@ COMMAND_REGISTRY: dict[str, CommandSpec] = {
     # vulnerability scans, image builds) and multi-line heredocs that
     # the verify limits were never sized for. Seal-gated identically to
     # run_verify_block, see build_registry below.
-    "run_apply_block": CommandSpec(
+    APPLY_BLOCK_COMMAND: CommandSpec(
         group="signoff",
         command=["/bin/bash", "-c", "{apply_command}"],
         timeout=600,
@@ -128,7 +128,7 @@ def build_registry(
     on the host. See ``stormpulse.signoff`` and ADR CORE-004.
     """
     merged = {**COMMAND_REGISTRY, **config_commands}
-    auto_disabled = {"run_verify_block", "run_apply_block"} if signoff_sealed else set()
+    auto_disabled = SEALED_COMMANDS if signoff_sealed else frozenset()
     return {
         k: v for k, v in merged.items() if k not in disabled and k not in auto_disabled
     }

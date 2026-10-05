@@ -14,7 +14,6 @@
 # rewritten to describe the behaviour instead. Only shrinks.
 stormpulse/commands/jobs.py:147 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/commands/jobs.py:294 points at another repository; describe it, the far end is 'the control plane'
-stormpulse/commands/registry.py:73 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/bucket_resolver.py:6 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/bucket_resolver.py:55 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/bucket_resolver.py:80 points at another repository; describe it, the far end is 'the control plane'

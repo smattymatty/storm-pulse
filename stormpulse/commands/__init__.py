@@ -1,8 +1,7 @@
-"""Command whitelist, execution, and deploy sequences."""
+"""Command whitelist and execution."""
 
 from stormpulse.config import CommandSpec
 
-from .deploy import run_deploy_sequence
 from .registry import (
     COMMAND_REGISTRY,
     CommandError,
@@ -23,6 +22,5 @@ __all__ = [
     "execute_command",
     "get_command",
     "non_secret_params",
-    "run_deploy_sequence",
     "validate_params",
 ]
