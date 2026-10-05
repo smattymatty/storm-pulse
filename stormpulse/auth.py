@@ -159,9 +159,11 @@ class NonceStore:
     def check_and_store(self, nonce: str, max_age_seconds: int) -> None:
         """Record a nonce. Raises AuthError if already seen.
 
-        Also purges expired nonces (older than max_age_seconds).
+        Also purges nonces past max_age_seconds plus the skew tolerance.
         """
-        cutoff = time.time() - max_age_seconds
+        # A command dated up to the skew tolerance ahead stays fresh that much
+        # longer, so its nonce must outlive it by the same margin.
+        cutoff = time.time() - max_age_seconds - _CLOCK_SKEW_TOLERANCE_SECONDS
         try:
             with self._conn:
                 self._conn.execute(

@@ -50,6 +50,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A signed command can no longer be replayed after its nonce is evicted.
+  Commands dated up to 5s ahead stay fresh for `command_max_age_seconds`
+  plus 5s, but nonces were kept only `command_max_age_seconds`, leaving a
+  window of up to 5s where a captured command verified twice. Nonces now
+  outlive the freshness window.
+- A `command.sequence` naming a job or refresh command is refused before
+  any step runs. The sequence path ran every step as a subprocess, so a job
+  command's bare name went to a PATH lookup instead of an absolute binary.
+  The refusal is a `validation_failed` result on the wire.
+
 - The push-time dependency scan reads the installed tree. Skylos `--sca`
   sees exact pins only, and the manifest's ranges left it scanning 1 package;
   `make security` now freezes the environment to pins first (93 packages).

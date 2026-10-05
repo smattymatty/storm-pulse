@@ -12,7 +12,7 @@ import pytest
 
 from stormpulse.agent import Agent, dispatch
 from stormpulse.auth import NonceStore
-from stormpulse.config import Config
+from stormpulse.config import CommandSpec, Config
 from stormpulse.protocol import Envelope, MessageType, make_heartbeat
 from stormpulse.signoff import SignoffState
 from tests.helpers import (
@@ -269,6 +269,26 @@ async def test_dispatch_sequence_invalid_command_sends_failure(
     assert sent_data["payload"]["failure_reason"] == "validation_failed"
     assert sent_data["payload"]["command"] == "this_command_does_not_exist"
     assert sent_data["payload"]["sequence_id"]
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.dispatch.execute_command")
+async def test_dispatch_sequence_refuses_job_command(
+    mock_exec: MagicMock,
+    agent: Agent,
+) -> None:
+    """A job in a sequence is refused before any step runs, never PATH-resolved."""
+    agent.registry["some_job"] = CommandSpec(
+        group="g", command=["some_job"], timeout=5, mode="job", handler=lambda p: None
+    )
+    ws = AsyncMock()
+    await dispatch.dispatch_message(
+        agent, ws, sign_command_sequence(["git_pull", "some_job"])
+    )
+    mock_exec.assert_not_called()
+    sent_data = json.loads(ws.send.call_args[0][0])
+    assert sent_data["payload"]["failure_reason"] == "validation_failed"
+    assert sent_data["payload"]["command"] == "some_job"
 
 
 @pytest.mark.asyncio

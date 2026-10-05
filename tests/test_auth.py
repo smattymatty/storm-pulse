@@ -539,6 +539,20 @@ def test_verify_future_timestamp_too_far_raises(nonce_store: NonceStore) -> None
         verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
 
 
+def test_future_dated_command_cannot_replay_after_nonce_eviction(
+    nonce_store: NonceStore,
+) -> None:
+    """A future-dated command stays fresh past max_age, so its nonce must too."""
+    env = _make_signed_request(ts=datetime.now(UTC) - timedelta(seconds=58))
+    verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
+    # First seen 62s ago: the command was dated 4s ahead and is still fresh.
+    nonce_store._conn.execute("UPDATE seen_nonces SET seen_at = ?", (time.time() - 62,))
+    nonce_store._conn.commit()
+    with pytest.raises(AuthError) as exc_info:
+        verify_envelope(env, SECRET, nonce_store, max_age_seconds=60)
+    assert exc_info.value.reason == "replayed_nonce"
+
+
 def test_empty_command_list_in_sequence(nonce_store: NonceStore) -> None:
     """An empty command list should still produce a valid canonical message."""
     env = _make_signed_sequence(commands=[])

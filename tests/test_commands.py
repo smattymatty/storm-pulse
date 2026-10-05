@@ -97,6 +97,17 @@ def test_get_command_error_lists_valid_commands() -> None:
         get_command("nope", registry=COMMAND_REGISTRY)
 
 
+@patch("stormpulse.commands.registry.subprocess.run")
+def test_execute_command_refuses_job_spec(mock_run: MagicMock) -> None:
+    """A job's bare name never reaches subprocess, where PATH would resolve it."""
+    job = CommandSpec(
+        group="g", command=["some_job"], timeout=5, mode="job", handler=lambda p: None
+    )
+    with pytest.raises(CommandError, match="job command"):
+        execute_command("some_job", MagicMock(), "rid", registry={"some_job": job})
+    mock_run.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Resolution
 # ---------------------------------------------------------------------------

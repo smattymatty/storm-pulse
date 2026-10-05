@@ -260,12 +260,22 @@ def _resolve_command(
 
 
 def get_command(name: str, *, registry: dict[str, CommandSpec]) -> CommandSpec:
-    """Look up a command by name, or raise CommandError."""
+    """Look up a subprocess command by name, or raise CommandError.
+
+    A job or refresh spec carries a bare name, not an absolute binary, so
+    running one here would hand that name to a PATH lookup.
+    """
     try:
-        return registry[name]
+        cmd_def = registry[name]
     except KeyError:
         valid = ", ".join(sorted(registry))
         raise CommandError(f"Unknown command: {name!r}. Valid commands: {valid}")
+    if cmd_def.mode != "subprocess":
+        raise CommandError(
+            f"Command {name!r} is a {cmd_def.mode} command; send it on its own, "
+            "not in a sequence"
+        )
+    return cmd_def
 
 
 def execute_command(
