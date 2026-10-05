@@ -31,6 +31,7 @@ import ssl
 
 from stormpulse.agent import reconnect
 from stormpulse.agent.bootstrap import build_agent_dependencies
+from stormpulse.agent.cert_renew import cert_renew_loop
 from stormpulse.agent.integrations_runtime import IntegrationRuntime
 from stormpulse.agent.log_batches import PendingBatches
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
@@ -93,5 +94,11 @@ class Agent:
         self.job_manager: JobManager | None = None
 
     async def run(self) -> None:
-        """Connect, run tasks, reconnect on failure until shutdown."""
-        await reconnect.run_with_backoff(self)
+        """Connect, run tasks, reconnect on failure until shutdown.
+
+        Cert renewal runs beside the reconnect loop, never inside a session,
+        so a flap neither repeats nor cancels it (CORE-010 decision 1).
+        """
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(cert_renew_loop(self))
+            await reconnect.run_with_backoff(self)

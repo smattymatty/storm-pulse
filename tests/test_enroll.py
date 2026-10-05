@@ -8,6 +8,8 @@ import json
 import os
 import stat
 import urllib.error
+import urllib.request
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -16,15 +18,27 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
+from stormpulse.config import TlsConfig
 from stormpulse.enroll import (
+    RENEW_TIMEOUT_SECONDS,
     EnrollError,
+    RenewError,
     build_csr,
+    complete_pending_swap,
+    days_remaining,
     generate_keypair,
+    pending_key_path,
     preflight_creds_dir,
+    presented_cert,
+    read_cert_not_after,
+    read_cert_serial,
+    renew_certificate,
+    renew_endpoint,
     request_certificate,
     write_credentials,
     write_enroll_metadata,
 )
+from stormpulse.init.mode import InstallMode
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -553,3 +567,594 @@ class TestEnrollCLI:
             "agent-01",
             "wss://pulse.example.com/ws/pulse/",
         )
+
+
+# ---------------------------------------------------------------------------
+# Renewal (CORE-010)
+# ---------------------------------------------------------------------------
+
+
+def _tls(creds: Path) -> TlsConfig:
+    """The creds dir's paths, with the issuing CA already in ``ca.pem``."""
+    if not (creds / "ca.pem").exists():
+        (creds / "ca.pem").write_bytes(_CA_PEM)
+    return TlsConfig(
+        ca_cert=creds / "ca.pem",
+        client_cert=creds / "agent.pem",
+        client_key=creds / "agent-key.pem",
+    )
+
+
+_CA_NAME = x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "ca")])
+_CA_KEY = ec.generate_private_key(ec.SECP256R1())
+_CA_PEM = (
+    x509.CertificateBuilder()
+    .subject_name(_CA_NAME)
+    .issuer_name(_CA_NAME)
+    .public_key(_CA_KEY.public_key())
+    .serial_number(1)
+    .not_valid_before(datetime.now(UTC) - timedelta(days=1))
+    .not_valid_after(datetime.now(UTC) + timedelta(days=3650))
+    .sign(_CA_KEY, hashes.SHA256())
+    .public_bytes(serialization.Encoding.PEM)
+)
+
+
+def _sign(
+    csr_pem: bytes,
+    *,
+    serial: int = 7,
+    days: int = 90,
+    start: timedelta = timedelta(0),
+    ca_key: ec.EllipticCurvePrivateKey = _CA_KEY,
+    cn: str | None = None,
+) -> str:
+    """Issue a cert for the CSR's key from the CA in every test's ``ca.pem``."""
+    csr = x509.load_pem_x509_csr(csr_pem)
+    subject = csr.subject
+    if cn is not None:
+        subject = x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, cn)])
+    now = datetime.now(UTC) + start
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(_CA_NAME)
+        .public_key(csr.public_key())
+        .serial_number(serial)
+        .not_valid_before(now)
+        .not_valid_after(now + timedelta(days=days))
+        .sign(ca_key, hashes.SHA256())
+    )
+    return cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
+
+
+class _FakeRenewServer:
+    """Stands in for urlopen: records each CSR, answers or fails on cue."""
+
+    def __init__(self, *outcomes: Exception | None) -> None:
+        self.outcomes = list(outcomes)
+        self.csrs: list[x509.CertificateSigningRequest] = []
+        self.calls: list[tuple[urllib.request.Request, dict[str, object]]] = []
+
+    def __call__(self, req: urllib.request.Request, **kwargs: object) -> MagicMock:
+        assert isinstance(req.data, bytes)
+        body = json.loads(req.data)
+        self.calls.append((req, kwargs))
+        self.csrs.append(x509.load_pem_x509_csr(body["csr_pem"].encode()))
+        outcome = self.outcomes.pop(0) if self.outcomes else None
+        if outcome is not None:
+            raise outcome
+        return _mock_urlopen(
+            {"client_cert_pem": _sign(body["csr_pem"].encode()), "ca_cert_pem": "x"}
+        )
+
+    def public_keys(self) -> list[bytes]:
+        return [
+            c.public_key().public_bytes(
+                serialization.Encoding.DER,
+                serialization.PublicFormat.SubjectPublicKeyInfo,
+            )
+            for c in self.csrs
+        ]
+
+
+def _http_error(code: int) -> urllib.error.HTTPError:
+    return urllib.error.HTTPError(
+        "https://p/api/renew/", code, "x", email.message.Message(), None
+    )
+
+
+ENDPOINT = "https://pulse.example.com/api/renew/"
+DASHBOARD = "wss://pulse.example.com/ws/pulse/"
+
+
+class TestRenewCertificate:
+    def test_happy_path_returns_cert_for_pending_key(self, tmp_path: Path) -> None:
+        server = _FakeRenewServer()
+        ctx = MagicMock()
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            pem = renew_certificate(_tls(tmp_path), "agent-01", DASHBOARD, ctx)
+
+        live_key = tmp_path / "agent-key.pem"
+        key = serialization.load_pem_private_key(live_key.read_bytes(), password=None)
+        cert = x509.load_pem_x509_certificate(pem)
+        assert cert.public_key() == key.public_key()
+        assert (tmp_path / "agent.pem").read_bytes() == pem
+        assert stat.S_IMODE(live_key.stat().st_mode) == 0o600
+        req, kwargs = server.calls[0]
+        assert kwargs["context"] is ctx
+        assert req.full_url == ENDPOINT
+        assert isinstance(req.data, bytes)
+        assert json.loads(req.data).keys() == {"csr_pem"}
+        cn = server.csrs[0].subject.get_attributes_for_oid(x509.oid.NameOID.COMMON_NAME)
+        assert cn[0].value == "agent-01"
+
+    def test_lost_response_retry_sends_same_public_key(self, tmp_path: Path) -> None:
+        server = _FakeRenewServer(urllib.error.URLError(TimeoutError("timed out")))
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+            assert exc_info.value.reason == "unreachable"
+            renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+
+        first, second = server.public_keys()
+        assert first == second
+
+    def test_pending_key_on_disk_before_request(self, tmp_path: Path) -> None:
+        seen: list[bool] = []
+
+        def urlopen(req: urllib.request.Request, **_: object) -> MagicMock:
+            seen.append((tmp_path / "agent-key.pem.new").is_file())
+            raise _http_error(404)
+
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=urlopen):
+            with pytest.raises(RenewError):
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert seen == [True]
+
+    def test_corrupt_pending_key_is_replaced(self, tmp_path: Path) -> None:
+        (tmp_path / "agent-key.pem.new").write_bytes(b"garbage")
+        server = _FakeRenewServer()
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert b"BEGIN PRIVATE KEY" in (tmp_path / "agent-key.pem").read_bytes()
+
+    def test_unwritable_pending_key_is_creds_not_writable(self, tmp_path: Path) -> None:
+        (tmp_path / "agent-key.pem.new").mkdir()
+        server = _FakeRenewServer()
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "creds_not_writable"
+        assert "sudo" not in str(exc_info.value)
+        assert server.calls == []
+
+    @pytest.mark.parametrize(
+        ("code", "reason"),
+        [
+            (404, "endpoint_missing"),
+            (403, "refused"),
+            (401, "refused"),
+            (500, "http_error"),
+        ],
+    )
+    def test_http_errors_map_to_closed_reason(
+        self, tmp_path: Path, code: int, reason: str
+    ) -> None:
+        server = _FakeRenewServer(_http_error(code))
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == reason
+        assert exc_info.value.reason in RenewError.REASONS
+
+    def test_socket_error_is_unreachable(self, tmp_path: Path) -> None:
+        server = _FakeRenewServer(ConnectionResetError("reset"))
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "unreachable"
+
+    def test_cert_for_another_key_is_bad_response(self, tmp_path: Path) -> None:
+        other_csr = build_csr(generate_keypair()[0], "a")
+        resp = _mock_urlopen({"client_cert_pem": _sign(other_csr)})
+        with patch("stormpulse.enroll.urllib.request.urlopen", return_value=resp):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "bad_response"
+
+    @pytest.mark.parametrize(
+        "payload", [{"ca_cert_pem": "x"}, {"client_cert_pem": "not a cert"}]
+    )
+    def test_malformed_response_is_bad_response(
+        self, tmp_path: Path, payload: dict[str, str]
+    ) -> None:
+        with patch(
+            "stormpulse.enroll.urllib.request.urlopen",
+            return_value=_mock_urlopen(payload),
+        ):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "bad_response"
+
+    @pytest.mark.parametrize("raw", [b"<html>", b"[]"])
+    def test_non_json_object_body_is_bad_response(
+        self, tmp_path: Path, raw: bytes
+    ) -> None:
+        resp = _mock_urlopen({})
+        resp.read.return_value = raw
+        with patch("stormpulse.enroll.urllib.request.urlopen", return_value=resp):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "bad_response"
+
+    def test_read_only_creds_dir_fails_up_front_writing_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        if os.geteuid() == 0:
+            pytest.skip("root bypasses permission bits")
+        creds = tmp_path / "creds"
+        creds.mkdir()
+        (creds / "agent.pem").write_bytes(b"live")
+        tls = _tls(creds)
+        creds.chmod(0o500)
+        server = _FakeRenewServer()
+        try:
+            with (
+                patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server),
+                patch("stormpulse.enroll.generate_keypair") as gen,
+            ):
+                with pytest.raises(RenewError) as exc_info:
+                    renew_certificate(tls, "a", DASHBOARD, MagicMock())
+        finally:
+            creds.chmod(0o700)
+        assert exc_info.value.reason == "creds_not_writable"
+        gen.assert_not_called()
+        assert server.calls == []
+        assert sorted(p.name for p in creds.iterdir()) == ["agent.pem", "ca.pem"]
+
+    def test_system_mode_fails_up_front_even_when_writable(
+        self, tmp_path: Path
+    ) -> None:
+        """``sudo stormpulse renew`` would leave a root-only key (CORE-010 d1)."""
+        server = _FakeRenewServer()
+        with (
+            patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server),
+            patch("stormpulse.enroll.detect_mode", return_value=InstallMode.SYSTEM),
+            patch("stormpulse.enroll.generate_keypair") as gen,
+        ):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "creds_not_writable"
+        gen.assert_not_called()
+        assert server.calls == []
+
+    def test_request_uses_the_renew_timeout(self, tmp_path: Path) -> None:
+        server = _FakeRenewServer()
+        with (
+            patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server),
+            patch("stormpulse.enroll.RENEW_TIMEOUT_SECONDS", 7.0),
+        ):
+            renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert server.calls[0][1]["timeout"] == 7.0
+        assert RENEW_TIMEOUT_SECONDS < 20  # under the ping timeout
+
+    @pytest.mark.parametrize(
+        ("kwargs", "why"),
+        [
+            ({"ca_key": ec.generate_private_key(ec.SECP256R1())}, "not signed"),
+            ({"start": timedelta(days=-100)}, "validity window"),
+            ({"start": timedelta(hours=1)}, "validity window"),
+            ({"cn": "someone-else"}, "not issued to a"),
+        ],
+    )
+    def test_cert_the_terminator_would_refuse_is_bad_response(
+        self, tmp_path: Path, kwargs: dict[str, object], why: str
+    ) -> None:
+        old_cert, old_key = _seed_live_pair(tmp_path)
+
+        def urlopen(req: urllib.request.Request, **_: object) -> MagicMock:
+            assert isinstance(req.data, bytes)
+            csr = json.loads(req.data)["csr_pem"].encode()
+            return _mock_urlopen({"client_cert_pem": _sign(csr, **kwargs)})  # type: ignore[arg-type]
+
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=urlopen):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "bad_response"
+        assert why in str(exc_info.value)
+        assert (tmp_path / "agent.pem").read_bytes() == old_cert
+        assert (tmp_path / "agent-key.pem").read_bytes() == old_key
+
+    def test_small_clock_skew_is_accepted(self, tmp_path: Path) -> None:
+        def urlopen(req: urllib.request.Request, **_: object) -> MagicMock:
+            assert isinstance(req.data, bytes)
+            csr = json.loads(req.data)["csr_pem"].encode()
+            pem = _sign(csr, start=timedelta(minutes=2))
+            return _mock_urlopen({"client_cert_pem": pem})
+
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=urlopen):
+            renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+
+    def test_unreadable_ca_is_bad_response(self, tmp_path: Path) -> None:
+        tls = _tls(tmp_path)
+        tls.ca_cert.write_bytes(b"not a ca")
+        with patch(
+            "stormpulse.enroll.urllib.request.urlopen",
+            side_effect=_FakeRenewServer(),
+        ):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(tls, "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "bad_response"
+
+
+def _seed_live_pair(creds: Path, *, serial: int = 1) -> tuple[bytes, bytes]:
+    """Write a matching live pair, as enrollment left it; return (cert, key)."""
+    key, key_pem = generate_keypair()
+    cert_pem = _sign(build_csr(key, "a"), serial=serial).encode()
+    (creds / "agent.pem").write_bytes(cert_pem)
+    (creds / "agent-key.pem").write_bytes(key_pem)
+    return cert_pem, key_pem
+
+
+def _renew(creds: Path) -> None:
+    with patch(
+        "stormpulse.enroll.urllib.request.urlopen", side_effect=_FakeRenewServer()
+    ):
+        renew_certificate(_tls(creds), "a", DASHBOARD, MagicMock())
+
+
+def _cut_between_live_renames(creds: Path) -> None:
+    """One renewal whose power is cut after the cert goes live, before the key."""
+    real_replace = os.replace
+    live = {creds / "agent.pem", creds / "agent-key.pem"}
+    renamed: list[Path] = []
+
+    def replace(src: str | Path, dst: str | Path) -> None:
+        if Path(dst) in live:
+            if renamed:
+                raise OSError("power cut")
+            renamed.append(Path(dst))
+        real_replace(src, dst)
+
+    with (
+        patch(
+            "stormpulse.enroll.urllib.request.urlopen",
+            side_effect=_FakeRenewServer(),
+        ),
+        patch("stormpulse.enroll.os.replace", side_effect=replace),
+    ):
+        with pytest.raises(RenewError) as exc_info:
+            renew_certificate(_tls(creds), "a", DASHBOARD, MagicMock())
+    assert exc_info.value.reason == "creds_not_writable"
+
+
+class TestInstallRenewedPair:
+    def test_swap_leaves_live_pair_and_whole_prev_only(self, tmp_path: Path) -> None:
+        old_cert, old_key = _seed_live_pair(tmp_path)
+        _renew(tmp_path)
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "agent-key.pem",
+            "agent-key.pem.prev",
+            "agent.pem",
+            "agent.pem.prev",
+            "ca.pem",
+        ]
+        assert (tmp_path / "agent.pem.prev").read_bytes() == old_cert
+        assert (tmp_path / "agent-key.pem.prev").read_bytes() == old_key
+        assert read_cert_serial(tmp_path / "agent.pem") == 7
+        live = x509.load_pem_x509_certificate((tmp_path / "agent.pem").read_bytes())
+        key = serialization.load_pem_private_key(
+            (tmp_path / "agent-key.pem").read_bytes(), password=None
+        )
+        assert live.public_key() == key.public_key()
+
+    def test_second_renew_keeps_one_prev_generation(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        _renew(tmp_path)
+        middle = (tmp_path / "agent.pem").read_bytes()
+        _renew(tmp_path)
+        assert (tmp_path / "agent.pem.prev").read_bytes() == middle
+        assert len(list(tmp_path.iterdir())) == 5
+
+    def test_stale_prev_tmp_from_a_crash_is_cleared(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        (tmp_path / "agent.pem.prev.tmp").write_bytes(b"left by a crash")
+        _renew(tmp_path)
+        assert not (tmp_path / "agent.pem.prev.tmp").exists()
+        assert read_cert_serial(tmp_path / "agent.pem") == 7
+
+    def test_mismatched_live_pair_never_overwrites_prev(self, tmp_path: Path) -> None:
+        old_cert, old_key = _seed_live_pair(tmp_path)
+        (tmp_path / "agent.pem.prev").write_bytes(old_cert)
+        (tmp_path / "agent-key.pem.prev").write_bytes(old_key)
+        _, stray_key = generate_keypair()
+        (tmp_path / "agent-key.pem").write_bytes(stray_key)  # crash mid-swap
+        _renew(tmp_path)
+        assert (tmp_path / "agent.pem.prev").read_bytes() == old_cert
+        assert (tmp_path / "agent-key.pem.prev").read_bytes() == old_key
+
+    def test_crash_between_live_renames_keeps_pending_key(self, tmp_path: Path) -> None:
+        old_cert, old_key = _seed_live_pair(tmp_path)
+        _cut_between_live_renames(tmp_path)
+
+        new_cert = (tmp_path / "agent.pem").read_bytes()
+        assert new_cert != old_cert
+        assert (tmp_path / "agent-key.pem").read_bytes() == old_key
+        assert (tmp_path / "agent-key.pem.new").exists()
+        assert (tmp_path / "agent.pem.prev").read_bytes() == old_cert
+        assert (tmp_path / "agent-key.pem.prev").read_bytes() == old_key
+
+    def test_unwritable_new_cert_is_creds_not_writable(self, tmp_path: Path) -> None:
+        old_cert, _ = _seed_live_pair(tmp_path)
+        (tmp_path / "agent.pem.new").mkdir()
+        with pytest.raises(RenewError) as exc_info:
+            _renew(tmp_path)
+        assert exc_info.value.reason == "creds_not_writable"
+        assert "sudo" not in str(exc_info.value)
+        assert (tmp_path / "agent.pem").read_bytes() == old_cert
+
+
+class TestCompletePendingSwap:
+    def test_rolls_an_interrupted_swap_forward(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        _cut_between_live_renames(tmp_path)
+        pending = (tmp_path / "agent-key.pem.new").read_bytes()
+
+        assert complete_pending_swap(_tls(tmp_path)) is True
+        assert (tmp_path / "agent-key.pem").read_bytes() == pending
+        assert not (tmp_path / "agent-key.pem.new").exists()
+        assert presented_cert(_tls(tmp_path)) == tmp_path / "agent.pem"
+
+    def test_pending_key_of_a_failed_attempt_is_left_alone(
+        self, tmp_path: Path
+    ) -> None:
+        _, old_key = _seed_live_pair(tmp_path)
+        with patch(
+            "stormpulse.enroll.urllib.request.urlopen",
+            side_effect=_FakeRenewServer(_http_error(404)),
+        ):
+            with pytest.raises(RenewError):
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+
+        assert complete_pending_swap(_tls(tmp_path)) is False
+        assert (tmp_path / "agent-key.pem").read_bytes() == old_key
+        assert (tmp_path / "agent-key.pem.new").exists()
+
+    def test_no_pending_key_is_a_no_op(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        assert complete_pending_swap(_tls(tmp_path)) is False
+
+    def test_unwritable_key_reports_false(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        _cut_between_live_renames(tmp_path)
+        with patch("stormpulse.enroll.os.replace", side_effect=OSError("ro")):
+            assert complete_pending_swap(_tls(tmp_path)) is False
+
+
+class TestPresentedCert:
+    def test_whole_live_pair_is_presented(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        assert presented_cert(_tls(tmp_path)) == tmp_path / "agent.pem"
+
+    def test_broken_live_pair_presents_whole_prev(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        _renew(tmp_path)
+        (tmp_path / "agent-key.pem").write_bytes(b"corrupt")
+        assert presented_cert(_tls(tmp_path)) == tmp_path / "agent.pem.prev"
+
+    def test_cut_swap_presents_live_it_will_roll_forward_to(
+        self, tmp_path: Path
+    ) -> None:
+        _seed_live_pair(tmp_path)
+        _cut_between_live_renames(tmp_path)
+        assert presented_cert(_tls(tmp_path)) == tmp_path / "agent.pem"
+
+    def test_nothing_whole_reports_live(self, tmp_path: Path) -> None:
+        (tmp_path / "agent.pem").write_bytes(b"x")
+        assert presented_cert(_tls(tmp_path)) == tmp_path / "agent.pem"
+
+
+class TestRenewHelpers:
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            (
+                "wss://pulse.example.com/ws/pulse/",
+                "https://pulse.example.com/api/renew/",
+            ),
+            ("wss://p.example:8443/ws/pulse/?x=1", "https://p.example:8443/api/renew/"),
+            ("ws://localhost:8000/ws/pulse/", "http://localhost:8000/api/renew/"),
+        ],
+    )
+    def test_renew_endpoint_derives_from_transport(
+        self, url: str, expected: str
+    ) -> None:
+        assert renew_endpoint(url) == expected
+
+    def test_read_cert_not_after_and_serial(self, tmp_path: Path) -> None:
+        key, _ = generate_keypair()
+        path = tmp_path / "agent.pem"
+        path.write_text(_sign(build_csr(key, "a"), serial=4242, days=30))
+        not_after = read_cert_not_after(path)
+        assert not_after is not None
+        assert timedelta(days=29) < not_after - datetime.now(UTC) <= timedelta(days=30)
+        assert read_cert_serial(path) == 4242
+
+    def test_unreadable_cert_reads_as_none(self, tmp_path: Path) -> None:
+        bad = tmp_path / "agent.pem"
+        bad.write_bytes(b"nope")
+        assert read_cert_not_after(bad) is None
+        assert read_cert_serial(bad) is None
+        assert read_cert_not_after(tmp_path / "missing.pem") is None
+
+    def test_days_remaining_counts_whole_days(self) -> None:
+        now = datetime(2026, 10, 5, tzinfo=UTC)
+        assert days_remaining(now + timedelta(days=13, hours=23), now) == 13
+        assert days_remaining(now + timedelta(days=14), now) == 14
+
+    def test_pending_key_path_sits_beside_live_key(self) -> None:
+        assert pending_key_path(Path("/c/agent-key.pem")) == Path(
+            "/c/agent-key.pem.new"
+        )
+
+
+class TestRenewFileHygiene:
+    """Hunted edges: key type, cert mode, and the enrollment error text."""
+
+    def test_non_ec_pending_key_is_replaced_with_ec(self, tmp_path: Path) -> None:
+        from cryptography.hazmat.primitives.asymmetric import rsa
+
+        rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        (tmp_path / "agent-key.pem.new").write_bytes(
+            rsa_key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            )
+        )
+        server = _FakeRenewServer()
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert isinstance(server.csrs[0].public_key(), ec.EllipticCurvePublicKey)
+        live = serialization.load_pem_private_key(
+            (tmp_path / "agent-key.pem").read_bytes(), password=None
+        )
+        assert isinstance(live, ec.EllipticCurvePrivateKey)
+
+    def test_installed_cert_keeps_enrollment_mode(self, tmp_path: Path) -> None:
+        _seed_live_pair(tmp_path)
+        _renew(tmp_path)
+        assert stat.S_IMODE((tmp_path / "agent.pem").stat().st_mode) == 0o644
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+    def test_permission_denied_pending_key_never_says_enroll_with_sudo(
+        self, tmp_path: Path
+    ) -> None:
+        blocker = tmp_path / "agent-key.pem.tmp"  # _write_file's tmp for .new
+        blocker.write_bytes(b"")
+        blocker.chmod(0o400)
+        server = _FakeRenewServer()
+        with patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server):
+            with pytest.raises(RenewError) as exc_info:
+                renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
+        assert exc_info.value.reason == "creds_not_writable"
+        assert "sudo" not in str(exc_info.value)
+        assert "Permission denied" in str(exc_info.value)
+        assert server.calls == []
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file modes")
+    def test_permission_denied_new_cert_never_says_enroll_with_sudo(
+        self, tmp_path: Path
+    ) -> None:
+        old_cert, _ = _seed_live_pair(tmp_path)
+        blocker = tmp_path / "agent.pem.tmp"  # _write_file's tmp for agent.pem.new
+        blocker.write_bytes(b"")
+        blocker.chmod(0o400)
+        with pytest.raises(RenewError) as exc_info:
+            _renew(tmp_path)
+        assert exc_info.value.reason == "creds_not_writable"
+        assert "sudo" not in str(exc_info.value)
+        assert "Permission denied" in str(exc_info.value)
+        assert (tmp_path / "agent.pem").read_bytes() == old_cert

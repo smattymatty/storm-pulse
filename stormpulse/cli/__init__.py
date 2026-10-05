@@ -222,6 +222,18 @@ def main() -> None:
         help=f"path to config file (default: {_DEFAULT_CONFIG})",
     )
 
+    # --- renew subcommand ---
+    renew_parser = subparsers.add_parser(
+        "renew",
+        help="renew the client cert now (CORE-010), ignoring the 30-day window",
+    )
+    renew_parser.add_argument(
+        "config",
+        nargs="?",
+        default=_DEFAULT_CONFIG,
+        help=f"path to config file (default: {_DEFAULT_CONFIG})",
+    )
+
     # --- config subcommand group ---
     config_parser = subparsers.add_parser(
         "config",
@@ -307,6 +319,10 @@ def main() -> None:
         from stormpulse.cli.status import cmd_status
 
         cmd_status(args)
+    elif args.command == "renew":
+        from stormpulse.cli.renew import cmd_renew
+
+        cmd_renew(args)
     elif args.command == "config":
         if getattr(args, "config_command", None) == "check":
             from stormpulse.cli.config_check import cmd_config_check
@@ -348,7 +364,10 @@ def main() -> None:
         else:
             print("Usage: stormpulse garage <subcommand>\n", file=sys.stderr)
             print("Subcommands:", file=sys.stderr)
-            print("  init         Detect and configure Garage integration", file=sys.stderr)
+            print(
+                "  init         Detect and configure Garage integration",
+                file=sys.stderr,
+            )
             print(
                 "  investigate  Run a garage diagnostic case file",
                 file=sys.stderr,
@@ -449,6 +468,7 @@ def main() -> None:
                 file=sys.stderr,
             )
             print("  status               Show agent status", file=sys.stderr)
+            print("  renew                Renew the client cert now", file=sys.stderr)
             print(
                 "  config               Validate configuration without booting",
                 file=sys.stderr,

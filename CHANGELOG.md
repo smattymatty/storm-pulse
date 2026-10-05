@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The agent renews its own client cert (ADR CORE-010, decisions 1 to 5).
+  Once a day, inside 30 days of `notAfter`, it writes a fresh pending key
+  (`agent-key.pem.new`, 0600) before sending anything, then POSTs a CSR to
+  `https://<pulse host>/api/renew/` over mTLS, presenting the current cert.
+  On success the old pair moves to `.prev`, the new pair goes live, and the
+  SSL context is rebuilt in memory; the open socket is left alone, so the next
+  reconnect presents the new cert. The loop lives beside the connection, not
+  inside it: a flapping link adds no attempts. Each attempt emits
+  `cert_renew_succeeded` or `cert_renew_failed` with `days_remaining` and a
+  `reason` (`creds_not_writable`, `unreachable`, `endpoint_missing`,
+  `refused`, `http_error`, `bad_response`, `cert_unreadable`, `unspecified`),
+  never key or cert material, and logs a journal line, at ERROR inside 14
+  days. A response is installed only if it certifies the pending key, chains
+  to `ca.pem`, is valid now and names the agent id. The renew
+  endpoint belongs to the control plane and is not live yet, so until it is a
+  404 is an ordinary daily failure and that failure is the expiry warning.
+  User mode only: a creds directory the agent cannot write, or a run as root
+  (system mode, `sudo stormpulse renew`), fails up front with
+  `creds_not_writable`.
+- Boot falls back to `agent.pem.prev` / `agent-key.pem.prev` when the live
+  pair will not load, and logs at ERROR naming both. With both broken it
+  raises the same error it raised before. A swap cut off after the new cert
+  went live is finished from the pending key before the load. The daily check
+  judges the cert the context actually holds: an agent on `.prev` renews at
+  once, whatever the live file says, and warns by `.prev`'s expiry.
+- `stormpulse renew [config]` runs one renewal by hand, ignoring the 30-day
+  window, and prints days remaining before and after. It writes files only;
+  a running agent sees the new serial at its next daily check and rebuilds
+  its context.
+- `stormpulse investigate box` adds a "client cert expiry" suspect:
+  IMPLICATED under 14 days or when the agent would present `.prev`, CLEARED
+  otherwise, INCONCLUSIVE when the cert or config cannot be read.
+
 - Fitness Function 13: every shell hatch ships sealed. A registered command
   whose argv runs `sh -c` (or bash, dash, zsh) and is missing from
   `SEALED_COMMANDS` fails the check, as does a sealed name with no command.

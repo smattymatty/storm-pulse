@@ -7,8 +7,8 @@ import grp
 import os
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from datetime import date as date_cls
-from datetime import datetime
 from pathlib import Path
 
 from stormpulse.sdk.investigate import CaseFile, SuspectReport, Verdict, Window
@@ -29,7 +29,8 @@ def read_proc_stat_cpu(text: str) -> tuple[int, ...] | None:
 
 
 def judge_cpu_pressure(
-    before: tuple[int, ...], after: tuple[int, ...],
+    before: tuple[int, ...],
+    after: tuple[int, ...],
 ) -> dict[str, float]:
     """iowait/steal as a percent of the sampled delta (fields: user nice
     system idle iowait irq softirq steal)."""
@@ -70,7 +71,9 @@ def judge_reboots(last_output: str, window: Window) -> list[datetime]:
 
 
 _APT_START_RE = re.compile(r"^Start-Date:\s+(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2})")
-_UU_SCHEDULED_RE = re.compile(r"Reboot scheduled for \w+ (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+_UU_SCHEDULED_RE = re.compile(
+    r"Reboot scheduled for \w+ (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})"
+)
 
 
 def judge_apt_activity(history_text: str, window: Window) -> list[datetime]:
@@ -93,9 +96,7 @@ def judge_scheduled_reboots(uu_log_text: str) -> list[datetime]:
     scheduled: list[datetime] = []
     for m in _UU_SCHEDULED_RE.finditer(uu_log_text):
         try:
-            scheduled.append(
-                datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S")
-            )
+            scheduled.append(datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"))
         except ValueError:
             continue
     return scheduled
@@ -115,7 +116,7 @@ _STORAGE_AWAIT_THRESHOLD_MS = 100.0  # healthy virtual disks sit at 1-5ms
 
 def judge_sar_spikes(
     text: str,
-    file_date: "date_cls",
+    file_date: date_cls,
     threshold_ms: float = _STORAGE_AWAIT_THRESHOLD_MS,
 ) -> list[StorageSpike]:
     """Block-device latency spikes from one day's ``sar -d`` output.
@@ -145,15 +146,17 @@ def judge_sar_spikes(
         except (ValueError, IndexError):
             continue
         if await_ms >= threshold_ms:
-            spikes.append(StorageSpike(
-                at=datetime.combine(file_date, sampled),
-                device=device,
-                await_ms=await_ms,
-            ))
+            spikes.append(
+                StorageSpike(
+                    at=datetime.combine(file_date, sampled),
+                    device=device,
+                    await_ms=await_ms,
+                )
+            )
     return spikes
 
 
-def _fetch_sar_history() -> list[tuple["date_cls", str]] | None:
+def _fetch_sar_history() -> list[tuple[date_cls, str]] | None:
     """Every retained sysstat day file as (file date, ``sar -d`` text);
     None when sysstat isn't recording here."""
     day_files = sorted(Path("/var/log/sysstat").glob("sa[0-3][0-9]"))
@@ -181,6 +184,33 @@ def judge_kernel_lines(text: str) -> list[str]:
     return hits
 
 
+def judge_cert_expiry(
+    not_after: datetime | None, now: datetime, *, on_prev: bool = False
+) -> SuspectReport:
+    """Days left on the presented client cert; IMPLICATED inside CORE-010's urgent window."""
+    from stormpulse.enroll import URGENT_WINDOW, days_remaining
+
+    if not_after is None:
+        return SuspectReport(
+            suspect="client cert expiry",
+            verdict=Verdict.INCONCLUSIVE,
+            evidence="Client cert unreadable.",
+            remedy="stormpulse status",
+        )
+    urgent = on_prev or not_after - now < URGENT_WINDOW
+    evidence = (
+        f"{days_remaining(not_after, now)} day(s) remaining "
+        f"(notAfter {not_after:%Y-%m-%d})."
+    )
+    if on_prev:
+        evidence += " The live pair will not load; the agent presents .prev."
+    return SuspectReport(
+        suspect="client cert expiry",
+        verdict=Verdict.IMPLICATED if urgent else Verdict.CLEARED,
+        evidence=evidence,
+    )
+
+
 def _can_read_system_journal() -> bool:
     if os.geteuid() == 0:
         return True
@@ -192,7 +222,24 @@ def _can_read_system_journal() -> bool:
     return bool(allowed & names)
 
 
-def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ignore[SKY-Q301,SKY-Q306,SKY-C304] branch-per-verdict is the CORE-005 case-script contract
+def _read_client_cert_expiry(
+    args: argparse.Namespace,
+) -> tuple[datetime | None, bool]:
+    """notAfter of the cert the agent presents, and whether that is ``.prev``."""
+    from stormpulse.config import ConfigError, load_config
+    from stormpulse.enroll import presented_cert, read_cert_not_after
+
+    try:
+        tls = load_config(Path(args.config)).tls
+    except (ConfigError, OSError):  # a 0640 system config, read by a non-member
+        return None, False
+    cert = presented_cert(tls)
+    return read_cert_not_after(cert), cert != tls.client_cert
+
+
+def run_box(  # skylos: ignore[SKY-Q301,SKY-Q306,SKY-C304] branch-per-verdict is the CORE-005 case-script contract
+    args: argparse.Namespace, window: Window
+) -> CaseFile:
     # Function-level: make_case lives in the host (__init__), which imports this
     # module for the _CORE registry.
     from . import make_case
@@ -212,24 +259,28 @@ def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ig
     except OSError:
         before = after = None
     if before is None or after is None:
-        reports.append(SuspectReport(
-            suspect="cpu starvation (steal/iowait)",
-            verdict=Verdict.INCONCLUSIVE,
-            evidence="/proc/stat unreadable.",
-            remedy="vmstat 2 5  (watch the st and wa columns)",
-        ))
+        reports.append(
+            SuspectReport(
+                suspect="cpu starvation (steal/iowait)",
+                verdict=Verdict.INCONCLUSIVE,
+                evidence="/proc/stat unreadable.",
+                remedy="vmstat 2 5  (watch the st and wa columns)",
+            )
+        )
     else:
         pressure = judge_cpu_pressure(before, after)
         starved = pressure["steal"] >= 10.0 or pressure["iowait"] >= 25.0
-        reports.append(SuspectReport(
-            suspect="cpu starvation (steal/iowait)",
-            verdict=Verdict.IMPLICATED if starved else Verdict.CLEARED,
-            evidence=f"right now: steal {pressure['steal']:.1f}%, "
-                     f"iowait {pressure['iowait']:.1f}%.",
-            detail="Point-in-time sample. Steal is the hypervisor giving "
-                   "your CPU away; a full host-side pause shows NO steal, "
-                   "only the freeze signature in `investigate flaps`.",
-        ))
+        reports.append(
+            SuspectReport(
+                suspect="cpu starvation (steal/iowait)",
+                verdict=Verdict.IMPLICATED if starved else Verdict.CLEARED,
+                evidence=f"right now: steal {pressure['steal']:.1f}%, "
+                f"iowait {pressure['iowait']:.1f}%.",
+                detail="Point-in-time sample. Steal is the hypervisor giving "
+                "your CPU away; a full host-side pause shows NO steal, "
+                "only the freeze signature in `investigate flaps`.",
+            )
+        )
         if not starved:
             next_moves.append(
                 "For history through an overnight window, enable sysstat "
@@ -246,41 +297,50 @@ def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ig
 
     last_out = run_evidence(["last", "-F", "reboot"])
     if last_out is None:
-        reports.append(SuspectReport(
-            suspect="unexpected reboots",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
-            verdict=Verdict.INCONCLUSIVE,
-            evidence="`last -F reboot` unavailable.",
-            remedy="last -F reboot | head -5",
-        ))
+        reports.append(
+            SuspectReport(
+                suspect="unexpected reboots",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
+                verdict=Verdict.INCONCLUSIVE,
+                evidence="`last -F reboot` unavailable.",
+                remedy="last -F reboot | head -5",
+            )
+        )
     else:
         reboots = judge_reboots(last_out, window)
         scheduled = judge_scheduled_reboots(uu_text) if uu_text else []
         unexplained = [
-            r for r in reboots
+            r
+            for r in reboots
             if not any(abs((r - s).total_seconds()) < 600 for s in scheduled)
         ]
         if not reboots:
-            reports.append(SuspectReport(
-                suspect="unexpected reboots",
-                verdict=Verdict.CLEARED,
-                evidence="No reboots in window.",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="unexpected reboots",
+                    verdict=Verdict.CLEARED,
+                    evidence="No reboots in window.",
+                )
+            )
         elif not unexplained:
-            reports.append(SuspectReport(
-                suspect="unexpected reboots",
-                verdict=Verdict.CLEARED,
-                evidence=f"{len(reboots)} reboot(s) in window, all matching "
-                         "an unattended-upgrades scheduled reboot.",
-                detail="A boot at the scheduled reboot time is routine, not "
-                       "an anomaly.",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="unexpected reboots",
+                    verdict=Verdict.CLEARED,
+                    evidence=f"{len(reboots)} reboot(s) in window, all matching "
+                    "an unattended-upgrades scheduled reboot.",
+                    detail="A boot at the scheduled reboot time is routine, not "
+                    "an anomaly.",
+                )
+            )
         else:
             stamps = ", ".join(r.strftime("%m-%d %H:%M") for r in unexplained)
-            reports.append(SuspectReport(
-                suspect="unexpected reboots",
-                verdict=Verdict.IMPLICATED,
-                evidence=f"reboot(s) at {stamps} match no scheduled reboot.",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="unexpected reboots",
+                    verdict=Verdict.IMPLICATED,
+                    evidence=f"reboot(s) at {stamps} match no scheduled reboot.",
+                )
+            )
             open_questions.append(
                 f"Were the reboot(s) at {stamps} operator-initiated? If not, "
                 "the host restarted under you - provider-ticket territory."
@@ -292,122 +352,145 @@ def run_box(args: argparse.Namespace, window: Window) -> CaseFile:  # skylos: ig
     except OSError:
         apt_text = None
     if apt_text is None:
-        reports.append(SuspectReport(
-            suspect="package upgrades",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
-            verdict=Verdict.INCONCLUSIVE,
-            evidence="/var/log/apt/history.log unreadable as this user.",
-            remedy="sudo tail -30 /var/log/apt/history.log",
-        ))
+        reports.append(
+            SuspectReport(
+                suspect="package upgrades",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
+                verdict=Verdict.INCONCLUSIVE,
+                evidence="/var/log/apt/history.log unreadable as this user.",
+                remedy="sudo tail -30 /var/log/apt/history.log",
+            )
+        )
     else:
         apt_runs = judge_apt_activity(apt_text, window)
         if apt_runs:
-            stamps = ", ".join(r.strftime("%m-%d %H:%M") for r in apt_runs)  # skylos: ignore[SKY-L027] evidence timestamps share one rendering format
-            reports.append(SuspectReport(
-                suspect="package upgrades",
-                verdict=Verdict.IMPLICATED,
-                evidence=f"apt ran inside the window: {stamps}.",
-                detail="dpkg on a small VPS can stall the box; correlate "
-                       "these times with the flap/freeze timestamps.",
-            ))
+            stamp = "%m-%d %H:%M"  # skylos: ignore[SKY-L027] evidence timestamps share one rendering format
+            stamps = ", ".join(r.strftime(stamp) for r in apt_runs)
+            reports.append(
+                SuspectReport(
+                    suspect="package upgrades",
+                    verdict=Verdict.IMPLICATED,
+                    evidence=f"apt ran inside the window: {stamps}.",
+                    detail="dpkg on a small VPS can stall the box; correlate "
+                    "these times with the flap/freeze timestamps.",
+                )
+            )
         else:
-            reports.append(SuspectReport(
-                suspect="package upgrades",
-                verdict=Verdict.CLEARED,
-                evidence="No apt activity in window.",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="package upgrades",
+                    verdict=Verdict.CLEARED,
+                    evidence="No apt activity in window.",
+                )
+            )
 
     history = _fetch_sar_history()
     if history is None:
-        reports.append(SuspectReport(
-            suspect="storage latency (sar history)",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
-            verdict=Verdict.INCONCLUSIVE,
-            evidence="No sysstat history on this box - storage stalls in the "
-                     "past are invisible without the flight recorder.",
-            detail="sar samples CPU and per-disk latency every 10 minutes "
-                   "around the clock; it is how a host-side storage stall "
-                   "gets caught after the fact.",
-            remedy="sudo apt install sysstat && sudo systemctl enable --now "
-                   "sysstat sysstat-collect.timer",
-        ))
+        reports.append(
+            SuspectReport(
+                suspect="storage latency (sar history)",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
+                verdict=Verdict.INCONCLUSIVE,
+                evidence="No sysstat history on this box - storage stalls in the "
+                "past are invisible without the flight recorder.",
+                detail="sar samples CPU and per-disk latency every 10 minutes "
+                "around the clock; it is how a host-side storage stall "
+                "gets caught after the fact.",
+                remedy="sudo apt install sysstat && sudo systemctl enable --now "
+                "sysstat sysstat-collect.timer",
+            )
+        )
     else:
-        all_spikes = [
-            s for day, text in history for s in judge_sar_spikes(text, day)
-        ]
+        all_spikes = [s for day, text in history for s in judge_sar_spikes(text, day)]
         in_window = [
-            s for s in all_spikes
-            if s.at >= window.since
-            and (window.until is None or s.at <= window.until)
+            s
+            for s in all_spikes
+            if s.at >= window.since and (window.until is None or s.at <= window.until)
         ]
         days_hit = len({s.at.date() for s in all_spikes})
         if in_window:
             worst = max(in_window, key=lambda s: s.await_ms)
-            reports.append(SuspectReport(
-                suspect="storage latency (sar history)",
-                verdict=Verdict.IMPLICATED,
-                evidence=f"{len(in_window)} sample(s) >= "
-                         f"{int(_STORAGE_AWAIT_THRESHOLD_MS)}ms await in "
-                         f"window; worst {worst.await_ms:.0f}ms on "
-                         f"{worst.device} at {worst.at:%m-%d %H:%M}.",
-                detail="High await at trickle load is the storage below the "
-                       "guest stalling, not guest workload - "
-                       "provider-ticket territory.",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="storage latency (sar history)",
+                    verdict=Verdict.IMPLICATED,
+                    evidence=f"{len(in_window)} sample(s) >= "
+                    f"{int(_STORAGE_AWAIT_THRESHOLD_MS)}ms await in "
+                    f"window; worst {worst.await_ms:.0f}ms on "
+                    f"{worst.device} at {worst.at:%m-%d %H:%M}.",
+                    detail="High await at trickle load is the storage below the "
+                    "guest stalling, not guest workload - "
+                    "provider-ticket territory.",
+                )
+            )
         elif all_spikes:
             worst = max(all_spikes, key=lambda s: s.await_ms)
-            reports.append(SuspectReport(
-                suspect="storage latency (sar history)",
-                verdict=Verdict.CLEARED,
-                evidence=f"No spikes in this window, but {len(all_spikes)} "
-                         f"sample(s) >= {int(_STORAGE_AWAIT_THRESHOLD_MS)}ms "
-                         f"await across {days_hit} recorded day(s); worst "
-                         f"{worst.await_ms:.0f}ms on {worst.device} at "
-                         f"{worst.at:%m-%d %H:%M}.",
-                detail="Chronic background storage latency: cleared for this "
-                       "window, ticket material overall (sar -d has the rows).",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="storage latency (sar history)",
+                    verdict=Verdict.CLEARED,
+                    evidence=f"No spikes in this window, but {len(all_spikes)} "
+                    f"sample(s) >= {int(_STORAGE_AWAIT_THRESHOLD_MS)}ms "
+                    f"await across {days_hit} recorded day(s); worst "
+                    f"{worst.await_ms:.0f}ms on {worst.device} at "
+                    f"{worst.at:%m-%d %H:%M}.",
+                    detail="Chronic background storage latency: cleared for this "
+                    "window, ticket material overall (sar -d has the rows).",
+                )
+            )
         else:
-            reports.append(SuspectReport(
-                suspect="storage latency (sar history)",
-                verdict=Verdict.CLEARED,
-                evidence="No block-device awaits >= "
-                         f"{int(_STORAGE_AWAIT_THRESHOLD_MS)}ms anywhere in "
-                         "the sysstat retention window.",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="storage latency (sar history)",
+                    verdict=Verdict.CLEARED,
+                    evidence="No block-device awaits >= "
+                    f"{int(_STORAGE_AWAIT_THRESHOLD_MS)}ms anywhere in "
+                    "the sysstat retention window.",
+                )
+            )
 
     if not _can_read_system_journal():
-        reports.append(SuspectReport(
-            suspect="kernel faults",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
-            verdict=Verdict.INCONCLUSIVE,
-            evidence="System journal not readable as this user.",
-            remedy=f'sudo journalctl -k --since "{journal_ts(window.since)}" '
-                   '--no-pager | grep -iE "rcu|stall|hung|lockup|oom"',
-        ))
+        reports.append(
+            SuspectReport(
+                suspect="kernel faults",  # skylos: ignore[SKY-L027] each verdict branch names its suspect - CORE-005 case-file contract
+                verdict=Verdict.INCONCLUSIVE,
+                evidence="System journal not readable as this user.",
+                remedy=f'sudo journalctl -k --since "{journal_ts(window.since)}" '
+                '--no-pager | grep -iE "rcu|stall|hung|lockup|oom"',
+            )
+        )
     else:
         argv = ["journalctl", "-k", "--no-pager", "--since", journal_ts(window.since)]
         if window.until is not None:
             argv += ["--until", journal_ts(window.until)]
         kernel_out = run_evidence(argv)
         if kernel_out is None:
-            reports.append(SuspectReport(
-                suspect="kernel faults",
-                verdict=Verdict.INCONCLUSIVE,
-                evidence="journalctl -k failed.",
-                remedy="sudo journalctl -k --no-pager | tail -50",
-            ))
+            reports.append(
+                SuspectReport(
+                    suspect="kernel faults",
+                    verdict=Verdict.INCONCLUSIVE,
+                    evidence="journalctl -k failed.",
+                    remedy="sudo journalctl -k --no-pager | tail -50",
+                )
+            )
         else:
             hits = judge_kernel_lines(kernel_out)
             if hits:
-                reports.append(SuspectReport(
-                    suspect="kernel faults",
-                    verdict=Verdict.IMPLICATED,
-                    evidence=f"{len(hits)} alarm line(s); first: {hits[0][:100]}",
-                ))
+                reports.append(
+                    SuspectReport(
+                        suspect="kernel faults",
+                        verdict=Verdict.IMPLICATED,
+                        evidence=f"{len(hits)} alarm line(s); first: {hits[0][:100]}",
+                    )
+                )
             else:
-                reports.append(SuspectReport(
-                    suspect="kernel faults",
-                    verdict=Verdict.CLEARED,
-                    evidence="No rcu/stall/hung/lockup/oom lines in window.",
-                    detail="A clean kernel log does NOT acquit the "
-                           "hypervisor: full pauses leave no in-guest trace.",
-                ))
+                reports.append(
+                    SuspectReport(
+                        suspect="kernel faults",
+                        verdict=Verdict.CLEARED,
+                        evidence="No rcu/stall/hung/lockup/oom lines in window.",
+                        detail="A clean kernel log does NOT acquit the "
+                        "hypervisor: full pauses leave no in-guest trace.",
+                    )
+                )
+    expiry, on_prev = _read_client_cert_expiry(args)
+    reports.append(judge_cert_expiry(expiry, datetime.now(UTC), on_prev=on_prev))
     return make_case("box", window, reports, next_moves, open_questions)

@@ -16,8 +16,8 @@ adr:
 certificate. Verify against `stormpulse/agent/ssl_context.py`,
 `stormpulse/enroll.py`, which carries the renewal path beside enrollment.
 
-**Status: ACCEPTED 2026-10-05 (maintainer seal), sealed on the commit that
-lands this line; proposed at `4fc6c49`.** Decisions grilled and
+**Status: ACCEPTED 2026-10-05 (maintainer seal) at `eed357c`; proposed at
+`4fc6c49`.** Decisions 1 to 5 built on the commit that lands this line. Decisions grilled and
 maintainer-ruled 2026-10-05, read-back folded the same day; nothing built. The agent half (decisions 1 to 5) is buildable now.
 The renew endpoint (decision 6) belongs to the control plane and lands after it.
 

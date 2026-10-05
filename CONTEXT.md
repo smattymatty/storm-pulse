@@ -144,6 +144,11 @@ Revocation fences, it does not unload, and is per-capability: revoking
 loading for state/health; revoking `integration_load` fences every new
 callback and evicts the code only on agent restart (CORE-007 D3).
 
+**Pending key**:
+`agent-key.pem.new`, the key a cert renewal is waiting to have signed. Kept
+across failed attempts so a retry sends the same public key (CORE-010 decision 2).
+_Avoid_: stale key, leftover (it is live state, not junk to delete)
+
 ## Privacy by design
 
 Pulse is built so the agent has almost nothing to hold and therefore
