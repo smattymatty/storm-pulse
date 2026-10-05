@@ -157,157 +157,160 @@ class TestBoxJudges:
         assert "self-detected stall" in hits[0]
 
 
-class TestCertExpiryJudge:
-    """CORE-010 Q3 A: the box case file carries the client cert's days left."""
+# CORE-010 Q3 A: the box case file carries the client cert's days left.
+_CERT_NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 
-    _NOW = datetime(2026, 10, 5, 12, 0, tzinfo=UTC)
 
-    def _judge(self, days: int) -> SuspectReport:
-        from stormpulse.cli.investigate.box import judge_cert_expiry
+def _cert_judge(days: int) -> SuspectReport:
+    from stormpulse.cli.investigate.box import judge_cert_expiry
 
-        return judge_cert_expiry(self._NOW + timedelta(days=days, hours=1), self._NOW)
+    return judge_cert_expiry(_CERT_NOW + timedelta(days=days, hours=1), _CERT_NOW)
 
-    def test_urgent_window_boundary(self) -> None:
-        from stormpulse.cli.investigate.box import judge_cert_expiry
 
-        exact = judge_cert_expiry(self._NOW + timedelta(days=14), self._NOW)
-        assert exact.verdict is Verdict.CLEARED  # the loop's ERROR is < 14d too
-        assert self._judge(15).verdict is Verdict.CLEARED
-        assert self._judge(14).verdict is Verdict.CLEARED
-        assert self._judge(13).verdict is Verdict.IMPLICATED
-        assert self._judge(-2).verdict is Verdict.IMPLICATED
+def test_urgent_window_boundary() -> None:
+    from stormpulse.cli.investigate.box import judge_cert_expiry
 
-    def test_evidence_names_days_and_date(self) -> None:
-        report = self._judge(13)
-        assert report.suspect == "client cert expiry"
-        assert report.evidence == "13 day(s) remaining (notAfter 2026-10-18)."
+    exact = judge_cert_expiry(_CERT_NOW + timedelta(days=14), _CERT_NOW)
+    assert exact.verdict is Verdict.CLEARED  # the loop's ERROR is < 14d too
+    assert _cert_judge(15).verdict is Verdict.CLEARED
+    assert _cert_judge(14).verdict is Verdict.CLEARED
+    assert _cert_judge(13).verdict is Verdict.IMPLICATED
+    assert _cert_judge(-2).verdict is Verdict.IMPLICATED
 
-    def test_unreadable_cert_is_inconclusive_with_remedy(self) -> None:
-        from stormpulse.cli.investigate.box import judge_cert_expiry
 
-        report = judge_cert_expiry(None, self._NOW)
-        assert report.verdict is Verdict.INCONCLUSIVE
-        assert report.remedy
+def test_evidence_names_days_and_date() -> None:
+    report = _cert_judge(13)
+    assert report.suspect == "client cert expiry"
+    assert report.evidence == "13 day(s) remaining (notAfter 2026-10-18)."
 
-    @staticmethod
-    def _pair(cert: Path, key: Path, not_after: datetime) -> None:
-        from cryptography import x509
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.x509.oid import NameOID
 
-        k = ec.generate_private_key(ec.SECP256R1())
-        name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "box")])
-        cert.write_bytes(
-            x509.CertificateBuilder()
-            .subject_name(name)
-            .issuer_name(name)
-            .public_key(k.public_key())
-            .serial_number(1)
-            .not_valid_before(datetime(2026, 1, 1, tzinfo=UTC))
-            .not_valid_after(not_after)
-            .sign(k, hashes.SHA256())
-            .public_bytes(serialization.Encoding.PEM)
-        )
-        key.write_bytes(
-            k.private_bytes(
-                serialization.Encoding.PEM,
-                serialization.PrivateFormat.PKCS8,
-                serialization.NoEncryption(),
-            )
-        )
+def test_unreadable_cert_is_inconclusive_with_remedy() -> None:
+    from stormpulse.cli.investigate.box import judge_cert_expiry
 
-    def _read(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> tuple[datetime | None, bool]:
-        import stormpulse.config as config_mod
-        from stormpulse.cli.investigate.box import _read_client_cert_expiry
-        from stormpulse.config import TlsConfig
+    report = judge_cert_expiry(None, _CERT_NOW)
+    assert report.verdict is Verdict.INCONCLUSIVE
+    assert report.remedy
 
-        tls = TlsConfig(
-            ca_cert=tmp_path / "ca.pem",
-            client_cert=tmp_path / "agent.pem",
-            client_key=tmp_path / "agent-key.pem",
-        )
-        monkeypatch.setattr(
-            config_mod, "load_config", lambda _p: SimpleNamespace(tls=tls)
-        )
-        return _read_client_cert_expiry(argparse.Namespace(config="x.toml"))
 
-    def test_reads_cert_named_by_config(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        not_after = datetime(2027, 1, 2, tzinfo=UTC)
-        self._pair(tmp_path / "agent.pem", tmp_path / "agent-key.pem", not_after)
-        assert self._read(tmp_path, monkeypatch) == (not_after, False)
+def _cert_pair(cert: Path, key: Path, not_after: datetime) -> None:
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
 
-    def test_judges_the_presented_prev_not_the_live_file(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        prev_after = datetime(2026, 10, 25, tzinfo=UTC)
-        self._pair(
-            tmp_path / "agent.pem.prev", tmp_path / "agent-key.pem.prev", prev_after
-        )
-        self._pair(
-            tmp_path / "agent.pem",
-            tmp_path / "stray-key.pem",
-            datetime(2027, 10, 1, tzinfo=UTC),
-        )
-        (tmp_path / "agent-key.pem").write_bytes(
-            (tmp_path / "agent-key.pem.prev").read_bytes()
-        )
-        assert self._read(tmp_path, monkeypatch) == (prev_after, True)
-
-        from stormpulse.cli.investigate.box import judge_cert_expiry
-
-        report = judge_cert_expiry(prev_after, self._NOW, on_prev=True)
-        assert report.verdict is Verdict.IMPLICATED  # 19 days, but on .prev
-        assert ".prev" in report.evidence
-
-    @pytest.mark.parametrize(
-        "error",
-        [PermissionError("0640 root:stormpulse"), FileNotFoundError("x")],
+    k = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "box")])
+    cert.write_bytes(
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(k.public_key())
+        .serial_number(1)
+        .not_valid_before(datetime(2026, 1, 1, tzinfo=UTC))
+        .not_valid_after(not_after)
+        .sign(k, hashes.SHA256())
+        .public_bytes(serialization.Encoding.PEM)
     )
-    def test_unreadable_config_is_inconclusive_not_a_crash(
-        self, monkeypatch: pytest.MonkeyPatch, error: Exception
-    ) -> None:
-        import stormpulse.config as config_mod
-        from stormpulse.cli.investigate.box import _read_client_cert_expiry
+    key.write_bytes(
+        k.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
 
-        def broken(_p: Path) -> None:
-            raise error
 
-        monkeypatch.setattr(config_mod, "load_config", broken)
-        args = argparse.Namespace(config="x.toml")
-        assert _read_client_cert_expiry(args) == (None, False)
+def _cert_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[datetime | None, bool]:
+    import stormpulse.config as config_mod
+    from stormpulse.cli.investigate.box import _read_client_cert_expiry
+    from stormpulse.config import TlsConfig
 
-    def test_config_error_reads_as_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import stormpulse.config as config_mod
-        from stormpulse.cli.investigate.box import _read_client_cert_expiry
+    tls = TlsConfig(
+        ca_cert=tmp_path / "ca.pem",
+        client_cert=tmp_path / "agent.pem",
+        client_key=tmp_path / "agent-key.pem",
+    )
+    monkeypatch.setattr(config_mod, "load_config", lambda _p: SimpleNamespace(tls=tls))
+    return _read_client_cert_expiry(argparse.Namespace(config="x.toml"))
 
-        def broken(_p: Path) -> None:
-            raise config_mod.ConfigError("missing")
 
-        monkeypatch.setattr(config_mod, "load_config", broken)
-        args = argparse.Namespace(config="x.toml")
-        assert _read_client_cert_expiry(args) == (None, False)
+def test_reads_cert_named_by_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    not_after = datetime(2027, 1, 2, tzinfo=UTC)
+    _cert_pair(tmp_path / "agent.pem", tmp_path / "agent-key.pem", not_after)
+    assert _cert_read(tmp_path, monkeypatch) == (not_after, False)
 
-    def test_box_case_file_carries_the_cert_finding(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        import time
 
-        from stormpulse.cli.investigate import box
+def test_judges_the_presented_prev_not_the_live_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prev_after = datetime(2026, 10, 25, tzinfo=UTC)
+    _cert_pair(tmp_path / "agent.pem.prev", tmp_path / "agent-key.pem.prev", prev_after)
+    _cert_pair(
+        tmp_path / "agent.pem",
+        tmp_path / "stray-key.pem",
+        datetime(2027, 10, 1, tzinfo=UTC),
+    )
+    (tmp_path / "agent-key.pem").write_bytes(
+        (tmp_path / "agent-key.pem.prev").read_bytes()
+    )
+    assert _cert_read(tmp_path, monkeypatch) == (prev_after, True)
 
-        monkeypatch.setattr(time, "sleep", lambda _s: None)
-        monkeypatch.setattr(box, "run_evidence", lambda _argv: None)
-        monkeypatch.setattr(box, "_fetch_sar_history", lambda: None)
-        monkeypatch.setattr(box, "_can_read_system_journal", lambda: False)
-        monkeypatch.setattr(box, "_read_client_cert_expiry", lambda _a: (None, False))
-        case = box.run_box(argparse.Namespace(), Window(since=_NOW, until=None))
-        found = [r for r in case.reports if r.suspect == "client cert expiry"]
-        assert len(found) == 1
+    from stormpulse.cli.investigate.box import judge_cert_expiry
+
+    report = judge_cert_expiry(prev_after, _CERT_NOW, on_prev=True)
+    assert report.verdict is Verdict.IMPLICATED  # 19 days, but on .prev
+    assert ".prev" in report.evidence
+
+
+@pytest.mark.parametrize(
+    "error",
+    [PermissionError("0640 root:stormpulse"), FileNotFoundError("x")],
+)
+def test_unreadable_config_is_inconclusive_not_a_crash(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    import stormpulse.config as config_mod
+    from stormpulse.cli.investigate.box import _read_client_cert_expiry
+
+    def broken(_p: Path) -> None:
+        raise error
+
+    monkeypatch.setattr(config_mod, "load_config", broken)
+    args = argparse.Namespace(config="x.toml")
+    assert _read_client_cert_expiry(args) == (None, False)
+
+
+def test_config_error_reads_as_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    import stormpulse.config as config_mod
+    from stormpulse.cli.investigate.box import _read_client_cert_expiry
+
+    def broken(_p: Path) -> None:
+        raise config_mod.ConfigError("missing")
+
+    monkeypatch.setattr(config_mod, "load_config", broken)
+    args = argparse.Namespace(config="x.toml")
+    assert _read_client_cert_expiry(args) == (None, False)
+
+
+def test_box_case_file_carries_the_cert_finding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import time
+
+    from stormpulse.cli.investigate import box
+
+    monkeypatch.setattr(time, "sleep", lambda _s: None)
+    monkeypatch.setattr(box, "run_evidence", lambda _argv: None)
+    monkeypatch.setattr(box, "_fetch_sar_history", lambda: None)
+    monkeypatch.setattr(box, "_can_read_system_journal", lambda: False)
+    monkeypatch.setattr(box, "_read_client_cert_expiry", lambda _a: (None, False))
+    case = box.run_box(argparse.Namespace(), Window(since=_NOW, until=None))
+    found = [r for r in case.reports if r.suspect == "client cert expiry"]
+    assert len(found) == 1
 
 
 class TestSarStorageJudge:
