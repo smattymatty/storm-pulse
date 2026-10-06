@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Each daily certificate check logs one line naming the certificate the
+  agent holds: `Client certificate serial <hex> expires <date> (<n> days);
+  renewal window opens <date>`. The loop's other log lines say
+  "certificate" too, so `stormpulse logs -g certificate` finds them all.
+  Event names are unchanged.
+
 ## [0.6.0] - 2026-10-05
 
 ### Added

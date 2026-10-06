@@ -187,6 +187,25 @@ async def test_attempts_only_inside_thirty_days(
 
 
 @pytest.mark.asyncio
+async def test_healthy_check_logs_the_certificate_it_holds(
+    agent: Agent, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A quiet loop still says which certificate it holds and when it will act."""
+    loaded = _seed(agent, 45, serial=0x3F9A)
+    assert loaded.not_after is not None
+    with patch(URLOPEN, side_effect=_Server()) as urlopen:
+        with caplog.at_level(logging.INFO, logger="stormpulse.agent.cert_renew"):
+            await check_cert(agent, loaded)
+    urlopen.assert_not_called()
+    expires = f"{loaded.not_after:%Y-%m-%d}"
+    opens = f"{loaded.not_after - timedelta(days=30):%Y-%m-%d}"
+    assert [r.getMessage() for r in caplog.records] == [
+        f"Client certificate serial 3f9a expires {expires} (45 days); "
+        f"renewal window opens {opens}"
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("days", "level"),
     [(29, logging.WARNING), (14, logging.WARNING), (13, logging.ERROR)],

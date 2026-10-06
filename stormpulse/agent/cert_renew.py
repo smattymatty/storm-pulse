@@ -57,10 +57,10 @@ def _reload(agent: Agent, previous: LoadedTls | None) -> LoadedTls | None:
     try:
         loaded = _load(agent)
     except OSError as exc:
-        logger.error("Cert %s will not load: %s", cert, exc)
+        logger.error("Certificate %s will not load: %s", cert, exc)
         return previous
     if previous is not None and loaded.serial != previous.serial:
-        logger.info("Cert %s changed on disk; TLS context reloaded", cert)
+        logger.info("Certificate %s changed on disk; TLS context reloaded", cert)
     return loaded
 
 
@@ -75,7 +75,7 @@ async def cert_renew_loop(agent: Agent) -> None:
         try:
             loaded = await check_cert(agent, loaded)
         except Exception:  # skylos: ignore - the agent outlives a renewal bug
-            logger.exception("Cert renewal check crashed; retrying tomorrow")
+            logger.exception("Certificate renewal check crashed; retrying tomorrow")
             events.emit(_FAILED, source="cert", reason="unspecified")
         if await sleep_or_shutdown(agent.shutdown, CHECK_INTERVAL_SECONDS):
             return
@@ -96,11 +96,19 @@ async def check_cert(agent: Agent, loaded: LoadedTls | None) -> LoadedTls | None
     if _is_stale(agent, loaded):
         loaded = _reload(agent, loaded)
     if loaded is None or loaded.not_after is None:
-        logger.error("Cannot read the loaded client cert; renewal check skipped")
+        logger.error("Cannot read the loaded client certificate; renewal check skipped")
         events.emit(_FAILED, source="cert", reason="cert_unreadable")
         return loaded
     remaining = loaded.not_after - datetime.now(UTC)
     days = days_remaining(loaded.not_after, datetime.now(UTC))
+    serial = f"{loaded.serial:x}" if loaded.serial is not None else "unknown"
+    logger.info(
+        "Client certificate serial %s expires %s (%d days); renewal window opens %s",
+        serial,
+        f"{loaded.not_after:%Y-%m-%d}",
+        days,
+        f"{loaded.not_after - RENEW_WINDOW:%Y-%m-%d}",
+    )
     if loaded.on_prev:
         logger.error(
             "Agent presents %s, %d days remaining; renewing now", loaded.cert, days
@@ -108,7 +116,7 @@ async def check_cert(agent: Agent, loaded: LoadedTls | None) -> LoadedTls | None
     elif remaining >= RENEW_WINDOW:
         return loaded
     else:
-        logger.info("Client cert expires in %d days; renewing", days)
+        logger.info("Client certificate expires in %d days; renewing", days)
     return await _attempt(
         agent, loaded, days, urgent=loaded.on_prev or remaining < URGENT_WINDOW
     )
@@ -123,7 +131,7 @@ async def _attempt(
     except RenewError as exc:
         logger.log(
             logging.ERROR if urgent else logging.WARNING,
-            "Cert renewal failed (%s), %d days remaining: %s",
+            "Certificate renewal failed (%s), %d days remaining: %s",
             exc.reason,
             days,
             exc,
@@ -135,6 +143,6 @@ async def _attempt(
         if renewed.not_after
         else None
     )
-    logger.info("Client cert renewed; %s days remaining", new_days)
+    logger.info("Client certificate renewed; %s days remaining", new_days)
     events.emit("cert_renew_succeeded", source="cert", days_remaining=new_days)
     return renewed
