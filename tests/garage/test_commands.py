@@ -176,31 +176,13 @@ class TestBuildGarageCommands:
 
     def test_hooked_commands_resource_id_params_are_resolvable(self) -> None:
         """Every resource-id param on a HOOKED garage command is wired into the
-        post-mutation resolver, so the mutation's effect is re-read and pushed,
-        never silently left to ride only the periodic walk.
-
-        The footgun this closes (state.py names it on ``new_key_id``): the
-        resolver ``affected_bucket_ids`` matches bucket/key ids by an explicit
-        allowlist of param NAMES (``_BUCKET_ID_PARAMS`` / ``_KEY_ID_PARAMS``). A
-        hooked command that grows a resource-id param the allowlist doesn't cover
-        resolves to nothing and defers to the walk - safe, but slow and invisible,
-        and "safe by coincidence, not design" until something pins it.
-
-        The cross-check is independent of the allowlist itself: the naming
-        convention. A param named ``*bucket_id`` or ``*key_id`` identifies an
-        existing resource and MUST be matched. Alias params (the deliberate defer
-        path) and new-resource names (``display_name``, ``new_key_name``) are out
-        of scope by design - they correctly resolve to nothing, the detector owns
-        newcomers. So a renamed or added id-param on a hooked command fails here
-        unless it is also wired into the resolver.
-
-        A command is hooked iff ``post_success_hook`` returns a callback: garage
-        group, job mode (``long_running``), and neither ``read_only`` nor
-        ``self_reconciling``. The gate is read off the spec exactly as the hook
-        reads it, so this never hardcodes command names. (This is why a
-        ``self_reconciling`` command may carry an uncovered id - e.g. converge's
-        ``new_key_id`` - without failing: it is never hooked. Drop that flag and
-        this test demands the id be wired in.)
+        post-mutation resolver, so its effect is re-read, not left to the walk.
+        The resolver matches by an allowlist of param NAMES; this cross-checks it
+        by convention: any ``*bucket_id`` / ``*key_id`` param must be covered.
+        Aliases and new-resource names resolve to nothing by design. "Hooked" is
+        read off the spec exactly as ``post_success_hook`` reads it (garage group,
+        ``long_running``, not ``read_only`` or ``self_reconciling``), so a
+        ``self_reconciling`` command like converge may carry an uncovered id.
         """
         cmds = build_garage_specs(_make_config())
         resolver_covered = set(_BUCKET_ID_PARAMS) | set(_KEY_ID_PARAMS)
@@ -363,16 +345,12 @@ class TestBuildGarageCommands:
             assert re.fullmatch(pattern, good) is not None
 
     def test_walk_bucket_stats_prefix_accepts_real_s3_keys(self) -> None:
-        """The stats-walk ``prefix`` is the customer's real S3 prefix, not
-        an identifier. It reaches Garage as a URL-encoded ListObjectsV2
-        query param (no shell), so the old ``[A-Za-z0-9_\\-./]`` charset
-        wrongly rejected legal folder names (spaces, ``+``, parens,
-        unicode) and left per-folder stats stuck on "Calculating...".
-
-        This pattern is the *only* charset gate (the website validates
-        structure, not charset), so it must own the structural invariants
-        itself: empty = root, ends with '/', never starts with '/', and
-        no control bytes (C0 ``\\x00-\\x1f``, DEL, and C1 ``\\x7f-\\x9f``).
+        """The stats-walk ``prefix`` is a real S3 prefix sent URL-encoded (no
+        shell), so the old ``[A-Za-z0-9_\\-./]`` charset wrongly refused legal
+        names (spaces, ``+``, parens, unicode). This is the only charset gate
+        (the control plane checks structure), so it owns the invariants: empty
+        is root, ends with '/', never starts with '/', and no control bytes
+        (C0 ``\\x00-\\x1f``, DEL, C1 ``\\x7f-\\x9f``).
         """
         import re
 

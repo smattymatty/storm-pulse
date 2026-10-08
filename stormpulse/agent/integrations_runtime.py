@@ -1,9 +1,9 @@
 """Per-Integration runtime state, the shared targeted merge, and the one
 metrics-envelope builder (CORE-005; heir of the named garage_live/garage_state pair).
 
-Three writers touch ``runtime.state``: the periodic walk REPLACES the world on a
-beat, the detector PATCHES in newcomers fast (ours or out-of-band alike), and the
-post-mutation hook PATCHES changes to already-known resources instantly."""
+Two writers touch ``runtime.state``: the periodic read REPLACES it on a beat
+(the Integration's reader composes its own sub-cadences), and the post-mutation
+hook PATCHES changes to already-known resources instantly."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def merge_items_into_runtime(runtime: IntegrationRuntime, items: list[Any]) -> b
         return False
     if not isinstance(state, MergeableState):
         raise TypeError(
-            f"Integration {runtime.id!r} declares a targeted writer (detect/read_affected) "
+            f"Integration {runtime.id!r} declares a targeted writer (read_affected) "
             "but its state type has no with_items() (MergeableState)"
         )
     # Read-merge-assign with no await between, so a concurrent writer is never

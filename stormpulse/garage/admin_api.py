@@ -675,15 +675,14 @@ def _request(
         now = time.monotonic()
         duration_ms = (now - start) * 1000.0
         _METER.record(admin_url, duration_ms, now)
-        # Emit raw call details so the control plane can compute other aggregates.
         endpoint = path.split("?", 1)[0].rsplit("/", 1)[-1]
-        events.emit(
+        events.record_call(
             "admin_call",
             source="garage_admin",
             endpoint=endpoint,
-            http_method=method,
             duration_ms=int(duration_ms),
             status=result[0],
+            http_method=method,
             error=result[1] if result[0] is None else "",
             **_event_target(endpoint, path),
         )

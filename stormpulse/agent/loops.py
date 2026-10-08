@@ -13,10 +13,7 @@ from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
 from stormpulse import events
-from stormpulse.agent.integrations_runtime import (
-    build_metrics_envelope,
-    merge_items_into_runtime,
-)
+from stormpulse.agent.integrations_runtime import build_metrics_envelope
 from stormpulse.integrations import LogEnricher
 from stormpulse.protocol import make_events_batch, make_heartbeat, make_log_batch
 
@@ -88,38 +85,6 @@ async def integration_state_loop(
                 logger.debug("Refreshed %s state", integ_id)
         except Exception:
             logger.warning("Failed to collect %s state", integ_id, exc_info=True)
-        if await sleep_or_shutdown(agent.shutdown, interval):
-            return
-
-
-async def integration_detect_loop(
-    agent: Agent, ws: ClientConnection, integ_id: str
-) -> None:
-    """Run one Integration's new-resource detector at its own interval - the one
-    tunable state-read cadence, a security dial (CORE-005 decision 9)."""
-    runtime = agent.integrations[integ_id]
-    detector = runtime.descriptor.detect
-    assert detector is not None
-    interval = detector.interval(runtime.config)
-    # Attribute admin calls made under this loop to the detector.
-    events.trigger_var.set("detector")
-    while not agent.shutdown.is_set():
-        try:
-            # The snapshot handed to detect is only the diff baseline; the merge
-            # reads the CURRENT state (decision 11 race discipline), then push.
-            newcomers = await asyncio.to_thread(detector.run, runtime.config, runtime.state)
-            if newcomers and merge_items_into_runtime(runtime, newcomers):
-                envelope = await build_metrics_envelope(agent)
-                await ws.send(envelope.to_json())
-                logger.info(
-                    "Detector pushed %d new %s resource(s)",
-                    len(newcomers),
-                    integ_id,
-                )
-        except ConnectionClosed:
-            raise
-        except Exception:
-            logger.warning("Detect loop error for %s", integ_id, exc_info=True)
         if await sleep_or_shutdown(agent.shutdown, interval):
             return
 
@@ -196,13 +161,9 @@ async def events_loop(agent: Agent, ws: ClientConnection) -> None:
             batch_id = str(uuid.uuid4())
             batch = buf.drain(batch_id)
             if batch:
-                envelope = make_events_batch(
-                    agent_id, batch_id=batch_id, events=batch
-                )
+                envelope = make_events_batch(agent_id, batch_id=batch_id, events=batch)
                 await ws.send(envelope.to_json())
-                logger.debug(
-                    "Shipped events.batch %s events=%d", batch_id, len(batch)
-                )
+                logger.debug("Shipped events.batch %s events=%d", batch_id, len(batch))
         except ConnectionClosed:
             raise
         except Exception:

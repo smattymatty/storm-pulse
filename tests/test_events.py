@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from stormpulse import events
 from stormpulse.events import EventBuffer
 
@@ -29,14 +31,14 @@ class TestEmit:
         assert len(e["error"]) == 500
 
     def test_emit_stamps_trigger_from_contextvar(self) -> None:
-        token = events.trigger_var.set("detector")
+        token = events.trigger_var.set("periodic_walk")
         try:
             events.emit("admin_call", source="garage_admin")
         finally:
             events.trigger_var.reset(token)
         events.emit("admin_call", source="garage_admin")
         batch = events.buffer().drain("b1")
-        assert batch[0]["trigger"] == "detector"
+        assert batch[0]["trigger"] == "periodic_walk"
         assert "trigger" not in batch[1]
 
     def test_emit_stamps_command_ref_from_contextvar(self) -> None:
@@ -112,3 +114,50 @@ class TestEventBuffer:
         batch = buf.drain("final")
         assert batch[0]["kind"] == "dropped_events"
         assert batch[0]["dropped"] == 1
+
+
+def _call(endpoint: str, ms: int, **fields: str) -> None:
+    events.record_call(
+        "admin_call",
+        source="garage_admin",
+        endpoint=endpoint,
+        duration_ms=ms,
+        status=200,
+        **fields,
+    )
+
+
+class TestWalk:
+    def test_summary_names_the_slowest_call_even_when_every_call_is_0ms(self) -> None:
+        # Localhost admin calls truncate to 0 ms; the summary must still name one.
+        with events.walk(source="garage_admin", item="bucket"):
+            _call("ListBuckets", 0)
+            _call("GetBucketInfo", 0, bucket_id="b1")
+        (summary,) = events.buffer().drain("b1")
+        assert summary["slowest_endpoint"] == "GetBucketInfo"
+        assert summary["slowest_ms"] == 0
+
+    def test_summary_slowest_and_total_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ticks = iter([10.0, 10.25])
+        monkeypatch.setattr("stormpulse.events.time.monotonic", lambda: next(ticks))
+        with events.walk(source="garage_admin", item="bucket"):
+            _call("ListBuckets", 5)
+            _call("GetBucketInfo", 30)
+            _call("GetClusterStatus", 10)
+        (summary,) = events.buffer().drain("b1")
+        assert summary["slowest_endpoint"] == "GetBucketInfo"
+        assert summary["slowest_ms"] == 30
+        assert summary["total_ms"] == 250
+
+    def test_a_walk_that_raises_still_summarises_and_closes(self) -> None:
+        # A crashed collect must not leave the scope open, or every later
+        # job-driven call folds into a summary nobody emits.
+        with pytest.raises(RuntimeError):
+            with events.walk(source="garage_admin", item="bucket"):
+                _call("ListBuckets", 1)
+                raise RuntimeError("collect crashed")
+        _call("UpdateBucket", 1)
+        kinds = [e["kind"] for e in events.buffer().drain("b1")]
+        assert kinds == ["walk_summary", "admin_call"]

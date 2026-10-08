@@ -85,7 +85,7 @@ def test_list_objects_v2_paginates_with_a_continuation_token(
     """Truncation and the continuation token behave as the loop assumes.
 
     The drain loop re-lists from the front rather than paginating, but the
-    detector and usage walk both depend on truncation being reported
+    hint and usage walk both depend on truncation being reported
     correctly. A silently-untruncated page under-reports every large bucket.
     """
     for i in range(5):

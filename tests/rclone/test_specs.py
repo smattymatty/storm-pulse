@@ -18,14 +18,15 @@ from tests.rclone.helpers import CONFIG, DST_PARAMS, SRC_PARAMS
 
 def test_rclone_is_registered_stateless() -> None:
     integration = next(
-        i for i in registered_integrations() if i.id == rclone_integration.RCLONE_INTEGRATION.id
+        i
+        for i in registered_integrations()
+        if i.id == rclone_integration.RCLONE_INTEGRATION.id
     )
     assert integration.specs is not None
     assert integration.preconditions is not None
     # Stateless by design: no state surface, no merge involvement.
     assert integration.discover is None
     assert integration.collect_state is None
-    assert integration.detect is None
     assert integration.read_affected is None
     assert integration.log_enrichers is None
 

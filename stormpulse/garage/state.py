@@ -9,12 +9,16 @@ moved in when the CLI-scraping ``parse.py`` was deleted.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping
+import threading
+import time
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
+from stormpulse import events
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.hint import HintRead, Refusal, read_hint
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +45,7 @@ class GarageKeyRef:
 
     ``bucket_local_aliases`` is the bucket-name namespace private to this key.
     An S3-created bucket has no global alias, so its name lives
-    here under the owning key; the website's adopt branch reads it to name the
+    here under the owning key; the control plane's adopt branch reads it to name the
     bucket. Empty for the top-level key inventory and for dashboard-provisioned
     buckets that carry a global alias.
     """
@@ -78,16 +82,11 @@ class GarageBucket:
 
 @dataclass(frozen=True, slots=True)
 class GarageAdminMetric:
-    """Admin-API call telemetry for one target node, observed over the agent's
-    trailing meter window (``admin_api._AdminCallMeter``).
-
-    Node-adjacent operational telemetry: how the agent's admin-API traffic to
-    this node is behaving - the signal the 2026-06-27 saturation incident had no
-    graph for (admin-API request serialization saturated while CPU/RAM/disk read
-    healthy). Keyed by target node so a future multi-node dispatch attributes
-    load to the endpoint being serialized, not to the agent. It rides the state
-    blob as garage's own telemetry, but is NOT durable state; the website stores
-    it in its own time-series table (``GarageNodeMetric``), not the state JSON.
+    """Admin-API call telemetry for one target node over the agent's trailing
+    meter window (``admin_api._AdminCallMeter``): the graph the 2026-06-27
+    saturation incident lacked. Keyed by target node so multi-node dispatch
+    attributes load to the endpoint, not the agent. It rides the state blob but is
+    NOT durable state; the control plane keeps it in ``GarageNodeMetric``.
     """
 
     target_node_id: str
@@ -118,8 +117,8 @@ class GarageState:
     keys: list[GarageKeyRef]
     peers: list[GaragePeer]
     # Per-target-node admin-API call telemetry over the agent's meter window.
-    # Empty by default so test/fixture states and the detector's merged pushes
-    # (which carry the last periodic value, see ``with_items``) stay valid.
+    # Empty by default so test/fixture states and targeted merges (which carry
+    # the last periodic value, see ``with_items``) stay valid.
     admin_metrics: tuple[GarageAdminMetric, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
@@ -231,6 +230,7 @@ def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
     )
 
 
+@events.walk(source="garage_admin", item="bucket")
 def read_buckets_by_id(
     config: GarageConfig, bucket_ids: Iterable[str]
 ) -> list[GarageBucket]:
@@ -243,12 +243,15 @@ def read_buckets_by_id(
     buckets: list[GarageBucket] = []
     for bucket_id in bucket_ids:
         info, err = admin_api.get_bucket_info(
-            admin_url=admin_url, admin_token=admin_token, bucket_ref=bucket_id,
+            admin_url=admin_url,
+            admin_token=admin_token,
+            bucket_ref=bucket_id,
         )
         if info is None:
             logger.warning(
                 "GetBucketInfo failed for %s; skipping this bucket: %s",
-                bucket_id, err,
+                bucket_id,
+                err,
             )
             continue
         buckets.append(_bucket_from_admin_info(info))
@@ -273,27 +276,14 @@ _KEY_ID_PARAMS = ("key_id", "account_key_id", "access_key_id", "old_key_id")
 
 
 def affected_bucket_ids(params: Mapping[str, str], state: GarageState) -> list[str]:
-    """Resolve the bucket ids a just-succeeded garage mutation could have changed.
+    """Bucket ids a just-succeeded garage mutation could have changed. Precedence:
 
-    The read-planning half of the post-mutation targeted re-read (garage's
-    ``read_affected`` capability feeds the result to ``read_buckets_by_id``).
-    A create resolves to nothing here - a brand-new bucket has no id in the
-    snapshot - so creates always arrive via the detector/walk, never this hook.
-    Precedence, not per-command branching:
-
-    1. A command that names a bucket by id (``bucket_id``) affects exactly that
-       bucket - re-read it. Any key param is only the grantee.
-    2. A command that names a bucket only by alias (no resolvable id) affects that
-       one bucket too, but the alias is not cheaply mapped to an id here, so it
-       defers to the periodic walk. The key path is deliberately NOT taken:
-       re-reading the grantee key's whole bucket set would be wasteful and would
-       miss the actually-changed (aliased) bucket.
-    3. A command that names ONLY a key (delete_key, reap: no bucket param at all)
-       affects the buckets that key currently touches, resolved by an in-memory
-       filter over the snapshot's recorded grants - never a live key read, never
-       the ``BucketIdResolver`` (a name-attribution map, the wrong
-       tool). New-bucket ops (create/provision) name no existing id and resolve to
-       nothing: the detector owns newcomers.
+    1. A ``bucket_id`` param: exactly that bucket; any key param is the grantee.
+    2. A bucket named only by alias: deferred to the walk (alias to id is not
+       cheap here, and re-reading the grantee key's buckets would miss it).
+    3. Only a key (delete_key, reap): the buckets that key touches, from the
+       snapshot's recorded grants, never a live read. Creates name no existing
+       id and resolve to nothing: the hint or the next walk brings them in.
     """
     direct = [params[name] for name in _BUCKET_ID_PARAMS if params.get(name)]
     if direct:
@@ -304,9 +294,7 @@ def affected_bucket_ids(params: Mapping[str, str], state: GarageState) -> list[s
     if not key_ids:
         return []
     return [
-        b.id
-        for b in state.buckets
-        if b.id and any(k.key_id in key_ids for k in b.keys)
+        b.id for b in state.buckets if b.id and any(k.key_id in key_ids for k in b.keys)
     ]
 
 
@@ -365,7 +353,8 @@ def _collect_topology(config: GarageConfig) -> _Topology | None:
     """
     admin_url, admin_token = config.admin_url, config.admin_token
     status, err = admin_api.get_cluster_status(
-        admin_url=admin_url, admin_token=admin_token,
+        admin_url=admin_url,
+        admin_token=admin_token,
     )
     if status is None:
         logger.warning("GetClusterStatus failed; skipping topology read: %s", err)
@@ -377,7 +366,8 @@ def _collect_topology(config: GarageConfig) -> _Topology | None:
 
     # Best-effort: a stats failure degrades object_count to 0, not the read.
     stats, _err = admin_api.get_cluster_statistics(
-        admin_url=admin_url, admin_token=admin_token,
+        admin_url=admin_url,
+        admin_token=admin_token,
     )
     object_count = int((stats or {}).get("totalObjectCount") or 0)
 
@@ -397,6 +387,13 @@ def _walk_and_compose(config: GarageConfig, topology: _Topology) -> GarageState 
     if buckets is None:
         logger.warning("Bucket state unavailable this tick; skipping state push")
         return None
+    return _compose(config, topology, buckets)
+
+
+def _compose(
+    config: GarageConfig, topology: _Topology, buckets: list[GarageBucket]
+) -> GarageState:
+    """Fold *topology* and *buckets* into one wire ``GarageState``."""
     node = topology.peers[0]
     return GarageState(
         node_id=node.node_id,
@@ -436,6 +433,7 @@ def _read_admin_metrics(
     )
 
 
+@events.walk(source="garage_admin", item="bucket")
 def collect_garage_state(config: GarageConfig) -> GarageState | None:
     """Collect the FULL Garage node state (topology + every bucket) via the admin API.
 
@@ -454,71 +452,160 @@ def collect_garage_state(config: GarageConfig) -> GarageState | None:
     return _walk_and_compose(config, topology)
 
 
+class _Every:
+    """Due on first use, then once ``period`` has passed on ``clock`` since the
+    last ``mark``. Only the caller marks, so a failed attempt stays due."""
+
+    def __init__(self, period: float, clock: Callable[[], float]) -> None:
+        self._period = period
+        self._clock = clock
+        self._last: float | None = None
+
+    def due(self) -> bool:
+        return self._last is None or self._clock() - self._last >= self._period
+
+    def mark(self) -> None:
+        self._last = self._clock()
+
+
 class GarageStateReader:
-    """Cadence-aware periodic read (CORE-005 decision 9): per-bucket usage every call,
-    topology cached on a hardcoded slow multiple. One process-lifetime instance;
-    the topology cache deliberately survives reconnects."""
+    """Cadence-aware periodic read (CORE-005 decision 9). With no hint file every
+    call walks every bucket, as before hints existed. With one, each call re-reads
+    the buckets it names and every bucket is walked once per ``SWEEP_SECONDS``;
+    topology every ``TOPOLOGY_EVERY`` producing calls. Every targeted read goes
+    through ``read`` and lands in the cache, so a non-sweep call never reverts
+    one. Process-lifetime: the caches deliberately survive reconnects."""
 
     TOPOLOGY_EVERY = 6
+    SWEEP_SECONDS = 60.0
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._topology: _Topology | None = None
-        self._since_topology = 0
+        # Last sweep's buckets by id, upserted by every targeted read since.
+        # Not runtime state: the agent's one merge primitive stays the only
+        # writer there (Fitness Function 6).
+        self._buckets: dict[str, GarageBucket] | None = None
+        # Reads absorbed while a sweep is in flight, laid over its result.
+        self._absorbed: dict[str, GarageBucket] | None = None
+        self._pending: set[str] = set()
+        self._last_refusal: Refusal | None = None
+        self._ticks = 0
+        self._topology_due = _Every(self.TOPOLOGY_EVERY, lambda: self._ticks)
+        self._sweep_due = _Every(self.SWEEP_SECONDS, clock)
+        # One collect at a time (periodic loop vs refresh). ``_lock`` guards the
+        # cache, which ``read`` touches from the post-mutation hook mid-collect.
+        self._collect_lock = threading.Lock()
+        self._lock = threading.Lock()
 
+    @events.walk(source="garage_admin", item="bucket")
     def collect(
-        self, config: GarageConfig, *, force_topology: bool = False
+        self, config: GarageConfig, *, fresh: bool = False
     ) -> GarageState | None:
-        """One periodic read: walk every bucket, refresh topology on its slow multiple.
+        """One periodic read: a full sweep when due, else the hinted buckets.
 
-        ``force_topology`` bypasses the topology cache for the on-demand
-        refresh command: an explicit refresh is the "the operator just
-        changed something" signal, and serving it cached topology made a
-        deliberate layout change invisible for up to ``TOPOLOGY_EVERY``
-        ticks. The periodic loop never sets it, so the admin-API cadence
-        is unchanged.
+        ``fresh`` is the on-demand refresh: "the operator just changed
+        something", so it re-reads topology and sweeps regardless of cadence.
+        A failed topology read keeps the cache and stays due; a failed sweep
+        returns None and stays due; only a producing call advances cadence.
         """
         if not _admin_configured(config):
             return None
+        with self._collect_lock:
+            state = self._collect(config, fresh=fresh)
+            if state is not None:
+                self._ticks += 1
+            return state
 
-        # Cold start, slow multiple due, or an explicit refresh: read
-        # topology. A failed refresh keeps the cache and stays due, so
-        # the next call retries.
-        if force_topology or self._topology is None or self._since_topology >= self.TOPOLOGY_EVERY:
-            fresh = _collect_topology(config)
-            if fresh is not None:
-                self._topology = fresh
-                self._since_topology = 0
+    def _collect(self, config: GarageConfig, *, fresh: bool) -> GarageState | None:
+        self._take_hint(config)
+        if fresh or self._topology_due.due():
+            topology = _collect_topology(config)
+            if topology is not None:
+                self._topology = topology
+                self._topology_due.mark()
         topology = self._topology
         if topology is None:
             logger.warning("No garage topology read yet; skipping state this tick")
             return None
+        if fresh or not config.hint_file or self._sweep_due.due():
+            if not self._sweep(config, topology):
+                return None
+            self._sweep_due.mark()
+        else:
+            self.read(config, self._drain())
+        with self._lock:
+            assert self._buckets is not None  # a sweep has produced
+            buckets = list(self._buckets.values())
+        return _compose(config, topology, buckets)
 
-        state = _walk_and_compose(config, topology)
-        if state is None:
-            return None
-        # Advance the topology cadence only on a tick that actually produced
-        # state; a skipped walk must not push topology toward its next refresh.
-        self._since_topology += 1
-        return state
+    def _sweep(self, config: GarageConfig, topology: _Topology) -> bool:
+        """Walk every bucket into the cache, keeping reads absorbed meanwhile."""
+        with self._lock:
+            self._absorbed = {}
+        buckets = None
+        try:
+            buckets = _collect_buckets_via_admin(config)
+        finally:
+            with self._lock:
+                absorbed, self._absorbed = self._absorbed or {}, None
+                if buckets is not None:
+                    self._buckets = {b.id: b for b in buckets} | absorbed
+                    self._pending.clear()
+        if buckets is None:
+            logger.warning("Bucket state unavailable this tick; skipping state push")
+        return buckets is not None
+
+    def read(self, config: GarageConfig, bucket_ids: list[str]) -> list[GarageBucket]:
+        """Targeted read of *bucket_ids*, absorbed into the cache by id (a no-op
+        before the first sweep); known ids keep their place, new ids append."""
+        buckets = read_buckets_by_id(config, bucket_ids)
+        with self._lock:
+            upserts = [(b.id, b) for b in buckets if b.id]
+            if self._buckets is not None:
+                self._buckets.update(upserts)
+            if self._absorbed is not None:
+                self._absorbed.update(upserts)
+        return buckets
+
+    def _take_hint(self, config: GarageConfig) -> None:
+        if not config.hint_file:
+            return
+        read = read_hint(config.hint_file)
+        if read.refusal is None:
+            self._last_refusal = None
+            with self._lock:
+                self._pending |= read.bucket_ids
+            return
+        self._log_refusal(config.hint_file, read)
+
+    def _log_refusal(self, path: str, read: HintRead) -> None:
+        # Once per distinct reason until the next good read; a stale file
+        # only means the writer is down, so it never warns.
+        if read.refusal == self._last_refusal:
+            return
+        self._last_refusal = read.refusal
+        level = logging.DEBUG if read.refusal is Refusal.STALE else logging.WARNING
+        logger.log(
+            level, "Ignoring hint file %s (%s): %s", path, read.refusal, read.detail
+        )
+
+    def _drain(self) -> list[str]:
+        with self._lock:
+            batch = sorted(self._pending)[:MAX_TARGETED_BUCKET_READS]
+            self._pending.difference_update(batch)
+        return batch
 
 
-# Shared fan-out bound for every per-id GetBucketInfo burst (detector newcomers,
-# read_affected key->buckets): sized to admin-API tolerance, overflow rides the
-# next full walk. Hardcoded, no knob.
+# Shared fan-out bound for every per-id GetBucketInfo burst (one push's hinted
+# batch, read_affected key->buckets): sized to admin-API tolerance. Hardcoded.
 MAX_TARGETED_BUCKET_READS = 8
 
 
 def cap_targeted_reads(ids: list[str], *, context: str) -> list[str]:
     """Cap a targeted-read fan-out at ``MAX_TARGETED_BUCKET_READS``, logging any deferral.
 
-    Both fan-out points - the new-bucket detector and the post-mutation
-    key->buckets path (``read_affected``) - bound their per-trigger admin
-    calls by the one shared constant, and both must defer the overflow loudly
-    rather than truncate it silently. That cap-and-say-what-deferred idiom lives
-    here once instead of being copy-pasted at each site. The overflow is caught by
-    the periodic full walk within one push interval regardless of caller, so the
-    log names that single backstop; ``context`` only identifies which fan-out
-    deferred (``"Detector"`` / ``"Post-mutation"``).
+    Overflow is deferred loudly, never truncated silently; the periodic sweep
+    catches it. ``context`` names the fan-out that deferred.
     """
     capped = ids[:MAX_TARGETED_BUCKET_READS]
     deferred = len(ids) - len(capped)
@@ -526,32 +613,9 @@ def cap_targeted_reads(ids: list[str], *, context: str) -> list[str]:
         logger.info(
             "%s: %d targeted reads requested; reading %d this pass, deferring %d "
             "to the periodic walk",
-            context, len(ids), len(capped), deferred,
+            context,
+            len(ids),
+            len(capped),
+            deferred,
         )
     return capped
-
-
-def detect_new_buckets(
-    config: GarageConfig, current_state: GarageState | None
-) -> list[GarageBucket]:
-    """One constant-cost ``ListBuckets`` diff against the baseline, then a capped
-    targeted read of the newcomers (overflow defers: still absent next tick, and the
-    full walk backstops). Returns [] with no baseline or an unreadable admin API."""
-    if current_state is None:
-        return []
-    admin_url, admin_token = config.admin_url, config.admin_token
-    if not (admin_url and admin_token):
-        return []
-    items, err = admin_api.list_buckets(admin_url=admin_url, admin_token=admin_token)
-    if items is None:
-        logger.warning("Detector ListBuckets failed; skipping this tick: %s", err)
-        return []
-    known_ids = {b.id for b in current_state.buckets}
-    new_ids: list[str] = []
-    for item in items:
-        bucket_id = item.get("id", "")
-        if bucket_id and bucket_id not in known_ids:
-            new_ids.append(bucket_id)
-    if not new_ids:
-        return []
-    return read_buckets_by_id(config, cap_targeted_reads(new_ids, context="Detector"))

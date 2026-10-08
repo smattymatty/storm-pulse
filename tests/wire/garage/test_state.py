@@ -10,7 +10,10 @@ been fed a wrong or empty picture of the node, silently.
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import time
+from pathlib import Path
 
 from stormpulse.garage import admin_api
 from stormpulse.garage.state import GarageState, GarageStateReader, collect_garage_state
@@ -100,7 +103,9 @@ def test_walk_reports_exact_usage_for_a_seeded_bucket(
     assert found.id == bucket.id
 
 
-def test_walk_carries_the_quota_the_agent_set(wire: WireEnv, bucket: WireBucket) -> None:
+def test_walk_carries_the_quota_the_agent_set(
+    wire: WireEnv, bucket: WireBucket
+) -> None:
     """A quota set through the admin API comes back on the walk.
 
     This is the loop closing: the agent caps a bucket, then reads its own cap
@@ -164,34 +169,36 @@ def test_walk_reports_key_grants_on_a_bucket(wire: WireEnv, bucket: WireBucket) 
 # ---------------------------------------------------------------------------
 
 
-def test_reader_collect_returns_a_state_and_force_topology_refreshes(
+def test_reader_collect_returns_a_state_and_fresh_refreshes(
     wire: WireEnv,
 ) -> None:
     """The cadence-aware reader works against the real endpoint both ways.
 
-    The periodic path (topology cached on a slow multiple) and the on-demand
-    refresh path (``force_topology``) are different code; the on-demand one
-    exists because serving cached topology made a refresh lie.
+    The periodic path (cached topology and sweep) and the on-demand refresh
+    path (``fresh``) are different code; the on-demand one exists because
+    serving cached topology made a refresh lie.
     """
     reader = GarageStateReader()
     first = reader.collect(wire.garage_config())
     assert first is not None
 
-    forced = reader.collect(wire.garage_config(), force_topology=True)
+    forced = reader.collect(wire.garage_config(), fresh=True)
     assert forced is not None
     assert forced.node_id == first.node_id
 
 
-def test_walk_sees_a_bucket_created_after_the_first_collect(
-    wire: WireEnv,
+def test_hinted_bucket_created_after_the_first_collect_is_seen(
+    wire: WireEnv, tmp_path: Path
 ) -> None:
-    """A new bucket appears on the next walk, never behind a stale cache.
+    """A bucket the hint names appears on the next collect, before any sweep.
 
-    The detector's whole job: an S3-born bucket must be seen promptly so its
-    uncapped window stays bounded.
+    The hint's whole job: an S3-born bucket must be seen promptly so its
+    uncapped window stays bounded. The clock never moves, so no sweep runs.
     """
-    reader = GarageStateReader()
-    before = reader.collect(wire.garage_config())
+    hint = tmp_path / "hint.json"
+    config = dataclasses.replace(wire.garage_config(), hint_file=str(hint))
+    reader = GarageStateReader(clock=lambda: 0.0)
+    before = reader.collect(config)
     assert before is not None
 
     alias = unique_alias("late")
@@ -199,10 +206,15 @@ def test_walk_sees_a_bucket_created_after_the_first_collect(
     assert err == "", err
     assert created is not None
     try:
-        after = reader.collect(wire.garage_config())
+        hint.write_text(
+            json.dumps(
+                {"version": 1, "written_at": time.time(), "bucket_ids": [created["id"]]}
+            )
+        )
+        after = reader.collect(config)
         assert after is not None
         assert any(b.alias == alias for b in after.buckets), (
-            f"bucket created between collects was invisible to the second walk:\n"
+            f"hinted bucket was invisible to the next collect:\n"
             f"{pretty([b.alias for b in after.buckets])}"
         )
     finally:
@@ -224,9 +236,7 @@ def test_walk_returns_none_when_the_admin_api_is_unreachable(
     """
     import dataclasses
 
-    broken = dataclasses.replace(
-        wire.garage_config(), admin_url="http://127.0.0.1:1"
-    )
+    broken = dataclasses.replace(wire.garage_config(), admin_url="http://127.0.0.1:1")
     assert collect_garage_state(broken) is None
 
 

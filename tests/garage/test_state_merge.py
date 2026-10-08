@@ -1,15 +1,8 @@
-"""Tests for the shared GarageState merge primitive (``with_items`` / ``with_bucket``).
-
-This is the single merge path every targeted writer uses (the new-bucket
-detector and the post-mutation hook). The invariants it must hold:
-
-- upsert by id: an incoming bucket replaces the same-id entry in place, a new
-  id is appended, and unaffected buckets keep their position;
-- full-snapshot-never-partial: the result always carries every prior bucket
-  plus the merged one(s), because the control plane reads ``buckets`` as a
-  manifest and a partial would read as deletions (manifest alarms, never acts);
-- immutability: the source state is frozen and untouched; the result is a new
-  object.
+"""The shared GarageState merge (``with_items`` / ``with_bucket``), the one path
+every targeted writer uses. Invariants: upsert by id (replace in place, append
+new, others keep position); never partial, since the control plane reads
+``buckets`` as a manifest and a missing bucket reads as a deletion; and the
+source state is untouched, the result a new object.
 """
 
 from __future__ import annotations
@@ -43,7 +36,13 @@ def _ids(state: GarageState) -> list[str]:
 
 
 def test_upsert_replaces_in_place_and_preserves_position() -> None:
-    state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B, size_bytes=10), make_garage_bucket(ID_C)])
+    state = _state(
+        [
+            make_garage_bucket(ID_A),
+            make_garage_bucket(ID_B, size_bytes=10),
+            make_garage_bucket(ID_C),
+        ]
+    )
     merged = state.with_items([make_garage_bucket(ID_B, size_bytes=999)])
     # B is replaced where it sat; A and C keep their slots.
     assert _ids(merged) == [ID_A, ID_B, ID_C]
@@ -59,7 +58,9 @@ def test_new_bucket_is_appended() -> None:
 
 def test_merge_many_mixes_upsert_and_append() -> None:
     state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B, size_bytes=1)])
-    merged = state.with_items([make_garage_bucket(ID_B, size_bytes=2), make_garage_bucket(ID_C)])
+    merged = state.with_items(
+        [make_garage_bucket(ID_B, size_bytes=2), make_garage_bucket(ID_C)]
+    )
     assert _ids(merged) == [ID_A, ID_B, ID_C]
     assert {b.id: b for b in merged.buckets}[ID_B].size_bytes == 2
 
@@ -67,7 +68,9 @@ def test_merge_many_mixes_upsert_and_append() -> None:
 def test_full_snapshot_never_partial() -> None:
     # Merging ONE bucket into a 3-bucket state must yield all 3, never just the
     # merged one - a partial reads downstream as two deletions.
-    state = _state([make_garage_bucket(ID_A), make_garage_bucket(ID_B), make_garage_bucket(ID_C)])
+    state = _state(
+        [make_garage_bucket(ID_A), make_garage_bucket(ID_B), make_garage_bucket(ID_C)]
+    )
     merged = state.with_items([make_garage_bucket(ID_B, size_bytes=42)])
     assert len(merged.buckets) == 3
     assert set(_ids(merged)) == {ID_A, ID_B, ID_C}

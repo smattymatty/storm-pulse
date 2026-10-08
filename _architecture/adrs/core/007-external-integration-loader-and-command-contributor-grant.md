@@ -49,7 +49,7 @@ Authority is layered:
   surface, not host power.
 
 An execution grant without `command_contributor` exposes only non-command
-capabilities (state, detection, targeted re-read, log-enrichment); the code stays
+capabilities (state, targeted re-read, log-enrichment); the code stays
 fully privileged regardless.
 
 **3. Local seal; control plane mirrors, never grants.** A local CLI action seals

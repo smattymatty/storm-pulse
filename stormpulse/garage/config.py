@@ -27,17 +27,15 @@ class GarageConfig:
     garage_binary: str
     docker_binary: str
     config_path: Path
-    # New-bucket detector cadence (seconds). The one tunable state-read interval:
-    # the security dial bounding the S3-born uncapped window. Has a default so a
-    # deployed box without the key updates clean. Periodic state has no such knob;
-    # it rides the metrics-push cadence.
-    detector_interval_seconds: float = 2.0
     # Garage admin HTTP API (port 3903). Optional: empty when not configured,
     # in which case admin-API-backed commands (set-quota) fail loudly rather
     # than silently. admin_token is the resolved Bearer token (a node secret,
     # never sent over the wire), read inline or from admin_token_file.
     admin_url: str = ""
     admin_token: str = ""
+    # Absolute path of a file where another process on this box names bucket
+    # ids worth re-reading each push (``hint.py``). Empty: hints off.
+    hint_file: str = ""
 
 
 def parse_garage_config(section: dict[str, Any]) -> GarageConfig:
@@ -59,22 +57,9 @@ def parse_garage_config(section: dict[str, Any]) -> GarageConfig:
             f"'docker_binary' in [garage] must be an absolute path, got {docker_binary!r}"
         )
     config_path = Path(require_key(section, "config_path", str, "garage"))
-    # A legacy ``state_push_interval_seconds`` key may linger in a deployed TOML
-    # (the garage state read no longer has a tunable interval; the periodic loop
-    # rides the metrics-push cadence and the reader walks topology on a fixed
-    # slow multiple). It is intentionally ignored, not read and not rejected, so
-    # updating on a live box is a clean restart, never a soft-disable.
-
-    # The one surviving state-read knob: the new-bucket detector cadence. Optional
-    # with a default, so a box that lacks the key (e.g. just updated) runs at the
-    # default rather than soft-disabling.
-    detector_interval = float(
-        optional_key(section, "detector_interval_seconds", (int, float), 2.0, "garage")
-    )
-    if detector_interval <= 0:
-        raise ConfigError(
-            "'detector_interval_seconds' in [garage] must be positive"
-        )
+    # Legacy ``state_push_interval_seconds`` and ``detector_interval_seconds`` keys
+    # may linger in a deployed TOML. Both are ignored, never rejected, so updating a
+    # live box is a clean restart, never a soft-disable.
 
     # Optional admin HTTP API wiring. admin_token may be given inline or, like
     # Garage's own garage.toml, via a file path; the file is read once at
@@ -97,7 +82,8 @@ def parse_garage_config(section: dict[str, Any]) -> GarageConfig:
                 "[garage] admin_token_file %r could not be read (%s); disabling the "
                 "Garage admin API. Quota writes will fail until this is fixed; the "
                 "rest of the agent runs normally.",
-                admin_token_file, exc,
+                admin_token_file,
+                exc,
             )
             admin_token = ""
 
@@ -107,7 +93,20 @@ def parse_garage_config(section: dict[str, Any]) -> GarageConfig:
         garage_binary=garage_binary,
         docker_binary=docker_binary,
         config_path=config_path,
-        detector_interval_seconds=detector_interval,
         admin_url=admin_url,
         admin_token=admin_token,
+        hint_file=_parse_hint_file(section.get("hint_file", "")),
     )
+
+
+def _parse_hint_file(value: object) -> str:
+    """An absolute path, else "" with a warning: a bad value turns hints off,
+    never Garage (the periodic sweep still runs)."""
+    if isinstance(value, str) and (value == "" or Path(value).is_absolute()):
+        return value
+    logger.warning(
+        "[garage] hint_file %r is not an absolute path; hints are off, the "
+        "periodic sweep still runs.",
+        value,
+    )
+    return ""

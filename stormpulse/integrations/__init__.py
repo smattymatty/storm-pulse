@@ -6,7 +6,6 @@ set without importing any Integration by name.
 """
 
 from stormpulse.integrations.registry import (
-    Detector,
     Integration,
     InvestigationSpec,
     LogEnricher,
@@ -19,7 +18,6 @@ from stormpulse.integrations.registry import (
 )
 
 __all__ = [
-    "Detector",
     "Integration",
     "InvestigationSpec",
     "LogEnricher",

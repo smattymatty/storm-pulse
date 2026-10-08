@@ -7,7 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `[garage] hint_file`: an absolute path to a JSON file
+  (`{"version": 1, "written_at": <unix>, "bucket_ids": [<64 hex>, ...]}`)
+  where another process on the box names buckets to re-read. With it set,
+  each push reads up to 8 of them and every bucket is walked once a minute and
+  on `garage_refresh`. Unset, every push walks every bucket, as before. A file that is a symlink, not a regular file, owned by
+  another user, over 64 KiB, malformed, older than 60 s or holding a short id
+  is ignored. A bad value turns hints off, not Garage.
+
+### Removed
+
+- The 2 s new-bucket detector loop and `detector_interval_seconds`. A
+  leftover key in a deployed config is ignored. New buckets arrive on the
+  next walk: every push without a hint file, once a minute with one.
+
 ### Changed
+
+- With `hint_file` set, a push no longer walks every bucket: between the
+  one-minute sweeps the cached state is served with hinted and post-mutation
+  reads merged in. Without it, every push walks, as before.
+- Garage admin calls made inside one read emit a single `walk_summary`
+  event (calls, buckets read, failures, slowest call, total ms) instead of
+  one `admin_call` each. A failed call (no status, or 400 and up) keeps its
+  own `admin_call` event; calls outside a read still emit one each.
 
 - Each daily certificate check logs one line naming the certificate the
   agent holds: `Client certificate serial <hex> expires <date> (<n> days);

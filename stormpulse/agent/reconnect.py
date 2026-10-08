@@ -168,16 +168,13 @@ async def _run_session(
             tg.create_task(loops.metrics_loop(agent, ws))
             tg.create_task(loops.events_loop(agent, ws))
             tg.create_task(dispatch.receive_loop(agent, ws))
-            # Per live Integration: a periodic state loop (if it collects state)
-            # and a fast new-resource detector (if it declares one). caddy
-            # declares neither, so no loop spins up for it (CORE-005).
+            # Per live Integration: a periodic state loop if it collects state.
+            # caddy does not, so no loop spins up for it (CORE-005).
             for integ_id, runtime in agent.integrations.items():
                 if runtime.status != "live":
                     continue
                 if runtime.descriptor.collect_state is not None:
                     tg.create_task(loops.integration_state_loop(agent, ws, integ_id))
-                if runtime.descriptor.detect is not None:
-                    tg.create_task(loops.integration_detect_loop(agent, ws, integ_id))
             tg.create_task(signoff_nag_loop(agent, ws))
             tg.create_task(signoff_state_push_loop(agent, ws))
             for group_name, shipper in agent.shippers.items():

@@ -91,7 +91,7 @@ A named, one-shot diagnostic run (`stormpulse investigate <name>`) that
 executes a fixed set of checks non-interactively and prints a Case file.
 One engine, two doors: agent-core investigations live under the bare
 command; an Integration declares its own on its descriptor (a contract
-surface alongside commands and detectors), surfaced as
+surface alongside commands and state readers), surfaced as
 `stormpulse <integration> investigate <name>`. Human-first output: each
 check explains what it means, and guidance lives in the report's prose,
 never in interactive prompts.

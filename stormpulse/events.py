@@ -1,29 +1,22 @@
-"""Wide-event emission for the events plane.
+"""Wide-event emission: one record per unit of agent work, buffered in-process
+and shipped as ``events.batch``, released on the dashboard's ack. A full buffer
+drops oldest and the next drain says so with ``dropped_events``.
 
-One structured record per unit of agent work: an admin-API call, a job
-result, a reconnect. Events land in a bounded in-process buffer and ship
-to the control plane as ``events.batch`` envelopes; the dashboard ack
-releases them (the log-shipping pattern), so a connection flap never
-loses the events that describe it. A full buffer drops oldest and the
-next drain prepends a ``dropped_events`` event - truncation is never
-silent.
-
-Foundation-tier on purpose: Features (garage), Framework (commands), and
-the Entry loops all emit, so this module sits beside protocol/config
-where every layer may import it downward. It holds plain dicts and no
-protocol types; the envelope maker lives in ``protocol``.
-
-Ids, never identities: events carry bucket/key/command ids only. No user
-ids, no IPs. Nothing is aggregated here - rate and percentiles are
-computed at read time, control-plane side, so tomorrow's question is
-still answerable from yesterday's data.
+Foundation-tier: every layer imports it downward; plain dicts, no protocol types.
+Ids, never identities: bucket/key/command ids, no user ids, no IPs. One aggregate:
+an open ``walk`` folds routine calls into one ``walk_summary``; every failure
+keeps its own event. Rate and percentiles stay read-time, control-plane side.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -32,10 +25,9 @@ MAX_BATCH_EVENTS = 500
 MAX_IN_FLIGHT_BATCHES = 32
 _MAX_ERROR_CHARS = 500
 
-# What triggered the work an event describes (periodic_walk, detector,
-# job). Set by the owning loop or the job manager; propagates into
-# ``asyncio.to_thread`` calls via contextvars, so a garage admin call
-# made three frames down still knows why it ran.
+# What triggered the work an event describes (periodic_walk, job). Set
+# by the owning loop or the job manager; propagates into ``to_thread``
+# calls via contextvars, so a call three frames down knows why it ran.
 trigger_var: ContextVar[str] = ContextVar("stormpulse_event_trigger", default="")
 
 # Which command the work belongs to (the dispatch request id). Set by
@@ -45,6 +37,92 @@ trigger_var: ContextVar[str] = ContextVar("stormpulse_event_trigger", default=""
 command_ref_var: ContextVar[str] = ContextVar(
     "stormpulse_event_command_ref", default=""
 )
+
+
+@dataclass(slots=True)
+class _Walk:
+    """Running totals for one open walk; one thread, so no lock."""
+
+    item: str
+    calls: int = 0
+    items_read: int = 0
+    failures: int = 0
+    slowest_ms: int = 0
+    slowest_endpoint: str = ""
+
+
+# The open walk, if any. A nested ``walk`` joins the outer one, so a
+# collect that calls a targeted read still emits one summary.
+_walk_var: ContextVar[_Walk | None] = ContextVar("stormpulse_event_walk", default=None)
+
+
+def is_failure(status: int | None) -> bool:
+    """A call failed when it got no status or a status >= 400 (a 404 counts)."""
+    return status is None or status >= 400
+
+
+@contextmanager
+def walk(*, source: str, item: str) -> Iterator[None]:
+    """Fold every ``record_call`` inside into one ``walk_summary`` on exit.
+
+    A success carrying ``<item>_id`` counts as ``<item>s_read``. A walk that
+    made no call emits nothing; failures are counted and still emitted.
+    """
+    if _walk_var.get() is not None:
+        yield
+        return
+    totals = _Walk(item=item)
+    token = _walk_var.set(totals)
+    start = time.monotonic()
+    try:
+        yield
+    finally:
+        _walk_var.reset(token)
+        if totals.calls:
+            emit(
+                "walk_summary",
+                source=source,
+                calls=totals.calls,
+                failures=totals.failures,
+                slowest_endpoint=totals.slowest_endpoint,
+                slowest_ms=totals.slowest_ms,
+                total_ms=int((time.monotonic() - start) * 1000.0),
+                **{f"{totals.item}s_read": totals.items_read},
+            )
+
+
+def record_call(
+    kind: str,
+    *,
+    source: str,
+    endpoint: str,
+    duration_ms: int,
+    status: int | None,
+    **fields: Any,
+) -> None:
+    """Record one call: inside a walk a success folds into its summary;
+    a failure, or any call outside a walk, emits its own ``kind`` event."""
+    failed = is_failure(status)
+    totals = _walk_var.get()
+    if totals is not None:
+        totals.calls += 1
+        if failed:
+            totals.failures += 1
+        elif fields.get(f"{totals.item}_id"):
+            totals.items_read += 1
+        if duration_ms >= totals.slowest_ms:
+            totals.slowest_ms = duration_ms
+            totals.slowest_endpoint = endpoint
+        if not failed:
+            return
+    emit(
+        kind,
+        source=source,
+        endpoint=endpoint,
+        duration_ms=duration_ms,
+        status=status,
+        **fields,
+    )
 
 
 class EventBuffer:

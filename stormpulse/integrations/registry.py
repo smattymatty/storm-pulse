@@ -26,7 +26,7 @@ class StateBlob(Protocol):
 
 @runtime_checkable
 class MergeableState(StateBlob, Protocol):
-    """State supporting the targeted upsert merge; required iff ``detect`` or ``read_affected`` is declared."""
+    """State supporting the targeted upsert merge; required iff ``read_affected`` is declared."""
 
     def with_items(self, items: Iterable[Any], /) -> MergeableState: ...
 
@@ -43,15 +43,6 @@ Preconditions = Callable[[Any], str | None]
 # second map to drift against.
 BuildSpecs = Callable[[Any], dict[str, CommandSpec]]
 CollectState = Callable[[Any], "StateBlob | None"]
-# New-resource detector: given the config and the current state snapshot (for the
-# baseline diff), return only the resources that are new since that snapshot. The
-# generic loop merges them into the *current* state and pushes. Constant-cost by
-# design (a single list call); see the garage realization in its wiki page.
-Detect = Callable[[Any, Any], list[Any]]
-# The detector's own cadence - the one tunable state-read interval (a security
-# dial), read from the Integration's own config. Distinct from periodic state,
-# which rides the metrics-push cadence and has no knob.
-DetectInterval = Callable[[Any], float]
 # Post-mutation targeted re-read: given config, the current snapshot (id planning
 # only), and the mutation's params, return only the freshly re-read items.
 ReadAffected = Callable[[Any, Any, Mapping[str, str]], list[Any]]
@@ -70,15 +61,6 @@ BuildLogEnricher = Callable[[Any], LogEnricher]
 # Runs on the doctor/readiness/init path, NEVER under ``config check`` (CORE-000
 # side-effect-free rule; ADR CORE-007 readiness graph).
 ReadinessProbe = Callable[[Any], tuple[CapabilityStatus, ...]]
-
-
-@dataclass(frozen=True, slots=True)
-class Detector:
-    """A fast new-resource detector and its cadence as one capability: a detector
-    cannot be declared without its interval (structural, never a half-declared pair)."""
-
-    run: Detect
-    interval: DetectInterval
 
 
 # One Investigation's runner: given the parsed integration config and the
@@ -119,9 +101,6 @@ class Integration:
     # an explicit refresh means "the operator just changed something".
     # When absent, refresh uses ``collect_state``.
     collect_state_fresh: CollectState | None = None
-    # Optional fast new-resource detector (its run + cadence as one object).
-    # caddy declares none; the detect loop spawns iff this is present.
-    detect: Detector | None = None
     # Optional post-mutation targeted re-read; the generic dispatch hook fires
     # it after a mutating job succeeds and pushes the merged snapshot.
     read_affected: ReadAffected | None = None

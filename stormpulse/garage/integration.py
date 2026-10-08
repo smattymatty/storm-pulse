@@ -14,7 +14,6 @@ from stormpulse.garage.investigate import run_health
 from stormpulse.garage.preconditions import run_preconditions
 from stormpulse.garage.state import GarageBucket, GarageState
 from stormpulse.integrations import (
-    Detector,
     Integration,
     InvestigationSpec,
     register_integration,
@@ -32,10 +31,9 @@ def _preconditions(config: GarageConfig) -> str | None:
     return run_preconditions(config)
 
 
-# One stateful reader per process: the periodic loop and on-demand refresh share
-# it, so topology's slow-multiple cadence and cache persist across reconnects
-# (topology does not change on reconnect). Discovery uses the full
-# ``collect_garage_state`` directly (see ``_discover``).
+# One stateful reader per process: the periodic loop, on-demand refresh and the
+# post-mutation hook share it, so its cadences and cache persist across
+# reconnects. Discovery uses the full ``collect_garage_state`` (see ``_discover``).
 _state_reader = garage_state.GarageStateReader()
 
 
@@ -44,23 +42,13 @@ def _collect_state(config: GarageConfig) -> GarageState | None:
 
 
 def _collect_state_fresh(config: GarageConfig) -> GarageState | None:
-    """On-demand ``garage_refresh`` path: bypass the topology cache so an
-    operator's layout change (capacity, zones) is visible immediately."""
-    return _state_reader.collect(config, force_topology=True)
+    """On-demand ``garage_refresh`` path: re-read topology and sweep now, so an
+    operator's change (capacity, zones, buckets) is visible immediately."""
+    return _state_reader.collect(config, fresh=True)
 
 
 def _discover(config: GarageConfig) -> GarageState | None:
     return garage_discover.discover_garage(config)
-
-
-def _detect(
-    config: GarageConfig, current_state: GarageState | None
-) -> list[GarageBucket]:
-    return garage_state.detect_new_buckets(config, current_state)
-
-
-def _detect_interval(config: GarageConfig) -> float:
-    return config.detector_interval_seconds
 
 
 def _read_affected(
@@ -71,7 +59,7 @@ def _read_affected(
     if not ids:
         return []
     capped = garage_state.cap_targeted_reads(ids, context="Post-mutation")
-    return garage_state.read_buckets_by_id(config, capped)
+    return _state_reader.read(config, capped)
 
 
 def _log_enricher(state: object) -> BucketIdResolver:
@@ -91,7 +79,6 @@ GARAGE_INTEGRATION = Integration(
     discover=_discover,
     collect_state=_collect_state,
     collect_state_fresh=_collect_state_fresh,
-    detect=Detector(run=_detect, interval=_detect_interval),
     read_affected=_read_affected,
     log_enrichers={"garage_s3": _log_enricher},
     capabilities=(Capability("garage.admin.v1", "garage"),),

@@ -143,40 +143,9 @@ state_push_interval_seconds = -1
         assert gc.enabled is True
         assert not hasattr(gc, "state_push_interval_seconds")
 
-    def test_detector_interval_defaults_when_absent(self, tmp_path: Path) -> None:
-        # A config without the knob (e.g. a box that just updated) runs at the
-        # default rather than soft-disabling.
-        path = _write_toml(
-            tmp_path,
-            """\
-[garage]
-enabled = true
-container_name = "garaged"
-garage_binary = "/garage"
-docker_binary = "/usr/bin/docker"
-config_path = "/opt/garage/garage.toml"
-""",
-        )
-        gc = parse_garage_config(_garage_section(path))
-        assert gc.detector_interval_seconds == 2.0
-
-    def test_detector_interval_custom_value(self, tmp_path: Path) -> None:
-        path = _write_toml(
-            tmp_path,
-            """\
-[garage]
-enabled = true
-container_name = "garaged"
-garage_binary = "/garage"
-docker_binary = "/usr/bin/docker"
-config_path = "/opt/garage/garage.toml"
-detector_interval_seconds = 5
-""",
-        )
-        gc = parse_garage_config(_garage_section(path))
-        assert gc.detector_interval_seconds == 5.0
-
-    def test_detector_interval_must_be_positive(self, tmp_path: Path) -> None:
+    def test_legacy_detector_interval_is_ignored(self, tmp_path: Path) -> None:
+        # The retired new-bucket poll's knob may linger in a deployed TOML; even
+        # an invalid value must not soft-disable Garage on update.
         path = _write_toml(
             tmp_path,
             """\
@@ -189,8 +158,59 @@ config_path = "/opt/garage/garage.toml"
 detector_interval_seconds = 0
 """,
         )
-        with pytest.raises(ConfigError, match="detector_interval_seconds.*positive"):
-            parse_garage_config(_garage_section(path))
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.enabled is True
+        assert not hasattr(gc, "detector_interval_seconds")
+
+    def test_hint_file_defaults_off(self, tmp_path: Path) -> None:
+        path = _write_toml(
+            tmp_path,
+            """\
+[garage]
+enabled = true
+container_name = "garaged"
+garage_binary = "/garage"
+docker_binary = "/usr/bin/docker"
+config_path = "/opt/garage/garage.toml"
+""",
+        )
+        assert parse_garage_config(_garage_section(path)).hint_file == ""
+
+    def test_hint_file_absolute_path_kept(self, tmp_path: Path) -> None:
+        path = _write_toml(
+            tmp_path,
+            """\
+[garage]
+enabled = true
+container_name = "garaged"
+garage_binary = "/garage"
+docker_binary = "/usr/bin/docker"
+config_path = "/opt/garage/garage.toml"
+hint_file = "/run/user/1000/hints.json"
+""",
+        )
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.hint_file == "/run/user/1000/hints.json"
+
+    @pytest.mark.parametrize("value", ['"hints.json"', "42"])
+    def test_bad_hint_file_turns_hints_off_not_garage(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        path = _write_toml(
+            tmp_path,
+            f"""\
+[garage]
+enabled = true
+container_name = "garaged"
+garage_binary = "/garage"
+docker_binary = "/usr/bin/docker"
+config_path = "/opt/garage/garage.toml"
+hint_file = {value}
+""",
+        )
+        gc = parse_garage_config(_garage_section(path))
+        assert gc.enabled is True
+        assert gc.hint_file == ""
 
     def test_empty_container_name(self, tmp_path: Path) -> None:
         path = _write_toml(
