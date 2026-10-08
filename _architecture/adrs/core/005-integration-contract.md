@@ -99,8 +99,9 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
    Integration, including those like caddy that collect no state. It composes its own
    reads at its own sub-cadences internally, behind its own state reader. Newcomers
    are one such sub-cadence, not a contract slot: the reader finds them itself (Garage:
-   a full walk every push, or with an optional hint file, its ids each push plus a
-   full walk once a minute),
+   a full walk every push, or with an optional hint file, its ids each push, a
+   `ListBuckets` membership diff once a minute and a full walk every five;
+   ~~plus a full walk once a minute~~ amended 2026-10-08),
    and every targeted read lands in its cache. The same
    cadence-aware reader serves the periodic loop and on-demand refresh alike; the
    command result, not the state manifest, is the synchronous answer to "did this
