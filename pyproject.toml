@@ -12,7 +12,7 @@ license = "AGPL-3.0"
 dependencies = [
     "websockets>=14.0,<15.0",
     "psutil>=6.0",
-    "cryptography>=48.0.0",
+    "cryptography>=50.0.2",
 ]
 
 [project.optional-dependencies]

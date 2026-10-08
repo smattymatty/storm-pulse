@@ -49,6 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "certificate" too, so `stormpulse logs -g certificate` finds them all.
   Event names are unchanged.
 
+### Security
+
+- `cryptography>=50.0.2`, up from `>=48.0.0`. 48.0.0 carries seven
+  advisories (OSV, 2026-10-08) and the old floor allowed a node to stay on
+  it; 50.0.2 is the latest release and carries none.
+
 ## [0.6.0] - 2026-10-05
 
 ### Added
