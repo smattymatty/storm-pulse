@@ -72,15 +72,14 @@ def test_shipper_added_fields_name_a_real_parser() -> None:
     assert set(SHIPPER_ADDED) <= set(PARSERS)
 
 
-def test_caddy_json_emits_no_bucket() -> None:
-    """The known gap, pinned as a fact rather than a memory.
+def test_caddy_json_emits_bucket_and_path() -> None:
+    """A consumer meters per-bucket egress from `bucket` alone.
 
-    This is not a wish. It records what the agent does today so a consumer
-    cannot assume otherwise, and so that the day someone adds bucket extraction
-    to the caddy parser, this test fails and forces the artifact, and every
-    consumer's expectation, to move in the same commit.
+    The access row carried only `path` until 2026-10-08, and the meter
+    attributed nothing for months while both suites stayed green. Pinned as a
+    fact, so dropping either field fails here before any consumer goes quiet.
     """
-    assert "bucket" not in emitted_fields("caddy_json")
+    assert "bucket" in emitted_fields("caddy_json")
     assert "path" in emitted_fields("caddy_json")
 
 
@@ -95,4 +94,4 @@ def test_the_artifact_shape_is_stable() -> None:
     # The precomputed union is what a consumer asserts against, so it must
     # actually contain the shipper half rather than only the parser's own keys.
     assert "bucket_id" in art["parsers"]["garage_s3"]["all_fields"]
-    assert "bucket" not in art["parsers"]["caddy_json"]["all_fields"]
+    assert "bucket" in art["parsers"]["caddy_json"]["all_fields"]

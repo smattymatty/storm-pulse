@@ -88,7 +88,6 @@ GOLDEN_LINES: dict[str, dict[str, str]] = {
 }
 
 # Declared parser fields, sorted for readable artifact diffs.
-# caddy_json emits path, not bucket; consumers must derive the bucket.
 # Parser field changes require updating these declarations.
 DECLARED: dict[str, dict[str, tuple[str, ...]]] = {
     "garage_s3": {
@@ -109,6 +108,7 @@ DECLARED: dict[str, dict[str, tuple[str, ...]]] = {
     },
     "caddy_json": {
         "access": (
+            "bucket",
             "bytes_sent",
             "client_ip",
             "duration_ms",

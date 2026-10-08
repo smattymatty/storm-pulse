@@ -223,8 +223,12 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
 # bucket_id stamping
 # ---------------------------------------------------------------------------
 
-from stormpulse.garage.state import GarageBucket, GarageKeyRef, GarageState  # noqa: E402
 from stormpulse.garage.bucket_resolver import BucketIdResolver  # noqa: E402
+from stormpulse.garage.state import (  # noqa: E402
+    GarageBucket,
+    GarageKeyRef,
+    GarageState,
+)
 
 _GARAGE_LINE = (
     "2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: "
@@ -238,17 +242,34 @@ def _garage_group(source_path: Path) -> LogGroupConfig:
 
 def _resolver_for(key_id: str, bucket_name: str, bucket_id: str) -> BucketIdResolver:
     state = GarageState(
-        node_id="n1", hostname="h", zone="z", capacity_gb=1.0, data_avail_gb=1.0,
-        version="v", healthy=True, object_count=0, keys=[], peers=[],
+        node_id="n1",
+        hostname="h",
+        zone="z",
+        capacity_gb=1.0,
+        data_avail_gb=1.0,
+        version="v",
+        healthy=True,
+        object_count=0,
+        keys=[],
+        peers=[],
         buckets=[
             GarageBucket(
-                id=bucket_id, alias="", size_bytes=0, object_count=0,
-                keys=[GarageKeyRef(
-                    key_id=key_id, key_name="k", permissions="RWO",
-                    bucket_local_aliases=(bucket_name,),
-                )],
-                website_access=False, website_index_document="index.html",
-                website_error_document=None, quota_max_size_bytes=None,
+                id=bucket_id,
+                alias="",
+                size_bytes=0,
+                object_count=0,
+                keys=[
+                    GarageKeyRef(
+                        key_id=key_id,
+                        key_name="k",
+                        permissions="RWO",
+                        bucket_local_aliases=(bucket_name,),
+                    )
+                ],
+                website_access=False,
+                website_index_document="index.html",
+                website_error_document=None,
+                quota_max_size_bytes=None,
                 quota_max_objects=None,
             ),
         ],
@@ -297,6 +318,34 @@ def test_garage_s3_no_resolver_leaves_field_off(tmp_path: Path) -> None:
 
     batch = shipper.collect_batch()
     assert batch is not None
+    assert "bucket_id" not in batch.lines[0]
+    store.close()
+
+
+def test_caddy_group_ignores_resolver_though_its_rows_name_a_bucket(
+    tmp_path: Path,
+) -> None:
+    # A Caddy row names its bucket but carries no key id, so the resolver
+    # cannot anchor it: stamping is gated by parser, never by a bucket field.
+    store = LogPositionStore(tmp_path / "pos.db")
+    log = tmp_path / "caddy.log"
+    log.write_text(
+        json.dumps(
+            {
+                "ts": "2026-04-10T13:00:00Z",
+                "status": 200,
+                "request": {"method": "GET", "uri": "/media/photos/x.jpg"},
+            }
+        )
+        + "\n"
+    )
+    group = _make_group(log, parser="caddy_json")
+    shipper = LogShipper(group, LogTailer(group, store))
+    resolver = _resolver_for("GKaccount01", "media", "bid-media-000001")
+
+    batch = shipper.collect_batch(resolver)
+    assert batch is not None
+    assert batch.lines[0]["bucket"] == "media"
     assert "bucket_id" not in batch.lines[0]
     store.close()
 

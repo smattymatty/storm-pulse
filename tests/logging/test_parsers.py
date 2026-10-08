@@ -335,6 +335,50 @@ class TestParseCaddyJson:
         assert parse_caddy_json("not json") is None
         assert parse_caddy_json("") is None
 
+    @staticmethod
+    def _access_line(uri: object) -> str:
+        return json.dumps(
+            {
+                "ts": "2026-04-10T13:00:00Z",
+                "status": 200,
+                "request": {"method": "GET", "uri": uri},
+            }
+        )
+
+    def test_access_log_names_the_bucket(self) -> None:
+        # Path-style endpoint: the first segment is the bucket, the key
+        # and the query string never leak into it.
+        cases = {
+            "/media/photos/x.jpg": "media",
+            "/my-bucket/?list-type=2": "my-bucket",
+            "/my-bucket?list-type=2": "my-bucket",
+            "/": "",
+            "": "",
+        }
+        for uri, bucket in cases.items():
+            result = parse_caddy_json(self._access_line(uri))
+            assert result is not None, uri
+            assert result["bucket"] == bucket, uri
+            assert result["path"] == uri
+            assert "object_key" not in result
+
+    def test_access_log_without_a_rooted_path_names_no_bucket(self) -> None:
+        # `OPTIONS *`, an absolute-form proxy request and a null uri all
+        # reach Caddy; none has a first segment, so none names a bucket.
+        for uri in ("*", "http://alpha.example.ca/media/x", None):
+            result = parse_caddy_json(self._access_line(uri))
+            assert result is not None, uri
+            assert result["bucket"] == "", uri
+            assert result["path"] == (uri or "")
+
+    def test_access_log_with_a_non_string_uri_names_no_bucket(self) -> None:
+        # A malformed line can carry a number or a list where the uri should
+        # be; the parser must answer, not raise, since the shipper catches nothing.
+        for uri in (7, ["/media/x"]):
+            result = parse_caddy_json(self._access_line(uri))
+            assert result is not None, uri
+            assert result["bucket"] == "", uri
+
     def test_cert_obtained_passes_through(self) -> None:
         result = parse_caddy_json(_REAL_CERTMAGIC_OBTAINED)
         assert result is not None

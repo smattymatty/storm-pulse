@@ -71,6 +71,18 @@ _GARAGE_ADMIN_MUTATIONS: frozenset[str] = frozenset(
 )
 
 
+def _split_bucket_key(path: str) -> tuple[str, str]:
+    """Split a path-style request path into ``(bucket, object_key)``.
+
+    The bucket is the first segment, the key the rest; the query string
+    is dropped. Anything not rooted at ``/`` yields two empty strings.
+    """
+    if not isinstance(path, str) or not path.startswith("/"):
+        return "", ""
+    parts = path.split("?", 1)[0][1:].split("/", 1)
+    return parts[0], parts[1] if len(parts) > 1 else ""
+
+
 def parse_garage_s3(line: str) -> dict[str, Any] | None:
     """Parse a Garage S3 access log line.
 
@@ -96,13 +108,7 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
             status = int(m.group("status"))
     if m is not None:
         path = m.group("path")
-        bucket = ""
-        object_key = ""
-        if path.startswith("/"):
-            path_part = path.split("?", 1)[0]
-            parts = path_part[1:].split("/", 1)
-            bucket = parts[0]
-            object_key = parts[1] if len(parts) > 1 else ""
+        bucket, object_key = _split_bucket_key(path)
 
         method = m.group("method")
         if object_key:
@@ -279,6 +285,7 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
 
     method = request.get("method", "") or ""
     uri = request.get("uri", "") or ""
+    bucket, _ = _split_bucket_key(uri)
     host = request.get("host", "") or ""
     client_ip = request.get("remote_ip", "") or request.get("client_ip", "") or ""
     status = obj.get("status", 0)
@@ -300,6 +307,7 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
         "method": method,
         "host": host,
         "path": uri,
+        "bucket": bucket,
         "status": status,
         "user_agent": ua,
         "duration_ms": int(float(obj.get("duration", 0.0)) * 1000),

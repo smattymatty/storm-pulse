@@ -2,6 +2,7 @@
   "parsers": {
     "caddy_json": {
       "all_fields": [
+        "bucket",
         "bytes_sent",
         "client_ip",
         "duration_ms",
@@ -23,6 +24,7 @@
       "shipper_added": [],
       "variants": {
         "access": [
+          "bucket",
           "bytes_sent",
           "client_ip",
           "duration_ms",

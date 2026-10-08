@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that is a symlink, not a regular file, owned by another user, over 64 KiB,
   malformed, older than 60 s or holding a short id is ignored. A bad value
   turns hints off, not Garage.
+- A Caddy access row names its `bucket`: the first segment of the request
+  path, the same split the Garage S3 parser makes, empty when the path has
+  none. `path` and the other fields are unchanged; the field is declared in
+  the log-line contract.
 
 ### Removed
 
