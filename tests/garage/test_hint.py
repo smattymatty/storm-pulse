@@ -33,6 +33,17 @@ def test_good_file_yields_its_ids(tmp_path: Path) -> None:
     assert got.bucket_ids == (ID_A, ID_B)
 
 
+def test_unknown_keys_are_ignored_so_new_fields_ship_without_a_version_bump(
+    tmp_path: Path,
+) -> None:
+    # A writer that adds a field must never cost a node its hints, in either deploy order.
+    got = read_hint(
+        _hint(tmp_path, touched_at={ID_A: NOW}, writer_started=NOW, dropped=0), now=NOW
+    )
+    assert got.refusal is None
+    assert got.bucket_ids == (ID_A, ID_B)
+
+
 def test_empty_file_is_a_heartbeat_not_a_refusal(tmp_path: Path) -> None:
     got = read_hint(_hint(tmp_path, bucket_ids=[]), now=NOW)
     assert got.refusal is None
