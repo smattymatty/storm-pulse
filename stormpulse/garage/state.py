@@ -365,20 +365,28 @@ def collect_topology(config: GarageConfig) -> Topology | None:
         logger.warning("No nodes in GetClusterStatus; skipping topology read")
         return None
 
-    # Best-effort: a stats failure degrades object_count to 0, not the read.
-    stats, _err = admin_api.get_cluster_statistics(
-        admin_url=admin_url,
-        admin_token=admin_token,
+    return Topology(
+        object_count=_object_count(config), keys=_key_inventory(config), peers=peers
     )
-    object_count = int((stats or {}).get("totalObjectCount") or 0)
 
-    # Best-effort: a key-list failure empties the top-level inventory only.
-    keys_raw, _err = admin_api.list_keys(admin_url=admin_url, admin_token=admin_token)
-    keys = [
+
+def _object_count(config: GarageConfig) -> int:
+    """Best-effort: a stats failure degrades object_count to 0, not the read."""
+    stats, _err = admin_api.get_cluster_statistics(
+        admin_url=config.admin_url, admin_token=config.admin_token
+    )
+    return int((stats or {}).get("totalObjectCount") or 0)
+
+
+def _key_inventory(config: GarageConfig) -> list[GarageKeyRef]:
+    """Best-effort: a key-list failure empties the top-level inventory only."""
+    keys_raw, _err = admin_api.list_keys(
+        admin_url=config.admin_url, admin_token=config.admin_token
+    )
+    return [
         GarageKeyRef(k.get("id", "") or "", k.get("name", "") or "", "")
         for k in (keys_raw or [])
     ]
-    return Topology(object_count=object_count, keys=keys, peers=peers)
 
 
 def _walk_and_compose(config: GarageConfig, topology: Topology) -> GarageState | None:
