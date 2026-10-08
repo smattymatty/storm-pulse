@@ -138,3 +138,31 @@ def test_no_hint_file_walks_every_bucket_every_call() -> None:
         for _ in range(3):
             assert reader.collect(reader_config(hint_file="")) is not None
     assert m["list_buckets"].call_count == 3
+
+
+def test_drain_reads_in_the_writers_order_latest_file_first(tmp_path: Path) -> None:
+    # The writer lists the most recently touched first and the cap keeps those;
+    # a sorted drain would starve every id past the first eight by hex prefix.
+    reader = GarageStateReader(clock=Clock())
+    hint = _hint(tmp_path, [])
+    _warm(reader, reader_config(hint_file=hint))
+    _hint(tmp_path, [hex_id(0xF), hex_id(0xE), hex_id(0xD)])
+    with patched() as m:
+        reader.collect(reader_config(hint_file=hint))
+        assert [c.kwargs["bucket_ref"] for c in m["get_info"].call_args_list] == [
+            hex_id(0xF),
+            hex_id(0xE),
+            hex_id(0xD),
+        ]
+    # A later file leads; an id it drops but the reader still owes keeps its turn.
+    ids = [hex_id(i) for i in range(1, MAX_TARGETED_BUCKET_READS + 3)]
+    _hint(tmp_path, ids)
+    with patched():
+        reader.collect(reader_config(hint_file=hint))  # drains ids[:8]; owes 2
+    _hint(tmp_path, [hex_id(0xB)])
+    with patched() as m:
+        reader.collect(reader_config(hint_file=hint))
+    assert [c.kwargs["bucket_ref"] for c in m["get_info"].call_args_list] == [
+        hex_id(0xB),
+        *ids[MAX_TARGETED_BUCKET_READS:],
+    ]

@@ -30,13 +30,13 @@ def _hint(tmp_path: Path, **overrides: object) -> str:
 def test_good_file_yields_its_ids(tmp_path: Path) -> None:
     got = read_hint(_hint(tmp_path), now=NOW)
     assert got.refusal is None
-    assert got.bucket_ids == {ID_A, ID_B}
+    assert got.bucket_ids == (ID_A, ID_B)
 
 
 def test_empty_file_is_a_heartbeat_not_a_refusal(tmp_path: Path) -> None:
     got = read_hint(_hint(tmp_path, bucket_ids=[]), now=NOW)
     assert got.refusal is None
-    assert got.bucket_ids == frozenset()
+    assert got.bucket_ids == ()
 
 
 def test_missing_file_is_unreadable(tmp_path: Path) -> None:
@@ -50,7 +50,7 @@ def test_symlink_refused(tmp_path: Path) -> None:
     link.symlink_to(target)
     got = read_hint(str(link), now=NOW)
     assert got.refusal is Refusal.SYMLINK
-    assert got.bucket_ids == frozenset()
+    assert got.bucket_ids == ()
 
 
 def test_fifo_refused_without_blocking(tmp_path: Path) -> None:
@@ -78,7 +78,7 @@ def test_directory_refused(tmp_path: Path) -> None:
 def test_foreign_owner_refused(tmp_path: Path) -> None:
     got = read_hint(_hint(tmp_path), now=NOW, uid=os.geteuid() + 1)
     assert got.refusal is Refusal.FOREIGN_OWNER
-    assert got.bucket_ids == frozenset()
+    assert got.bucket_ids == ()
 
 
 def test_oversize_refused(tmp_path: Path) -> None:
@@ -92,7 +92,7 @@ def test_file_at_the_cap_is_read(tmp_path: Path) -> None:
     body = json.dumps({"version": 1, "written_at": NOW, "bucket_ids": [ID_A]})
     path = tmp_path / "hint.json"
     path.write_bytes(body.encode() + b" " * (MAX_HINT_BYTES - len(body)))
-    assert read_hint(str(path), now=NOW).bucket_ids == {ID_A}
+    assert read_hint(str(path), now=NOW).bucket_ids == (ID_A,)
 
 
 @pytest.mark.parametrize(
@@ -138,7 +138,7 @@ def test_non_64_hex_id_refused_whole_file(tmp_path: Path, bad: object) -> None:
     # A short id would become a Garage prefix search; refuse rather than search.
     got = read_hint(_hint(tmp_path, bucket_ids=[ID_A, bad]), now=NOW)
     assert got.refusal is Refusal.BAD_ID
-    assert got.bucket_ids == frozenset()
+    assert got.bucket_ids == ()
 
 
 def test_nan_written_at_refused(tmp_path: Path) -> None:

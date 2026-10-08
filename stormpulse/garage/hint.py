@@ -42,7 +42,7 @@ class Refusal(StrEnum):
 class HintRead:
     """Ids to re-read, or the refusal that left none."""
 
-    bucket_ids: frozenset[str] = frozenset()
+    bucket_ids: tuple[str, ...] = ()  # the writer's order: most recent first
     refusal: Refusal | None = None
     detail: str = ""
 
@@ -144,4 +144,4 @@ def _parse(raw: bytes, now: float) -> HintRead:
         return _refuse(Refusal.STALE, f"written_at is {age:.0f}s old")
     if not all(isinstance(i, str) and _BUCKET_ID.fullmatch(i) for i in ids):
         return _refuse(Refusal.BAD_ID, "hint names a non-64-hex bucket id")
-    return HintRead(bucket_ids=frozenset(str(i) for i in ids))
+    return HintRead(bucket_ids=tuple(dict.fromkeys(str(i) for i in ids)))

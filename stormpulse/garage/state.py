@@ -490,7 +490,8 @@ class GarageStateReader:
         self._buckets: dict[str, GarageBucket] | None = None
         # Reads absorbed while a sweep is in flight, laid over its result.
         self._absorbed: dict[str, GarageBucket] | None = None
-        self._pending: set[str] = set()
+        # Hinted ids not yet read, most recent first: the latest file leads.
+        self._pending: list[str] = []
         self._last_refusal: Refusal | None = None
         self._ticks = 0
         self._topology_due = _Every(self.TOPOLOGY_EVERY, lambda: self._ticks)
@@ -577,7 +578,8 @@ class GarageStateReader:
         if read.refusal is None:
             self._last_refusal = None
             with self._lock:
-                self._pending |= read.bucket_ids
+                fresh = read.bucket_ids
+                self._pending = [*fresh, *(i for i in self._pending if i not in fresh)]
             return
         self._log_refusal(config.hint_file, read)
 
@@ -594,8 +596,8 @@ class GarageStateReader:
 
     def _drain(self) -> list[str]:
         with self._lock:
-            batch = sorted(self._pending)[:MAX_TARGETED_BUCKET_READS]
-            self._pending.difference_update(batch)
+            batch = self._pending[:MAX_TARGETED_BUCKET_READS]
+            del self._pending[:MAX_TARGETED_BUCKET_READS]
         return batch
 
 
