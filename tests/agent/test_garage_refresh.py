@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from stormpulse.agent import Agent, dispatch, refresh
-from stormpulse.garage.state import GarageStateReader
+from stormpulse.garage.state_reader import GarageStateReader
 from tests.helpers import (
     FAKE_METRICS,
     get_garage_state,

@@ -1,14 +1,15 @@
 """One summary per walk, and no failure hidden inside it.
 
 A walk (the periodic collect, or a targeted batch) folds its successful admin
-calls into one ``walk_summary``; every failed call (no status, or >= 400) keeps
-its own ``admin_call`` event. Outside a walk every call emits, as before.
-Driven through a fake ``HTTPConnection`` so the real ``_request`` runs.
+calls into one ``walk_summary``, emitted when it read, dropped or failed; a
+quiet diff minute or a topology-only tick emits nothing. Every failed call (no
+status, or >= 400) keeps its own ``admin_call`` event.
 """
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +18,9 @@ import pytest
 from stormpulse import events
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.state import (
-    GarageStateReader,
-    collect_garage_state,
-    read_buckets_by_id,
-)
+from stormpulse.garage.state import collect_garage_state, read_buckets_by_id
+from stormpulse.garage.state_reader import GarageStateReader
+from tests.garage.state_reader_support import Clock
 
 ADMIN_URL = "http://127.0.0.1:3903"
 NODE = {
@@ -39,7 +38,8 @@ def _bucket_id(i: int) -> str:
     return f"{i:064x}"
 
 
-def _config() -> GarageConfig:
+def _config(*, hint_file: str = "") -> GarageConfig:
+    # An unreadable hint file turns hints off but keeps the hinted cadences.
     return GarageConfig(
         enabled=True,
         container_name="garaged",
@@ -48,7 +48,32 @@ def _config() -> GarageConfig:
         config_path=Path("/tmp/garage.toml"),
         admin_url=ADMIN_URL,
         admin_token="tok",
+        hint_file=hint_file,
     )
+
+
+@dataclass
+class _FakeGarage:
+    """The fake's live state: the test edits ``ids`` and reads ``calls``."""
+
+    ids: list[str]
+    calls: list[str] = field(default_factory=list)
+    down: bool = False
+
+
+class _Resp:
+    def __init__(self, status: int, payload: Any) -> None:
+        self.status = status
+        self._payload = json.dumps(payload).encode()
+
+    def read(self) -> bytes:
+        return self._payload
+
+
+_TOPOLOGY: dict[str, Any] = {
+    "GetClusterStatus": {"nodes": [NODE]},
+    "GetClusterStatistics": {"totalObjectCount": 0},
+}
 
 
 def _install_fake_garage(
@@ -57,23 +82,9 @@ def _install_fake_garage(
     *,
     not_found: frozenset[str] | set[str] = frozenset(),
     unreachable: frozenset[str] | set[str] = frozenset(),
-) -> None:
+) -> _FakeGarage:
     """A Garage with ``n`` buckets; named ids answer 404 or drop the connection."""
-    ids = [_bucket_id(i) for i in range(n)]
-
-    class _Resp:
-        def __init__(self, status: int, payload: Any) -> None:
-            self.status = status
-            self._payload = json.dumps(payload).encode()
-
-        def read(self) -> bytes:
-            return self._payload
-
-    fixed: dict[str, Any] = {
-        "ListBuckets": [{"id": b} for b in ids],
-        "GetClusterStatus": {"nodes": [NODE]},
-        "GetClusterStatistics": {"totalObjectCount": 0},
-    }
+    fake = _FakeGarage(ids=[_bucket_id(i) for i in range(n)])
 
     def _bucket_info(bucket_id: str) -> _Resp:
         if bucket_id in unreachable:
@@ -91,14 +102,20 @@ def _install_fake_garage(
 
         def getresponse(self) -> _Resp:
             endpoint = self._path.split("?", 1)[0].rsplit("/", 1)[-1]
+            fake.calls.append(endpoint)
+            if fake.down:
+                raise OSError("connection refused")
             if endpoint == "GetBucketInfo":
                 return _bucket_info(self._path.rsplit("id=", 1)[-1])
-            return _Resp(200, fixed.get(endpoint, []))  # ListKeys: []
+            if endpoint == "ListBuckets":
+                return _Resp(200, [{"id": b} for b in fake.ids])
+            return _Resp(200, _TOPOLOGY.get(endpoint, []))  # ListKeys: []
 
         def close(self) -> None:
             pass
 
     monkeypatch.setattr("http.client.HTTPConnection", _Conn)
+    return fake
 
 
 def _drain() -> list[dict[str, Any]]:
@@ -171,6 +188,109 @@ def test_the_full_discovery_read_is_one_walk(
     _install_fake_garage(monkeypatch, 5)
     assert collect_garage_state(_config()) is not None
     assert [e["kind"] for e in _drain()] == ["walk_summary"]
+
+
+def test_quiet_diff_minutes_emit_nothing_until_the_reread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The prediction in miniature: six ticks over five quiet minutes on a
+    # hinted node leave two summaries (the cold walk and the re-read), not six.
+    fake = _install_fake_garage(monkeypatch, 3)
+    clock = Clock()
+    reader = GarageStateReader(clock=clock)
+    config = _config(hint_file="/nonexistent/hint.json")
+    assert reader.collect(config) is not None
+    assert [e["kind"] for e in _drain()] == ["walk_summary"]
+    for clock.now in (60.0, 120.0, 180.0, 240.0):
+        fake.calls.clear()
+        assert reader.collect(config) is not None
+        assert fake.calls == ["ListBuckets"]
+        assert _drain() == []
+    clock.now = 300.0
+    assert reader.collect(config) is not None
+    (summary,) = _drain()
+    assert summary["buckets_read"] == 3
+    assert summary["buckets_dropped"] == 0
+
+
+def test_a_diff_that_drops_a_bucket_emits_one_summary_with_the_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _install_fake_garage(monkeypatch, 3)
+    clock = Clock()
+    reader = GarageStateReader(clock=clock)
+    config = _config(hint_file="/nonexistent/hint.json")
+    assert reader.collect(config) is not None
+    _drain()
+    del fake.ids[2]
+    clock.now = 60.0
+    state = reader.collect(config)
+    assert state is not None
+    assert [b.id for b in state.buckets] == fake.ids
+    (summary,) = _drain()
+    assert summary["kind"] == "walk_summary"
+    assert summary["buckets_dropped"] == 1
+    assert summary["buckets_read"] == 0
+    assert summary["failures"] == 0
+    assert summary["calls"] == 1
+
+
+def test_a_reread_that_drops_a_bucket_carries_the_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A deletion no diff minute saw reaches the plane through the re-read's
+    # own summary, beside what it read.
+    fake = _install_fake_garage(monkeypatch, 3)
+    clock = Clock()
+    reader = GarageStateReader(clock=clock)
+    config = _config(hint_file="/nonexistent/hint.json")
+    assert reader.collect(config) is not None
+    _drain()
+    del fake.ids[0]
+    clock.now = 300.0
+    state = reader.collect(config)
+    assert state is not None
+    assert [b.id for b in state.buckets] == fake.ids
+    (summary,) = _drain()
+    assert summary["buckets_read"] == 2
+    assert summary["buckets_dropped"] == 1
+
+
+def test_a_topology_only_tick_emits_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _install_fake_garage(monkeypatch, 2)
+    reader = GarageStateReader(clock=Clock())
+    config = _config(hint_file="/nonexistent/hint.json")
+    for _ in range(GarageStateReader.TOPOLOGY_EVERY):
+        assert reader.collect(config) is not None
+    _drain()
+    fake.calls.clear()
+    assert reader.collect(config) is not None
+    assert fake.calls == ["GetClusterStatus", "GetClusterStatistics", "ListKeys"]
+    assert _drain() == []
+
+
+def test_a_failed_diff_still_emits_its_failure_and_the_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _install_fake_garage(monkeypatch, 2)
+    clock = Clock()
+    reader = GarageStateReader(clock=clock)
+    config = _config(hint_file="/nonexistent/hint.json")
+    assert reader.collect(config) is not None
+    _drain()
+    fake.down = True
+    clock.now = 60.0
+    state = reader.collect(config)
+    assert state is not None  # the cache is served
+    assert len(state.buckets) == 2
+    failed, summary = _drain()
+    assert failed["kind"] == "admin_call"
+    assert failed["endpoint"] == "ListBuckets"
+    assert summary["kind"] == "walk_summary"
+    assert summary["failures"] == 1
+    assert summary["buckets_dropped"] == 0
 
 
 def test_outside_a_walk_every_call_keeps_its_event(

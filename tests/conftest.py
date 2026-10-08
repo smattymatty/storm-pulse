@@ -15,7 +15,7 @@ from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.garage import integration as garage_integration
-from stormpulse.garage.state import GarageStateReader
+from stormpulse.garage.state_reader import GarageStateReader
 from stormpulse.signoff import SignoffState
 from tests.helpers import SECRET, build_config
 

@@ -16,7 +16,8 @@ import time
 from pathlib import Path
 
 from stormpulse.garage import admin_api
-from stormpulse.garage.state import GarageState, GarageStateReader, collect_garage_state
+from stormpulse.garage.state import GarageState, collect_garage_state
+from stormpulse.garage.state_reader import GarageStateReader
 from tests.wire.garage.conftest import (
     WireBucket,
     WireEnv,

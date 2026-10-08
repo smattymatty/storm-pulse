@@ -13,7 +13,8 @@ from stormpulse.agent import Agent, loops, refresh
 from stormpulse.auth import NonceStore
 from stormpulse.config import Config
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.state import GarageState, GarageStateReader
+from stormpulse.garage.state import GarageState
+from stormpulse.garage.state_reader import GarageStateReader
 from stormpulse.signoff import SignoffState
 from tests.helpers import build_config
 
@@ -110,7 +111,9 @@ class TestGarageLoopEnabled:
 
         async def run_loop() -> None:
             with patch.object(
-                GarageStateReader, "collect", return_value=fake_state,
+                GarageStateReader,
+                "collect",
+                return_value=fake_state,
             ):
                 task = asyncio.create_task(
                     loops.integration_state_loop(agent, ws, "garage")
@@ -153,7 +156,9 @@ class TestGarageLoopEnabled:
 
         async def run_loop() -> None:
             with patch.object(
-                GarageStateReader, "collect", return_value=fake_state,
+                GarageStateReader,
+                "collect",
+                return_value=fake_state,
             ) as mock_collect:
                 task = asyncio.create_task(
                     loops.integration_state_loop(agent, ws, "garage")
@@ -161,9 +166,7 @@ class TestGarageLoopEnabled:
                 # Give just enough time for the collect to run, but nowhere
                 # near 600s - proves collect happens before the wait
                 await asyncio.sleep(0.1)
-                assert mock_collect.called, (
-                    "reader.collect was not called before wait"
-                )
+                assert mock_collect.called, "reader.collect was not called before wait"
                 shutdown.set()
                 await task
 
@@ -213,9 +216,13 @@ class TestGarageRefresh:
             peers=[],
         )
         with patch.object(
-            GarageStateReader, "collect", return_value=fake_state,
+            GarageStateReader,
+            "collect",
+            return_value=fake_state,
         ):
-            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1", "garage")
+            result = await refresh.collect_refresh_result(
+                agent, "garage_refresh", "req-1", "garage"
+            )
 
         assert result.success is True
         assert result.command == "garage_refresh"
@@ -229,7 +236,9 @@ class TestGarageRefresh:
         config = _make_config(tmp_path, garage=None)
         agent, _ = _make_agent(config, tmp_path)
 
-        result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1", "garage")
+        result = await refresh.collect_refresh_result(
+            agent, "garage_refresh", "req-1", "garage"
+        )
 
         assert result.success is False
         assert result.failure_reason == "not_configured"
@@ -240,9 +249,13 @@ class TestGarageRefresh:
         agent, _ = _make_agent(config, tmp_path)
 
         with patch.object(
-            GarageStateReader, "collect", return_value=None,
+            GarageStateReader,
+            "collect",
+            return_value=None,
         ):
-            result = await refresh.collect_refresh_result(agent, "garage_refresh", "req-1", "garage")
+            result = await refresh.collect_refresh_result(
+                agent, "garage_refresh", "req-1", "garage"
+            )
 
         assert result.success is False
         assert result.failure_reason == "collection_failed"

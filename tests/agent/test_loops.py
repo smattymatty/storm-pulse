@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from stormpulse.agent import Agent, loops
-from stormpulse.garage.state import GarageStateReader
+from stormpulse.garage.state_reader import GarageStateReader
 from stormpulse.protocol import MetricsPayload
 from tests.helpers import (
     FAKE_METRICS,

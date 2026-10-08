@@ -203,7 +203,8 @@ known log signature. In load order:
 
 - **Garage admin walk** (`integration_state_loop`): one full
   O(buckets) state collection per metrics push interval, in a worker
-  thread. The on-demand `garage_refresh` command runs the same walk
+  thread; with a hint file, a membership diff a minute, the full walk
+  every five, and only hinted buckets in between. The on-demand `garage_refresh` command runs the same walk
   with no debounce or rate limit; a client looping refresh is the one
   unbounded path to Garage's admin API (jobs are capped, refresh is
   not). Signature: INFO `Sent result for 'garage_refresh'` with

@@ -46,6 +46,7 @@ class _Walk:
     item: str
     calls: int = 0
     items_read: int = 0
+    dropped: int = 0
     failures: int = 0
     slowest_ms: int = 0
     slowest_endpoint: str = ""
@@ -65,8 +66,10 @@ def is_failure(status: int | None) -> bool:
 def walk(*, source: str, item: str) -> Iterator[None]:
     """Fold every ``record_call`` inside into one ``walk_summary`` on exit.
 
-    A success carrying ``<item>_id`` counts as ``<item>s_read``. A walk that
-    made no call emits nothing; failures are counted and still emitted.
+    A success carrying ``<item>_id`` counts as ``<item>s_read``. The summary
+    emits when the walk read, dropped (``record_dropped``) or failed; a walk
+    that only made calls (a quiet membership list, a topology-only tick)
+    emits nothing. Failures are counted and still emitted on their own.
     """
     if _walk_var.get() is not None:
         yield
@@ -78,7 +81,7 @@ def walk(*, source: str, item: str) -> Iterator[None]:
         yield
     finally:
         _walk_var.reset(token)
-        if totals.calls:
+        if totals.items_read or totals.dropped or totals.failures:
             emit(
                 "walk_summary",
                 source=source,
@@ -87,7 +90,10 @@ def walk(*, source: str, item: str) -> Iterator[None]:
                 slowest_endpoint=totals.slowest_endpoint,
                 slowest_ms=totals.slowest_ms,
                 total_ms=int((time.monotonic() - start) * 1000.0),
-                **{f"{totals.item}s_read": totals.items_read},
+                **{
+                    f"{totals.item}s_read": totals.items_read,
+                    f"{totals.item}s_dropped": totals.dropped,
+                },
             )
 
 
@@ -123,6 +129,15 @@ def record_call(
         status=status,
         **fields,
     )
+
+
+def record_dropped(count: int) -> None:
+    """Note *count* items the open walk dropped from its cache: no call is
+    made for a drop, so this is how one reaches the summary. Outside a walk
+    there is no summary to carry it."""
+    totals = _walk_var.get()
+    if totals is not None:
+        totals.dropped += count
 
 
 class EventBuffer:

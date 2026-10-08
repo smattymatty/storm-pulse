@@ -7,6 +7,7 @@ from collections.abc import Mapping
 
 from stormpulse.garage import discover as garage_discover
 from stormpulse.garage import state as garage_state
+from stormpulse.garage import state_reader
 from stormpulse.garage.bucket_resolver import BucketIdResolver
 from stormpulse.garage.commands import build_garage_specs
 from stormpulse.garage.config import GarageConfig, parse_garage_config
@@ -34,7 +35,7 @@ def _preconditions(config: GarageConfig) -> str | None:
 # One stateful reader per process: the periodic loop, on-demand refresh and the
 # post-mutation hook share it, so its cadences and cache persist across
 # reconnects. Discovery uses the full ``collect_garage_state`` (see ``_discover``).
-_state_reader = garage_state.GarageStateReader()
+_state_reader = state_reader.GarageStateReader()
 
 
 def _collect_state(config: GarageConfig) -> GarageState | None:

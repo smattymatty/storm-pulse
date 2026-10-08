@@ -116,7 +116,7 @@ Run `stormpulse init` to generate a config interactively - see the [Setup Guide]
 | `garage` | `enabled` | Enable Garage S3 integration (optional, default: absent) |
 | `garage` | `container_name` | Docker container name for Garage (e.g. `garaged`) |
 | `garage` | `config_path` | Path to Garage config file |
-| `garage` | `hint_file` | Absolute path to a JSON file, owned by the agent's user, that names bucket ids to re-read on the next push; with it set, every bucket is walked once a minute instead of every push (optional; unset keeps the walk on every push) |
+| `garage` | `hint_file` | Absolute path to a JSON file, owned by the agent's user, that names bucket ids to re-read on the next push; with it set, a `ListBuckets` membership diff runs every minute and every bucket is re-read every five minutes instead of every push (optional; unset keeps the walk on every push) |
 
 ## Documentation
 

@@ -116,13 +116,13 @@ class TestEventBuffer:
         assert batch[0]["dropped"] == 1
 
 
-def _call(endpoint: str, ms: int, **fields: str) -> None:
+def _call(endpoint: str, ms: int, *, status: int | None = 200, **fields: str) -> None:
     events.record_call(
         "admin_call",
         source="garage_admin",
         endpoint=endpoint,
         duration_ms=ms,
-        status=200,
+        status=status,
         **fields,
     )
 
@@ -144,7 +144,7 @@ class TestWalk:  # skylos: ignore[SKY-Q702] a pytest grouping, no shared state b
         monkeypatch.setattr("stormpulse.events.time.monotonic", lambda: next(ticks))
         with events.walk(source="garage_admin", item="bucket"):
             _call("ListBuckets", 5)
-            _call("GetBucketInfo", 30)
+            _call("GetBucketInfo", 30, bucket_id="b1")
             _call("GetClusterStatus", 10)
         (summary,) = events.buffer().drain("b1")
         assert summary["slowest_endpoint"] == "GetBucketInfo"
@@ -156,8 +156,41 @@ class TestWalk:  # skylos: ignore[SKY-Q702] a pytest grouping, no shared state b
         # job-driven call folds into a summary nobody emits.
         with pytest.raises(RuntimeError):
             with events.walk(source="garage_admin", item="bucket"):
-                _call("ListBuckets", 1)
+                _call("GetBucketInfo", 1, bucket_id="b1")
                 raise RuntimeError("collect crashed")
         _call("UpdateBucket", 1)
         kinds = [e["kind"] for e in events.buffer().drain("b1")]
         assert kinds == ["walk_summary", "admin_call"]
+
+    def test_a_walk_that_only_listed_emits_nothing(self) -> None:
+        # A quiet membership diff: one counted call, nothing read or dropped.
+        with events.walk(source="garage_admin", item="bucket"):
+            _call("ListBuckets", 1)
+        assert events.buffer().drain("b1") == []
+
+    def test_a_topology_only_walk_emits_nothing(self) -> None:
+        with events.walk(source="garage_admin", item="bucket"):
+            _call("GetClusterStatus", 1)
+            _call("GetClusterStatistics", 1)
+            _call("ListKeys", 1)
+        assert events.buffer().drain("b1") == []
+
+    def test_a_drop_emits_a_summary_carrying_the_count(self) -> None:
+        with events.walk(source="garage_admin", item="bucket"):
+            _call("ListBuckets", 1)
+            events.record_dropped(2)
+        (summary,) = events.buffer().drain("b1")
+        assert summary["kind"] == "walk_summary"
+        assert summary["buckets_dropped"] == 2
+        assert summary["buckets_read"] == 0
+        assert summary["calls"] == 1
+
+    def test_a_failure_still_emits_the_summary(self) -> None:
+        with events.walk(source="garage_admin", item="bucket"):
+            _call("ListBuckets", 1, status=None)
+        kinds = [e["kind"] for e in events.buffer().drain("b1")]
+        assert kinds == ["admin_call", "walk_summary"]
+
+    def test_a_drop_outside_a_walk_has_no_summary_to_reach(self) -> None:
+        events.record_dropped(1)
+        assert events.buffer().drain("b1") == []

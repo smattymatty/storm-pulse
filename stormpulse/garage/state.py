@@ -2,23 +2,20 @@
 
 Node telemetry (cluster status, statistics, key list) and per-bucket state
 (sizes, object counts, quotas, keys) are all read via the admin HTTP API, never
-the Garage CLI. ``GaragePeer`` (a dataclass, not a scraper) lives here; it
-moved in when the CLI-scraping ``parse.py`` was deleted.
+the Garage CLI. The cadence-aware periodic reader is ``state_reader``; it
+calls the reads defined here.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
-import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, replace
 from typing import Any
 
 from stormpulse import events
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
-from stormpulse.garage.hint import HintRead, Refusal, read_hint
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +236,7 @@ def read_buckets_by_id(
 ) -> list[GarageBucket]:
     """Targeted ``GetBucketInfo`` per id; a failed read (incl. a delete's 404) is
     skipped and logged, never fabricated. Callers merge upsert-only, so a removal
-    rides the full walk + reconcile, never a partial-manifest deletion."""
+    rides the membership diff or the full walk, never a partial-manifest deletion."""
     admin_url, admin_token = config.admin_url, config.admin_token
     if not (admin_url and admin_token):
         return []
@@ -301,33 +298,34 @@ def affected_bucket_ids(params: Mapping[str, str], state: GarageState) -> list[s
     ]
 
 
-def _collect_buckets_via_admin(config: GarageConfig) -> list[GarageBucket] | None:
-    """List buckets and fetch each one's info over the admin HTTP API.
-
-    Returns the bucket list, or **None** when the cluster can't be enumerated
-    (``ListBuckets`` unreachable). The caller treats None as "skip this tick":
-    pushing an empty set would read downstream as "every bucket vanished"
-    (no fresh read, no action). A single bucket whose
-    ``GetBucketInfo`` fails is skipped and logged, never crashing the tick.
-    """
-    admin_url, admin_token = config.admin_url, config.admin_token
-    items, err = admin_api.list_buckets(admin_url=admin_url, admin_token=admin_token)
-    if items is None:
-        logger.warning("ListBuckets failed; skipping bucket state this tick: %s", err)
-        return None
-    return read_buckets_by_id(
-        config, (item.get("id", "") for item in items if item.get("id"))
+def list_bucket_ids(config: GarageConfig) -> list[str] | None:
+    """One ``ListBuckets``: every bucket id the cluster holds, or None when it
+    can't be enumerated. None never reads as "no buckets": pushing an empty set
+    would read downstream as "every bucket vanished"."""
+    items, err = admin_api.list_buckets(
+        admin_url=config.admin_url, admin_token=config.admin_token
     )
+    if items is None:
+        logger.warning("ListBuckets failed: %s", err)
+        return None
+    return [item.get("id", "") for item in items if item.get("id")]
+
+
+def collect_buckets_via_admin(config: GarageConfig) -> list[GarageBucket] | None:
+    """List buckets and fetch each one's info; None when the cluster can't be
+    enumerated. A bucket whose ``GetBucketInfo`` fails is skipped and logged."""
+    ids = list_bucket_ids(config)
+    return None if ids is None else read_buckets_by_id(config, ids)
 
 
 @dataclass(frozen=True, slots=True)
-class _Topology:
+class Topology:
     """The slowly-changing slice of garage state: cluster nodes, totals, key inventory.
 
-    Read together by ``_collect_topology`` and cached by ``GarageStateReader``
-    between its slow-multiple refreshes. Internal to this module: never
-    transmitted on its own, ``_compose_state`` folds it together with the
-    per-bucket walk into the wire ``GarageState``.
+    Read together by ``collect_topology`` and cached by ``GarageStateReader``
+    between its slow-multiple refreshes. Never transmitted on its own:
+    ``compose`` folds it together with the per-bucket walk into the wire
+    ``GarageState``.
     """
 
     object_count: int
@@ -335,7 +333,7 @@ class _Topology:
     peers: list[GaragePeer]
 
 
-def _admin_configured(config: GarageConfig) -> bool:
+def admin_configured(config: GarageConfig) -> bool:
     """True iff the admin HTTP API is wired (admin_url + admin_token), else logs why."""
     if config.admin_url and config.admin_token:
         return True
@@ -346,7 +344,7 @@ def _admin_configured(config: GarageConfig) -> bool:
     return False
 
 
-def _collect_topology(config: GarageConfig) -> _Topology | None:
+def collect_topology(config: GarageConfig) -> Topology | None:
     """Read cluster status (required) plus statistics and key list (best-effort).
 
     Returns None when ``GetClusterStatus`` is unreachable or reports no nodes -
@@ -380,21 +378,21 @@ def _collect_topology(config: GarageConfig) -> _Topology | None:
         GarageKeyRef(k.get("id", "") or "", k.get("name", "") or "", "")
         for k in (keys_raw or [])
     ]
-    return _Topology(object_count=object_count, keys=keys, peers=peers)
+    return Topology(object_count=object_count, keys=keys, peers=peers)
 
 
-def _walk_and_compose(config: GarageConfig, topology: _Topology) -> GarageState | None:
+def _walk_and_compose(config: GarageConfig, topology: Topology) -> GarageState | None:
     """Walk every bucket and fold with *topology* into one wire ``GarageState``; None
     when enumeration fails (never push an empty set: invariant 4)."""
-    buckets = _collect_buckets_via_admin(config)
+    buckets = collect_buckets_via_admin(config)
     if buckets is None:
         logger.warning("Bucket state unavailable this tick; skipping state push")
         return None
-    return _compose(config, topology, buckets)
+    return compose(config, topology, buckets)
 
 
-def _compose(
-    config: GarageConfig, topology: _Topology, buckets: list[GarageBucket]
+def compose(
+    config: GarageConfig, topology: Topology, buckets: list[GarageBucket]
 ) -> GarageState:
     """Fold *topology* and *buckets* into one wire ``GarageState``."""
     node = topology.peers[0]
@@ -440,169 +438,20 @@ def _read_admin_metrics(
 def collect_garage_state(config: GarageConfig) -> GarageState | None:
     """Collect the FULL Garage node state (topology + every bucket) via the admin API.
 
-    The full, every-field compose: used by startup discovery and any force-full
-    refresh. The periodic loop instead uses ``GarageStateReader``, which reads
-    the per-bucket walk every tick but topology only on a slow multiple
-    (capacity-model 2026-06-27 amendment). Returns None when the admin API is
-    unconfigured/unreachable, no node is found, or the bucket set can't be
-    enumerated - the caller skips rather than report a degraded snapshot.
-    """
-    if not _admin_configured(config):
+    Full compose for startup discovery and force-full refresh; the periodic
+    loop uses ``GarageStateReader`` (see ``state_reader``). Returns None when
+    the admin API is unconfigured/unreachable, no node is found, or the bucket
+    set can't be enumerated: the caller skips a degraded snapshot."""
+    if not admin_configured(config):
         return None
-    topology = _collect_topology(config)
+    topology = collect_topology(config)
     if topology is None:
         return None
     return _walk_and_compose(config, topology)
 
 
-class _Every:
-    """Due on first use, then once ``period`` has passed on ``clock`` since the
-    last ``mark``. Only the caller marks, so a failed attempt stays due."""
-
-    def __init__(self, period: float, clock: Callable[[], float]) -> None:
-        self._period = period
-        self._clock = clock
-        self._last: float | None = None
-
-    def due(self) -> bool:
-        return self._last is None or self._clock() - self._last >= self._period
-
-    def mark(self) -> None:
-        self._last = self._clock()
-
-
-class GarageStateReader:
-    """Cadence-aware periodic read (CORE-005 decision 9). With no hint file every
-    call walks every bucket, as before hints existed. With one, each call re-reads
-    the buckets it names and every bucket is walked once per ``SWEEP_SECONDS``;
-    topology every ``TOPOLOGY_EVERY`` producing calls. Every targeted read goes
-    through ``read_buckets`` and lands in the cache, so a non-sweep call never reverts
-    one. Process-lifetime: the caches deliberately survive reconnects."""
-
-    TOPOLOGY_EVERY = 6
-    SWEEP_SECONDS = 60.0
-
-    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
-        self._topology: _Topology | None = None
-        # Last sweep's buckets by id, upserted by every targeted read since.
-        # Not runtime state: the agent's one merge primitive stays the only
-        # writer there (Fitness Function 6).
-        self._buckets: dict[str, GarageBucket] | None = None
-        # Reads absorbed while a sweep is in flight, laid over its result.
-        self._absorbed: dict[str, GarageBucket] | None = None
-        # Hinted ids not yet read, most recent first: the latest file leads.
-        self._pending: list[str] = []
-        self._last_refusal: Refusal | None = None
-        self._ticks = 0
-        self._topology_due = _Every(self.TOPOLOGY_EVERY, lambda: self._ticks)
-        self._sweep_due = _Every(self.SWEEP_SECONDS, clock)
-        # One collect at a time (periodic loop vs refresh). ``_lock`` guards the
-        # cache, which ``read_buckets`` touches from the post-mutation hook mid-collect.
-        self._collect_lock = threading.Lock()
-        self._lock = threading.Lock()
-
-    @_garage_walk
-    def collect(
-        self, config: GarageConfig, *, fresh: bool = False
-    ) -> GarageState | None:
-        """One periodic read: a full sweep when due, else the hinted buckets.
-
-        ``fresh`` is the on-demand refresh: "the operator just changed
-        something", so it re-reads topology and sweeps regardless of cadence.
-        A failed topology read keeps the cache and stays due; a failed sweep
-        returns None and stays due; only a producing call advances cadence.
-        """
-        if not _admin_configured(config):
-            return None
-        with self._collect_lock:
-            state = self._collect(config, fresh=fresh)
-            if state is not None:
-                self._ticks += 1
-            return state
-
-    def _collect(self, config: GarageConfig, *, fresh: bool) -> GarageState | None:
-        self._take_hint(config)
-        if fresh or self._topology_due.due():
-            topology = _collect_topology(config)
-            if topology is not None:
-                self._topology = topology
-                self._topology_due.mark()
-        topology = self._topology
-        if topology is None:
-            logger.warning("No garage topology read yet; skipping state this tick")
-            return None
-        if fresh or not config.hint_file or self._sweep_due.due():
-            if not self._sweep(config):
-                return None
-            self._sweep_due.mark()
-        else:
-            self.read_buckets(config, self._drain())
-        with self._lock:
-            assert self._buckets is not None  # a sweep has produced
-            buckets = list(self._buckets.values())
-        return _compose(config, topology, buckets)
-
-    def _sweep(self, config: GarageConfig) -> bool:
-        """Walk every bucket into the cache, keeping reads absorbed meanwhile."""
-        with self._lock:
-            self._absorbed = {}
-        buckets = None
-        try:
-            buckets = _collect_buckets_via_admin(config)
-        finally:
-            with self._lock:
-                absorbed, self._absorbed = self._absorbed or {}, None
-                if buckets is not None:
-                    self._buckets = {b.id: b for b in buckets} | absorbed
-                    self._pending.clear()
-        if buckets is None:
-            logger.warning("Bucket state unavailable this tick; skipping state push")
-        return buckets is not None
-
-    def read_buckets(self, config: GarageConfig, ids: list[str]) -> list[GarageBucket]:
-        """Targeted read of *ids*, absorbed into the cache by id (a no-op before
-        the first sweep); known ids keep their place, new ids append."""
-        buckets = read_buckets_by_id(config, ids)
-        with self._lock:
-            upserts = [(b.id, b) for b in buckets if b.id]
-            if self._buckets is not None:
-                self._buckets.update(upserts)
-            if self._absorbed is not None:
-                self._absorbed.update(upserts)
-        return buckets
-
-    def _take_hint(self, config: GarageConfig) -> None:
-        if not config.hint_file:
-            return
-        read = read_hint(config.hint_file)
-        if read.refusal is None:
-            self._last_refusal = None
-            with self._lock:
-                fresh = read.bucket_ids
-                self._pending = [*fresh, *(i for i in self._pending if i not in fresh)]
-            return
-        self._log_refusal(config.hint_file, read)
-
-    def _log_refusal(self, path: str, read: HintRead) -> None:
-        # Once per distinct reason until the next good read; a stale file
-        # only means the writer is down, so it never warns.
-        if read.refusal == self._last_refusal:
-            return
-        self._last_refusal = read.refusal
-        level = logging.DEBUG if read.refusal is Refusal.STALE else logging.WARNING
-        logger.log(
-            level, "Ignoring hint file %s (%s): %s", path, read.refusal, read.detail
-        )
-
-    def _drain(self) -> list[str]:
-        with self._lock:
-            batch = self._pending[:MAX_TARGETED_BUCKET_READS]
-            del self._pending[:MAX_TARGETED_BUCKET_READS]
-        return batch
-
-
-# Shared fan-out bound for every per-id GetBucketInfo burst (one push's hinted
-# batch, read_affected key->buckets): sized to admin-API tolerance. Hardcoded.
+# Fan-out bound for a post-mutation GetBucketInfo burst (read_affected
+# key->buckets): sized to admin-API tolerance. Hardcoded.
 MAX_TARGETED_BUCKET_READS = 8
 
 
