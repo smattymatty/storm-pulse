@@ -127,7 +127,7 @@ def _call(endpoint: str, ms: int, **fields: str) -> None:
     )
 
 
-class TestWalk:
+class TestWalk:  # skylos: ignore[SKY-Q702] a pytest grouping, no shared state by design
     def test_summary_names_the_slowest_call_even_when_every_call_is_0ms(self) -> None:
         # Localhost admin calls truncate to 0 ms; the summary must still name one.
         with events.walk(source="garage_admin", item="bucket"):

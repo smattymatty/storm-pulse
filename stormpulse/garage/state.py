@@ -22,6 +22,9 @@ from stormpulse.garage.hint import HintRead, Refusal, read_hint
 
 logger = logging.getLogger(__name__)
 
+# One summary per admin walk; each decorated call opens its own scope.
+_garage_walk = events.walk(source="garage_admin", item="bucket")
+
 
 @dataclass(frozen=True, slots=True)
 class GaragePeer:
@@ -230,7 +233,7 @@ def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
     )
 
 
-@events.walk(source="garage_admin", item="bucket")
+@_garage_walk
 def read_buckets_by_id(
     config: GarageConfig, bucket_ids: Iterable[str]
 ) -> list[GarageBucket]:
@@ -433,7 +436,7 @@ def _read_admin_metrics(
     )
 
 
-@events.walk(source="garage_admin", item="bucket")
+@_garage_walk
 def collect_garage_state(config: GarageConfig) -> GarageState | None:
     """Collect the FULL Garage node state (topology + every bucket) via the admin API.
 
@@ -473,7 +476,7 @@ class GarageStateReader:
     call walks every bucket, as before hints existed. With one, each call re-reads
     the buckets it names and every bucket is walked once per ``SWEEP_SECONDS``;
     topology every ``TOPOLOGY_EVERY`` producing calls. Every targeted read goes
-    through ``read`` and lands in the cache, so a non-sweep call never reverts
+    through ``read_buckets`` and lands in the cache, so a non-sweep call never reverts
     one. Process-lifetime: the caches deliberately survive reconnects."""
 
     TOPOLOGY_EVERY = 6
@@ -493,11 +496,11 @@ class GarageStateReader:
         self._topology_due = _Every(self.TOPOLOGY_EVERY, lambda: self._ticks)
         self._sweep_due = _Every(self.SWEEP_SECONDS, clock)
         # One collect at a time (periodic loop vs refresh). ``_lock`` guards the
-        # cache, which ``read`` touches from the post-mutation hook mid-collect.
+        # cache, which ``read_buckets`` touches from the post-mutation hook mid-collect.
         self._collect_lock = threading.Lock()
         self._lock = threading.Lock()
 
-    @events.walk(source="garage_admin", item="bucket")
+    @_garage_walk
     def collect(
         self, config: GarageConfig, *, fresh: bool = False
     ) -> GarageState | None:
@@ -528,17 +531,17 @@ class GarageStateReader:
             logger.warning("No garage topology read yet; skipping state this tick")
             return None
         if fresh or not config.hint_file or self._sweep_due.due():
-            if not self._sweep(config, topology):
+            if not self._sweep(config):
                 return None
             self._sweep_due.mark()
         else:
-            self.read(config, self._drain())
+            self.read_buckets(config, self._drain())
         with self._lock:
             assert self._buckets is not None  # a sweep has produced
             buckets = list(self._buckets.values())
         return _compose(config, topology, buckets)
 
-    def _sweep(self, config: GarageConfig, topology: _Topology) -> bool:
+    def _sweep(self, config: GarageConfig) -> bool:
         """Walk every bucket into the cache, keeping reads absorbed meanwhile."""
         with self._lock:
             self._absorbed = {}
@@ -555,10 +558,10 @@ class GarageStateReader:
             logger.warning("Bucket state unavailable this tick; skipping state push")
         return buckets is not None
 
-    def read(self, config: GarageConfig, bucket_ids: list[str]) -> list[GarageBucket]:
-        """Targeted read of *bucket_ids*, absorbed into the cache by id (a no-op
-        before the first sweep); known ids keep their place, new ids append."""
-        buckets = read_buckets_by_id(config, bucket_ids)
+    def read_buckets(self, config: GarageConfig, ids: list[str]) -> list[GarageBucket]:
+        """Targeted read of *ids*, absorbed into the cache by id (a no-op before
+        the first sweep); known ids keep their place, new ids append."""
+        buckets = read_buckets_by_id(config, ids)
         with self._lock:
             upserts = [(b.id, b) for b in buckets if b.id]
             if self._buckets is not None:

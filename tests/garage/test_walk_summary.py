@@ -69,6 +69,19 @@ def _install_fake_garage(
         def read(self) -> bytes:
             return self._payload
 
+    fixed: dict[str, Any] = {
+        "ListBuckets": [{"id": b} for b in ids],
+        "GetClusterStatus": {"nodes": [NODE]},
+        "GetClusterStatistics": {"totalObjectCount": 0},
+    }
+
+    def _bucket_info(bucket_id: str) -> _Resp:
+        if bucket_id in unreachable:
+            raise OSError("connection reset")
+        if bucket_id in not_found:
+            return _Resp(404, {"code": "NoSuchBucket"})
+        return _Resp(200, {"id": bucket_id, "objects": 1, "bytes": 1})
+
     class _Conn:
         def __init__(self, host: str, port: int, timeout: float | None = None) -> None:
             self._path = ""
@@ -79,19 +92,8 @@ def _install_fake_garage(
         def getresponse(self) -> _Resp:
             endpoint = self._path.split("?", 1)[0].rsplit("/", 1)[-1]
             if endpoint == "GetBucketInfo":
-                bucket_id = self._path.rsplit("id=", 1)[-1]
-                if bucket_id in unreachable:
-                    raise OSError("connection reset")
-                if bucket_id in not_found:
-                    return _Resp(404, {"code": "NoSuchBucket"})
-                return _Resp(200, {"id": bucket_id, "objects": 1, "bytes": 1})
-            if endpoint == "ListBuckets":
-                return _Resp(200, [{"id": b} for b in ids])
-            if endpoint == "GetClusterStatus":
-                return _Resp(200, {"nodes": [NODE]})
-            if endpoint == "GetClusterStatistics":
-                return _Resp(200, {"totalObjectCount": 0})
-            return _Resp(200, [])  # ListKeys
+                return _bucket_info(self._path.rsplit("id=", 1)[-1])
+            return _Resp(200, fixed.get(endpoint, []))  # ListKeys: []
 
         def close(self) -> None:
             pass
@@ -184,8 +186,11 @@ def test_outside_a_walk_every_call_keeps_its_event(
     assert all(e["status"] == 200 for e in batch)
 
 
-@pytest.mark.parametrize(
-    ("status", "failed"), [(None, True), (200, False), (399, False), (400, True)]
-)
-def test_is_failure_bounds(status: int | None, failed: bool) -> None:
-    assert events.is_failure(status) is failed
+@pytest.mark.parametrize("status", [None, 400])
+def test_no_status_or_400_and_up_is_a_failure(status: int | None) -> None:
+    assert events.is_failure(status)
+
+
+@pytest.mark.parametrize("status", [200, 399])
+def test_below_400_is_not_a_failure(status: int) -> None:
+    assert not events.is_failure(status)

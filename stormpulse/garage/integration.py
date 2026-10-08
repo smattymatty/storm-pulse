@@ -59,7 +59,7 @@ def _read_affected(
     if not ids:
         return []
     capped = garage_state.cap_targeted_reads(ids, context="Post-mutation")
-    return _state_reader.read(config, capped)
+    return _state_reader.read_buckets(config, capped)
 
 
 def _log_enricher(state: object) -> BucketIdResolver:
