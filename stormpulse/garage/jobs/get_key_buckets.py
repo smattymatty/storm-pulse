@@ -38,7 +38,9 @@ def make_get_key_buckets_handler(
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_get_key_buckets(
-            progress=progress, garage_config=garage_config, key_id=key_id,
+            progress=progress,
+            garage_config=garage_config,
+            key_id=key_id,
         )
 
     return handler
@@ -66,14 +68,18 @@ async def run_get_key_buckets(
     await progress("starting", 0, 1, "Reading key buckets")
     kinfo, err = await asyncio.to_thread(
         admin_api.get_key_info,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=key_id,
     )
     if kinfo is None:
         if admin_api.is_not_found(err):
             return _success(key_id, owned=[], grants=[], started_at=started_at)
         return _failure(
             failure_reason="key_read_failed",
-            key_id=key_id, stderr=err, started_at=started_at,
+            key_id=key_id,
+            stderr=err,
+            started_at=started_at,
         )
 
     owned: list[dict[str, str]] = []
@@ -83,15 +89,20 @@ async def run_get_key_buckets(
         if not full_id:
             continue
         perms = entry.get("permissions") or {}
+        # Garage 2.4 lists a detached bucket with every permission false; 2.3 omitted it.
+        if not any(perms.get(p) for p in ("read", "write", "owner")):
+            continue
         aliases = entry.get("localAliases") or []
         alias = aliases[0] if aliases else ""
-        grants.append({
-            "id": full_id,
-            "alias": alias,
-            "read": bool(perms.get("read")),
-            "write": bool(perms.get("write")),
-            "owner": bool(perms.get("owner")),
-        })
+        grants.append(
+            {
+                "id": full_id,
+                "alias": alias,
+                "read": bool(perms.get("read")),
+                "write": bool(perms.get("write")),
+                "owner": bool(perms.get("owner")),
+            }
+        )
         if perms.get("owner"):
             owned.append({"id": full_id, "alias": alias})
     return _success(key_id, owned=owned, grants=grants, started_at=started_at)
@@ -119,7 +130,11 @@ def _success(
 
 
 def _failure(
-    *, failure_reason: str, key_id: str, stderr: str, started_at: float,
+    *,
+    failure_reason: str,
+    key_id: str,
+    stderr: str,
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=False,

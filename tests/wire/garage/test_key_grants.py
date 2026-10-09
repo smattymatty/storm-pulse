@@ -237,20 +237,26 @@ async def test_reattach_narrows_owner_down_to_read_only(wire: WireEnv) -> None:
         first = await run_attach_account_key(
             progress=_ProgressRecorder(),
             garage_config=wire.garage_config(),
-            bucket_id=short, account_key_id=account_key_id,
-            local_alias=unique_alias("att"), tier="owner",
+            bucket_id=short,
+            account_key_id=account_key_id,
+            local_alias=unique_alias("att"),
+            tier="owner",
         )
         assert first.success, first.stderr
         assert _perms_on(wire, account_key_id, full_id) == {
-            "read": True, "write": True, "owner": True,
+            "read": True,
+            "write": True,
+            "owner": True,
         }
 
         # Re-attach narrower. The deny-complement must strip write + owner.
         second = await run_attach_account_key(
             progress=_ProgressRecorder(),
             garage_config=wire.garage_config(),
-            bucket_id=short, account_key_id=account_key_id,
-            local_alias=unique_alias("att"), tier="ro",
+            bucket_id=short,
+            account_key_id=account_key_id,
+            local_alias=unique_alias("att"),
+            tier="ro",
         )
         assert second.success, second.stderr
         perms = _perms_on(wire, account_key_id, full_id)
@@ -285,8 +291,10 @@ async def test_detach_removes_the_grant_but_not_the_key(wire: WireEnv) -> None:
             att = await run_attach_account_key(
                 progress=_ProgressRecorder(),
                 garage_config=wire.garage_config(),
-                bucket_id=short, account_key_id=account_key_id,
-                local_alias=unique_alias("att"), tier="rw",
+                bucket_id=short,
+                account_key_id=account_key_id,
+                local_alias=unique_alias("att"),
+                tier="rw",
             )
             assert att.success, att.stderr
 
@@ -300,12 +308,14 @@ async def test_detach_removes_the_grant_but_not_the_key(wire: WireEnv) -> None:
         assert outcome.success, outcome.stderr
         assert outcome.extras["confirmed_detached"] is True
 
-        # Grant on A is gone; grant on B survives; the key still exists.
-        assert _perms_on(wire, account_key_id, full_a) is None, (
-            "the detached grant survived"
-        )
+        # Grant on A is gone (Garage 2.3 drops the bucket from the key; 2.4
+        # lists it with every permission false); B survives; the key exists.
+        gone = _perms_on(wire, account_key_id, full_a)
+        assert gone is None or not any(gone.values()), "the detached grant survived"
         assert _perms_on(wire, account_key_id, full_b) == {
-            "read": True, "write": True, "owner": False,
+            "read": True,
+            "write": True,
+            "owner": False,
         }, "detach damaged an unrelated grant"
         info, err = admin_api.get_key_info(
             **wire.admin_kwargs, access_key_id=account_key_id
@@ -330,8 +340,10 @@ async def test_attach_then_detach_round_trips_to_no_grant(wire: WireEnv) -> None
         att = await run_attach_account_key(
             progress=_ProgressRecorder(),
             garage_config=wire.garage_config(),
-            bucket_id=short, account_key_id=account_key_id,
-            local_alias=alias, tier="rw",
+            bucket_id=short,
+            account_key_id=account_key_id,
+            local_alias=alias,
+            tier="rw",
         )
         assert att.success, att.stderr
         assert _perms_on(wire, account_key_id, full_id) is not None
@@ -339,7 +351,9 @@ async def test_attach_then_detach_round_trips_to_no_grant(wire: WireEnv) -> None
         det = await run_detach_account_key(
             progress=_ProgressRecorder(),
             garage_config=wire.garage_config(),
-            bucket_id=short, account_key_id=account_key_id, local_alias=alias,
+            bucket_id=short,
+            account_key_id=account_key_id,
+            local_alias=alias,
         )
         assert det.success, det.stderr
         assert _perms_on(wire, account_key_id, full_id) is None

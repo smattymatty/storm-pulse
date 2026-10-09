@@ -140,21 +140,19 @@ def test_delete_objects_reports_deleted_keys(
 def test_delete_objects_on_an_absent_key_reports_NoSuchKey(
     s3: GarageS3Client, bucket: WireBucket
 ) -> None:
-    """Garage DIVERGES from AWS S3 here, and the drain loop must not care.
-
-    AWS S3 treats DeleteObjects on a missing key as success. Garage returns a
-    per-object ``NoSuchKey`` error inside an HTTP 200. Pinned deliberately: the
-    drain loop re-deletes keys whenever a response is lost, so if it measured
-    progress by "no errors" instead of by "deleted_total advanced", every clear
-    that dropped a response would report stalled. It measures the latter, which
-    is why this divergence is survivable.
-
-    If a future Garage adopts AWS semantics this test goes red. That is a
-    behavior change worth reading, not a regression: relax it then.
+    """A missing key on DeleteObjects: Garage <= 2.3 answers ``NoSuchKey`` in
+    an HTTP 200, Garage >= 2.4 answers the AWS way (reported as deleted).
+    Both are pinned until the fleet is past 2.3. The drain loop never cared:
+    it re-deletes keys whenever a response is lost and measures progress by
+    ``deleted_total`` advancing, never by "no errors", so a clear that dropped
+    a response is not read as stalled under either answer.
     """
     result = s3.delete_objects(bucket.name, ["never-existed.bin"])
-    assert [e.code for e in result.errors] == ["NoSuchKey"], result.errors
-    assert result.deleted == [], result.deleted
+    codes = [e.code for e in result.errors]
+    assert (codes, result.deleted) in (
+        (["NoSuchKey"], []),  # Garage <= 2.3
+        ([], ["never-existed.bin"]),  # Garage >= 2.4, the AWS answer
+    ), (result.errors, result.deleted)
 
 
 # ---------------------------------------------------------------------------

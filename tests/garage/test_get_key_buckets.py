@@ -26,7 +26,9 @@ _B2 = "b2" + "0" * 62
 
 def _make_config(*, configured: bool = True) -> GarageConfig:
     return GarageConfig(
-        enabled=True, container_name="garaged", garage_binary="/garage",
+        enabled=True,
+        container_name="garaged",
+        garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=Path("/opt/garage/garage.toml"),
         admin_url="http://127.0.0.1:3903" if configured else "",
@@ -70,16 +72,28 @@ def _install(monkeypatch, key_info):
 
 async def _run(*, config=None) -> JobOutcome:
     return await run_get_key_buckets(
-        progress=_Progress(), garage_config=config or _make_config(), key_id=_KEY,
+        progress=_Progress(),
+        garage_config=config or _make_config(),
+        key_id=_KEY,
     )
 
 
 @pytest.mark.asyncio
 async def test_returns_owned_buckets(monkeypatch):
-    _install(monkeypatch, ({"buckets": [
-        _bucket(_B1, owner=True, aliases=["vault"]),
-        _bucket(_B2, owner=False),  # not owned -> excluded from owned_buckets
-    ]}, ""))
+    _install(
+        monkeypatch,
+        (
+            {
+                "buckets": [
+                    _bucket(_B1, owner=True, aliases=["vault"]),
+                    _bucket(
+                        _B2, owner=False
+                    ),  # not owned -> excluded from owned_buckets
+                ]
+            },
+            "",
+        ),
+    )
     outcome = await _run()
     assert outcome.success is True
     assert outcome.extras["owned_buckets"] == [{"id": _B1, "alias": "vault"}]
@@ -89,10 +103,20 @@ async def test_returns_owned_buckets(monkeypatch):
 async def test_bucket_grants_carry_every_grant_with_permissions(monkeypatch):
     # An rw attach is a grant, not ownership: absent from
     # owned_buckets, present in bucket_grants with its raw booleans.
-    _install(monkeypatch, ({"buckets": [
-        _bucket(_B1, owner=True, aliases=["vault"]),
-        _bucket(_B2, owner=False, read=True, write=True, aliases=["storage"]),
-    ]}, ""))
+    _install(
+        monkeypatch,
+        (
+            {
+                "buckets": [
+                    _bucket(_B1, owner=True, aliases=["vault"]),
+                    _bucket(
+                        _B2, owner=False, read=True, write=True, aliases=["storage"]
+                    ),
+                ]
+            },
+            "",
+        ),
+    )
     outcome = await _run()
     assert outcome.success is True
     assert outcome.extras["owned_buckets"] == [{"id": _B1, "alias": "vault"}]
@@ -100,6 +124,29 @@ async def test_bucket_grants_carry_every_grant_with_permissions(monkeypatch):
         {"id": _B1, "alias": "vault", "read": True, "write": True, "owner": True},
         {"id": _B2, "alias": "storage", "read": True, "write": True, "owner": False},
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_bucket_with_every_permission_false_is_no_grant(monkeypatch):
+    # Garage 2.4 lists a detached bucket with read/write/owner all false where
+    # 2.3 omitted it; a consumer reading tiers must never see it as attached.
+    _install(
+        monkeypatch,
+        (
+            {
+                "buckets": [
+                    _bucket(_B1, owner=True, aliases=["vault"]),
+                    _bucket(
+                        _B2, owner=False, read=False, write=False, aliases=["gone"]
+                    ),
+                ]
+            },
+            "",
+        ),
+    )
+    outcome = await _run()
+    assert outcome.success is True
+    assert [g["id"] for g in outcome.extras["bucket_grants"]] == [_B1]
 
 
 @pytest.mark.asyncio
