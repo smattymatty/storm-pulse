@@ -83,6 +83,7 @@ async def dispatch_message(
     raw: str | bytes,
 ) -> None:
     """Parse envelope, verify auth, execute command(s); a refused frame is answered, never dropped."""
+    envelope = None
     try:
         envelope = Envelope.from_json(raw)
         handler = HANDLERS.get(envelope.type)
@@ -92,14 +93,18 @@ async def dispatch_message(
                 reason="unknown_type",
                 msg_type=envelope.type.value,
             )
+        await handler(agent, ws, envelope)
     except ProtocolError as exc:
         # CORE-011 d2: one `error` frame naming the reason and the type, the socket kept.
         logger.warning("Refused message (%s): %s", exc.reason, exc)
         await ws.send(
-            make_error(agent.config.agent.id, exc.reason, exc.msg_type).to_json()
+            make_error(
+                agent.config.agent.id,
+                exc.reason,
+                exc.msg_type or (envelope.type.value if envelope is not None else None),
+            ).to_json()
         )
         return
-    await handler(agent, ws, envelope)
 
 
 async def handle_command_request(
@@ -374,7 +379,7 @@ async def dispatch_long_running(
             stdout="",
             stderr=str(exc),
             duration_ms=0,
-            failure_reason=FailureReason.OS_ERROR,
+            failure_reason=FailureReason.VALIDATION_FAILED,
         )
         await agent.job_manager.send_now(
             make_command_result(agent.config.agent.id, failure)

@@ -40,6 +40,9 @@ a control plane that only speaks v1.
 
 ### Changed
 
+- **Malformed commands fail clearly.** Command fields and sequence controls
+  are checked before execution. Invalid signatures remain authentication
+  refusals; malformed signed payloads receive an error response.
 - **State acknowledgements identify their snapshot.** `metrics.ack` requires
   `push_id`. Late acknowledgements cannot clear newer integration reads, even
   when the same resource was read again.

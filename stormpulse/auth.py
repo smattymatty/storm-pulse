@@ -90,12 +90,28 @@ def sign_envelope(envelope: dict[str, Any], secret: bytes) -> str:
     Every key is covered: ``v``, ``type``, ``id``, ``ts``, ``agent_id`` and the
     whole payload, ``nonce`` included, so an additive field is signed for free
     and no two inputs share a form (CORE-011 d4). The dict is never mutated.
-    Raises ValueError on a value no signer may cover (a NaN; Function 15).
+    Raises ValueError on non-JSON values or floats in signed data.
     """
     payload = dict(envelope["payload"])
     payload.pop("hmac", None)
-    message = canonical_json({**envelope, "payload": payload})
+    signed = {**envelope, "payload": payload}
+    _check_signed_values(signed)
+    message = canonical_json(signed)
     return hmac_mod.new(secret, message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _check_signed_values(value: Any) -> None:
+    """Signed JSON uses integers, never floats; unsigned metrics may use floats."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise ValueError("Signed JSON object keys must be strings")
+            _check_signed_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            _check_signed_values(item)
+    elif value is not None and type(value) not in (str, int, bool):
+        raise ValueError(f"Signed JSON cannot contain {type(value).__name__}")
 
 
 def generate_nonce() -> str:
@@ -168,20 +184,11 @@ def verify_envelope(
     nonce_store: NonceStore,
     max_age_seconds: int,
 ) -> CommandRequestPayload | CommandSequencePayload:
-    """Verify an inbound command envelope.
+    """Authenticate a command and return its checked payload.
 
-    Checks in order:
-    1. Message type is command.request or command.sequence.
-    2. Timestamp freshness (within max_age_seconds of now).
-    3. HMAC signature validity (constant-time comparison).
-    4. Nonce uniqueness (stored in SQLite).
-
-    Returns the parsed, typed payload on success.
-    Raises AuthError on any failure.
-
-    Order is deliberate: timestamp is cheapest (rejects stale before
-    crypto), HMAC is checked before nonce storage (forged messages
-    don't pollute the nonce store).
+    Check type, timestamp, HMAC, declared fields, then nonce uniqueness.
+    Forged input never enters the nonce store. AuthError reports authentication
+    failures; ProtocolError reports malformed authenticated payloads.
     """
     # 1. Type check
     if envelope.type not in (MessageType.COMMAND_REQUEST, MessageType.COMMAND_SEQUENCE):
@@ -206,29 +213,33 @@ def verify_envelope(
             reason="too_old",
         )
 
-    # 3. Parse the payload, then the MAC over the frame as the sender signed it:
-    # the parsed dict, never a re-rendering of ``ts``. One path (CORE-011 d4).
+    # Authenticate the received frame before interpreting command fields.
+    if envelope.received is None:
+        raise AuthError(
+            "Envelope was built in-process, not received off the wire",
+            reason="bad_signature",
+        )
+    expected_hmac = envelope.payload.get("hmac")
+    if (
+        not isinstance(expected_hmac, str)
+        or len(expected_hmac) != 64
+        or any(c not in "0123456789abcdef" for c in expected_hmac)
+    ):
+        raise AuthError("HMAC verification failed", reason="bad_signature")
+    try:
+        computed = sign_envelope(envelope.received, secret)
+    except ValueError as exc:
+        raise AuthError(f"Envelope cannot be signed: {exc}", reason="bad_signature")
+    if not hmac_mod.compare_digest(computed, expected_hmac):
+        raise AuthError("HMAC verification failed", reason="bad_signature")
+
     payload: CommandRequestPayload | CommandSequencePayload
     if envelope.type == MessageType.COMMAND_REQUEST:
         payload = CommandRequestPayload.from_dict(envelope.payload)
     else:
         payload = CommandSequencePayload.from_dict(envelope.payload)
 
-    if envelope.received is None:
-        raise AuthError(
-            "Envelope was built in-process, not received off the wire",
-            reason="bad_signature",
-        )
-    try:
-        computed = sign_envelope(envelope.received, secret)
-    except ValueError as exc:
-        raise AuthError(f"Envelope cannot be signed: {exc}", reason="bad_signature")
-    if not isinstance(payload.hmac, str) or not hmac_mod.compare_digest(
-        computed, payload.hmac
-    ):
-        raise AuthError("HMAC verification failed", reason="bad_signature")
-
-    # 4. Nonce uniqueness (only after HMAC passes)
+    # 4. Store only a valid, authenticated nonce.
     nonce_store.check_and_store(payload.nonce, max_age_seconds)
 
     return payload

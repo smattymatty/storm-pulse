@@ -20,8 +20,9 @@ from dataclasses import (
 )
 from datetime import UTC, datetime
 from enum import StrEnum
+from functools import cache
 from types import UnionType
-from typing import Any, Self, Union, get_args, get_origin, get_type_hints
+from typing import Any, Self, Union, cast, get_args, get_origin, get_type_hints
 
 from stormpulse.protocol.reasons import CancelReason as CancelReason
 from stormpulse.protocol.reasons import FailureReason as FailureReason
@@ -127,16 +128,53 @@ def _payload_from_dict[T](
     if missing_fields:
         raise ProtocolError(f"{cls.__name__}: missing fields: {missing_fields}")
 
-    hints = get_type_hints(cls) if nested else {}
+    hints = _payload_hints(cast(type, cls))
     filtered: dict[str, Any] = {}
     for f in cls_fields:
         if f.name in data:
             val = data[f.name]
             if nested and f.name in nested and val is not None:
                 val = _nested_from_dict(cls, f.name, hints[f.name], nested[f.name], val)
+            if not _matches_type(hints[f.name], val):
+                raise ProtocolError(
+                    f"{cls.__name__}.{f.name}: invalid field type {type(val).__name__}"
+                )
             filtered[f.name] = val
 
     return cls(**filtered)
+
+
+@cache
+def _payload_hints(cls: type) -> dict[str, Any]:
+    return get_type_hints(cls)
+
+
+def _matches_type(annotation: Any, value: Any) -> bool:
+    """Check declared JSON types without interpreting an integration's data."""
+    if annotation is Any:
+        return True
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin in (UnionType, Union):
+        return any(_matches_type(member, value) for member in args)
+    if annotation is type(None):
+        return value is None
+    if origin is dict:
+        return isinstance(value, dict) and all(
+            _matches_type(args[0], key) and _matches_type(args[1], item)
+            for key, item in value.items()
+        )
+    if origin is list:
+        return isinstance(value, list) and all(
+            _matches_type(args[0], item) for item in value
+        )
+    if annotation in (bool, int):
+        return type(value) is annotation
+    if annotation is float:
+        return type(value) in (int, float)
+    if isinstance(annotation, type) and issubclass(annotation, str):
+        return isinstance(value, str)
+    return isinstance(value, annotation)
 
 
 def _nested_from_dict(cls: type, name: str, hint: Any, item: type, val: Any) -> Any:
@@ -663,6 +701,10 @@ class Envelope:
 
         ts = _parse_timestamp(data["ts"])
 
+        message_id = data["id"]
+        if not isinstance(message_id, str) or not message_id:
+            raise ProtocolError("id must be a non-empty string")
+
         agent_id = data["agent_id"]
         if not isinstance(agent_id, str) or not agent_id:
             raise ProtocolError("agent_id must be a non-empty string")
@@ -674,7 +716,7 @@ class Envelope:
         return cls(
             v=v,
             type=msg_type,
-            id=data["id"],
+            id=message_id,
             ts=ts,
             agent_id=agent_id,
             payload=payload,

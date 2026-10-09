@@ -1053,3 +1053,19 @@ def test_credential_shaped_param_name_requires_secret_flag() -> None:
     # Tagged, it constructs fine.
     pdef = ParamDef("api_token", default=None, pattern=r".+", secret=True)
     assert pdef.secret is True
+
+
+def test_parameterless_command_rejects_supplied_params() -> None:
+    from stormpulse.commands.registry import COMMAND_REGISTRY, execute_command
+    from tests.helpers import DUMMY_PROJECT
+
+    with patch('stormpulse.commands.registry.subprocess.run') as run:
+        with pytest.raises(ParamValidationError, match='Unknown params'):
+            execute_command(
+                'git_pull',
+                DUMMY_PROJECT,
+                'r',
+                registry=COMMAND_REGISTRY,
+                runtime_params={'extra': 'ignored-before'},
+            )
+    run.assert_not_called()

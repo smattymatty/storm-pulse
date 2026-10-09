@@ -152,6 +152,10 @@ def validate_params(
     Raises ParamValidationError for unknown params, a value of the wrong JSON
     type, a pattern, byte-cap or schema miss (CORE-011 d9).
     """
+    if not isinstance(runtime_params, dict) or not all(
+        isinstance(key, str) for key in runtime_params
+    ):
+        raise ParamValidationError("Command params must be an object with string keys")
     unknown = set(runtime_params) - set(cmd_def.params)
     if unknown:
         raise ParamValidationError(f"Unknown params: {', '.join(sorted(unknown))}")
@@ -290,8 +294,8 @@ def execute_command(
     OS errors) are reported in the result payload.
     """
     cmd_def = get_command(command_name, registry=registry)
-    validated = (
-        validate_params(cmd_def, runtime_params or {}) if cmd_def.params else None
+    validated = validate_params(
+        cmd_def, runtime_params if runtime_params is not None else {}
     )
     resolved = _resolve_command(cmd_def.command, config, validated)
 

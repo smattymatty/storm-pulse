@@ -671,3 +671,32 @@ def test_sign_envelope_bytes_are_the_canonical_json_the_control_plane_must_write
     expected = "7e3bd0f160202e57a53605329d774fde598dfbd7123f8e34e86ddc8c9803fbc6"
     assert hmac.new(key, canonical, hashlib.sha256).hexdigest() == expected
     assert sign_envelope(frame, key) == expected
+
+
+@pytest.mark.parametrize('value', [1.5, float('nan'), float('inf')])
+@pytest.mark.parametrize('where', ['params', 'extra'])
+def test_floats_are_never_signed_or_verified(
+    nonce_store: NonceStore, value: float, where: str
+) -> None:
+    frame = _request_dict(ts=datetime.now(UTC).isoformat())
+    if where == 'params':
+        frame['payload']['params'] = {'nested': [value]}
+    else:
+        frame['extra'] = {'nested': [value]}
+    with pytest.raises(ValueError, match='float'):
+        sign_envelope(frame, SECRET)
+    # Even a sender computing a MAC outside our signer cannot bypass the rule.
+    unsigned = {
+        **frame,
+        'payload': {k: v for k, v in frame['payload'].items() if k != 'hmac'},
+    }
+    encoded = json.dumps(
+        unsigned, sort_keys=True, separators=(',', ':'), ensure_ascii=True
+    )
+    frame['payload']['hmac'] = hmac.new(
+        SECRET, encoded.encode(), hashlib.sha256
+    ).hexdigest()
+    received = Envelope.from_json(json.dumps(frame))
+    with pytest.raises(AuthError) as error:
+        verify_envelope(received, SECRET, nonce_store, 60)
+    assert error.value.reason == 'bad_signature'
