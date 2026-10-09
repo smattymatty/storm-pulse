@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Mapping
 from dataclasses import MISSING, asdict, dataclass, fields, is_dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -66,6 +67,16 @@ def dataclass_wire_shape(root: type) -> dict[str, dict[str, str | None]]:
                 pending.append(nested)
         classes[cls.__name__] = shape
     return classes
+
+
+class WirePayload:
+    """Base of every payload class: one ``from_dict``, so a table can hold them all."""
+
+    __slots__ = ()
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Self:
+        return _payload_from_dict(cls, data)
 
 
 class MessageType(StrEnum):
@@ -137,20 +148,16 @@ def _payload_from_dict[T](
 
 
 @dataclass(frozen=True, slots=True)
-class ContainerInfo:
+class ContainerInfo(WirePayload):
     """A single container's status."""
 
     name: str
     status: str
     image: str
 
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
-
 
 @dataclass(frozen=True, slots=True)
-class MetricsPayload:
+class MetricsPayload(WirePayload):
     """Payload for metrics.push messages."""
 
     cpu_percent: float
@@ -174,7 +181,7 @@ class MetricsPayload:
 
 
 @dataclass(frozen=True, slots=True)
-class CommandRequestPayload:
+class CommandRequestPayload(WirePayload):
     """Payload for command.request (dashboard -> agent)."""
 
     command: str
@@ -182,13 +189,9 @@ class CommandRequestPayload:
     hmac: str
     nonce: str
 
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
-
 
 @dataclass(frozen=True, slots=True)
-class CommandSequencePayload:
+class CommandSequencePayload(WirePayload):
     """Payload for command.sequence (dashboard -> agent)."""
 
     sequence_id: str
@@ -197,13 +200,9 @@ class CommandSequencePayload:
     hmac: str
     nonce: str
 
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
-
 
 @dataclass(frozen=True, slots=True)
-class CommandResultPayload:
+class CommandResultPayload(WirePayload):
     """Payload for command.result (agent -> dashboard)."""
 
     request_id: str
@@ -216,10 +215,6 @@ class CommandResultPayload:
     duration_ms: int
     sequence_id: str | None = None
     failure_reason: str | None = None
-
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,7 +243,7 @@ class TransferStats:
 
 
 @dataclass(frozen=True, slots=True)
-class CommandProgressPayload:
+class CommandProgressPayload(WirePayload):
     """Payload for command.progress (agent -> dashboard).
 
     Long-running commands emit one or more of these between the originating
@@ -280,13 +275,9 @@ class CommandProgressPayload:
     # dropped tolerantly by an old dashboard, no protocol bump.
     bytes_freed: int | None = None
 
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
-
 
 @dataclass(frozen=True, slots=True)
-class RegisterPayload:
+class RegisterPayload(WirePayload):
     """Payload for register messages."""
 
     version: str
@@ -315,13 +306,9 @@ class RegisterPayload:
     # about what a field MEANS.
     wire_contract: str | None = None
 
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
-
 
 @dataclass(frozen=True, slots=True)
-class SignoffStatePayload:
+class SignoffStatePayload(WirePayload):
     """Payload for signoff.state messages (agent -> dashboard).
 
     Mid-session push of the verify-block seal state. The register
@@ -334,13 +321,9 @@ class SignoffStatePayload:
     signoff_sealed: bool
     unsealed_since: str | None = None
 
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
-
 
 @dataclass(frozen=True, slots=True)
-class LogBatchPayload:
+class LogBatchPayload(WirePayload):
     """Payload for log.batch messages (agent -> dashboard)."""
 
     group: str
@@ -351,9 +334,90 @@ class LogBatchPayload:
     from_position: int | str
     to_position: int | str
 
-    @classmethod
-    def from_dict(cls, data: Any) -> Self:
-        return _payload_from_dict(cls, data)
+
+@dataclass(frozen=True, slots=True)
+class HeartbeatPayload(WirePayload):
+    """Payload for heartbeat messages: empty by contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class EventsBatchPayload(WirePayload):
+    """Payload for events.batch messages (agent -> dashboard).
+
+    Events are opaque dicts built by ``stormpulse.events.emit``; the control
+    plane validates and maps them per field. ``batch_id`` comes back in the ack.
+    """
+
+    batch_id: str
+    events: list[dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class LogBatchAckPayload(WirePayload):
+    """Payload for log.batch.ack (dashboard -> agent); the sender adds ``group``."""
+
+    batch_id: str
+    group: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EventsBatchAckPayload(WirePayload):
+    """Payload for events.batch.ack (dashboard -> agent): the batch id alone."""
+
+    batch_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class AckPayload(WirePayload):
+    """Payload for the empty dashboard acks: logged at debug, never acted on."""
+
+
+@dataclass(frozen=True, slots=True)
+class ErrorPayload(WirePayload):
+    """Payload for error messages (dashboard -> agent): the control plane sends ``error``."""
+
+    error: str | None = None
+
+
+class Direction(StrEnum):
+    """Which way a message type travels; the dispatcher routes only inbound ones."""
+
+    AGENT_TO_DASHBOARD = "agent->dashboard"
+    DASHBOARD_TO_AGENT = "dashboard->agent"
+
+
+@dataclass(frozen=True, slots=True)
+class MessageSpec:
+    """One row of the catalogue: where a type goes and the class its payload has."""
+
+    direction: Direction
+    payload: type[WirePayload]
+
+
+# The catalogue: every MessageType, its direction and its payload class, so a
+# generator, a dispatcher or a test iterates this instead of guessing (CORE-011 d3).
+_OUT = Direction.AGENT_TO_DASHBOARD
+_IN = Direction.DASHBOARD_TO_AGENT
+MESSAGES: Mapping[MessageType, MessageSpec] = {
+    MessageType.HEARTBEAT: MessageSpec(_OUT, HeartbeatPayload),
+    MessageType.METRICS_PUSH: MessageSpec(_OUT, MetricsPayload),
+    MessageType.COMMAND_RESULT: MessageSpec(_OUT, CommandResultPayload),
+    MessageType.COMMAND_PROGRESS: MessageSpec(_OUT, CommandProgressPayload),
+    MessageType.REGISTER: MessageSpec(_OUT, RegisterPayload),
+    MessageType.LOG_BATCH: MessageSpec(_OUT, LogBatchPayload),
+    MessageType.EVENTS_BATCH: MessageSpec(_OUT, EventsBatchPayload),
+    MessageType.SIGNOFF_STATE: MessageSpec(_OUT, SignoffStatePayload),
+    MessageType.COMMAND_REQUEST: MessageSpec(_IN, CommandRequestPayload),
+    MessageType.COMMAND_SEQUENCE: MessageSpec(_IN, CommandSequencePayload),
+    MessageType.LOG_BATCH_ACK: MessageSpec(_IN, LogBatchAckPayload),
+    MessageType.EVENTS_BATCH_ACK: MessageSpec(_IN, EventsBatchAckPayload),
+    MessageType.REGISTER_OK: MessageSpec(_IN, AckPayload),
+    MessageType.HEARTBEAT_ACK: MessageSpec(_IN, AckPayload),
+    MessageType.METRICS_ACK: MessageSpec(_IN, AckPayload),
+    MessageType.COMMAND_RESULT_ACK: MessageSpec(_IN, AckPayload),
+    MessageType.SIGNOFF_STATE_ACK: MessageSpec(_IN, AckPayload),
+    MessageType.ERROR: MessageSpec(_IN, ErrorPayload),
+}
 
 
 def _parse_timestamp(raw: Any) -> datetime:
@@ -565,17 +629,11 @@ def make_events_batch(
     batch_id: str,
     events: list[dict[str, Any]],
 ) -> Envelope:
-    """Create an events.batch envelope carrying wide events.
-
-    Events are opaque dicts built by ``stormpulse.events.emit``; the
-    control plane validates and maps them per field. ``batch_id`` is
-    echoed back in the ``events.batch.ack`` that releases the batch from
-    the agent's buffer.
-    """
+    """Create an events.batch envelope carrying wide events (``EventsBatchPayload``)."""
     return _make_envelope(
         agent_id,
         MessageType.EVENTS_BATCH,
-        {"batch_id": batch_id, "events": events},
+        asdict(EventsBatchPayload(batch_id=batch_id, events=events)),
     )
 
 

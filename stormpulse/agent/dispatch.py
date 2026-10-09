@@ -7,10 +7,11 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 from websockets.asyncio.client import ClientConnection
 
+from stormpulse import events
 from stormpulse.agent.integrations_runtime import (
     STATUS_LIVE,
     build_metrics_envelope,
@@ -24,7 +25,6 @@ from stormpulse.agent.signoff_guard import (
     restart_pending_result,
     sealed_refusal_result,
 )
-from stormpulse import events
 from stormpulse.auth import AuthError, verify_envelope
 from stormpulse.commands import (
     CommandError,
@@ -35,6 +35,8 @@ from stormpulse.commands import (
 from stormpulse.commands.registry import non_secret_params, validate_params
 from stormpulse.config import CommandSpec
 from stormpulse.protocol import (
+    MESSAGES,
+    AckPayload,
     CommandRequestPayload,
     CommandResultPayload,
     CommandSequencePayload,
@@ -49,16 +51,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Dashboard acks, received but not actionable. Add SIGNOFF_STATE_ACK when the protocol enum lands.
-ACK_TYPES = frozenset(
-    {
-        MessageType.REGISTER_OK,
-        MessageType.HEARTBEAT_ACK,
-        MessageType.METRICS_ACK,
-        MessageType.COMMAND_RESULT_ACK,
-        MessageType.ERROR,
-    }
-)
+type Handler = Callable[[Agent, ClientConnection, Envelope], Awaitable[None]]
 
 
 async def receive_loop(agent: Agent, ws: ClientConnection) -> None:
@@ -83,24 +76,16 @@ async def dispatch_message(
         logger.warning("Invalid message: %s", exc)
         return
 
-    if envelope.type in ACK_TYPES:
-        logger.debug("Received %s (%s)", envelope.type.value, envelope.id)
+    handler = HANDLERS.get(envelope.type)
+    if handler is None:
+        logger.warning("Unexpected message type: %s", envelope.type.value)
         return
-
-    match envelope.type:
-        case MessageType.COMMAND_REQUEST:
-            await handle_command_request(agent, ws, envelope)
-        case MessageType.COMMAND_SEQUENCE:
-            await handle_command_sequence(agent, ws, envelope)
-        case MessageType.LOG_BATCH_ACK:
-            await handle_log_batch_ack(agent, envelope)
-        case MessageType.EVENTS_BATCH_ACK:
-            handle_events_batch_ack(envelope)
-        case _:
-            logger.warning("Unexpected message type: %s", envelope.type.value)
+    await handler(agent, ws, envelope)
 
 
-def handle_events_batch_ack(envelope: Envelope) -> None:
+async def handle_events_batch_ack(
+    _agent: Agent, _ws: ClientConnection, envelope: Envelope
+) -> None:
     """Release an acknowledged events batch from the in-process buffer."""
     batch_id = envelope.payload.get("batch_id")
     if not isinstance(batch_id, str):
@@ -110,7 +95,9 @@ def handle_events_batch_ack(envelope: Envelope) -> None:
         logger.debug("events.batch.ack for unknown batch_id %s", batch_id)
 
 
-async def handle_log_batch_ack(agent: Agent, envelope: Envelope) -> None:
+async def handle_log_batch_ack(
+    agent: Agent, _ws: ClientConnection, envelope: Envelope
+) -> None:
     """Advance the stored log position for an acknowledged batch."""
     batch_id = envelope.payload.get("batch_id")
     if not isinstance(batch_id, str):
@@ -164,14 +151,11 @@ async def handle_command_request(
     _log_to_pulse(agent, payload.command, result)
 
 
-_PayloadT = TypeVar("_PayloadT")
-
-
-def _verify_typed_payload(
+def _verify_typed_payload[PayloadT](
     agent: Agent,
     envelope: Envelope,
-    expected_type: type[_PayloadT],
-) -> _PayloadT | None:
+    expected_type: type[PayloadT],
+) -> PayloadT | None:
     """Verify envelope auth and assert payload type, or return ``None`` to drop."""
     try:
         payload = verify_envelope(
@@ -525,9 +509,7 @@ async def handle_command_sequence(
             sequence_id=payload.sequence_id,
             failure_reason="validation_failed",
         )
-        await ws.send(
-            make_command_result(agent.config.agent.id, failure).to_json()
-        )
+        await ws.send(make_command_result(agent.config.agent.id, failure).to_json())
         return
 
     # Sequence seal recheck mirrors the single-command path (ADR CORE-004).
@@ -541,7 +523,9 @@ async def handle_command_sequence(
         first_sealed = sealed_in_sequence[0]
         sealed = replace(
             sealed_refusal_result(
-                str(uuid.uuid4()), first_sealed, agent.registry.get(first_sealed),
+                str(uuid.uuid4()),
+                first_sealed,
+                agent.registry.get(first_sealed),
             ),
             sequence_id=payload.sequence_id,
         )
@@ -576,3 +560,28 @@ async def handle_command_sequence(
                 name,
             )
             break
+
+
+async def handle_ack(_agent: Agent, _ws: ClientConnection, envelope: Envelope) -> None:
+    """A dashboard ack: received, logged at debug, never acted on."""
+    logger.debug("Received %s (%s)", envelope.type.value, envelope.id)
+
+
+async def handle_error(
+    _agent: Agent, _ws: ClientConnection, envelope: Envelope
+) -> None:
+    """A dashboard error: the agent cannot correct it, so it says what was refused."""
+    logger.warning(
+        "Dashboard error (%s): %s", envelope.id, envelope.payload.get("error")
+    )
+
+
+# Every inbound type in the protocol catalogue, one table; a test holds it exhaustive.
+HANDLERS: Mapping[MessageType, Handler] = {
+    **{t: handle_ack for t, spec in MESSAGES.items() if spec.payload is AckPayload},
+    MessageType.ERROR: handle_error,
+    MessageType.COMMAND_REQUEST: handle_command_request,
+    MessageType.COMMAND_SEQUENCE: handle_command_sequence,
+    MessageType.LOG_BATCH_ACK: handle_log_batch_ack,
+    MessageType.EVENTS_BATCH_ACK: handle_events_batch_ack,
+}

@@ -468,7 +468,10 @@ def test_transfer_stats_fields_match_the_progress_payload() -> None:
     assert transfer_fields <= payload_fields
     # And they are the four the wire contract declares.
     assert transfer_fields == {
-        "rate_bytes_per_sec", "eta_seconds", "objects_current", "objects_total",
+        "rate_bytes_per_sec",
+        "eta_seconds",
+        "objects_current",
+        "objects_total",
     }
 
 
@@ -476,8 +479,11 @@ def test_command_progress_payload_transfer_fields_default_absent() -> None:
     """Every non-transfer command emits progress without them. They are
     optional by construction (a default), never by convention."""
     payload = CommandProgressPayload(
-        request_id="req-9", command="caddy_cert_status", group="caddy",
-        stage="starting", current=0,
+        request_id="req-9",
+        command="caddy_cert_status",
+        group="caddy",
+        stage="starting",
+        current=0,
     )
     assert payload.rate_bytes_per_sec is None
     assert payload.eta_seconds is None
@@ -488,10 +494,17 @@ def test_command_progress_payload_transfer_fields_default_absent() -> None:
 def test_command_progress_payload_from_an_older_agents_dict() -> None:
     """A payload dict predating the transfer fields still deserializes. This
     is why adding them needed no protocol version bump."""
-    payload = CommandProgressPayload.from_dict({
-        "request_id": "req-9", "command": "rclone_migrate", "group": "buckets",
-        "stage": "running", "current": 1000, "total": 5000, "message": "x",
-    })
+    payload = CommandProgressPayload.from_dict(
+        {
+            "request_id": "req-9",
+            "command": "rclone_migrate",
+            "group": "buckets",
+            "stage": "running",
+            "current": 1000,
+            "total": 5000,
+            "message": "x",
+        }
+    )
     assert payload.rate_bytes_per_sec is None
     assert payload.eta_seconds is None
 
@@ -499,10 +512,16 @@ def test_command_progress_payload_from_an_older_agents_dict() -> None:
 def test_command_progress_payload_ignores_unknown_keys() -> None:
     """Forward compatibility in the other direction: a newer peer may send
     fields this build has never heard of, and they are dropped, not fatal."""
-    payload = CommandProgressPayload.from_dict({
-        "request_id": "req-9", "command": "rclone_migrate", "group": "buckets",
-        "stage": "running", "current": 1, "a_field_from_the_future": 42,
-    })
+    payload = CommandProgressPayload.from_dict(
+        {
+            "request_id": "req-9",
+            "command": "rclone_migrate",
+            "group": "buckets",
+            "stage": "running",
+            "current": 1,
+            "a_field_from_the_future": 42,
+        }
+    )
     assert payload.current == 1
 
 
@@ -764,7 +783,9 @@ def test_make_metrics_push_carries_job_load() -> None:
         containers=[],
     )
     env = make_metrics_push(
-        "test-01", metrics, job_load={"pending": 8, "running": 6},
+        "test-01",
+        metrics,
+        job_load={"pending": 8, "running": 6},
     )
     assert env.payload["jobs"] == {"pending": 8, "running": 6}
     Envelope.from_json(env.to_json())
@@ -1079,3 +1100,29 @@ def test_envelope_post_init_rejects_naive_timestamp() -> None:
             agent_id="a",
             payload={},
         )
+
+
+# ---------------------------------------------------------------------------
+# The message catalogue (CORE-011 d3): every type, its direction, its payload
+# ---------------------------------------------------------------------------
+
+
+def test_every_message_type_is_catalogued() -> None:
+    from dataclasses import is_dataclass
+
+    from stormpulse.protocol import MESSAGES, WirePayload
+
+    assert set(MESSAGES) == set(MessageType)
+    assert all(
+        is_dataclass(row.payload) and issubclass(row.payload, WirePayload)
+        for row in MESSAGES.values()
+    )
+
+
+def test_builders_emit_the_payload_class_the_catalogue_names() -> None:
+    from stormpulse.protocol import MESSAGES, EventsBatchPayload, make_events_batch
+
+    assert MESSAGES[MessageType.EVENTS_BATCH].payload is EventsBatchPayload
+    batch = make_events_batch("test-01", batch_id="b1", events=[{"kind": "x"}])
+    assert batch.payload == {"batch_id": "b1", "events": [{"kind": "x"}]}
+    assert {f.name for f in fields(EventsBatchPayload)} == set(batch.payload)

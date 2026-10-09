@@ -197,3 +197,11 @@ def test_schema_refuses_pattern_even_when_max_bytes_is_present() -> None:
         SdkParamDef(
             placeholder="x", default=None, pattern=".*", max_bytes=16, schema=shape
         )
+
+
+def test_canonical_digest_refuses_nan_and_escapes_non_ascii() -> None:
+    from stormpulse.sdk.declaration import canonical_digest, canonical_json
+
+    assert canonical_json({"b": 1, "a": "é"}) == '{"a":"\\u00e9","b":1}'
+    with pytest.raises(ValueError):
+        canonical_digest({"x": float("nan")})

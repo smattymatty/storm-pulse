@@ -1,8 +1,8 @@
-"""Fitness suite harness: Functions 2 through 14, every check, every violation.
+"""Fitness suite harness: Functions 2 through 15, every check, every violation.
 
 CORE-001 defines 1-4 (1 is ``lint-imports``), CORE-005 adds 5-6, CORE-007 7-8,
 CORE-008 9; 10-11 guard what readers are told; 12 holds CI to `make check`;
-13-14 hold the seal and the signing key. Never fail-fast: one stop hides the rest.
+13-14 hold the seal and the signing key; 15 one JSON encoder. Never fail-fast.
 ``fitness/baseline.txt`` suppresses known violations by exact match, only shrinks.
 """
 
@@ -19,6 +19,7 @@ from fitness.merge_fence import check_merge_fence
 from fitness.no_listener import check_no_listener
 from fitness.no_shell import check_no_shell
 from fitness.no_signing_key import check_no_signing_key
+from fitness.one_encoder import check_one_encoder
 from fitness.private_imports import check_private_imports
 from fitness.self_contained_docs import check_self_contained_docs
 from fitness.shell_hatches import check_shell_hatches_sealed
@@ -38,9 +39,15 @@ def load_baseline() -> set[str]:
     }
 
 
+def stale_baseline(baseline: set[str], seen: set[str]) -> list[str]:
+    """Baseline lines no check reported: a suppression outliving its violation."""
+    return [f"stale baseline entry: {line}" for line in sorted(baseline - seen)]
+
+
 def main() -> int:
     baseline = load_baseline()
     findings: list[tuple[str, list[str]]] = []
+    seen: set[str] = set()
     total = 0
     for label, check in [
         ("Function 2 - no cross-boundary private imports", check_private_imports),
@@ -62,10 +69,16 @@ def main() -> int:
         ("Function 12 - CI runs make check", check_ci_workflow),
         ("Function 13 - every shell hatch ships sealed", check_shell_hatches_sealed),
         ("Function 14 - no publisher signing key in the agent", check_no_signing_key),
+        ("Function 15 - one canonical JSON encoder", check_one_encoder),
     ]:
-        violations = [v for v in check() if v not in baseline]
+        violations = check()
+        seen.update(violations)
+        violations = [v for v in violations if v not in baseline]
         findings.append((label, violations))
         total += len(violations)
+    stale = stale_baseline(baseline, seen)
+    findings.append(("Baseline - every line still names a live violation", stale))
+    total += len(stale)
 
     if total == 0:
         print("Fitness: all checks passed.", file=sys.stderr)

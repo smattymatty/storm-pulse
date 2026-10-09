@@ -9,13 +9,19 @@ source path (``PackageError.path`` is package-relative by contract).
 from __future__ import annotations
 
 import argparse
-import json
 import socket
 import sys
 from pathlib import Path
 from typing import Any
 
-from stormpulse.integrations.external import doctor, grants, inspection, install, ledger, trust
+from stormpulse.integrations.external import (
+    doctor,
+    grants,
+    inspection,
+    install,
+    ledger,
+    trust,
+)
 from stormpulse.integrations.external.model import (
     CapabilityRequest,
     FailureCode,
@@ -26,6 +32,7 @@ from stormpulse.integrations.external.model import (
     SealedGrantV1,
     Severity,
 )
+from stormpulse.sdk.declaration import canonical_json
 
 _EXIT_BY_CODE = {
     FailureCode.F1: 3,
@@ -47,25 +54,35 @@ _EXIT_BY_CODE = {
 
 
 def add_integration_subparser(subparsers: Any) -> None:
-    parser = subparsers.add_parser("integration", help="manage external integration packages")
+    parser = subparsers.add_parser(
+        "integration", help="manage external integration packages"
+    )
     sub = parser.add_subparsers(dest="integration_command")
 
-    inspect_parser = sub.add_parser("inspect", help="inspect a package without executing it")
+    inspect_parser = sub.add_parser(
+        "inspect", help="inspect a package without executing it"
+    )
     inspect_parser.add_argument("source")
     _add_common(inspect_parser)
 
-    install_parser = sub.add_parser("install", help="install a signed package immutably")
+    install_parser = sub.add_parser(
+        "install", help="install a signed package immutably"
+    )
     install_parser.add_argument("source")
     _add_common(install_parser)
 
     _add_common(sub.add_parser("list", help="list install receipts"))
 
-    seal_parser = sub.add_parser("seal", help="grant execution authority to an installed digest")
+    seal_parser = sub.add_parser(
+        "seal", help="grant execution authority to an installed digest"
+    )
     seal_parser.add_argument("package_digest")
     seal_parser.add_argument("--confirm-hostname")
     _add_common(seal_parser)
 
-    grant_revoke_parser = sub.add_parser("revoke", help="fence one capability on a sealed grant")
+    grant_revoke_parser = sub.add_parser(
+        "revoke", help="fence one capability on a sealed grant"
+    )
     grant_revoke_parser.add_argument("package_digest")
     grant_revoke_parser.add_argument(
         "--capability", required=True, choices=[c.value for c in CapabilityRequest]
@@ -73,7 +90,9 @@ def add_integration_subparser(subparsers: Any) -> None:
     grant_revoke_parser.add_argument("--confirm-hostname")
     _add_common(grant_revoke_parser)
 
-    rollback_parser = sub.add_parser("rollback", help="re-activate a previously sealed digest")
+    rollback_parser = sub.add_parser(
+        "rollback", help="re-activate a previously sealed digest"
+    )
     rollback_parser.add_argument("integration_id")
     rollback_parser.add_argument("package_digest")
     rollback_parser.add_argument("--confirm-hostname")
@@ -89,17 +108,25 @@ def add_integration_subparser(subparsers: Any) -> None:
     # graph (available/configured/enabled/ready + live capabilities; host probes run
     # here, never under `config check`), plus any interrupted wizard apply. --recover
     # restores the pre-apply state of an interrupted apply from its durable journal.
-    doctor_parser = sub.add_parser("doctor", help="diagnose installed and readiness state")
+    doctor_parser = sub.add_parser(
+        "doctor", help="diagnose installed and readiness state"
+    )
     doctor_parser.add_argument("integration_id", nargs="?")
     doctor_parser.add_argument(
-        "--recover", action="store_true", help="recover an interrupted wizard apply from its journal"
+        "--recover",
+        action="store_true",
+        help="recover an interrupted wizard apply from its journal",
     )
     _add_common(doctor_parser)
 
-    publisher_parser = sub.add_parser("publisher", help="manage approved publisher keys")
+    publisher_parser = sub.add_parser(
+        "publisher", help="manage approved publisher keys"
+    )
     # required: a bare `integration publisher` is a usage error, not a crash. The
     # top-level subparser stays optional on purpose (custom usage in cmd_integration).
-    publisher_sub = publisher_parser.add_subparsers(dest="publisher_command", required=True)
+    publisher_sub = publisher_parser.add_subparsers(
+        dest="publisher_command", required=True
+    )
 
     add_parser = publisher_sub.add_parser("add", help="approve a publisher key")
     add_parser.add_argument("key_file")
@@ -109,7 +136,7 @@ def add_integration_subparser(subparsers: Any) -> None:
 
     _add_common(publisher_sub.add_parser("list", help="list approved publishers"))
 
-    revoke_parser = publisher_sub.add_parser("revoke", help="revoke a publisher")
+    revoke_parser = publisher_sub.add_parser(_REVOKE, help="revoke a publisher")
     revoke_parser.add_argument("fingerprint")
     revoke_parser.add_argument("--confirm-hostname")
     _add_common(revoke_parser)
@@ -187,7 +214,12 @@ def _cmd_init(args: argparse.Namespace, config: object, config_path: Path) -> No
     mode = detect_mode()
     context = InitContext(mode=mode.name.lower(), config_path=str(config_path))
     drive_wizard(
-        wizard, context, config=config, config_path=config_path, mode=mode, label=integration_id
+        wizard,
+        context,
+        config=config,
+        config_path=config_path,
+        mode=mode,
+        label=integration_id,
     )
 
 
@@ -208,6 +240,11 @@ def run(
         return 0
 
 
+# Spelled in two parsers and the dispatch, so named once.
+_REVOKE = "revoke"
+_DOCTOR = "doctor"
+
+
 def _dispatch(
     args: argparse.Namespace,
     state_dir: Path,
@@ -217,11 +254,13 @@ def _dispatch(
     command = args.integration_command
     if command == "inspect":
         report = inspection.inspect_package(Path(args.source), state_dir)
-        _emit(args, "inspect", _report_dict(report), list(report.findings))
+        _emit(args, command, _report_dict(report), list(report.findings))
         return 0
     if command == "install":
-        receipt = install.commit_install(Path(args.source), state_dir=state_dir, agent_id=agent_id)
-        _emit(args, "install", ledger.to_dict(receipt), [])
+        receipt = install.commit_install(
+            Path(args.source), state_dir=state_dir, agent_id=agent_id
+        )
+        _emit(args, command, ledger.to_dict(receipt), [])
         return 0
     if command == "list":
         receipts = ledger.list_receipts(state_dir)
@@ -232,25 +271,29 @@ def _dispatch(
         grant = grants.seal(state_dir, package_digest=args.package_digest)
         _emit(args, "seal", _grant_dict(grant), [])
         return 0
-    if command == "revoke":
+    if command == _REVOKE:
         _require_hostname(args)
         grant = grants.revoke(
-            state_dir, package_digest=args.package_digest, capability=CapabilityRequest(args.capability)
+            state_dir,
+            package_digest=args.package_digest,
+            capability=CapabilityRequest(args.capability),
         )
-        _emit(args, "revoke", _grant_dict(grant), [])
+        _emit(args, _REVOKE, _grant_dict(grant), [])
         return 0
     if command == "rollback":
         _require_hostname(args)
         grant = grants.rollback(
-            state_dir, integration_id=args.integration_id, package_digest=args.package_digest
+            state_dir,
+            integration_id=args.integration_id,
+            package_digest=args.package_digest,
         )
-        _emit(args, "rollback", _grant_dict(grant), [])
+        _emit(args, command, _grant_dict(grant), [])
         return 0
     if command == "grants":
         sealed = grants.list_grants(state_dir)
         _emit(args, "grants", {"grants": [_grant_dict(g) for g in sealed]}, [])
         return 0
-    if command == "doctor":
+    if command == _DOCTOR:
         return _doctor(args, state_dir, integrations_config)
     if command == "publisher":
         return _publisher(args, state_dir)
@@ -282,7 +325,9 @@ def _doctor(
     _emit_doctor(args, findings, reports, pending, recovery)
 
     p1_exit = 5 if any(f.severity is Severity.ERROR for f in findings) else 0
-    readiness_exit = 4 if any(r.state is ReadinessState.ENABLED for r in reports.values()) else 0
+    readiness_exit = (
+        4 if any(r.state is ReadinessState.ENABLED for r in reports.values()) else 0
+    )
     return max(p1_exit, readiness_exit)
 
 
@@ -313,16 +358,19 @@ def _emit_doctor(
         }
         payload = {
             "ok": True,
-            "operation": "doctor",
+            "operation": _DOCTOR,
             "schema_version": 1,
             "result": result,
             "findings": [_finding_dict(f) for f in findings],
         }
-        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        print(canonical_json(payload))
         return
     print("doctor: ok")
     for finding in findings:
-        print(f"  [{finding.severity.value}] {finding.code}: {finding.message}", file=sys.stderr)
+        print(
+            f"  [{finding.severity.value}] {finding.code}: {finding.message}",
+            file=sys.stderr,
+        )
     print("readiness:")
     for integ_id, report in sorted(reports.items()):
         suffix = f" - {report.reason}" if report.reason else ""
@@ -337,9 +385,14 @@ def _emit_doctor(
             file=sys.stderr,
         )
     if recovery is not None:
-        print(f"  recovered: {', '.join(recovery.recovered) or 'nothing'}", file=sys.stderr)
+        print(
+            f"  recovered: {', '.join(recovery.recovered) or 'nothing'}",
+            file=sys.stderr,
+        )
         if recovery.manual:
-            print(f"  needs manual review: {', '.join(recovery.manual)}", file=sys.stderr)
+            print(
+                f"  needs manual review: {', '.join(recovery.manual)}", file=sys.stderr
+            )
 
 
 def _publisher(args: argparse.Namespace, state_dir: Path) -> int:
@@ -351,9 +404,14 @@ def _publisher(args: argparse.Namespace, state_dir: Path) -> int:
         return 0
     if command == "list":
         records = trust.list_publishers(state_dir)
-        _emit(args, "publisher_list", {"publishers": [_publisher_dict(r) for r in records]}, [])
+        _emit(
+            args,
+            "publisher_list",
+            {"publishers": [_publisher_dict(r) for r in records]},
+            [],
+        )
         return 0
-    if command == "revoke":
+    if command == _REVOKE:
         _require_hostname(args)
         record = trust.revoke_publisher(state_dir, args.fingerprint)
         _emit(args, "publisher_revoke", _publisher_dict(record), [])
@@ -365,10 +423,17 @@ def _publisher(args: argparse.Namespace, state_dir: Path) -> int:
 def _require_hostname(args: argparse.Namespace) -> None:
     expected = socket.gethostname()
     if getattr(args, "confirm_hostname", None) != expected:
-        raise PackageError(FailureCode.F8, f"pass --confirm-hostname {expected} to confirm this host")
+        raise PackageError(
+            FailureCode.F8, f"pass --confirm-hostname {expected} to confirm this host"
+        )
 
 
-def _emit(args: argparse.Namespace, operation: str, result: dict[str, object] | None, findings: list[Finding]) -> None:
+def _emit(
+    args: argparse.Namespace,
+    operation: str,
+    result: dict[str, object] | None,
+    findings: list[Finding],
+) -> None:
     if getattr(args, "json", False):
         payload = {
             "ok": True,
@@ -377,18 +442,25 @@ def _emit(args: argparse.Namespace, operation: str, result: dict[str, object] | 
             "result": result,
             "findings": [_finding_dict(f) for f in findings],
         }
-        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        print(canonical_json(payload))
     else:
         print(f"{operation}: ok")
         if result is not None:
             for key, value in sorted(result.items()):
                 print(f"  {key}: {value}")
         for finding in findings:
-            print(f"  [{finding.severity.value}] {finding.code}: {finding.message}", file=sys.stderr)
+            print(
+                f"  [{finding.severity.value}] {finding.code}: {finding.message}",
+                file=sys.stderr,
+            )
 
 
 def _emit_error(args: argparse.Namespace, exc: PackageError) -> None:
-    finding: dict[str, object] = {"code": exc.code.value, "severity": "error", "message": exc.message}
+    finding: dict[str, object] = {
+        "code": exc.code.value,
+        "severity": "error",
+        "message": exc.message,
+    }
     if exc.path is not None:
         finding["path"] = exc.path
     if getattr(args, "json", False):
@@ -399,7 +471,7 @@ def _emit_error(args: argparse.Namespace, exc: PackageError) -> None:
             "result": None,
             "findings": [finding],
         }
-        print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+        print(canonical_json(payload))
     else:
         message = f"{exc.code.value}: {exc.message}"
         if exc.path is not None:
@@ -408,7 +480,11 @@ def _emit_error(args: argparse.Namespace, exc: PackageError) -> None:
 
 
 def _finding_dict(finding: Finding) -> dict[str, object]:
-    result: dict[str, object] = {"code": finding.code, "severity": finding.severity.value, "message": finding.message}
+    result: dict[str, object] = {
+        "code": finding.code,
+        "severity": finding.severity.value,
+        "message": finding.message,
+    }
     if finding.integration_id is not None:
         result["integration_id"] = finding.integration_id
     if finding.package_digest is not None:
@@ -430,7 +506,9 @@ def _report_dict(report: InspectionReport) -> dict[str, object]:
         "total_bytes": report.total_bytes,
         "integration_id": manifest.integration_id if manifest is not None else None,
         "version": manifest.version if manifest is not None else None,
-        "requested_capabilities": [c.value for c in manifest.requested_capabilities] if manifest is not None else [],
+        "requested_capabilities": [c.value for c in manifest.requested_capabilities]
+        if manifest is not None
+        else [],
         "executable_code_loaded": report.executable_code_loaded,
     }
 

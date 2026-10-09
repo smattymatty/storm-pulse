@@ -225,8 +225,24 @@ def canonical_digest(payload: Any) -> str:
     Callers own what goes IN. This function only guarantees that equal payloads
     hash equal, on any host, in any process.
     """
-    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return (
+        "sha256:" + hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+    )
+
+
+def canonical_json(payload: Any) -> str:
+    """The one canonical JSON encoder: key-sorted, compact, ASCII-escaped, no NaN.
+
+    Fitness Function 15 keeps every other compact ``sort_keys`` encoder out of
+    the agent, so a signed or digested byte string has exactly one spelling.
+    """
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
 
 
 def command_specs_digest(specs: Mapping[str, SdkCommandSpec]) -> str:

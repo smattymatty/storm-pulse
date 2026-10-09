@@ -85,6 +85,7 @@ async def test_dispatch_unexpected_type(agent: Agent) -> None:
         MessageType.HEARTBEAT_ACK,
         MessageType.METRICS_ACK,
         MessageType.COMMAND_RESULT_ACK,
+        MessageType.SIGNOFF_STATE_ACK,
         MessageType.ERROR,
     ],
 )
@@ -404,7 +405,7 @@ async def test_log_batch_ack_missing_batch_id(agent: Agent) -> None:
         payload={},
     )
     # Should not raise
-    await dispatch.handle_log_batch_ack(agent, envelope)
+    await dispatch.handle_log_batch_ack(agent, AsyncMock(), envelope)
 
 
 @pytest.mark.asyncio
@@ -417,7 +418,7 @@ async def test_log_batch_ack_unknown_batch_is_noop(agent: Agent) -> None:
         agent_id=AGENT_ID,
         payload={"batch_id": "never-sent"},
     )
-    await dispatch.handle_log_batch_ack(agent, envelope)
+    await dispatch.handle_log_batch_ack(agent, AsyncMock(), envelope)
 
 
 @pytest.mark.asyncio
@@ -435,7 +436,7 @@ async def test_log_batch_ack_advances_position(agent: Agent) -> None:
         agent_id=AGENT_ID,
         payload={"batch_id": "bid-1"},
     )
-    await dispatch.handle_log_batch_ack(agent, envelope)
+    await dispatch.handle_log_batch_ack(agent, AsyncMock(), envelope)
 
     fake_shipper.tailer.confirm_shipped.assert_called_once_with(4242)
     assert "bid-1" not in agent.pending_batches
@@ -472,3 +473,15 @@ async def test_command_result_logged_to_pulse_logger(
     kwargs = pulse_logger.log_command_result.call_args.kwargs
     assert kwargs["command"] == "git_pull"
     assert kwargs["success"] is True
+
+
+def test_every_inbound_type_is_routed_and_nothing_outbound_is() -> None:
+    """The dispatcher is exhaustive over the catalogue: a new inbound type fails here until routed."""
+    from stormpulse.protocol import MESSAGES, Direction
+
+    inbound = {
+        t
+        for t, row in MESSAGES.items()
+        if row.direction is Direction.DASHBOARD_TO_AGENT
+    }
+    assert set(dispatch.HANDLERS) == inbound

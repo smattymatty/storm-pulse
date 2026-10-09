@@ -23,8 +23,11 @@ stormpulse/garage/jobs/attach_account_key.py:9 points at another repository; des
 stormpulse/garage/jobs/provision_account_key.py:50 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/jobs/set_account_key_capability.py:3 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/jobs/set_quota.py:3 points at another repository; describe it, the far end is 'the control plane'
-stormpulse/logging/shipper.py:90 points at another repository; describe it, the far end is 'the control plane'
 tests/caddy/test_cert_status.py:93 points at another repository; describe it, the far end is 'the control plane'
 tests/garage/test_bucket_resolver.py:6 points at another repository; describe it, the far end is 'the control plane'
 tests/garage/test_detach_account_key.py:5 points at another repository; describe it, the far end is 'the control plane'
 tests/garage/test_state.py:221 points at another repository; describe it, the far end is 'the control plane'
+# Function 15: bytes already on disk under a digest; each moves to canonical_json with its own migration.
+stormpulse/integrations/external/layout.py:76 spells its own compact JSON; use canonical_json
+stormpulse/wizard/journal.py:157 spells its own compact JSON; use canonical_json
+stormpulse/wizard/receipt.py:56 spells its own compact JSON; use canonical_json
