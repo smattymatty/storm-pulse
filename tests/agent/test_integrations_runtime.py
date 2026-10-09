@@ -203,19 +203,21 @@ async def test_push_advances_generation_and_the_ack_releases_only_what_it_carrie
     ag = agent_with_garage()
     rt = ag.integrations["garage"]
     replace_runtime_state(rt, _fresh(_MERGE_ID_A))
-    first = (await build_metrics_envelope(ag)).payload["integrations"]["garage"]
+    first_envelope = await build_metrics_envelope(ag)
+    first = first_envelope.payload["integrations"]["garage"]
     assert (first["generation"], first["changed_ids"]) == (1, [_MERGE_ID_A])
     assert (first["complete"], first["last_full_read_at"]) == (True, "t0")
     # No ack: the next push repeats the id, and adds what was read since.
     replace_runtime_state(rt, _fresh(_MERGE_ID_B))
-    second = (await build_metrics_envelope(ag)).payload["integrations"]["garage"]
+    second_envelope = await build_metrics_envelope(ag)
+    second = second_envelope.payload["integrations"]["garage"]
     assert (second["generation"], second["changed_ids"]) == (
         2,
         [_MERGE_ID_A, _MERGE_ID_B],
     )
     # Read between the push and its ack: owed to the next one, not released.
     merge_items_into_runtime(rt, [make_garage_bucket("c" * 64)])
-    acknowledge_push(ag.integrations)
+    acknowledge_push(ag.integrations, second_envelope.id)
     assert rt.changed_ids == ["c" * 64]
     assert (await build_metrics_envelope(ag)).payload["integrations"]["garage"][
         "generation"
@@ -225,5 +227,5 @@ async def test_push_advances_generation_and_the_ack_releases_only_what_it_carrie
 def test_an_ack_with_no_push_behind_it_releases_nothing() -> None:
     rt = _runtime(None)
     replace_runtime_state(rt, _fresh(_MERGE_ID_A))
-    acknowledge_push({"garage": rt})
+    acknowledge_push({"garage": rt}, "unknown")
     assert rt.changed_ids == [_MERGE_ID_A]

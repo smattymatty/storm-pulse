@@ -23,6 +23,7 @@ from stormpulse.agent.acks import (
 from stormpulse.agent.integrations_runtime import (
     STATUS_LIVE,
     build_metrics_envelope,
+    discard_push,
     merge_items_into_runtime,
 )
 from stormpulse.agent.refresh import handle_refresh
@@ -340,7 +341,9 @@ def post_success_hook(
         if not items or not merge_items_into_runtime(runtime, items):
             return
         envelope = await build_metrics_envelope(agent)
-        await agent.job_manager.send_now(envelope)
+        if not await agent.job_manager.send_now(envelope):
+            discard_push(agent.integrations, envelope.id)
+            return
         logger.info("Sent post-mutation metrics push for %s", command)
 
     return refresh_and_push

@@ -2069,7 +2069,7 @@
       "result": null
     }
   },
-  "contract_digest": "sha256:3cd5196a74c7f3b8d590cabe800aec2836db95e11a119eb1252eb0a07f9e58b8",
+  "contract_digest": "sha256:57e5b72686add5d03ffbdce2cea862a90f04f2d48c955e022d6d835765b17b10",
   "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
   "integrations": {
@@ -2663,10 +2663,16 @@
     },
     "metrics.ack": {
       "classes": {
-        "AckPayload": {}
+        "MetricsAckPayload": {
+          "push_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        }
       },
       "direction": "dashboard->agent",
-      "root": "AckPayload"
+      "root": "MetricsAckPayload"
     },
     "metrics.push": {
       "_note": "jobs is omitted, never null, when the agent runs no job manager",

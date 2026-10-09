@@ -12,6 +12,7 @@ from websockets.asyncio.client import ClientConnection
 
 from stormpulse.agent.integrations_runtime import (
     build_metrics_envelope,
+    discard_push,
     replace_runtime_state,
 )
 from stormpulse.protocol import CommandResultPayload, FailureReason, make_command_result
@@ -112,9 +113,12 @@ async def handle_refresh(
         )
     if not result.success:
         return
+    envelope = None
     try:
         envelope = await build_metrics_envelope(agent)
         await ws.send(envelope.to_json())
         logger.info("Sent immediate metrics push after %s", command)
     except Exception:
+        if envelope is not None:
+            discard_push(agent.integrations, envelope.id)
         logger.warning("Failed to send metrics after %s", command, exc_info=True)

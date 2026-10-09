@@ -10,7 +10,7 @@ from websockets.asyncio.client import ClientConnection
 
 from stormpulse import events
 from stormpulse.agent.integrations_runtime import acknowledge_push
-from stormpulse.protocol import Envelope
+from stormpulse.protocol import Envelope, MetricsAckPayload
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
@@ -81,9 +81,13 @@ async def handle_log_batch_ack(
 async def handle_metrics_ack(
     agent: Agent, _ws: ClientConnection, envelope: Envelope
 ) -> None:
-    """A ``metrics.ack``: the ids the last push carried are no longer owed (CORE-011 d5)."""
-    acknowledge_push(agent.integrations)
-    logger.debug("Received metrics.ack (%s)", envelope.id)
+    """Release reads covered by the explicitly acknowledged metrics push."""
+    ack = MetricsAckPayload.from_dict(envelope.payload)
+    if not isinstance(ack.push_id, str) or not ack.push_id:
+        logger.warning("metrics.ack requires a non-empty push_id")
+        return
+    if not acknowledge_push(agent.integrations, ack.push_id):
+        logger.debug("metrics.ack for unknown push_id %s", ack.push_id)
 
 
 async def handle_ack(_agent: Agent, _ws: ClientConnection, envelope: Envelope) -> None:

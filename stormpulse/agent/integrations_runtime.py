@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Retain only watermarks, never one resource list per outstanding push.
+MAX_PENDING_METRICS_PUSHES = 32
+
 # Status values, per core-005-integrations-wire.md.
 STATUS_LIVE = "live"
 STATUS_DISABLED_ERROR = "disabled_error"
@@ -52,8 +55,10 @@ class IntegrationRuntime:
     last_full_read_at: str = ""
     # Ids re-read since the last ack, in first-seen order; a lost push repeats them.
     changed_ids: list[str] = field(default_factory=list)
-    # What the last push carried: the ack releases these, never ids read since.
-    pushed_ids: list[str] = field(default_factory=list)
+    # Read revisions are private bookkeeping, separate from wire push generation.
+    change_revision: int = 0
+    changed_revisions: dict[str, int] = field(default_factory=dict)
+    pending_pushes: dict[str, int] = field(default_factory=dict)
 
 
 def build_integrations_payload(
@@ -99,29 +104,58 @@ def replace_runtime_state(runtime: IntegrationRuntime, state: StateBlob) -> None
 
 
 def _note_changed(runtime: IntegrationRuntime, ids: Any) -> None:
-    """Owe *ids* to the next push, each once, in first-seen order."""
-    owed = set(runtime.changed_ids)
+    """Owe every read, including a newer read of an already-dirty resource."""
     for item_id in ids:
-        if item_id and item_id not in owed:
-            owed.add(item_id)
-            runtime.changed_ids.append(item_id)
+        if item_id:
+            runtime.change_revision += 1
+            if item_id not in runtime.changed_revisions:
+                runtime.changed_ids.append(item_id)
+            runtime.changed_revisions[item_id] = runtime.change_revision
 
 
 def advance_generation(runtimes: dict[str, IntegrationRuntime]) -> None:
-    """One push is leaving: every entry's ``generation`` climbs and its owed ids
-    are the ones this push carries. Per process, so a reconnect never rewinds it."""
+    """Advance the wire push generation, without changing read revisions."""
     for runtime in runtimes.values():
         runtime.generation += 1
-        runtime.pushed_ids = list(runtime.changed_ids)
 
 
-def acknowledge_push(runtimes: dict[str, IntegrationRuntime]) -> None:
-    """A ``metrics.ack`` releases the ids the last push carried; ids read since
-    stay owed. An ack with no push behind it releases nothing."""
+def track_push(runtimes: dict[str, IntegrationRuntime], push_id: str) -> None:
+    """Capture each snapshot's read watermark; eviction never clears changes."""
     for runtime in runtimes.values():
-        pushed = set(runtime.pushed_ids)
-        runtime.changed_ids = [i for i in runtime.changed_ids if i not in pushed]
-        runtime.pushed_ids = []
+        runtime.pending_pushes[push_id] = runtime.change_revision
+        while len(runtime.pending_pushes) > MAX_PENDING_METRICS_PUSHES:
+            del runtime.pending_pushes[next(iter(runtime.pending_pushes))]
+
+
+def discard_push(runtimes: dict[str, IntegrationRuntime], push_id: str) -> None:
+    """A failed send cannot be acknowledged; keep all dirty resources."""
+    for runtime in runtimes.values():
+        runtime.pending_pushes.pop(push_id, None)
+
+
+def discard_pending_pushes(runtimes: dict[str, IntegrationRuntime]) -> None:
+    """Retire connection-scoped receipts while preserving process-scoped changes."""
+    for runtime in runtimes.values():
+        runtime.pending_pushes.clear()
+
+
+def acknowledge_push(runtimes: dict[str, IntegrationRuntime], push_id: str) -> bool:
+    """Release only reads included in this push; newer reads stay dirty."""
+    matched = False
+    for runtime in runtimes.values():
+        watermark = runtime.pending_pushes.pop(push_id, None)
+        if watermark is None:
+            continue
+        matched = True
+        runtime.changed_revisions = {
+            item_id: revision
+            for item_id, revision in runtime.changed_revisions.items()
+            if revision > watermark
+        }
+        runtime.changed_ids = [
+            i for i in runtime.changed_ids if i in runtime.changed_revisions
+        ]
+    return matched
 
 
 def integration_components(runtimes: dict[str, IntegrationRuntime]) -> list[Component]:
@@ -180,9 +214,11 @@ async def build_metrics_envelope(agent: Agent) -> Envelope:
     advance_generation(agent.integrations)
     integrations = build_integrations_payload(agent.integrations) or None
     job_load = agent.job_manager.load() if agent.job_manager else None
-    return make_metrics_push(
+    envelope = make_metrics_push(
         agent.config.agent.id,
         metrics,
         integrations=integrations,
         job_load=job_load,
     )
+    track_push(agent.integrations, envelope.id)
+    return envelope

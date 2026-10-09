@@ -15,6 +15,7 @@ from websockets.exceptions import ConnectionClosed
 from stormpulse import events
 from stormpulse.agent.integrations_runtime import (
     build_metrics_envelope,
+    discard_push,
     replace_runtime_state,
 )
 from stormpulse.integrations import LogEnricher
@@ -54,13 +55,18 @@ async def metrics_loop(agent: Agent, ws: ClientConnection) -> None:
     """Collect and push metrics at the configured interval."""
     interval = agent.config.metrics.push_interval_seconds
     while not agent.shutdown.is_set():
+        envelope = None
         try:
             envelope = await build_metrics_envelope(agent)
             await ws.send(envelope.to_json())
             logger.debug("Sent metrics push %s", envelope.id)
         except ConnectionClosed:
+            if envelope is not None:
+                discard_push(agent.integrations, envelope.id)
             raise
         except Exception:
+            if envelope is not None:
+                discard_push(agent.integrations, envelope.id)
             logger.warning("Failed to collect/send metrics", exc_info=True)
         if await sleep_or_shutdown(agent.shutdown, interval):
             return

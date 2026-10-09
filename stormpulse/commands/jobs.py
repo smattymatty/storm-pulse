@@ -231,7 +231,7 @@ class JobManager:
         """Request ids of jobs still running, ids only (CORE-011 d7), start order."""
         return [rid for rid, task in self._jobs.items() if not task.done()]
 
-    async def send_now(self, envelope: Envelope) -> None:
+    async def send_now(self, envelope: Envelope) -> bool:
         """Push an envelope to the wire using this connection's send callback.
 
         Used by the agent to emit one-off results (e.g. a synthetic failure
@@ -240,6 +240,7 @@ class JobManager:
         """
         try:
             await self._send(envelope)
+            return True
         except Exception:
             logger.warning(
                 "send_now failed for envelope %s (type=%s)",
@@ -247,6 +248,7 @@ class JobManager:
                 envelope.type.value,
                 exc_info=True,
             )
+            return False
 
     def active_count(self) -> int:
         """Number of currently-running jobs. Used by tests and diagnostics."""

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,10 @@ import pytest
 
 from stormpulse import events
 from stormpulse.agent import Agent, acks, dispatch
+from stormpulse.agent.integrations_runtime import (
+    merge_items_into_runtime,
+    replace_runtime_state,
+)
 from stormpulse.auth import NonceStore
 from stormpulse.commands import ParamValidationError
 from stormpulse.config import CommandSpec, Config
@@ -23,6 +28,8 @@ from tests.helpers import (
     SECRET,
     envelope,
     make_failed_result,
+    make_fake_garage_state,
+    make_garage_bucket,
     make_successful_result,
     sign_command_request,
     sign_command_sequence,
@@ -169,7 +176,6 @@ async def test_dispatch_error_reply_never_echoes_the_payload(agent: Agent) -> No
     [
         MessageType.REGISTER_OK,
         MessageType.HEARTBEAT_ACK,
-        MessageType.METRICS_ACK,
         MessageType.COMMAND_RESULT_ACK,
         MessageType.SIGNOFF_STATE_ACK,
         MessageType.ERROR,
@@ -592,17 +598,24 @@ def test_every_inbound_type_is_routed_and_nothing_outbound_is() -> None:
 
 
 @pytest.mark.asyncio
-async def test_metrics_ack_releases_the_ids_the_last_push_carried(
+async def test_metrics_ack_releases_only_the_identified_push(
     agent_with_garage: Callable[..., Agent],
 ) -> None:
     ag = agent_with_garage()
     rt = ag.integrations["garage"]
-    rt.changed_ids, rt.pushed_ids = ["a" * 64, "b" * 64], ["a" * 64]
+    from stormpulse.agent.integrations_runtime import track_push
+    from stormpulse.integrations import Freshness
+
+    replace_runtime_state(
+        rt, replace(make_fake_garage_state(), read=Freshness(changed_ids=("a" * 64,)))
+    )
+    track_push(ag.integrations, "push-1")
+    merge_items_into_runtime(rt, [make_garage_bucket("b" * 64)])
     ws = AsyncMock()
     await dispatch.dispatch_message(
-        ag, ws, envelope(MessageType.METRICS_ACK, {}).to_json()
+        ag, ws, envelope(MessageType.METRICS_ACK, {"push_id": "push-1"}).to_json()
     )
-    assert (rt.changed_ids, rt.pushed_ids) == (["b" * 64], [])
+    assert rt.changed_ids == ["b" * 64]
     ws.send.assert_not_called()
 
 

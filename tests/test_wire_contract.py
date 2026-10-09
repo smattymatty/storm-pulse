@@ -533,9 +533,9 @@ def test_messages_entry_carries_direction_root_and_typed_classes() -> None:
     assert progress["root"] == "CommandProgressPayload"
     assert progress["classes"] == dataclass_wire_types(CommandProgressPayload)
     assert messages["command.request"]["direction"] == "dashboard->agent"
-    # The four acks each repeat AckPayload's classes: an entry reads on its own.
+    # Empty acks each repeat AckPayload's classes: an entry reads on its own.
     acks = [t.value for t, spec in MESSAGES.items() if spec.payload is AckPayload]
-    assert len(acks) == 4
+    assert len(acks) == 3
     assert "register.ok" not in acks
     for name in acks:
         assert messages[name]["classes"] == dataclass_wire_types(AckPayload)

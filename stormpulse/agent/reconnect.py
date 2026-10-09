@@ -14,6 +14,7 @@ from websockets.exceptions import ConnectionClosed
 
 from stormpulse import events
 from stormpulse.agent import dispatch, loops
+from stormpulse.agent.integrations_runtime import discard_pending_pushes
 from stormpulse.agent.register import await_register_ok, send_register
 from stormpulse.agent.signoff_nag import signoff_nag_loop
 from stormpulse.agent.signoff_push import signoff_state_push_loop
@@ -194,6 +195,7 @@ async def _run_session(
                 provider = log_enricher_provider(agent, shipper.parser_name)
                 tg.create_task(loops.log_loop(agent, ws, group_name, provider))
     finally:
+        discard_pending_pushes(agent.integrations)
         await agent.job_manager.shutdown_all()
         agent.job_manager = None
 

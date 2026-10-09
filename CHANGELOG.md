@@ -40,6 +40,9 @@ a control plane that only speaks v1.
 
 ### Changed
 
+- **State acknowledgements identify their snapshot.** `metrics.ack` requires
+  `push_id`. Late acknowledgements cannot clear newer integration reads, even
+  when the same resource was read again.
 - **Stronger command signing.** Signatures now protect the entire message,
   including its destination, ID and parameters. Unsupported or malformed
   messages get an explicit error response.

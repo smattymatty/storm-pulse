@@ -99,6 +99,13 @@ session), `complete: bool`, `last_full_read_at`, per-item `read_at`, and
 `changed_ids` since the last ack. The consumer deletes its absence debounce
 and recomputes only what changed. No deltas, no tombstones.
 
+`metrics.ack` carries `push_id`, the accepted `metrics.push` envelope's id.
+Acceptance means the snapshot and its changed-work intent have been stored or
+accepted for processing; it need not wait for every downstream business effect.
+The agent releases only reads covered by that snapshot, keeping newer reads of
+the same item pending. Read revisions are internal bookkeeping, not per-item
+wire fields. Unknown, duplicate and retired acknowledgements release nothing.
+
 ### 6. One typed events channel for every source
 
 `events.batch` is the channel for every source, node-local gates included.

@@ -51,6 +51,12 @@ gets no ack repeats them). Each Garage bucket carries its own `read_at`, the
 moment its `GetBucketInfo` returned; a bucket carried forward from the cache
 keeps its stamp.
 
+The control plane acknowledges an accepted snapshot with
+`metrics.ack {"push_id": "<metrics.push envelope id>"}`. This releases only the
+reads included in that push; newer reads remain pending. Empty or unknown
+acknowledgements cannot clear changes. Snapshot transmission continues without
+waiting for an ack, and outstanding receipts are bounded.
+
 Events are typed and sequenced. Every (source, kind) the agent emits is
 declared once with the fields it may carry; `emit` keeps those and drops the
 rest, and the buffer stamps `seq`, monotone per process. The next

@@ -129,7 +129,7 @@ def wire_contract_messages() -> dict[str, Any]:
     ``envelope`` first (no direction: it travels both ways), then one entry per
     ``MessageType``: its direction, the payload class at the root and every
     class reachable from it with each field's JSON type, nullability and
-    optionality. The four acks each repeat ``AckPayload``: nothing is hoisted.
+    optionality. Empty acks each repeat ``AckPayload``: nothing is hoisted.
     """
     messages: dict[str, Any] = {
         ENVELOPE_ENTRY: {

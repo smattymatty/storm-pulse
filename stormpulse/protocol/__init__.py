@@ -509,9 +509,15 @@ class RegisterOkPayload(WirePayload):
 
 
 @dataclass(frozen=True, slots=True)
+class MetricsAckPayload(WirePayload):
+    """The specific metrics.push accepted by the control plane."""
+
+    push_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class AckPayload(WirePayload):
-    """Payload for the empty dashboard acks: logged at debug; only ``metrics.ack``
-    acts, releasing the ids the last push carried (CORE-011 d5)."""
+    """Payload for empty acknowledgements that have no delivery bookkeeping."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,7 +568,7 @@ MESSAGES: Mapping[MessageType, MessageSpec] = {
     MessageType.EVENTS_BATCH_NACK: MessageSpec(_IN, EventsBatchNackPayload),
     MessageType.REGISTER_OK: MessageSpec(_IN, RegisterOkPayload),
     MessageType.HEARTBEAT_ACK: MessageSpec(_IN, AckPayload),
-    MessageType.METRICS_ACK: MessageSpec(_IN, AckPayload),
+    MessageType.METRICS_ACK: MessageSpec(_IN, MetricsAckPayload),
     MessageType.COMMAND_RESULT_ACK: MessageSpec(_IN, AckPayload),
     MessageType.SIGNOFF_STATE_ACK: MessageSpec(_IN, AckPayload),
     MessageType.ERROR: MessageSpec(Direction.BOTH, ErrorPayload),
