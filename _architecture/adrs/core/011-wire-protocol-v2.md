@@ -2,7 +2,7 @@
 adr:
   id: "CORE-011"
   title: "Wire protocol v2: negotiated, declared, signed end to end"
-  status: "Proposed"
+  status: "Accepted"
   date: "2026-10-08"
   authors:
     - "Mathew Storm (maintainer, decisions)"
@@ -16,8 +16,9 @@ adr:
 version 2 on. Verify against `stormpulse/protocol.py`, `stormpulse/auth.py`,
 `stormpulse/agent/wire_contract.py` and `wire-contract.json`.
 
-**Status: PROPOSED 2026-10-08.** Twelve decisions grilled and maintainer-ruled
-2026-10-08; nothing built. Supersedes the versioning rules of the v1 Protocol
+**Status: ACCEPTED 2026-10-08 (maintainer seal) at the commit that lands
+this line; proposed at `c4da57b`.** Twelve decisions grilled and
+maintainer-ruled 2026-10-08; nothing built. Supersedes the versioning rules of the v1 Protocol
 Specification wiki page, which is archived as `Protocol-Specification-v1`
 with a dated deprecation banner. The control-plane half (the dual-speak
 window, its tripwire, the fallback branches deleted) is its own ADR in the
