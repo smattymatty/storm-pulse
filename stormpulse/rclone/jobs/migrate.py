@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import math
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
-from stormpulse.protocol import TransferStats
+from stormpulse.protocol import FailureReason, TransferStats
 from stormpulse.rclone.config import RcloneConfig
 from stormpulse.rclone.jobs import failure_outcome, remote_from_params
 from stormpulse.rclone.runner import (
@@ -24,6 +25,15 @@ from stormpulse.rclone.runner import (
 
 # Fixed stats cadence; a constant, not a knob.
 _STATS_INTERVAL = "5s"
+
+
+@dataclass(frozen=True, slots=True)
+class MigrateResult:
+    """What ``rclone_migrate`` returns under ``result``, on a failure too."""
+
+    bytes_transferred: int
+    objects_transferred: int
+    duration_seconds: float
 
 
 def _non_negative_int(value: Any) -> int | None:
@@ -65,9 +75,7 @@ def make_migrate_handler(
     dest, dst_bucket = parsed_dst
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
-        return await run_migrate(
-            progress, config, source, src_bucket, dest, dst_bucket
-        )
+        return await run_migrate(progress, config, source, src_bucket, dest, dst_bucket)
 
     return handler
 
@@ -128,7 +136,7 @@ async def run_migrate(
             on_stats=on_stats,
         )
     except OSError as exc:
-        return failure_outcome("os_error", str(exc))
+        return failure_outcome(FailureReason.OS_ERROR, str(exc))
     extras = {
         "bytes_transferred": last["bytes"],
         "objects_transferred": last["objects"],

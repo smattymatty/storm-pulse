@@ -10,14 +10,15 @@ import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from stormpulse.protocol import (
     CommandRequestPayload,
     CommandSequencePayload,
     Envelope,
     MessageType,
-    format_timestamp,
 )
+from stormpulse.sdk.declaration import canonical_json
 
 logger = logging.getLogger(__name__)
 
@@ -83,46 +84,17 @@ def load_hmac_secret(path: Path) -> bytes:
     return raw
 
 
-def canonicalize_params(params: dict[str, str]) -> str:
-    """Canonicalize params for HMAC: sorted key=value pairs joined by &."""
-    if not params:
-        return ""
-    return "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+def sign_envelope(envelope: dict[str, Any], secret: bytes) -> str:
+    """HMAC-SHA256 hex over the envelope as ``canonical_json``, ``payload.hmac`` left out.
 
-
-def canonical_command_request(
-    command: str,
-    nonce: str,
-    timestamp: str,
-    params: dict[str, str] | None = None,
-) -> str:
-    """Build the canonical message for a command.request HMAC.
-
-    Format: ``v1\\n{command}\\n{params_canonical}\\n{nonce}\\n{timestamp}``
+    Every key is covered: ``v``, ``type``, ``id``, ``ts``, ``agent_id`` and the
+    whole payload, ``nonce`` included, so an additive field is signed for free
+    and no two inputs share a form (CORE-011 d4). The dict is never mutated.
+    Raises ValueError on a value no signer may cover (a NaN; Function 15).
     """
-    params_str = canonicalize_params(params or {})
-    return f"v1\n{command}\n{params_str}\n{nonce}\n{timestamp}"
-
-
-def canonical_command_sequence(
-    sequence_id: str,
-    commands: list[str],
-    *,
-    stop_on_failure: bool,
-    nonce: str,
-    timestamp: str,
-) -> str:
-    """Build the canonical message for a command.sequence HMAC.
-
-    Format: ``v1\\n{sequence_id}\\n{commands_csv}\\n{stop_on_failure}\\n{nonce}\\n{timestamp}``
-    """
-    commands_csv = ",".join(commands)
-    stop_str = "true" if stop_on_failure else "false"
-    return f"v1\n{sequence_id}\n{commands_csv}\n{stop_str}\n{nonce}\n{timestamp}"
-
-
-def sign(message: str, secret: bytes) -> str:
-    """Compute HMAC-SHA256 hex digest over a canonical message."""
+    payload = dict(envelope["payload"])
+    payload.pop("hmac", None)
+    message = canonical_json({**envelope, "payload": payload})
     return hmac_mod.new(secret, message.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
@@ -234,39 +206,29 @@ def verify_envelope(
             reason="too_old",
         )
 
-    # 3. Parse payload, build canonical message, verify HMAC
-    ts_str = format_timestamp(envelope.ts)
-
+    # 3. Parse the payload, then the MAC over the frame as the sender signed it:
+    # the parsed dict, never a re-rendering of ``ts``. One path (CORE-011 d4).
     payload: CommandRequestPayload | CommandSequencePayload
     if envelope.type == MessageType.COMMAND_REQUEST:
-        req_payload = CommandRequestPayload.from_dict(envelope.payload)
-        canonical = canonical_command_request(
-            req_payload.command,
-            req_payload.nonce,
-            ts_str,
-            req_payload.params,
-        )
-        expected_hmac = req_payload.hmac
-        nonce = req_payload.nonce
-        payload = req_payload
+        payload = CommandRequestPayload.from_dict(envelope.payload)
     else:
-        seq_payload = CommandSequencePayload.from_dict(envelope.payload)
-        canonical = canonical_command_sequence(
-            seq_payload.sequence_id,
-            seq_payload.commands,
-            stop_on_failure=seq_payload.stop_on_failure,
-            nonce=seq_payload.nonce,
-            timestamp=ts_str,
-        )
-        expected_hmac = seq_payload.hmac
-        nonce = seq_payload.nonce
-        payload = seq_payload
+        payload = CommandSequencePayload.from_dict(envelope.payload)
 
-    computed = sign(canonical, secret)
-    if not hmac_mod.compare_digest(computed, expected_hmac):
+    if envelope.received is None:
+        raise AuthError(
+            "Envelope was built in-process, not received off the wire",
+            reason="bad_signature",
+        )
+    try:
+        computed = sign_envelope(envelope.received, secret)
+    except ValueError as exc:
+        raise AuthError(f"Envelope cannot be signed: {exc}", reason="bad_signature")
+    if not isinstance(payload.hmac, str) or not hmac_mod.compare_digest(
+        computed, payload.hmac
+    ):
         raise AuthError("HMAC verification failed", reason="bad_signature")
 
     # 4. Nonce uniqueness (only after HMAC passes)
-    nonce_store.check_and_store(nonce, max_age_seconds)
+    nonce_store.check_and_store(payload.nonce, max_age_seconds)
 
     return payload

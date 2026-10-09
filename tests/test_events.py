@@ -2,10 +2,28 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from stormpulse import events
 from stormpulse.events import EventBuffer
+
+
+@pytest.fixture(autouse=True)
+def _own_kind() -> Any:
+    """A kind of this file's own, so no test leans on which agent module
+    another test imported; the registry is restored after, since the
+    artifact publishes it (``tests/test_wire_contract.py``)."""
+    before = dict(events._REGISTRY)
+    events.declare_event("probe", "ping", {"n", "note"})
+    yield
+    events._REGISTRY.clear()
+    events._REGISTRY.update(before)
+
+
+def _drain() -> list[dict[str, Any]]:
+    return events.buffer().drain("t")
 
 
 class TestEmit:
@@ -29,6 +47,11 @@ class TestEmit:
         events.emit("job_result", source="jobs", error="x" * 10_000)
         e = events.buffer().drain("b1")[0]
         assert len(e["error"]) == 500
+
+    def test_emit_caps_reason_text_like_error(self) -> None:
+        events.emit("events_nacked", source="events", reason="x" * 10_000)
+        e = events.buffer().drain("b1")[0]
+        assert len(e["reason"]) == 500
 
     def test_emit_stamps_trigger_from_contextvar(self) -> None:
         token = events.trigger_var.set("periodic_walk")
@@ -57,6 +80,103 @@ class TestEmit:
         assert "command_ref" not in batch[2]
 
 
+class TestRegistry:
+    def test_two_emits_carry_consecutive_seq(self) -> None:
+        events.emit("ping", source="probe", n=1)
+        events.emit("ping", source="probe", n=2)
+        assert [e["seq"] for e in _drain()] == [1, 2]
+
+    def test_the_synthesized_dropped_event_takes_the_next_seq(self) -> None:
+        buf = EventBuffer(max_events=1)
+        buf.append({"kind": "a"})
+        buf.append({"kind": "b"})  # drops "a" (seq 1)
+        synthesized, kept = buf.drain("b1")
+        assert (synthesized["kind"], synthesized["seq"]) == ("dropped_events", 3)
+        assert kept["seq"] == 2
+
+    def test_a_requeued_event_keeps_its_seq(self) -> None:
+        buf = EventBuffer()
+        buf.append({"kind": "a"})
+        buf.drain("b1")
+        buf.requeue_unacked()
+        buf.append({"kind": "b"})
+        assert [e["seq"] for e in buf.drain("b2")] == [1, 2]
+
+    def test_an_undeclared_field_is_dropped_and_counted_on_the_next_drain(
+        self,
+    ) -> None:
+        events.emit("ping", source="probe", n=1, user_ip="10.0.0.1")
+        first = _drain()
+        assert [e["kind"] for e in first] == ["dropped_events", "ping"]
+        assert "user_ip" not in first[1]
+        assert first[0]["undeclared"] == 1
+        assert first[0]["dropped"] == 0
+        events.emit("ping", source="probe", n=2)
+        assert [e["kind"] for e in _drain()] == ["ping"]  # the count was reset
+
+    def test_an_undeclared_kind_ships_bare_and_counts_every_field(self) -> None:
+        events.emit("nobody_declared_me", source="probe", a=1, b=2, c="")
+        synthesized, bare = _drain()
+        assert synthesized["undeclared"] == 2  # the empty field was elided, not counted
+        assert set(bare) == {"ts", "source", "kind", "seq"}
+
+    def test_command_ref_rides_without_a_declaration(self) -> None:
+        events.emit("ping", source="probe", command_ref="pc-1")
+        (e,) = _drain()
+        assert e["command_ref"] == "pc-1"
+
+    def test_a_second_declaration_adds_fields(self) -> None:
+        events.declare_event("probe", "pong", {"a"})
+        events.declare_event("probe", "pong", {"b"})
+        assert events.declared_events()["probe"]["pong"] == ["a", "b"]
+
+    def test_declared_events_are_sorted_for_the_artifact(self) -> None:
+        events.declare_event("zprobe", "zeta", {"b", "a"})
+        events.declare_event("zprobe", "alpha", set())
+        assert list(events.declared_events()["zprobe"]) == ["alpha", "zeta"]
+        assert events.declared_events()["zprobe"]["zeta"] == ["a", "b"]
+
+    def test_a_walk_declares_its_summary_per_item(self) -> None:
+        events.walk(source="probe", item="widget")
+        assert events.declared_events()["probe"]["walk_summary"] == [
+            "calls",
+            "failures",
+            "slowest_endpoint",
+            "slowest_ms",
+            "total_ms",
+            "widgets_dropped",
+            "widgets_read",
+        ]
+
+    def test_the_walk_summary_passes_its_own_filter(self) -> None:
+        with events.walk(source="garage_admin", item="bucket"):
+            _call("GetBucketInfo", 3, bucket_id="b1")
+        (summary,) = _drain()
+        assert summary["buckets_read"] == 1
+        assert summary["slowest_endpoint"] == "GetBucketInfo"
+
+    def test_a_decorated_walk_gets_a_fresh_scope_per_call(self) -> None:
+        scope = events.walk(source="garage_admin", item="bucket")
+
+        @scope
+        def read(depth: int) -> None:
+            if depth:
+                read(depth - 1)  # the nested call joins this walk
+            _call("GetBucketInfo", 1, bucket_id=f"b{depth}")
+
+        read(1)
+        (summary,) = _drain()
+        assert summary["buckets_read"] == 2
+
+    def test_the_synthesized_event_carries_only_declared_fields(self) -> None:
+        buf = EventBuffer(max_events=1)
+        buf.append({"kind": "a"})
+        buf.append({"kind": "b"})
+        synthesized = buf.drain("b1")[0]
+        declared = set(events.declared_events()["events"]["dropped_events"])
+        assert set(synthesized) - events.ENVELOPE_FIELDS == declared
+
+
 class TestEventBuffer:
     def test_ack_releases_batch(self) -> None:
         buf = EventBuffer()
@@ -66,6 +186,24 @@ class TestEventBuffer:
         assert buf.ack("b1") is True
         assert buf.ack("b1") is False
         assert buf.requeue_unacked() == 0
+
+    def test_nack_drops_the_batch_and_counts_it(self) -> None:
+        buf = EventBuffer()
+        buf.append({"kind": "a"})
+        buf.append({"kind": "b"})
+        buf.drain("b1")
+        assert buf.nack("b1") == 2
+        assert buf.nack("b1") is None
+        assert buf.ack("b1") is False
+        assert buf.requeue_unacked() == 0
+        assert buf.drain("b2") == []  # never requeued, never tallied as dropped
+
+    def test_nack_of_an_unknown_batch_leaves_in_flight_alone(self) -> None:
+        buf = EventBuffer()
+        buf.append({"kind": "a"})
+        buf.drain("b1")
+        assert buf.nack("never-sent") is None
+        assert buf.ack("b1") is True
 
     def test_unacked_batch_requeues_in_order(self) -> None:
         buf = EventBuffer()

@@ -10,17 +10,24 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Any
 
 from stormpulse import events
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.integrations import Freshness
 
 logger = logging.getLogger(__name__)
 
 # One summary per admin walk; each decorated call opens its own scope.
 _garage_walk = events.walk(source="garage_admin", item="bucket")
+
+
+def stamp_now() -> str:
+    """The wire's read stamp: ISO-8601 UTC to the second (CORE-011 d5)."""
+    return datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +85,9 @@ class GarageBucket:
     # Surfaced so the control plane can see storage the cap does not govern.
     unfinished_upload_bytes: int = 0
     unfinished_uploads: int = 0
+    # When this bucket's ``GetBucketInfo`` returned (CORE-011 d5); a bucket carried
+    # forward keeps its object and so its stamp. Defaults for positional constructors.
+    read_at: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,10 +130,19 @@ class GarageState:
     # Empty by default so test/fixture states and targeted merges (which carry
     # the last periodic value, see ``with_items``) stay valid.
     admin_metrics: tuple[GarageAdminMetric, ...] = ()
+    # What this read says about itself (CORE-011 d5). Off the blob: the push
+    # envelope carries it, so ``to_dict`` and the declared shape skip it.
+    read: Freshness = field(default=Freshness(), metadata={"wire": False})
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to plain dict for inclusion in protocol payloads."""
-        return asdict(self)
+        d = asdict(self)
+        d.pop("read")
+        return d
+
+    def freshness(self) -> Freshness:
+        """The envelope's view of this read (``FreshState``)."""
+        return self.read
 
     def summary(self) -> str:
         """One-line summary for the on-demand refresh command result.
@@ -234,9 +253,10 @@ def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
 def read_buckets_by_id(
     config: GarageConfig, bucket_ids: Iterable[str]
 ) -> list[GarageBucket]:
-    """Targeted ``GetBucketInfo`` per id; a failed read (incl. a delete's 404) is
-    skipped and logged, never fabricated. Callers merge upsert-only, so a removal
-    rides the membership diff or the full walk, never a partial-manifest deletion."""
+    """Targeted ``GetBucketInfo`` per id, each stamped ``read_at`` as it returns; a
+    failed read (incl. a delete's 404) is skipped and logged, never fabricated.
+    Callers merge upsert-only, so a removal rides the membership diff or the full
+    walk, never a partial-manifest deletion."""
     admin_url, admin_token = config.admin_url, config.admin_token
     if not (admin_url and admin_token):
         return []
@@ -254,7 +274,7 @@ def read_buckets_by_id(
                 err,
             )
             continue
-        buckets.append(_bucket_from_admin_info(info))
+        buckets.append(replace(_bucket_from_admin_info(info), read_at=stamp_now()))
     return buckets
 
 
@@ -309,13 +329,6 @@ def list_bucket_ids(config: GarageConfig) -> list[str] | None:
         logger.warning("ListBuckets failed: %s", err)
         return None
     return [item.get("id", "") for item in items if item.get("id")]
-
-
-def collect_buckets_via_admin(config: GarageConfig) -> list[GarageBucket] | None:
-    """List buckets and fetch each one's info; None when the cluster can't be
-    enumerated. A bucket whose ``GetBucketInfo`` fails is skipped and logged."""
-    ids = list_bucket_ids(config)
-    return None if ids is None else read_buckets_by_id(config, ids)
 
 
 @dataclass(frozen=True, slots=True)
@@ -391,18 +404,37 @@ def _key_inventory(config: GarageConfig) -> list[GarageKeyRef]:
 
 def _walk_and_compose(config: GarageConfig, topology: Topology) -> GarageState | None:
     """Walk every bucket and fold with *topology* into one wire ``GarageState``; None
-    when enumeration fails (never push an empty set: invariant 4)."""
-    buckets = collect_buckets_via_admin(config)
-    if buckets is None:
+    when enumeration fails (never push an empty set: invariant 4). A bucket whose
+    ``GetBucketInfo`` fails is skipped and logged, and the read says so."""
+    ids = list_bucket_ids(config)
+    if ids is None:
         logger.warning("Bucket state unavailable this tick; skipping state push")
         return None
-    return compose(config, topology, buckets)
+    buckets = read_buckets_by_id(config, ids)
+    return compose(
+        config, topology, buckets, freshness=full_read_freshness(ids, buckets)
+    )
+
+
+def full_read_freshness(ids: list[str], buckets: list[GarageBucket]) -> Freshness:
+    """What a full read says of itself: complete iff every listed id came back,
+    stamped now, every bucket read changed."""
+    read = [b.id for b in buckets if b.id]
+    return Freshness(
+        complete=set(ids) <= set(read),
+        last_full_read_at=stamp_now(),
+        changed_ids=tuple(read),
+    )
 
 
 def compose(
-    config: GarageConfig, topology: Topology, buckets: list[GarageBucket]
+    config: GarageConfig,
+    topology: Topology,
+    buckets: list[GarageBucket],
+    *,
+    freshness: Freshness = Freshness(),
 ) -> GarageState:
-    """Fold *topology* and *buckets* into one wire ``GarageState``."""
+    """Fold *topology*, *buckets* and the read's *freshness* into one wire ``GarageState``."""
     node = topology.peers[0]
     return GarageState(
         node_id=node.node_id,
@@ -417,6 +449,7 @@ def compose(
         keys=topology.keys,
         peers=topology.peers,
         admin_metrics=_read_admin_metrics(config, node),
+        read=freshness,
     )
 
 

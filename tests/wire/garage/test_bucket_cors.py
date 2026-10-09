@@ -8,7 +8,6 @@ Run: ``make garage-up && make test-garage-wire``
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -67,8 +66,8 @@ async def _set(
     handler = make_bucket_cors_set_handler(
         {
             "bucket_id": bucket_id,
-            "rules": json.dumps(rules),
-            "expected_rules": json.dumps(expected),
+            "rules": rules,
+            "expected_rules": expected,
         },
         **wire.admin_kwargs,
     )

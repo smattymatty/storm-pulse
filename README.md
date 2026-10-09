@@ -13,7 +13,78 @@ Secure server management agent for [Storm Developments](https://stormdevelopment
    the agent's client certificate before proxying the WebSocket to Django.
 2. Sends a `register` message (including its available commands list), then pushes metrics every 15s (CPU, memory, disk, load, containers).
 3. Dashboard sends HMAC-signed commands. Agent verifies signature, nonce, and expiry before executing.
-4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config with optional overridable parameters (regex-validated). No shell injection possible.
+4. Commands run via `subprocess.run(shell=False)` against a strict whitelist. Custom commands can be added via config with optional overridable parameters, each typed and validated (pattern, byte cap or schema) before anything runs. No shell injection possible.
+
+The envelope is protocol v2. `register` names the versions this agent speaks
+and its contract digest, and no loop starts until a `register.ok` picks one of
+them; anything else (a `register.ok` without `protocol`, an `error`, silence
+for 30 s) is refused and retried with backoff, never downgraded. A frame the
+agent cannot accept (a version it does not speak, an unknown type, an
+unreadable envelope) is answered with one `error` message carrying the reason
+code and the refused type, never the payload, and the socket stays open. The
+command MAC is HMAC-SHA256 over the whole envelope as compact canonical JSON
+with `payload.hmac` removed, so `id`, `agent_id`, `ts`, `type` and every
+payload field are signed; `wire-contract.json` carries golden vectors to check
+a signer against.
+
+`register` is the node's whole self-declaration, every field present on every
+send (empty is `{}`, `[]` or `""`, never absent): the versions it speaks and
+both contract digests, its commands, integrations, log groups and system
+inventory, the hatch seal, the kernel `boot_id` and the process start
+(`agent_started_at`, ISO-8601 UTC) so a reconnect is told from a reboot and
+from a restart, `components` (the agent itself plus whatever each live
+integration contributes, `{name, version, digest}`), and `in_flight`, the
+request ids of long-running jobs still running, which is `[]` today since no
+job outlives a socket. Each integration entry is an `IntegrationReport`
+(declared in `wire-contract.json`): its status and state, its
+`command_specs_digest` (over the SDK specs, the bytes a grant pins) and
+`commands_fenced`, null or the sentence saying why its commands were refused.
+
+A state push is still a full snapshot, and each `integrations.<id>` entry
+says how much to trust it: `generation` (climbs by one per push for the life
+of the process, never rewinds on a reconnect), `complete` (false when a
+listed bucket's `GetBucketInfo` failed in the last full read, so its absence
+is a failed read, not a deletion), `last_full_read_at` (ISO-8601 UTC, `""`
+before the first) and `changed_ids`, the ids re-read since the last
+`metrics.ack` (hinted, diffed, full and post-mutation reads alike; a push that
+gets no ack repeats them). Each Garage bucket carries its own `read_at`, the
+moment its `GetBucketInfo` returned; a bucket carried forward from the cache
+keeps its stamp.
+
+Events are typed and sequenced. Every (source, kind) the agent emits is
+declared once with the fields it may carry; `emit` keeps those and drops the
+rest, and the buffer stamps `seq`, monotone per process. The next
+`events.batch` carries one `dropped_events` naming what was lost (`dropped`,
+buffer overflow; `undeclared`, fields refused). A batch the control plane
+refuses comes back as `events.batch.nack` with a reason: the agent drops it
+(a malformed batch would be malformed again) and emits one `events_nacked`
+with the batch id, the count and the reason, capped at 500 characters.
+
+The command contract is typed end to end. `command.request` params are JSON
+values, not strings: a string is held to its `pattern`, an object or array to
+its `schema`, either to `max_bytes` (UTF-8 bytes of a string, canonical JSON
+of anything else), and `wire-contract.json` names each param's `type`. A
+`command.result` carries the command's own figures under `result`, a shape
+declared per command in the contract, never merged into the top level, and a
+failure carries `error` (`{code, http_status, upstream_code, message}`) beside
+`failure_reason`, which is a closed enum: a reason the set does not know is
+refused at construction, and a consumer branches on a name, never a stderr
+substring. A job still running when the agent is asked to stop gets a terminal
+`command.cancelled` (`request_id`, `command`, `reason`) before the socket
+closes, so no request id ends in silence. A `command.sequence` is `steps`,
+each `{command, params}`, and every step's result echoes the `sequence_id` and
+its `step_index`, the three refusals included.
+
+Shipped S3 and Caddy access lines name the operation, never the request. Each
+carries `s3_op` (`GetObject`, `PutObject`, `DeleteObjects`, `UploadPart`,
+`ListObjectsV2` and the rest of a closed table, `Unknown` otherwise), classified
+on the node from the method, the sub-resource and whether a key is present;
+the path and any query string (a presigned URL's signature among them) stop
+at the parser and never reach `message` either; `bucket` and `object_key`
+ride as before, on Garage lines only. The address rides as `peer_ip`, and
+every Garage S3 line carries `bucket_id`, `""` when the node cannot resolve
+it. `log-line-contract.json` declares the fields of every
+parser.
 
 Read the [Protocol Specification](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Protocol-Specification) for exact information.
 
@@ -24,7 +95,7 @@ Five layers, each independent:
 - **Network** -- No inbound ports. Agent initiates all connections.
 - **Transport** -- mTLS with per-agent certs from a private CA.
 - **Application** -- HMAC-SHA256 + nonce + expiry on every command.
-- **Execution** -- Whitelisted commands only. Absolute paths. `shell=False`. Config placeholders from local config only; runtime params are regex-validated.
+- **Execution** -- Whitelisted commands only. Absolute paths. `shell=False`. Config placeholders from local config only; runtime params are typed and validated against the declared pattern, byte cap or schema.
 - **OS** -- Rootless by default: a sudo-less operator user against rootless Docker, no host root, no docker group. Systemd sandboxing. (A legacy system-mode install under a dedicated system user is still supported.)
 
 See the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) wiki page for the full design. Found a vulnerability? [SECURITY.md](SECURITY.md) has the reporting path.
@@ -165,6 +236,27 @@ Testing a Garage upgrade before the fleet takes it:
 ```bash
 GARAGE_IMAGE=dxflrs/garage:v2.4.0 make garage-up && make test-garage-wire
 ```
+
+### The wire contract
+
+`wire-contract.json` is generated from the live dataclasses (`make
+wire-contract`) and `make check` fails when the checked-in copy drifts from
+them. Its `messages` section declares every message the agent sends or
+receives, each field with its JSON type, nullability and whether it is
+required, units carried in the field name (`_bytes`, `_seconds`, `_percent`).
+Two digests ride in the file during the protocol overlap: `digest` covers
+`integrations` alone and is what a v1 agent advertises on register, while
+`contract_digest` covers `integrations`, `messages` and `commands` and is the
+v2 value. A `vectors` section, outside both digests, holds a fixed
+`command.request` and `command.sequence`, the test key they are signed with
+(the byte ramp `00..1f`, never a real key) and the expected `hmac`. Each
+`commands.<name>` entry types its params and declares its `result` shape
+(`{root, classes}` through the same walker, null where the command returns
+none). The `events.batch` entry carries `sources`, `{source: {kind: [fields]}}` straight
+from the event registry, so the control plane vendors what each source may
+send; Function 16 of `make check` fails on an `emit(` whose kind or field
+nobody declared, and the contract check fails when the file and the registry
+disagree.
 
 ## License
 

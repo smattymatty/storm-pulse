@@ -8,6 +8,7 @@ in the cache; only a producing call advances a cadence.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -439,3 +440,75 @@ def test_reread_sheds_a_bucket_whose_info_read_failed() -> None:
         state = reader.collect(reader_config())
     assert state is not None
     assert [b.id for b in state.buckets] == [FULL_ID]
+
+
+# ---------------------------------------------------------------------------
+# What a read says of itself (CORE-011 d5): read_at, complete, changed_ids
+# ---------------------------------------------------------------------------
+
+
+def _within_a_second(stamp: str) -> bool:
+    read = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    return abs((datetime.now(UTC) - read).total_seconds()) < 1.0
+
+
+def test_full_read_stamps_every_bucket_and_says_complete() -> None:
+    reader = GarageStateReader(clock=Clock())
+    three = MagicMock(return_value=([{"id": hex_id(i)} for i in range(3)], ""))
+    with patched(list_buckets=three):
+        state = reader.collect(reader_config())
+    assert state is not None
+    assert all(_within_a_second(b.read_at) for b in state.buckets)
+    fresh = state.freshness()
+    assert fresh.complete is True
+    assert _within_a_second(fresh.last_full_read_at)
+    assert fresh.changed_ids == tuple(hex_id(i) for i in range(3))
+
+
+def test_diff_read_changes_only_the_new_bucket() -> None:
+    clock = Clock()
+    reader = GarageStateReader(clock=clock)
+    with patched(), patch("stormpulse.garage.state.stamp_now", return_value="t0"):
+        warm = reader.collect(reader_config())
+    assert warm is not None
+    clock.now = SWEEP
+    grown = MagicMock(return_value=([{"id": FULL_ID}, {"id": hex_id(4)}], ""))
+    with (
+        patched(list_buckets=grown),
+        patch("stormpulse.garage.state.stamp_now", return_value="t1"),
+    ):
+        state = reader.collect(reader_config())
+    assert state is not None
+    assert state.freshness().changed_ids == (hex_id(4),)
+    # The diff is not a full read: its stamp and completeness are the warm one's.
+    assert state.freshness().last_full_read_at == "t0"
+    assert {b.id: b.read_at for b in state.buckets} == {FULL_ID: "t0", hex_id(4): "t1"}
+
+
+def test_failed_info_read_in_a_full_read_says_incomplete_until_a_clean_one() -> None:
+    # The absence-reads-as-deletion hole: a listed bucket whose GetBucketInfo
+    # failed is missing from a "full" snapshot, so the snapshot must say so.
+    clock = Clock()
+    reader = GarageStateReader(clock=clock)
+    both = MagicMock(return_value=([{"id": FULL_ID}, {"id": hex_id(2)}], ""))
+    failing = MagicMock(
+        side_effect=lambda **kw: (
+            (None, "down") if kw["bucket_ref"] == hex_id(2) else (info(FULL_ID), "")
+        )
+    )
+    with (
+        patched(list_buckets=both),
+        patch("stormpulse.garage.state.admin_api.get_bucket_info", failing),
+    ):
+        state = reader.collect(reader_config())
+    assert state is not None
+    assert state.freshness().complete is False
+    with patched(list_buckets=both):
+        state = reader.collect(reader_config())  # hinted, nothing owed: not a full read
+        assert state is not None
+        assert state.freshness().complete is False
+        clock.now = REREAD
+        state = reader.collect(reader_config())  # the clean full read
+    assert state is not None
+    assert state.freshness().complete is True
+    assert [b.id for b in state.buckets] == [FULL_ID, hex_id(2)]

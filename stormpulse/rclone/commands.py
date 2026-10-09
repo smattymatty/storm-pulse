@@ -6,9 +6,12 @@ from __future__ import annotations
 
 from stormpulse.config import CommandSpec, ParamDef
 from stormpulse.rclone.config import RcloneConfig
-from stormpulse.rclone.jobs.estimate import make_estimate_handler
-from stormpulse.rclone.jobs.migrate import make_migrate_handler
-from stormpulse.rclone.jobs.restore_test import make_restore_test_handler
+from stormpulse.rclone.jobs.estimate import EstimateResult, make_estimate_handler
+from stormpulse.rclone.jobs.migrate import MigrateResult, make_migrate_handler
+from stormpulse.rclone.jobs.restore_test import (
+    RestoreTestResult,
+    make_restore_test_handler,
+)
 
 # https only: a plaintext endpoint would move customer objects unencrypted.
 # Loosening is a deliberate future decision, never a silent acceptance.
@@ -67,6 +70,7 @@ def build_rclone_specs(config: RcloneConfig) -> dict[str, CommandSpec]:
                 "Read-only; the capacity decision happens control-plane-side"
             ),
             mode="job",
+            result=EstimateResult,
             read_only=True,
             handler=lambda params: make_estimate_handler(config, params),
             params=_remote_params("src", "Source"),
@@ -82,6 +86,7 @@ def build_rclone_specs(config: RcloneConfig) -> dict[str, CommandSpec]:
             ),
             sensitive_output=True,  # credential-bearing long job
             mode="job",
+            result=MigrateResult,
             handler=lambda params: make_migrate_handler(config, params),
             params={
                 **_remote_params("src", "Source"),
@@ -98,6 +103,7 @@ def build_rclone_specs(config: RcloneConfig) -> dict[str, CommandSpec]:
                 "the stored copy, delete the scratch prefix"
             ),
             mode="job",
+            result=RestoreTestResult,
             handler=lambda params: make_restore_test_handler(config, params),
             params=_remote_params("dst", "Destination"),
         ),

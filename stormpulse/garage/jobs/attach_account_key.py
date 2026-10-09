@@ -16,18 +16,33 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.tiers import ATTACH_TIER_PERMS
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 3
 
+
+@dataclass(frozen=True, slots=True)
+class AttachAccountKeyResult:
+    """What ``garage_attach_account_key`` returns under ``result``."""
+
+    bucket_id: str
+    account_key_id: str
+    tier: str
+    confirmed_attached: bool
+    manual_cleanup_required: list[dict[str, Any]]
+    garage_stderr: str
+    duration_seconds: float
+    alias_added: bool | None = None
 
 
 def make_attach_account_key_handler(
@@ -81,8 +96,10 @@ async def run_attach_account_key(
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
         return _failure(
-            failure_reason="admin_api_unconfigured",
-            bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
+            bucket_id=bucket_id,
+            account_key_id=account_key_id,
+            tier=tier,
             stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
                 "[garage] admin_url and admin_token_file."
@@ -91,8 +108,10 @@ async def run_attach_account_key(
         )
     if tier not in ATTACH_TIER_PERMS:
         return _failure(
-            failure_reason="invalid_tier",
-            bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
+            failure_reason=FailureReason.INVALID_TIER,
+            bucket_id=bucket_id,
+            account_key_id=account_key_id,
+            tier=tier,
             stderr=f"tier must be one of {tuple(ATTACH_TIER_PERMS)}, got {tier!r}",
             started_at=started_at,
         )
@@ -102,15 +121,22 @@ async def run_attach_account_key(
     await progress("starting", 0, _TOTAL_STEPS, f"Granting {tier} access")
     ok, err = await asyncio.to_thread(
         admin_api.allow_bucket_key,
-        admin_url=admin_url, admin_token=admin_token,
-        bucket_ref=bucket_id, access_key_id=account_key_id,
-        read=read, write=write, owner=owner,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=account_key_id,
+        read=read,
+        write=write,
+        owner=owner,
     )
     if not ok:
         return _failure(
-            failure_reason="grant_failed",
-            bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
-            stderr=err, started_at=started_at,
+            failure_reason=FailureReason.GRANT_FAILED,
+            bucket_id=bucket_id,
+            account_key_id=account_key_id,
+            tier=tier,
+            stderr=err,
+            started_at=started_at,
         )
 
     # ---- Step 1b: deny the complement so the grant is EXACTLY the tier ----
@@ -122,49 +148,67 @@ async def run_attach_account_key(
     if not (read and write and owner):
         ok, err = await asyncio.to_thread(
             admin_api.deny_bucket_key,
-            admin_url=admin_url, admin_token=admin_token,
-            bucket_ref=bucket_id, access_key_id=account_key_id,
-            read=not read, write=not write, owner=not owner,
+            admin_url=admin_url,
+            admin_token=admin_token,
+            bucket_ref=bucket_id,
+            access_key_id=account_key_id,
+            read=not read,
+            write=not write,
+            owner=not owner,
         )
         if not ok:
             return _failure(
-                failure_reason="grant_narrow_failed",
-                bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
-                stderr=err, started_at=started_at,
+                failure_reason=FailureReason.GRANT_NARROW_FAILED,
+                bucket_id=bucket_id,
+                account_key_id=account_key_id,
+                tier=tier,
+                stderr=err,
+                started_at=started_at,
             )
 
     # ---- Step 2: AddBucketAlias (local; cosmetic, best-effort) ----
     await progress("running", 1, _TOTAL_STEPS, "Attaching alias")
     alias_ok, _alias_err = await asyncio.to_thread(
         admin_api.add_bucket_alias_local,
-        admin_url=admin_url, admin_token=admin_token,
-        bucket_ref=bucket_id, access_key_id=account_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=account_key_id,
         local_alias=local_alias,
     )
     manual: list[dict[str, Any]] = []
     if not alias_ok:
-        manual.append({
-            "type": "local_alias",
-            "key_id": account_key_id, "alias": local_alias,
-        })
+        manual.append(
+            {
+                "type": "local_alias",
+                "key_id": account_key_id,
+                "alias": local_alias,
+            }
+        )
 
     # ---- Step 3: read-back confirmation (grant-present proof) ----
     await progress("running", 2, _TOTAL_STEPS, "Confirming grant landed")
     kinfo, kerr = await asyncio.to_thread(
         admin_api.get_key_info,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=account_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=account_key_id,
     )
     if kinfo is None:
         return _failure(
-            failure_reason="grant_unconfirmed",
-            bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
+            failure_reason=FailureReason.GRANT_UNCONFIRMED,
+            bucket_id=bucket_id,
+            account_key_id=account_key_id,
+            tier=tier,
             stderr=f"read-back GetKeyInfo failed: {kerr}",
             started_at=started_at,
         )
     if not _grant_present(kinfo, bucket_id, (read, write, owner)):
         return _failure(
-            failure_reason="grant_not_present",
-            bucket_id=bucket_id, account_key_id=account_key_id, tier=tier,
+            failure_reason=FailureReason.GRANT_NOT_PRESENT,
+            bucket_id=bucket_id,
+            account_key_id=account_key_id,
+            tier=tier,
             stderr=(
                 "AllowBucketKey returned success but the read-back does not show "
                 "the account key holding the requested grant on the bucket."
@@ -191,7 +235,9 @@ async def run_attach_account_key(
 
 
 def _grant_present(
-    kinfo: dict[str, Any], bucket_id: str, want: tuple[bool, bool, bool],
+    kinfo: dict[str, Any],
+    bucket_id: str,
+    want: tuple[bool, bool, bool],
 ) -> bool:
     """True if the key's read-back shows the bucket with at least the requested
     (read, write, owner) grant. ``bucket_id`` is the 16-char prefix."""
@@ -202,7 +248,9 @@ def _grant_present(
             continue
         perms = entry.get("permissions") or {}
         have_r, have_w, have_o = (
-            bool(perms.get("read")), bool(perms.get("write")), bool(perms.get("owner")),
+            bool(perms.get("read")),
+            bool(perms.get("write")),
+            bool(perms.get("owner")),
         )
         return (have_r or not wr) and (have_w or not ww) and (have_o or not wo)
     return False
@@ -210,7 +258,7 @@ def _grant_present(
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     bucket_id: str,
     account_key_id: str,
     tier: str,

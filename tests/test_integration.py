@@ -16,18 +16,23 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore, generate_nonce
-from stormpulse.protocol import CommandResultPayload
+from stormpulse.commands.jobs import JobOutcome, ProgressCallback
+from stormpulse.config import CommandSpec
+from stormpulse.protocol import SPEAKS, CommandResultPayload, MessageType
 from stormpulse.signoff import SignoffState
 from tests.helpers import (
     AGENT_ID,
+    CONTRACT_DIGEST,
     FAKE_METRICS,
     PULSE_TOKEN,
     SECRET,
     build_config,
+    envelope,
     make_failed_result,
     make_successful_result,
     sign_command_request,
     sign_command_sequence,
+    signed_command_request,
 )
 
 # ---------------------------------------------------------------------------
@@ -44,7 +49,8 @@ def _plain_connect(url: str, **kwargs):
 async def _wait_for_register(
     ws: ServerConnection, *, timeout: float = 2.0
 ) -> dict[str, Any]:
-    """Receive messages until a register envelope arrives."""
+    """Receive messages until a register envelope arrives, then answer it with
+    a spoken ``register.ok``: the agent starts no loop before one (CORE-011 d2)."""
     deadline = asyncio.get_event_loop().time() + timeout
     while True:
         remaining = deadline - asyncio.get_event_loop().time()
@@ -53,6 +59,12 @@ async def _wait_for_register(
         raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
         data: dict[str, Any] = json.loads(raw)
         if data["type"] == "register":
+            ok = envelope(
+                MessageType.REGISTER_OK,
+                {"protocol": SPEAKS[-1], "contract_digest": CONTRACT_DIGEST},
+                agent_id="cp",
+            )
+            await ws.send(ok.to_json())
             return data
 
 
@@ -154,7 +166,10 @@ async def test_full_lifecycle(tmp_path: Path, free_port: int) -> None:
             "stormpulse.agent.dispatch.execute_command",
             side_effect=_exec_side_effect_factory(),
         ),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -208,7 +223,10 @@ async def test_bad_hmac_rejected(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -264,7 +282,10 @@ async def test_nonce_replay_rejected(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -312,7 +333,10 @@ async def test_stale_timestamp_rejected(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -364,7 +388,10 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -417,7 +444,10 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
             "stormpulse.agent.dispatch.execute_command",
             side_effect=_exec_side_effect_factory(),
         ),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -441,10 +471,11 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
     assert commands == ["git_pull", "docker_logs"]
     assert all(r["payload"]["success"] is True for r in results)
 
-    # All share the same sequence_id
+    # All share the same sequence_id; each names its step (CORE-011 d9).
     seq_ids = {r["payload"]["sequence_id"] for r in results}
     assert len(seq_ids) == 1
     assert None not in seq_ids
+    assert [r["payload"]["step_index"] for r in results] == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -472,7 +503,10 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
         patch("stormpulse.agent.dispatch.execute_command", mock_exec),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -494,7 +528,7 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
     assert len(results) == 1
     payload = results[0]["payload"]
     assert payload["success"] is False
-    assert payload["failure_reason"] == "validation_failed"
+    assert payload["failure_reason"] == "unknown_command"
     assert payload["command"] == "totally_bogus_command"
     assert payload["sequence_id"]
     mock_exec.assert_not_called()
@@ -534,7 +568,10 @@ async def test_heartbeat_and_metrics_flow(tmp_path: Path, free_port: int) -> Non
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -599,7 +636,10 @@ async def test_reconnect_after_disconnect(tmp_path: Path, free_port: int) -> Non
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -643,7 +683,10 @@ async def test_shutdown_during_backoff(tmp_path: Path, free_port: int) -> None:
 
     with (
         patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
-        patch("stormpulse.agent.integrations_runtime.collect_metrics", return_value=FAKE_METRICS),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
     ):
         async with serve(handler, "localhost", free_port):
             agent = Agent(
@@ -667,3 +710,72 @@ async def test_shutdown_during_backoff(tmp_path: Path, free_port: int) -> None:
             await asyncio.wait_for(agent_task, timeout=3.0)
 
     store.close()
+
+
+@pytest.mark.asyncio
+async def test_graceful_stop_sends_command_cancelled_before_the_socket_closes(
+    tmp_path: Path, free_port: int
+) -> None:
+    """A SIGTERM (``shutdown.set()``, what the signal handler does) with one
+    stub job running: one ``command.cancelled`` naming the request reaches the
+    control plane over the still-open socket, then the close; no
+    ``command.result`` for that id (CORE-011 d9)."""
+    config = build_config(tmp_path, free_port)
+    store = NonceStore(tmp_path / "nonces.db")
+    shutdown = asyncio.Event()
+    started = asyncio.Event()
+    closed = asyncio.Event()
+    frames: list[dict[str, Any]] = []
+    request = signed_command_request("stub_job")
+
+    async def stub_job(progress: ProgressCallback) -> JobOutcome:
+        await progress("starting", 0, None, "")
+        started.set()
+        await asyncio.sleep(60)
+        return JobOutcome(success=True)
+
+    async def handler(ws: ServerConnection) -> None:
+        await _wait_for_register(ws)
+        await ws.send(request.to_json())
+        await asyncio.wait_for(started.wait(), timeout=3.0)
+        shutdown.set()
+        try:
+            async for raw in ws:
+                frames.append(json.loads(raw))
+        finally:
+            closed.set()
+
+    with (
+        patch("stormpulse.agent.reconnect.connect", side_effect=_plain_connect),
+        patch(
+            "stormpulse.agent.integrations_runtime.collect_metrics",
+            return_value=FAKE_METRICS,
+        ),
+    ):
+        async with serve(handler, "localhost", free_port):
+            agent = Agent(
+                config,
+                SECRET,
+                store,
+                MagicMock(spec=ssl.SSLContext),
+                shutdown,
+                signoff_state=SignoffState(config.storage.db_path.parent),
+            )
+            agent.registry["stub_job"] = CommandSpec(
+                group="test",
+                command=["stub_job"],
+                timeout=5,
+                mode="job",
+                handler=lambda params: stub_job,
+            )
+            agent_task = asyncio.create_task(agent.run())
+            await asyncio.wait_for(closed.wait(), timeout=5.0)
+            await asyncio.wait_for(agent_task, timeout=5.0)
+
+    store.close()
+
+    cancelled = [f for f in frames if f["type"] == "command.cancelled"]
+    assert [f["payload"] for f in cancelled] == [
+        {"request_id": request.id, "command": "stub_job", "reason": "shutdown"}
+    ]
+    assert [f for f in frames if f["type"] == "command.result"] == []

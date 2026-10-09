@@ -25,15 +25,27 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from typing import Any
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.tiers import TIER_PERMS
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True, slots=True)
+class EnforceAccountKeyTierResult:
+    """What ``garage_enforce_account_key_tier`` returns under ``result``."""
+
+    account_key_id: str
+    tier: str
+    narrowed_buckets: list[str]
+    garage_stderr: str
+    duration_seconds: float
+    strand_risk: list[str] | None = None
 
 
 def make_enforce_account_key_tier_handler(
@@ -44,7 +56,9 @@ def make_enforce_account_key_tier_handler(
     account_key_id = params.get("account_key_id")
     tier = params.get("tier")
     if not account_key_id:
-        logger.error("garage_enforce_account_key_tier missing required param: account_key_id")
+        logger.error(
+            "garage_enforce_account_key_tier missing required param: account_key_id"
+        )
         return None
     if tier not in TIER_PERMS:
         logger.error("garage_enforce_account_key_tier invalid tier: %s", tier)
@@ -81,8 +95,10 @@ async def run_enforce_account_key_tier(
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
         return _failure(
-            failure_reason="admin_api_unconfigured", account_key_id=account_key_id,
-            tier=tier, stderr=(
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
+            account_key_id=account_key_id,
+            tier=tier,
+            stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
                 "[garage] admin_url and admin_token_file."
             ),
@@ -90,7 +106,9 @@ async def run_enforce_account_key_tier(
         )
     if tier not in TIER_PERMS:
         return _failure(
-            failure_reason="invalid_tier", account_key_id=account_key_id, tier=tier,
+            failure_reason=FailureReason.INVALID_TIER,
+            account_key_id=account_key_id,
+            tier=tier,
             stderr=f"tier must be one of {tuple(TIER_PERMS)}, got {tier!r}",
             started_at=started_at,
         )
@@ -101,12 +119,17 @@ async def run_enforce_account_key_tier(
     await progress("starting", 0, 3, "Reading current grants")
     kinfo, kerr = await asyncio.to_thread(
         admin_api.get_key_info,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=account_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=account_key_id,
     )
     if kinfo is None:
         return _failure(
-            failure_reason="read_failed", account_key_id=account_key_id, tier=tier,
-            stderr=f"GetKeyInfo failed: {kerr}", started_at=started_at,
+            failure_reason=FailureReason.READ_FAILED,
+            account_key_id=account_key_id,
+            tier=tier,
+            stderr=f"GetKeyInfo failed: {kerr}",
+            started_at=started_at,
         )
 
     over_tier: list[tuple[str, tuple[bool, bool, bool]]] = []
@@ -133,12 +156,16 @@ async def run_enforce_account_key_tier(
             continue  # not removing owner here; can't strand
         binfo, berr = await asyncio.to_thread(
             admin_api.get_bucket_info,
-            admin_url=admin_url, admin_token=admin_token, bucket_ref=bid,
+            admin_url=admin_url,
+            admin_token=admin_token,
+            bucket_ref=bid,
         )
         if binfo is None:
             return _failure(
-                failure_reason="strand_check_failed", account_key_id=account_key_id,
-                tier=tier, stderr=f"GetBucketInfo failed for {bid[:16]}: {berr}",
+                failure_reason=FailureReason.STRAND_CHECK_FAILED,
+                account_key_id=account_key_id,
+                tier=tier,
+                stderr=f"GetBucketInfo failed for {bid[:16]}: {berr}",
                 started_at=started_at,
             )
         other_owner = any(
@@ -153,13 +180,15 @@ async def run_enforce_account_key_tier(
         # Block the whole demote: no changes made. The customer claims an admin
         # key on each, then retries.
         return _failure(
-            failure_reason="would_strand", account_key_id=account_key_id, tier=tier,
+            failure_reason=FailureReason.WOULD_STRAND,
+            account_key_id=account_key_id,
+            tier=tier,
             stderr=(
                 "Refusing to narrow: these buckets would be left with no owner. "
-                "Claim an admin key on each, then retry: "
-                + ", ".join(strand_risk)
+                "Claim an admin key on each, then retry: " + ", ".join(strand_risk)
             ),
-            started_at=started_at, strand_risk=strand_risk,
+            started_at=started_at,
+            strand_risk=strand_risk,
         )
 
     # ---- Step 3: narrow each over-tier grant to exactly the tier ----
@@ -168,29 +197,43 @@ async def run_enforce_account_key_tier(
     for bid, _grant in over_tier:
         ok, err = await asyncio.to_thread(
             admin_api.allow_bucket_key,
-            admin_url=admin_url, admin_token=admin_token,
-            bucket_ref=bid, access_key_id=account_key_id,
-            read=mr, write=mw, owner=mo,
+            admin_url=admin_url,
+            admin_token=admin_token,
+            bucket_ref=bid,
+            access_key_id=account_key_id,
+            read=mr,
+            write=mw,
+            owner=mo,
         )
         if not ok:
             return _failure(
-                failure_reason="narrow_allow_failed", account_key_id=account_key_id,
-                tier=tier, stderr=f"AllowBucketKey {bid[:16]}: {err}",
-                started_at=started_at, narrowed=narrowed,
+                failure_reason=FailureReason.NARROW_ALLOW_FAILED,
+                account_key_id=account_key_id,
+                tier=tier,
+                stderr=f"AllowBucketKey {bid[:16]}: {err}",
+                started_at=started_at,
+                narrowed=narrowed,
             )
         # owner tier (all) denies nothing; rw/ro deny the complement.
         if not (mr and mw and mo):
             ok, err = await asyncio.to_thread(
                 admin_api.deny_bucket_key,
-                admin_url=admin_url, admin_token=admin_token,
-                bucket_ref=bid, access_key_id=account_key_id,
-                read=not mr, write=not mw, owner=not mo,
+                admin_url=admin_url,
+                admin_token=admin_token,
+                bucket_ref=bid,
+                access_key_id=account_key_id,
+                read=not mr,
+                write=not mw,
+                owner=not mo,
             )
             if not ok:
                 return _failure(
-                    failure_reason="narrow_deny_failed", account_key_id=account_key_id,
-                    tier=tier, stderr=f"DenyBucketKey {bid[:16]}: {err}",
-                    started_at=started_at, narrowed=narrowed,
+                    failure_reason=FailureReason.NARROW_DENY_FAILED,
+                    account_key_id=account_key_id,
+                    tier=tier,
+                    stderr=f"DenyBucketKey {bid[:16]}: {err}",
+                    started_at=started_at,
+                    narrowed=narrowed,
                 )
         narrowed.append(bid[:16])
 
@@ -199,7 +242,11 @@ async def run_enforce_account_key_tier(
 
 
 def _success(
-    account_key_id: str, tier: str, *, narrowed: list[str], started_at: float,
+    account_key_id: str,
+    tier: str,
+    *,
+    narrowed: list[str],
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=True,
@@ -217,7 +264,7 @@ def _success(
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     account_key_id: str,
     tier: str,
     stderr: str,

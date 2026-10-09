@@ -18,12 +18,25 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class GetKeyBucketsResult:
+    """What ``garage_get_key_buckets`` returns under ``result``."""
+
+    key_id: str
+    owned_buckets: list[dict[str, str]]
+    bucket_grants: list[dict[str, object]]
+    garage_stderr: str
+    duration_seconds: float
 
 
 def make_get_key_buckets_handler(
@@ -56,7 +69,7 @@ async def run_get_key_buckets(
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             key_id=key_id,
             stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
@@ -76,7 +89,7 @@ async def run_get_key_buckets(
         if admin_api.is_not_found(err):
             return _success(key_id, owned=[], grants=[], started_at=started_at)
         return _failure(
-            failure_reason="key_read_failed",
+            failure_reason=FailureReason.KEY_READ_FAILED,
             key_id=key_id,
             stderr=err,
             started_at=started_at,
@@ -131,7 +144,7 @@ def _success(
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     key_id: str,
     stderr: str,
     started_at: float,

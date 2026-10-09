@@ -7,53 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Protocol v2 strengthens Storm Pulse's messaging contract: signed commands,
+structured results, and explicit version negotiation. Integrations use that
+contract to report their own state and run their own commands.
+
+**Upgrade the control plane before your agents.** This release requires protocol
+v2 support and the updated `wire-contract.json`. Agents will refuse to connect to
+a control plane that only speaks v1.
+
 ### Added
 
-- `[garage] hint_file`: an absolute path to a JSON file
-  (`{"version": 1, "written_at": <unix>, "bucket_ids": [<64 hex>, ...]}`)
-  where another process on the box names buckets to re-read. With it set,
-  each push reads up to 32 of them, a `ListBuckets` membership diff runs every
-  minute (new ids are read, unlisted ids dropped, one `GetBucketInfo` per
-  new id) and every bucket is re-read every five minutes and on
-  `garage_refresh`. Unset, every push walks every bucket, as before. A file
-  that is a symlink, not a regular file, owned by another user, over 64 KiB,
-  malformed, older than 60 s or holding a short id is ignored. A bad value
-  turns hints off, not Garage.
-- A Caddy access row names its `bucket`: the first segment of the request
-  path, the same split the Garage S3 parser makes, empty when the path has
-  none. `path` and the other fields are unchanged; the field is declared in
-  the log-line contract.
-
-### Removed
-
-- The 2 s new-bucket detector loop and `detector_interval_seconds`. A
-  leftover key in a deployed config is ignored. New buckets arrive on the
-  next walk without a hint file, on the next minute diff with one.
+- **Garage reports data freshness.** The Garage integration reports bucket read
+  times and incomplete reads, so the control plane can distinguish a bucket it
+  failed to read from one that was deleted. Protocol v2 carries generic state
+  metadata supplied by integrations; Garage owns the bucket-specific details.
+- **See what's running on a server.** Agents report the server's boot ID, agent
+  start time, and component versions, including Garage. Integrations also report
+  why their commands are blocked, making missing commands easier to diagnose.
+- **Get useful command results.** Jobs return structured results and errors,
+  giving the control plane consistent failure codes and command-specific figures
+  such as deleted object counts. Invalid parameters are rejected before work
+  starts.
+- **Run sequences with parameters.** Each step can now have its own inputs, and
+  results identify the step they belong to. On graceful shutdown, the agent
+  reports which running jobs it cancelled.
+- **Refresh Garage with fewer admin calls.** Optional `[garage] hint_file`
+  support lets a local process flag buckets for refresh. With hints enabled,
+  bucket membership is checked every minute and all buckets are re-read every
+  five minutes. Without hints, each state push still reads every bucket.
+- **SDK v2 component reporting.** Integration authors can report component
+  versions through an optional hook. Existing SDK v1 integrations still load.
 
 ### Changed
 
-- With `hint_file` set, a push no longer walks every bucket: between the
-  five-minute re-reads the cached state is served with the minute diff,
-  hinted and post-mutation reads merged in. Without it, every push walks, as
-  before.
-- Garage admin calls made inside one read emit a single `walk_summary`
-  event (calls, buckets read, buckets dropped, failures, slowest call, total
-  ms) instead of one `admin_call` each, and only when the read read, dropped
-  or failed something: a quiet minute diff or a topology-only tick emits
-  nothing. A failed call (no status, or 400 and up) keeps its own
-  `admin_call` event; calls outside a read still emit one each.
+- **Stronger command signing.** Signatures now protect the entire message,
+  including its destination, ID and parameters. Unsupported or malformed
+  messages get an explicit error response.
+- **More useful, quieter logs.** S3 access logs name the operation, such as
+  `GetObject` or `PutObject`, instead of shipping request paths and query strings
+  that can contain signed URL credentials. Garage reads produce one summary
+  event; failed admin calls still get individual events. Daily certificate
+  checks show expiry and when renewal becomes due.
+- **More predictable events.** Events have sequence numbers and checked fields.
+  Rejected batches are reported and dropped instead of repeatedly resent.
 
-- Each daily certificate check logs one line naming the certificate the
-  agent holds: `Client certificate serial <hex> expires <date> (<n> days);
-  renewal window opens <date>`. The loop's other log lines say
-  "certificate" too, so `stormpulse logs -g certificate` finds them all.
-  Event names are unchanged.
+### Removed
+
+- Protocol v1 and its command signing format. Control-plane command senders must
+  use v2 signing; `wire-contract.json` includes examples to verify against.
+- The old command result and sequence layouts: command-specific output now lives
+  under `result`, errors under `error`, and sequences use `steps` instead of
+  `commands`. Job event parameters now live under `attrs.params`.
+- `path` and `client_ip` from Garage S3 and Caddy access logs. Log consumers should
+  use `s3_op` and `peer_ip`; Garage object keys are still included.
+- The two-second new-bucket detector and `detector_interval_seconds` setting.
+  New buckets are discovered on the next full read, or the next minute's
+  membership check when hints are enabled.
 
 ### Security
 
-- `cryptography>=50.0.2`, up from `>=48.0.0`. 48.0.0 carries seven
-  advisories (OSV, 2026-10-08) and the old floor allowed a node to stay on
-  it; 50.0.2 is the latest release and carries none.
+- Raised the minimum `cryptography` version from 48.0.0 to 50.0.2 to exclude
+  versions affected by known security advisories.
 
 ## [0.6.0] - 2026-10-05
 

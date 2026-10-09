@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -465,35 +467,35 @@ class TestBucketSnapshotSchema:
 
     _KEYS = {"old_key_id": "GKold", "new_key_id": "GKnew"}
 
-    def _validate(self, snapshot: str) -> dict[str, str]:
+    def _validate(self, snapshot: Any) -> dict[str, Any]:
         cmd = build_garage_specs(_make_config())["garage_converge_account_key_rotation"]
         return validate_params(cmd, {**self._KEYS, "bucket_snapshot": snapshot})
 
     def test_accepts_the_reap_shape(self) -> None:
-        blob = (
-            '[{"id": "'
-            + "ab" * 32
-            + '", "alias": "vault", "perms": [true, false, true]}, {"id": "0123456789abcdef", "alias": ""}]'
-        )
-        assert self._validate(blob)["bucket_snapshot"] == blob
+        snapshot = [
+            {"id": "ab" * 32, "alias": "vault", "perms": [True, False, True]},
+            {"id": "0123456789abcdef", "alias": ""},
+        ]
+        assert self._validate(snapshot)["bucket_snapshot"] == snapshot
 
     def test_rejects_anything_but_a_list_of_bucket_records(self) -> None:
-        for blob, fragment in [
-            ("{}", "$: expected array, got dict"),
-            ('[{"alias": "vault"}]', "$[0]: missing required key 'id'"),
-            ('[{"id": "not-hex"}]', "$[0].id: does not match pattern"),
+        for snapshot, fragment in [
+            ({}, "$: expected array, got dict"),
+            ("[]", "$: expected array, got str"),
+            ([{"alias": "vault"}], "$[0]: missing required key 'id'"),
+            ([{"id": "not-hex"}], "$[0].id: does not match pattern"),
             (
-                '[{"id": "0123456789abcdef", "owner": true}]',
+                [{"id": "0123456789abcdef", "owner": True}],
                 "$[0]: unexpected key 'owner'",
             ),
             (
-                '[{"id": "0123456789abcdef", "perms": [1, 0, 1]}]',
+                [{"id": "0123456789abcdef", "perms": [1, 0, 1]}],
                 "$[0].perms[0]: expected boolean",
             ),
         ]:
             with pytest.raises(ParamValidationError) as exc_info:
-                self._validate(blob)
-            assert fragment in str(exc_info.value), blob
+                self._validate(snapshot)
+            assert fragment in str(exc_info.value), str(snapshot)
 
 
 class TestCorsRulesSchema:
@@ -501,15 +503,22 @@ class TestCorsRulesSchema:
 
     _LIVE = '[{"ID": "web", "MaxAgeSeconds": 3600, "AllowedOrigin": ["https://example.com"], "AllowedMethod": ["GET", "PUT"], "AllowedHeader": ["*"], "ExposeHeader": ["ETag"]}]'
 
-    def _validate(self, rules: str, expected: str = "[]") -> dict[str, str]:
+    def _validate(self, rules: str, expected: str = "[]") -> dict[str, Any]:
+        """The literals are the JSON text the dashboard sends; the socket layer
+        has decoded it by the time ``validate_params`` sees the value."""
         cmd = build_garage_specs(_make_config())["garage_bucket_cors_set"]
         return validate_params(
-            cmd, {"bucket_id": "ab" * 8, "rules": rules, "expected_rules": expected}
+            cmd,
+            {
+                "bucket_id": "ab" * 8,
+                "rules": json.loads(rules),
+                "expected_rules": json.loads(expected),
+            },
         )
 
     def test_accepts_the_live_shape_on_both_params(self) -> None:
         merged = self._validate(self._LIVE, self._LIVE)
-        assert merged["rules"] == merged["expected_rules"] == self._LIVE
+        assert merged["rules"] == merged["expected_rules"] == json.loads(self._LIVE)
         # Optional lists may be null or absent; [] clears.
         self._validate(
             '[{"AllowedOrigin": ["*"], "AllowedMethod": ["GET"], "ExposeHeader": null, "ID": null}]'

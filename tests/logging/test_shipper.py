@@ -308,8 +308,9 @@ def test_garage_s3_line_unresolved_gets_empty_bucket_id(tmp_path: Path) -> None:
     store.close()
 
 
-def test_garage_s3_no_resolver_leaves_field_off(tmp_path: Path) -> None:
-    # Backward-compatible: collect_batch() with no resolver ships no bucket_id.
+def test_garage_s3_no_resolver_stamps_empty_bucket_id(tmp_path: Path) -> None:
+    # bucket_id is always present on a garage_s3 line (CORE-011 decision 10):
+    # no resolver yet (no state read) reads the same as unresolved.
     store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "garage.log"
     log.write_text(_GARAGE_LINE.format(key="GKaccount01", bucket="media"))
@@ -318,7 +319,7 @@ def test_garage_s3_no_resolver_leaves_field_off(tmp_path: Path) -> None:
 
     batch = shipper.collect_batch()
     assert batch is not None
-    assert "bucket_id" not in batch.lines[0]
+    assert batch.lines[0]["bucket_id"] == ""
     store.close()
 
 

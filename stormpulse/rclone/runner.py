@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from stormpulse.protocol import FailureReason
 from stormpulse.rclone.config import RcloneConfig
 
 logger = logging.getLogger(__name__)
@@ -37,15 +38,15 @@ _STREAM_LIMIT_BYTES = 1024 * 1024
 
 # rclone's documented exit codes, as named reasons.
 _EXIT_REASONS = {
-    1: "usage_error",
-    2: "rclone_error",
-    3: "path_not_found",
-    4: "path_not_found",
-    5: "retryable_error",
-    6: "partial_failure",
-    7: "fatal_error",
-    8: "transfer_limit_exceeded",
-    10: "duration_limit_exceeded",
+    1: FailureReason.USAGE_ERROR,
+    2: FailureReason.RCLONE_ERROR,
+    3: FailureReason.PATH_NOT_FOUND,
+    4: FailureReason.PATH_NOT_FOUND,
+    5: FailureReason.RETRYABLE_ERROR,
+    6: FailureReason.PARTIAL_FAILURE,
+    7: FailureReason.FATAL_ERROR,
+    8: FailureReason.TRANSFER_LIMIT_EXCEEDED,
+    10: FailureReason.DURATION_LIMIT_EXCEEDED,
 }
 
 # "Operation successful, but no files transferred": the re-dispatch resume
@@ -53,9 +54,10 @@ _EXIT_REASONS = {
 EXIT_NOTHING_TO_TRANSFER = 9
 
 
-def reason_for_exit(code: int) -> str:
-    """Named failure reason for an rclone exit code."""
-    return _EXIT_REASONS.get(code, f"rclone_exit_{code}")
+def reason_for_exit(code: int) -> FailureReason:
+    """Named failure reason for an rclone exit code; an undocumented one folds
+    into ``rclone_error``, the code itself rides as ``error.upstream_code``."""
+    return _EXIT_REASONS.get(code, FailureReason.RCLONE_ERROR)
 
 
 def tail_capped(text: str) -> str:

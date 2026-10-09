@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any, cast
 
 import stormpulse.agent.integrations_manifest  # noqa: F401  (registers in-tree Integrations)
 from stormpulse.agent.external_adapters import load_and_register_external
@@ -29,6 +30,7 @@ from stormpulse.logging import (
     LogTailer,
     StreamingDockerTailer,
 )
+from stormpulse.sdk import command_specs_digest
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +73,7 @@ def _resolve_integration(
         )
     try:
         integ_specs = integration_command_specs(integ, parsed)
+        digest, fenced = _command_receipt(integ, parsed)
     except Exception as exc:  # noqa: BLE001 - any build failure is a soft-disable, never a crash
         return IntegrationRuntime(
             integ.id,
@@ -103,7 +106,28 @@ def _resolve_integration(
                 integ,
             )
     commands.update(integ_specs)
-    return IntegrationRuntime(integ.id, STATUS_LIVE, None, parsed, integ)
+    return IntegrationRuntime(
+        integ.id,
+        STATUS_LIVE,
+        None,
+        parsed,
+        integ,
+        command_specs_digest=digest,
+        commands_fenced=fenced,
+    )
+
+
+def _command_receipt(integ: Integration, parsed: Any) -> tuple[str, str | None]:
+    """The digest a grant pins and why commands are fenced (CORE-011 d4): the
+    external gate's own receipt, or the digest over in-tree ``specs`` alone, never
+    the synthesized refresh; ``""`` for an Integration that contributes none."""
+    if integ.command_gate is not None:
+        return integ.command_gate(parsed)
+    if integ.specs is None:
+        return "", None
+    # CommandSpec carries every field the digest reads, so an in-tree surface
+    # hashes to the bytes its SDK twin would (pinned by test_integrations).
+    return command_specs_digest(cast(Any, integ.specs(parsed))), None
 
 
 def build_agent_dependencies(

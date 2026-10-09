@@ -13,6 +13,7 @@ from stormpulse.logging.parsers import (
     parse_journald,
     parse_stormpulse,
 )
+from stormpulse.logging.s3_op import S3_OPS
 
 
 class TestParseGarageS3:
@@ -25,12 +26,14 @@ class TestParseGarageS3:
         result = parse_garage_s3(line)
         assert result is not None
         assert result["ts"] == "2026-04-10T13:23:51.766230Z"
-        assert result["client_ip"] == "192.0.2.10"
+        assert result["peer_ip"] == "192.0.2.10"
         assert result["proxy"] == "[::1]:37780"
         assert result["key_id"] == "GKdeadbeef1234567890abcdef"
         assert result["method"] == "HEAD"
-        assert result["path"] == "/usr-0-example-bucket"
+        assert result["s3_op"] == "HeadBucket"
         assert result["bucket"] == "usr-0-example-bucket"
+        assert result["message"] == "HeadBucket usr-0-example-bucket"
+        assert "path" not in result
         assert result["object_key"] == ""
         assert result["truncated"] is False
 
@@ -55,7 +58,8 @@ class TestParseGarageS3:
         assert result is not None
         assert result["bucket"] == "my-bucket"
         assert result["object_key"] == ""
-        assert result["path"] == "/my-bucket/?list-type=2"
+        assert result["s3_op"] == "ListObjectsV2"
+        assert "?" not in json.dumps(result)
 
     def test_admin_api_parsed(self) -> None:
         line = (
@@ -84,7 +88,7 @@ class TestParseGarageS3:
         )
         result = parse_garage_s3(line)
         assert result is not None
-        assert result["client_ip"] == "1.2.3.4"
+        assert result["peer_ip"] == "1.2.3.4"
         assert result["bucket"] == "bucket"
         assert result["object_key"] == "object"
 
@@ -97,7 +101,7 @@ class TestParseGarageS3:
         )
         result = parse_garage_s3(line)
         assert result is not None
-        assert result["client_ip"] == "1.2.3.4"
+        assert result["peer_ip"] == "1.2.3.4"
         assert result["bucket"] == "bucket"
         assert result["object_key"] == "object"
 
@@ -110,7 +114,7 @@ class TestParseGarageS3:
         assert result is not None
         assert result["method"] == "ADMIN"
         assert result["message"] == "CreateKey"
-        assert result["client_ip"] == ""
+        assert result["peer_ip"] == ""
 
     def test_admin_delete_bucket(self) -> None:
         line = (
@@ -181,9 +185,9 @@ class TestParseGarageS3:
         assert result["method"] == "HEAD"
         assert result["bucket"] == "bucket"
         assert result["object_key"] == "storm-recovery-deadbeef"
-        assert result["client_ip"] == "1.2.3.4"
+        assert result["peer_ip"] == "1.2.3.4"
         assert result["level"] == "info"
-        assert result["message"] == "HEAD bucket/storm-recovery-deadbeef -> 404"
+        assert result["message"] == "HeadObject bucket -> 404"
 
     def test_error_line_status_is_the_garage_status(self) -> None:
         forbidden = (
@@ -223,6 +227,77 @@ class TestParseGarageS3:
         # Truncation alters the path so regex may not match - acceptable.
         # The important invariant: no crash, no injection.
         assert result is None or result["truncated"] is True
+
+    @staticmethod
+    def _request(method: str, path: str) -> str:
+        return (
+            "2026-04-10T13:23:51.766230Z  INFO garage_api_common::generic_server: "
+            f"1.2.3.4 (via [::1]:1234) (key GKabc123) {method} {path}"
+        )
+
+    def test_presigned_get_names_the_operation_never_the_query(self) -> None:
+        line = self._request(
+            "GET",
+            "/media/photos/x.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+            "&X-Amz-Credential=GKabc123%2F20260410&X-Amz-Signature=s3cr3t",
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["s3_op"] == "GetObject"
+        assert result["bucket"] == "media"
+        assert result["object_key"] == "photos/x.jpg"
+        assert result["message"] == "GetObject media"
+        assert "path" not in result
+        flat = json.dumps(result)
+        assert "X-Amz" not in flat and "s3cr3t" not in flat and "?" not in flat
+
+    def test_the_operation_table(self) -> None:
+        # One golden request per name (ADR CORE-011 decision 10).
+        table = {
+            ("GET", "/"): "ListBuckets",
+            ("HEAD", "/b"): "HeadBucket",
+            ("PUT", "/b"): "CreateBucket",
+            ("DELETE", "/b"): "DeleteBucket",
+            ("GET", "/b"): "ListObjects",
+            ("GET", "/b/?list-type=2&prefix=p%2F&max-keys=10"): "ListObjectsV2",
+            ("GET", "/b?uploads"): "ListMultipartUploads",
+            ("GET", "/b?cors"): "GetBucketCors",
+            ("PUT", "/b?cors"): "PutBucketCors",
+            ("DELETE", "/b?cors"): "DeleteBucketCors",
+            ("GET", "/b?location"): "GetBucketLocation",
+            ("POST", "/b?delete"): "DeleteObjects",
+            ("GET", "/b/k"): "GetObject",
+            ("PUT", "/b/k"): "PutObject",
+            ("DELETE", "/b/k"): "DeleteObject",
+            ("HEAD", "/b/k"): "HeadObject",
+            ("POST", "/b/k?uploads"): "CreateMultipartUpload",
+            ("PUT", "/b/k?partNumber=2&uploadId=x"): "UploadPart",
+            ("POST", "/b/k?uploadId=x"): "CompleteMultipartUpload",
+            ("DELETE", "/b/k?uploadId=x"): "AbortMultipartUpload",
+            ("OPTIONS", "/b/k"): "Unknown",
+            ("GET", "/b/k?uploadId=x"): "Unknown",
+            ("POST", "/b/k"): "Unknown",
+            ("POST", "/"): "Unknown",
+        }
+        assert set(table.values()) == S3_OPS, "every name has a golden request"
+        for (method, path), expected in table.items():
+            result = parse_garage_s3(self._request(method, path))
+            assert result is not None, (method, path)
+            assert result["s3_op"] == expected, (method, path)
+
+    def test_the_sub_resource_wins_whatever_the_query_order(self) -> None:
+        # Clients order query keys as they please; a part upload with uploadId
+        # first is still a part upload, and the listing's extra keys are not
+        # sub-resources at all.
+        cases = {
+            ("PUT", "/b/k?uploadId=x&partNumber=2"): "UploadPart",
+            ("GET", "/b?prefix=p%2F&max-keys=10&list-type=2"): "ListObjectsV2",
+            ("GET", "/b?prefix=p%2F&delimiter=%2F"): "ListObjects",
+        }
+        for (method, path), expected in cases.items():
+            result = parse_garage_s3(self._request(method, path))
+            assert result is not None, (method, path)
+            assert result["s3_op"] == expected, (method, path)
 
 
 class TestParseStormpulse:
@@ -329,7 +404,33 @@ class TestParseCaddyJson:
         assert result is not None
         assert result["status"] == 200
         assert result["duration_ms"] == 15
-        assert result["client_ip"] == "1.2.3.4"
+        assert result["peer_ip"] == "1.2.3.4"
+        assert "client_ip" not in result
+
+    def test_access_log_names_the_operation_never_the_uri(self) -> None:
+        # A presigned GET carries its signature in the query string; the
+        # entry names the operation and the bucket, nothing of the uri.
+        uri = "/media/photos/x.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=s3cr3t"
+        line = json.dumps(
+            {
+                "ts": "2026-04-10T13:00:00Z",
+                "status": 200,
+                "request": {
+                    "method": "GET",
+                    "uri": uri,
+                    "host": "alpha.example.ca",
+                    "remote_ip": "1.2.3.4",
+                },
+            }
+        )
+        result = parse_caddy_json(line)
+        assert result is not None
+        assert result["s3_op"] == "GetObject"
+        assert result["bucket"] == "media"
+        assert result["message"] == "GET alpha.example.ca GetObject -> 200 from 1.2.3.4"
+        assert "path" not in result
+        flat = json.dumps(result)
+        assert "photos" not in flat and "X-Amz" not in flat and "?" not in flat
 
     def test_malformed_rejected(self) -> None:
         assert parse_caddy_json("not json") is None
@@ -359,7 +460,7 @@ class TestParseCaddyJson:
             result = parse_caddy_json(self._access_line(uri))
             assert result is not None, uri
             assert result["bucket"] == bucket, uri
-            assert result["path"] == uri
+            assert "path" not in result
             assert "object_key" not in result
 
     def test_access_log_without_a_rooted_path_names_no_bucket(self) -> None:
@@ -369,7 +470,7 @@ class TestParseCaddyJson:
             result = parse_caddy_json(self._access_line(uri))
             assert result is not None, uri
             assert result["bucket"] == "", uri
-            assert result["path"] == (uri or "")
+            assert result["s3_op"] == "Unknown", uri
 
     def test_access_log_with_a_non_string_uri_names_no_bucket(self) -> None:
         # A malformed line can carry a number or a list where the uri should

@@ -1,9 +1,9 @@
-"""Fitness suite harness: Functions 2 through 15, every check, every violation.
+"""Fitness suite harness: Functions 2 through 16, every check, every violation.
 
 CORE-001 defines 1-4 (1 is ``lint-imports``), CORE-005 adds 5-6, CORE-007 7-8,
 CORE-008 9; 10-11 guard what readers are told; 12 holds CI to `make check`;
-13-14 hold the seal and the signing key; 15 one JSON encoder. Never fail-fast.
-``fitness/baseline.txt`` suppresses known violations by exact match, only shrinks.
+13-14 hold the seal and the signing key; 15 one JSON encoder; 16 every event
+declared. Never fail-fast; ``fitness/baseline.txt`` suppresses by exact match.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from pathlib import Path
 
 from fitness.ci_workflow import check_ci_workflow
 from fitness.dependency_allowlist import check_dependencies
+from fitness.event_registry import check_event_registry
 from fitness.external_loader_p1 import check_external_loader_no_execution
 from fitness.integration_contract import check_integration_contract
 from fitness.merge_fence import check_merge_fence
@@ -70,6 +71,7 @@ def main() -> int:
         ("Function 13 - every shell hatch ships sealed", check_shell_hatches_sealed),
         ("Function 14 - no publisher signing key in the agent", check_no_signing_key),
         ("Function 15 - one canonical JSON encoder", check_one_encoder),
+        ("Function 16 - every emitted event is declared", check_event_registry),
     ]:
         violations = check()
         seen.update(violations)

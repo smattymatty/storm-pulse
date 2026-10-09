@@ -10,8 +10,11 @@ from typing import TYPE_CHECKING
 
 from websockets.asyncio.client import ClientConnection
 
-from stormpulse.agent.integrations_runtime import build_metrics_envelope
-from stormpulse.protocol import CommandResultPayload, make_command_result
+from stormpulse.agent.integrations_runtime import (
+    build_metrics_envelope,
+    replace_runtime_state,
+)
+from stormpulse.protocol import CommandResultPayload, FailureReason, make_command_result
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
@@ -28,7 +31,11 @@ async def collect_refresh_result(
     """Collect a fresh snapshot for the command's integration and store it; no wire IO.
     ``integ_id`` is the spec's group (== id, boot-enforced), resolved once at dispatch."""
     runtime = agent.integrations.get(integ_id)
-    if runtime is None or runtime.status != "live" or runtime.descriptor.collect_state is None:
+    if (
+        runtime is None
+        or runtime.status != "live"
+        or runtime.descriptor.collect_state is None
+    ):
         return CommandResultPayload(
             request_id=request_id,
             command=command,
@@ -38,13 +45,15 @@ async def collect_refresh_result(
             stdout="",
             stderr=f"Integration {integ_id!r} not enabled",
             duration_ms=0,
-            failure_reason="not_configured",
+            failure_reason=FailureReason.NOT_CONFIGURED,
         )
     start = time.monotonic()
     # An explicit refresh must not serve cached sub-state (garage's
     # topology cache made a fresh layout change invisible here); prefer
     # the cache-bypassing collector when the Integration declares one.
-    collector = runtime.descriptor.collect_state_fresh or runtime.descriptor.collect_state
+    collector = (
+        runtime.descriptor.collect_state_fresh or runtime.descriptor.collect_state
+    )
     state = await asyncio.to_thread(collector, runtime.config)
     duration_ms = int((time.monotonic() - start) * 1000)
     if state is None:
@@ -57,9 +66,9 @@ async def collect_refresh_result(
             stdout="",
             stderr=f"Failed to collect {integ_id} state",
             duration_ms=duration_ms,
-            failure_reason="collection_failed",
+            failure_reason=FailureReason.COLLECTION_FAILED,
         )
-    runtime.state = state
+    replace_runtime_state(runtime, state)
     # Optional per-state summary (default when a state type doesn't define one).
     # Preserves the pre-single-source "Refreshed: N buckets" line for garage.
     summary = state.summary() if hasattr(state, "summary") else None

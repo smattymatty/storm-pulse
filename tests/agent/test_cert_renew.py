@@ -219,7 +219,9 @@ async def test_404_is_a_logged_failure_error_inside_fourteen_days(
             assert await check_cert(agent, loaded) is loaded
     failed = [r for r in caplog.records if "renewal failed" in r.getMessage()]
     assert [r.levelno for r in failed] == [level]
-    assert [{k: v for k, v in e.items() if k != "ts"} for e in _cert_events()] == [
+    assert [
+        {k: v for k, v in e.items() if k not in ("ts", "seq")} for e in _cert_events()
+    ] == [
         {
             "source": "cert",
             "kind": "cert_renew_failed",

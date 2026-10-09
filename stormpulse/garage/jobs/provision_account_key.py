@@ -20,15 +20,33 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 _TOTAL_STEPS = 1
+
+
+@dataclass(frozen=True, slots=True)
+class ProvisionAccountKeyResult:
+    """What ``garage_provision_account_key`` returns under ``result``."""
+
+    new_key_id: str | None
+    can_create_bucket: bool
+    step_completed: str | None
+    step_failed: str | None
+    rollback_status: str
+    manual_cleanup_required: list[dict[str, str]]
+    garage_stderr: str
+    duration_seconds: float
+    new_secret: str | None = None
+    new_key_name: str | None = None
 
 
 def make_provision_account_key_handler(
@@ -94,7 +112,7 @@ async def run_provision_account_key(
     if not (admin_url and admin_token):
         # Fail loud: a migrated operation never silently no-ops.
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             new_key_id=None,
             stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
@@ -115,7 +133,7 @@ async def run_provision_account_key(
     )
     if info is None:
         return _failure(
-            failure_reason="account_key_create_failed",
+            failure_reason=FailureReason.ACCOUNT_KEY_CREATE_FAILED,
             new_key_id=None,
             stderr=err,
             started_at=started_at,
@@ -127,7 +145,7 @@ async def run_provision_account_key(
         # The key was created but the response didn't identify it; we can't
         # roll it back without its id, so flag it for manual cleanup.
         return _failure(
-            failure_reason="account_key_create_failed",
+            failure_reason=FailureReason.ACCOUNT_KEY_CREATE_FAILED,
             new_key_id=None,
             stderr="CreateKey response missing accessKeyId",
             started_at=started_at,
@@ -161,7 +179,7 @@ async def run_provision_account_key(
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     new_key_id: str | None,
     stderr: str,
     started_at: float,

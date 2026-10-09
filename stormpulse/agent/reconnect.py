@@ -14,17 +14,18 @@ from websockets.exceptions import ConnectionClosed
 
 from stormpulse import events
 from stormpulse.agent import dispatch, loops
-from stormpulse.agent.register import send_register
+from stormpulse.agent.register import await_register_ok, send_register
 from stormpulse.agent.signoff_nag import signoff_nag_loop
 from stormpulse.agent.signoff_push import signoff_state_push_loop
 from stormpulse.commands.jobs import JobManager
 from stormpulse.integrations import LogEnricher, registered_integrations
-from stormpulse.protocol import Envelope
+from stormpulse.protocol import CancelReason, Envelope, ProtocolError
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
 
 logger = logging.getLogger(__name__)
+events.declare_event("ws", "reconnect", {"reason", "error", "category"})
 
 
 async def run_with_backoff(agent: Agent) -> None:
@@ -81,6 +82,17 @@ async def run_with_backoff(agent: Agent) -> None:
             _log_connection_event(
                 agent,
                 "Connection error",
+                "warning",
+                eg.exceptions[0],
+            )
+        except* ProtocolError as eg:
+            # A refused handshake (CORE-011 d2): a raise, never a return, so the
+            # backoff keeps growing instead of resetting on a session that never ran.
+            if first_failure_at is None:
+                first_failure_at = time.monotonic()
+            _log_connection_event(
+                agent,
+                "Handshake refused",
                 "warning",
                 eg.exceptions[0],
             )
@@ -147,8 +159,9 @@ async def _run_session(
     ws: ClientConnection,
     url: str,
 ) -> None:
-    """Run one connection's worth of work: register, then the task group."""
+    """Run one connection's worth of work: register, await register.ok, then the task group."""
     await send_register(agent, ws, url)
+    await await_register_ok(ws)
 
     async def ws_send(env: Envelope) -> None:
         await ws.send(env.to_json())
@@ -186,8 +199,12 @@ async def _run_session(
 
 
 async def _shutdown_watcher(agent: Agent, ws: ClientConnection) -> None:
-    """Close the websocket on shutdown so ``recv()`` unblocks (otherwise systemd SIGKILLs us at ``TimeoutStopSec``)."""
+    """On shutdown: cancel the jobs and send their ``command.cancelled`` while the
+    socket is open, then close it so ``recv()`` unblocks (otherwise systemd
+    SIGKILLs us at ``TimeoutStopSec``)."""
     await agent.shutdown.wait()
+    if agent.job_manager is not None:
+        await agent.job_manager.shutdown_all(CancelReason.SHUTDOWN)
     await ws.close()
 
 

@@ -51,7 +51,7 @@ class TestBuildCaddyCommands:
         assert tenants.max_bytes is not None
         assert tenants.max_bytes >= 100_000
         # Empty object default means "no buckets serve in this region."
-        assert tenants.default == "{}"
+        assert tenants.default == {} and tenants.wire_type == "object"
 
     def test_authorize_bulk_param_uses_regex(self) -> None:
         cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
@@ -87,20 +87,20 @@ class TestValidateParams:
 
     The manifest is a JSON string (opaque content, byte-capped); the agent
     handler decodes and per-tenant-validates it. authorize_bulk is a
-    'true'/'false' string. The wire is string-valued end to end, which is
-    what keeps these on the existing ParamDef machinery.
+    'true'/'false' string; the manifest rides as the JSON object it is
+    (CORE-011 d9), walked against its schema at dispatch.
     """
 
     def test_valid_region_tenants_and_flag(self) -> None:
         cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         # Multi-line fragments with braces (would break a regex) are fine
-        # inside the JSON because the tenants param has no pattern, only a
-        # byte cap.
-        tenants = (
-            '{"abcdef0123456789": "mathew.stormsites.ca {\\n'
-            "    reverse_proxy localhost:3902\\n"
-            '}\\n"}'
-        )
+        # inside the object because the tenants param has no pattern, only a
+        # byte cap and a shape.
+        tenants = {
+            "abcdef0123456789": "mathew.stormsites.ca {\n"
+            "    reverse_proxy localhost:3902\n"
+            "}\n"
+        }
         validated = validate_params(
             cmd,
             {
@@ -117,7 +117,7 @@ class TestValidateParams:
         cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         validated = validate_params(cmd, {"region": "vancouver-1"})
         # Empty object = "remove the managed files"; flag defaults off.
-        assert validated["tenants"] == "{}"
+        assert validated["tenants"] == {}
         assert validated["authorize_bulk"] == "false"
 
     def test_bad_region_rejected(self) -> None:
@@ -125,7 +125,7 @@ class TestValidateParams:
         with pytest.raises(ParamValidationError):
             validate_params(
                 cmd,
-                {"region": "../etc/passwd", "tenants": "{}"},
+                {"region": "../etc/passwd", "tenants": {}},
             )
 
     def test_bad_authorize_bulk_rejected(self) -> None:
@@ -141,18 +141,19 @@ class TestValidateParams:
     def test_manifest_must_be_an_object_of_safe_keys_and_string_fragments(self) -> None:
         cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
         for tenants, fragment in [
-            ("[]", "$: expected object, got list"),
-            ('{"../etc": "x"}', "key '../etc' does not match key_pattern"),
-            ('{"abc": 1}', "$.abc: expected string, got int"),
-            ('{"abc": "' + "a" * 16_385 + '"}', "$.abc: exceeds max_bytes=16384"),
+            ([], "$: expected object, got list"),
+            ("{}", "$: expected object, got str"),
+            ({"../etc": "x"}, "key '../etc' does not match key_pattern"),
+            ({"abc": 1}, "$.abc: expected string, got int"),
+            ({"abc": "a" * 16_385}, "$.abc: exceeds max_bytes=16384"),
         ]:
             with pytest.raises(ParamValidationError) as exc_info:
                 validate_params(cmd, {"region": "vancouver-1", "tenants": tenants})
-            assert fragment in str(exc_info.value), tenants[:40]
+            assert fragment in str(exc_info.value), str(tenants)[:40]
 
     def test_oversize_manifest_rejected(self) -> None:
         cmd = build_caddy_specs(_make_caddy_config())[BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC]
-        oversize = '{"x": "' + "a" * 1_100_000 + '"}'  # over the 1MB cap
+        oversize = {"x": "a" * 1_100_000}  # over the 1MB cap
         with pytest.raises(ParamValidationError) as exc_info:
             validate_params(
                 cmd,

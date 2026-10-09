@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from stormpulse.agent import Agent, loops
 from stormpulse.garage.state_reader import GarageStateReader
+from stormpulse.integrations import Freshness
 from stormpulse.protocol import MetricsPayload
 from tests.helpers import (
     FAKE_METRICS,
@@ -144,3 +146,55 @@ async def test_integration_state_loop_updates_state(
     )
     assert get_garage_state(ag) is fake
     assert mock_collect.call_count >= 1
+
+
+@pytest.mark.asyncio
+@patch.object(GarageStateReader, "collect")
+async def test_integration_state_loop_folds_what_the_read_said_of_itself(
+    mock_collect: MagicMock,
+    agent_with_garage: Callable[..., Agent],
+    shutdown: asyncio.Event,
+) -> None:
+    """CORE-011 d5: the periodic collect is the third writer of ``runtime.state``;
+    it owes the ids it re-read and carries the read's completeness like the others."""
+    fresh = replace(make_fake_garage_state(), read=Freshness(False, "t0", ("a" * 64,)))
+
+    def collect_once(config: object) -> object:
+        shutdown.set()  # one tick, then the loop's sleep returns at once
+        return fresh
+
+    mock_collect.side_effect = collect_once
+    ag = agent_with_garage()
+    await loops.integration_state_loop(ag, AsyncMock(), "garage")
+    rt = ag.integrations["garage"]
+    assert get_garage_state(ag) is fresh
+    assert (rt.complete, rt.last_full_read_at, rt.changed_ids) == (
+        False,
+        "t0",
+        ["a" * 64],
+    )
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.integrations_runtime.collect_metrics")
+async def test_generation_does_not_rewind_across_sessions(
+    mock_collect: MagicMock,
+    agent_with_garage: Callable[..., Agent],
+    shutdown: asyncio.Event,
+) -> None:
+    """The metrics loop is per session; the runtime it reads is per process
+    (CORE-011 d5), so a reconnect's first push continues the count."""
+    mock_collect.return_value = FAKE_METRICS
+    ag = agent_with_garage()
+    generations: list[int] = []
+
+    async def send(msg: str) -> None:
+        generations.append(
+            json.loads(msg)["payload"]["integrations"]["garage"]["generation"]
+        )
+        shutdown.set()  # one push per session
+
+    for _ in range(2):
+        shutdown.clear()
+        await loops.metrics_loop(ag, AsyncMock(send=AsyncMock(side_effect=send)))
+    assert generations == [1, 2]

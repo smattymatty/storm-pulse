@@ -21,6 +21,7 @@ import logging
 import socket
 import ssl
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.caddy.config import CaddyConfig
@@ -30,6 +31,18 @@ logger = logging.getLogger(__name__)
 
 _HTTPS_PORT = 443
 _TIMEOUT_SECONDS = 5.0
+
+
+@dataclass(frozen=True, slots=True)
+class CertStatusResult:
+    """What ``caddy_cert_status`` returns under ``result``."""
+
+    domain: str
+    cert_live: bool
+    not_after: str
+    issuer: str
+    probe_error: str
+    duration_seconds: float
 
 
 def make_caddy_cert_status_handler(
@@ -62,15 +75,21 @@ async def run_caddy_cert_status(
         # provisioning, name mismatch, expired, or Caddy's internal CA). A
         # definite "not live", not a command error - the query succeeded.
         return _result(
-            domain, cert_live=False, not_after="", issuer="",
-            error=err, started_at=started_at,
+            domain,
+            cert_live=False,
+            not_after="",
+            issuer="",
+            error=err,
+            started_at=started_at,
         )
 
     return _result(
-        domain, cert_live=True,
+        domain,
+        cert_live=True,
         not_after=cert.get("notAfter", ""),
         issuer=_issuer_name(cert),
-        error="", started_at=started_at,
+        error="",
+        started_at=started_at,
     )
 
 
@@ -87,7 +106,8 @@ def _probe_cert(domain: str) -> tuple[dict[str, Any] | None, str]:
     context = ssl.create_default_context()
     try:
         with socket.create_connection(
-            ("127.0.0.1", _HTTPS_PORT), timeout=_TIMEOUT_SECONDS,
+            ("127.0.0.1", _HTTPS_PORT),
+            timeout=_TIMEOUT_SECONDS,
         ) as sock:
             with context.wrap_socket(sock, server_hostname=domain) as ssock:
                 return ssock.getpeercert(), ""
@@ -111,8 +131,13 @@ def _issuer_name(cert: dict[str, Any]) -> str:
 
 
 def _result(
-    domain: str, *, cert_live: bool, not_after: str, issuer: str,
-    error: str, started_at: float,
+    domain: str,
+    *,
+    cert_live: bool,
+    not_after: str,
+    issuer: str,
+    error: str,
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=True,

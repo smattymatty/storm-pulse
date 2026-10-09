@@ -7,11 +7,19 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from websockets.asyncio.client import ClientConnection
 
 from stormpulse import events
+from stormpulse.agent.acks import (
+    handle_ack,
+    handle_error,
+    handle_events_batch_ack,
+    handle_events_batch_nack,
+    handle_log_batch_ack,
+    handle_metrics_ack,
+)
 from stormpulse.agent.integrations_runtime import (
     STATUS_LIVE,
     build_metrics_envelope,
@@ -41,15 +49,19 @@ from stormpulse.protocol import (
     CommandResultPayload,
     CommandSequencePayload,
     Envelope,
+    FailureReason,
     MessageType,
     ProtocolError,
     make_command_result,
+    make_error,
 )
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
 
 logger = logging.getLogger(__name__)
+events.declare_event("auth", "signature_failure", {"status", "failure_reason", "error"})
+events.declare_event("commands", "whitelist_rejection", {"status", "command", "error"})
 
 type Handler = Callable[[Agent, ClientConnection, Envelope], Awaitable[None]]
 
@@ -69,55 +81,24 @@ async def dispatch_message(
     ws: ClientConnection,
     raw: str | bytes,
 ) -> None:
-    """Parse envelope, verify auth, execute command(s)."""
+    """Parse envelope, verify auth, execute command(s); a refused frame is answered, never dropped."""
     try:
         envelope = Envelope.from_json(raw)
+        handler = HANDLERS.get(envelope.type)
+        if handler is None:
+            raise ProtocolError(
+                f"Outbound message type sent to the agent: {envelope.type.value}",
+                reason="unknown_type",
+                msg_type=envelope.type.value,
+            )
     except ProtocolError as exc:
-        logger.warning("Invalid message: %s", exc)
-        return
-
-    handler = HANDLERS.get(envelope.type)
-    if handler is None:
-        logger.warning("Unexpected message type: %s", envelope.type.value)
+        # CORE-011 d2: one `error` frame naming the reason and the type, the socket kept.
+        logger.warning("Refused message (%s): %s", exc.reason, exc)
+        await ws.send(
+            make_error(agent.config.agent.id, exc.reason, exc.msg_type).to_json()
+        )
         return
     await handler(agent, ws, envelope)
-
-
-async def handle_events_batch_ack(
-    _agent: Agent, _ws: ClientConnection, envelope: Envelope
-) -> None:
-    """Release an acknowledged events batch from the in-process buffer."""
-    batch_id = envelope.payload.get("batch_id")
-    if not isinstance(batch_id, str):
-        logger.warning("events.batch.ack missing batch_id")
-        return
-    if not events.buffer().ack(batch_id):
-        logger.debug("events.batch.ack for unknown batch_id %s", batch_id)
-
-
-async def handle_log_batch_ack(
-    agent: Agent, _ws: ClientConnection, envelope: Envelope
-) -> None:
-    """Advance the stored log position for an acknowledged batch."""
-    batch_id = envelope.payload.get("batch_id")
-    if not isinstance(batch_id, str):
-        logger.warning("log.batch.ack missing batch_id")
-        return
-    pending = agent.pending_batches.pop(batch_id)
-    if pending is None:
-        logger.debug("log.batch.ack for unknown batch_id %s", batch_id)
-        return
-    group_name, to_position = pending
-    shipper = agent.shippers.get(group_name)
-    if shipper is None:
-        return
-    await asyncio.to_thread(shipper.tailer.confirm_shipped, to_position)  # type: ignore[arg-type]
-    logger.debug(
-        "Advanced position for group %s to %s (batch %s)",
-        group_name,
-        to_position,
-        batch_id,
-    )
 
 
 async def handle_command_request(
@@ -284,7 +265,11 @@ async def _run_subprocess_command(
             stdout="",
             stderr=str(exc),
             duration_ms=0,
-            failure_reason="validation_failed",
+            failure_reason=(
+                exc.reason
+                if isinstance(exc, CommandError)
+                else FailureReason.VALIDATION_FAILED
+            ),
         )
 
 
@@ -326,7 +311,7 @@ def post_success_hook(
     agent: Agent,
     cmd_def: CommandSpec,
     command: str,
-    params: Mapping[str, str],
+    params: Mapping[str, Any],
 ) -> Callable[[], Awaitable[None]] | None:
     """Build the after-success callback (targeted re-read, merge, push) for a mutating
     integration command, or ``None``. Owner resolves via group == id (CORE-005 d11/12)."""
@@ -386,7 +371,7 @@ async def dispatch_long_running(
             stdout="",
             stderr=str(exc),
             duration_ms=0,
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
         )
         await agent.job_manager.send_now(
             make_command_result(agent.config.agent.id, failure)
@@ -412,7 +397,7 @@ async def dispatch_long_running(
             stdout="",
             stderr=f"No long-running handler for {payload.command!r}",
             duration_ms=0,
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
         )
         await agent.job_manager.send_now(
             make_command_result(agent.config.agent.id, failure)
@@ -459,23 +444,26 @@ async def handle_command_sequence(
     ws: ClientConnection,
     envelope: Envelope,
 ) -> None:
-    """Verify and execute a command sequence, streaming results."""
+    """Verify and execute a command sequence, streaming results.
+
+    Every result, a refusal included, carries the ``sequence_id`` and the
+    ``step_index`` of the step it answers for (CORE-011 d9).
+    """
     payload = _verify_typed_payload(agent, envelope, CommandSequencePayload)
     if payload is None:
         return
-    logger.info(
-        "Executing sequence %s: %s",
-        payload.sequence_id,
-        payload.commands,
-    )
+    names = [step.command for step in payload.steps]
+    logger.info("Executing sequence %s: %s", payload.sequence_id, names)
+
+    def step_result(result: CommandResultPayload, index: int) -> str:
+        stamped = replace(result, sequence_id=payload.sequence_id, step_index=index)
+        return make_command_result(agent.config.agent.id, stamped).to_json()
 
     # Deflect a now-unsealed hatch command missing from the boot-built
     # registry before whitelist validation, which would otherwise reject it
     # as unknown and fire the security alarm (ADR CORE-004). Mirrors the
     # single-command path's _deflect_if_restart_pending.
-    restart_cmd = needs_restart_to_load(
-        agent.signoff_state, agent.registry, payload.commands
-    )
+    restart_cmd = needs_restart_to_load(agent.signoff_state, agent.registry, names)
     if restart_cmd is not None:
         logger.warning(
             "Deflected sequence %s: %s unsealed after boot, registry not "
@@ -483,105 +471,104 @@ async def handle_command_sequence(
             payload.sequence_id,
             restart_cmd,
         )
-        result = replace(
-            restart_pending_result(str(uuid.uuid4()), restart_cmd),
-            sequence_id=payload.sequence_id,
-        )
-        await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+        result = restart_pending_result(str(uuid.uuid4()), restart_cmd)
+        await ws.send(step_result(result, names.index(restart_cmd)))
         return
 
-    try:
-        for name in payload.commands:
+    for index, name in enumerate(names):
+        try:
             get_command(name, registry=agent.registry)
-    except CommandError as exc:
-        logger.warning("Sequence %s has invalid command: %s", payload.sequence_id, exc)
-        # Authenticated request, so the refusal goes on the wire (one failure
-        # result terminates the sequence dashboard-side), never silence.
-        failure = CommandResultPayload(
-            request_id=str(uuid.uuid4()),
-            command=name,
-            group="unknown",
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=str(exc),
-            duration_ms=0,
-            sequence_id=payload.sequence_id,
-            failure_reason="validation_failed",
-        )
-        await ws.send(make_command_result(agent.config.agent.id, failure).to_json())
-        return
+        except CommandError as exc:
+            logger.warning(
+                "Sequence %s has invalid command: %s", payload.sequence_id, exc
+            )
+            # Authenticated request, so the refusal goes on the wire (one failure
+            # result terminates the sequence dashboard-side), never silence.
+            failure = CommandResultPayload(
+                request_id=str(uuid.uuid4()),
+                command=name,
+                group="unknown",
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=0,
+                failure_reason=exc.reason,
+            )
+            await ws.send(step_result(failure, index))
+            return
 
     # Sequence seal recheck mirrors the single-command path (ADR CORE-004).
-    if is_blocked_by_seal(agent.signoff_state, payload.commands):
-        sealed_in_sequence = sorted(SEALED_COMMANDS & set(payload.commands))
+    if is_blocked_by_seal(agent.signoff_state, names):
+        sealed_in_sequence = sorted(SEALED_COMMANDS & set(names))
         logger.warning(
             "Refused sequence %s: contains %s while sealed",
             payload.sequence_id,
             ", ".join(sealed_in_sequence),
         )
         first_sealed = sealed_in_sequence[0]
-        sealed = replace(
-            sealed_refusal_result(
-                str(uuid.uuid4()),
-                first_sealed,
-                agent.registry.get(first_sealed),
-            ),
-            sequence_id=payload.sequence_id,
+        sealed = sealed_refusal_result(
+            str(uuid.uuid4()), first_sealed, agent.registry.get(first_sealed)
         )
-        await ws.send(make_command_result(agent.config.agent.id, sealed).to_json())
+        await ws.send(step_result(sealed, names.index(first_sealed)))
         return
 
-    agent_id = agent.config.agent.id
     project = agent.config.project
-    for name in payload.commands:
+    for index, step in enumerate(payload.steps):
         request_id = str(uuid.uuid4())
-        result = await asyncio.to_thread(
-            execute_command,
-            name,
-            project,
-            request_id,
-            payload.sequence_id,
-            registry=agent.registry,
-        )
-        response = make_command_result(agent_id, result)
-        await ws.send(response.to_json())
+        try:
+            result = await asyncio.to_thread(
+                execute_command,
+                step.command,
+                project,
+                request_id,
+                payload.sequence_id,
+                registry=agent.registry,
+                runtime_params=step.params or None,
+            )
+        except ParamValidationError as exc:
+            logger.warning("Sequence %s step %d: %s", payload.sequence_id, index, exc)
+            result = CommandResultPayload(
+                request_id=request_id,
+                command=step.command,
+                group=agent.registry[step.command].group,
+                success=False,
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                duration_ms=0,
+                failure_reason=FailureReason.VALIDATION_FAILED,
+            )
+        await ws.send(step_result(result, index))
         logger.info(
-            "Sequence %s step %r: success=%s, %dms",
+            "Sequence %s step %d %r: success=%s, %dms",
             payload.sequence_id,
-            name,
+            index,
+            step.command,
             result.success,
             result.duration_ms,
         )
         if payload.stop_on_failure and not result.success:
             logger.warning(
-                "Sequence %s halted at %r",
+                "Sequence %s halted at step %d %r",
                 payload.sequence_id,
-                name,
+                index,
+                step.command,
             )
             break
 
 
-async def handle_ack(_agent: Agent, _ws: ClientConnection, envelope: Envelope) -> None:
-    """A dashboard ack: received, logged at debug, never acted on."""
-    logger.debug("Received %s (%s)", envelope.type.value, envelope.id)
-
-
-async def handle_error(
-    _agent: Agent, _ws: ClientConnection, envelope: Envelope
-) -> None:
-    """A dashboard error: the agent cannot correct it, so it says what was refused."""
-    logger.warning(
-        "Dashboard error (%s): %s", envelope.id, envelope.payload.get("error")
-    )
-
-
-# Every inbound type in the protocol catalogue, one table; a test holds it exhaustive.
+# Every inbound or both-way type in the catalogue, one table; a test holds it exhaustive.
 HANDLERS: Mapping[MessageType, Handler] = {
     **{t: handle_ack for t, spec in MESSAGES.items() if spec.payload is AckPayload},
+    # The handshake consumed the real one before this loop started (CORE-011 d2);
+    # a late duplicate is an ack.
+    MessageType.REGISTER_OK: handle_ack,
+    MessageType.METRICS_ACK: handle_metrics_ack,
     MessageType.ERROR: handle_error,
     MessageType.COMMAND_REQUEST: handle_command_request,
     MessageType.COMMAND_SEQUENCE: handle_command_sequence,
     MessageType.LOG_BATCH_ACK: handle_log_batch_ack,
     MessageType.EVENTS_BATCH_ACK: handle_events_batch_ack,
+    MessageType.EVENTS_BATCH_NACK: handle_events_batch_nack,
 }

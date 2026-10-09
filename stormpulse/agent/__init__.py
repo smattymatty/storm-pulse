@@ -1,27 +1,8 @@
-"""The Storm Pulse agent: a long-lived WebSocket client over mutual TLS.
+"""Storm Pulse's composition root and process-lifetime state.
 
-Five concurrent tasks per session (heartbeat, metrics, integration state,
-dispatch, log shipping); exponential reconnect when the session drops.
-
-``Agent`` is a composition root: per-process state plus one public ``run()``.
-The actual work lives in free functions in focused submodules:
-
-============================  ==============================================
-``bootstrap``                 Assemble registry + log shippers from Config.
-``ssl_context``               Construct the mutual-TLS context.
-``reconnect``                 Outer connect / run-tasks / backoff loop.
-``register``                  Initial register envelope after each connect.
-``loops``                     Periodic-loop bodies (heartbeat, metrics, ...).
-``dispatch``                  Inbound message dispatch + command execution.
-``integrations_runtime``      Integration runtime state, merge, metrics envelope.
-``metadata``                  Build the register-payload command metadata.
-``log_batches``               In-flight log-batch tracking.
-``long_running``              Resolve long-running commands to handlers.
-``signoff_guard``             Sign-off seal predicate + refusal builder.
-============================  ==============================================
-
-Submodules read ``Agent``'s state directly - it's all public, except
-``_secret``, ``_nonce_store``, ``_ssl_ctx`` (underscore sigil = cryptographic).
+Submodules implement registration, reconnects, periodic loops and dispatch.
+The client connects over mutual TLS and retries dropped sessions with backoff.
+Only cryptographic state uses private names: secret, nonce store and SSL context.
 """
 
 from __future__ import annotations
@@ -32,6 +13,7 @@ import ssl
 from stormpulse.agent import reconnect
 from stormpulse.agent.bootstrap import build_agent_dependencies
 from stormpulse.agent.cert_renew import cert_renew_loop
+from stormpulse.agent.identity import boot_id, started_at
 from stormpulse.agent.integrations_runtime import IntegrationRuntime
 from stormpulse.agent.log_batches import PendingBatches
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
@@ -77,6 +59,9 @@ class Agent:
         self.shutdown = shutdown
         self.pulse_logger = pulse_logger
         self.signoff_state = signoff_state
+        # Read once per process: every register repeats the same pair (CORE-011 d7).
+        self.boot_id: str = boot_id()
+        self.started_at: str = started_at()
         deps = build_agent_dependencies(
             config,
             signoff_sealed=self.signoff_state.is_sealed(),

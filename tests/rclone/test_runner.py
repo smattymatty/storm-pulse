@@ -28,7 +28,9 @@ def test_build_env_locks_out_config_file_and_carries_remotes() -> None:
     for name in ("SRC", "DST"):
         assert env[f"RCLONE_CONFIG_{name}_TYPE"] == "s3"
         assert env[f"RCLONE_CONFIG_{name}_ENDPOINT"] == REMOTE.endpoint
-        assert env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] == REMOTE.secret_access_key
+        assert (
+            env[f"RCLONE_CONFIG_{name}_SECRET_ACCESS_KEY"] == REMOTE.secret_access_key
+        )
 
 
 def test_build_env_omits_undeclared_remote() -> None:
@@ -57,9 +59,9 @@ def test_tail_capped_keeps_the_end() -> None:
     assert len(capped.encode()) <= MAX_STDERR_TAIL_BYTES
 
 
-def test_reason_for_exit_names_known_codes_and_falls_back() -> None:
+def test_reason_for_exit_names_known_codes_and_folds_the_rest() -> None:
     assert reason_for_exit(7) == "fatal_error"
-    assert reason_for_exit(42) == "rclone_exit_42"
+    assert reason_for_exit(42) == "rclone_error"
 
 
 @pytest.mark.asyncio
@@ -133,9 +135,7 @@ async def test_stop_process_terminates_gracefully() -> None:
 async def test_stop_process_kills_a_term_ignoring_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "stormpulse.rclone.runner._TERMINATE_GRACE_SECONDS", 0.2
-    )
+    monkeypatch.setattr("stormpulse.rclone.runner._TERMINATE_GRACE_SECONDS", 0.2)
     # The loop keeps the shell itself alive (a bare `sleep 30` would be
     # exec'd by sh, dropping the trap); the echo proves the trap is set
     # before the signal is sent.

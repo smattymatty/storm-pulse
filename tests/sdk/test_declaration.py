@@ -4,10 +4,13 @@ its stability and its sensitivity both matter)."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 
 from stormpulse.sdk import (
     SdkCommandSpec,
+    SdkComponent,
     SdkIntegration,
     SdkJobOutcome,
     SdkParamDef,
@@ -92,6 +95,45 @@ def test_non_job_must_not_carry_handler() -> None:
 def test_subprocess_needs_absolute_argv0() -> None:
     with pytest.raises(ValueError):
         SdkCommandSpec(group="g", command=["true"], timeout=5, mode="subprocess")
+
+
+@dataclass(frozen=True, slots=True)
+class _Figures:
+    count: int
+
+
+def test_result_is_a_dataclass_on_a_job_only() -> None:
+    """CORE-011 d9: an adapter declares its job's figures the way a built-in
+    does, and the declaration moves no digest (it binds no allow rule)."""
+    declared = SdkCommandSpec(
+        group="buckets_gate",
+        command=["j"],
+        timeout=5,
+        mode="job",
+        handler=lambda _p: _noop,
+        result=_Figures,
+    )
+    assert declared.result is _Figures
+    assert command_specs_digest({"j": declared}) == command_specs_digest(
+        {"j": _job("j", timeout=5)}
+    )
+    with pytest.raises(ValueError, match="result must be a dataclass on a 'job'"):
+        SdkCommandSpec(
+            group="g",
+            command=["/bin/true"],
+            timeout=5,
+            mode="subprocess",
+            result=_Figures,
+        )
+    with pytest.raises(ValueError, match="result must be a dataclass"):
+        SdkCommandSpec(
+            group="g",
+            command=["j"],
+            timeout=5,
+            mode="job",
+            handler=lambda _p: _noop,
+            result=int,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +229,22 @@ def test_integration_core_is_declarable() -> None:
     )
     assert integ.id == "buckets_gate"
     assert integ.specs is not None
+    assert integ.components is None  # opt-in, like every other capability
+
+
+def test_components_hook_is_declarable_from_config_alone() -> None:
+    """SDK_API 2: an adapter names what it fronts, versioned, without any state
+    (CORE-011 d7). ``digest`` is explicit, ``""`` where the component has none."""
+    integ = SdkIntegration(
+        id="buckets_gate",
+        parse_config=lambda section: section,
+        enabled=lambda cfg: True,
+        components=lambda cfg: (SdkComponent("buckets-gate", cfg["v"], ""),),
+    )
+    assert integ.components is not None
+    assert integ.components({"v": "0.4.1"}) == (
+        SdkComponent(name="buckets-gate", version="0.4.1", digest=""),
+    )
 
 
 def test_schema_refuses_pattern_even_when_max_bytes_is_present() -> None:

@@ -87,8 +87,8 @@ async def _set(
     handler = make_bucket_cors_set_handler(
         {
             "bucket_id": _PREFIX,
-            "rules": json.dumps(rules),
-            "expected_rules": json.dumps(expected),
+            "rules": rules,
+            "expected_rules": expected,
         },
         **_ADMIN,
     )
@@ -324,7 +324,8 @@ async def test_set_and_get_surface_a_failed_read(
 
 
 def test_set_handler_none_on_missing_or_bad_params() -> None:
-    good = {"bucket_id": _PREFIX, "rules": "[]", "expected_rules": "[]"}
+    # An empty list is a value (clear every rule), not a missing param.
+    good: dict[str, Any] = {"bucket_id": _PREFIX, "rules": [], "expected_rules": []}
     for key in good:
         assert (
             make_bucket_cors_set_handler(
@@ -332,13 +333,13 @@ def test_set_handler_none_on_missing_or_bad_params() -> None:
             )
             is None
         )
-    assert make_bucket_cors_set_handler({**good, "rules": "not json"}, **_ADMIN) is None
+    assert make_bucket_cors_set_handler({**good, "rules": "[]"}, **_ADMIN) is None
     assert (
-        make_bucket_cors_set_handler({**good, "expected_rules": "{}"}, **_ADMIN) is None
+        make_bucket_cors_set_handler({**good, "expected_rules": {}}, **_ADMIN) is None
     )
-    assert make_bucket_cors_set_handler({**good, "rules": '["GET"]'}, **_ADMIN) is None
+    assert make_bucket_cors_set_handler({**good, "rules": ["GET"]}, **_ADMIN) is None
     assert (
-        make_bucket_cors_set_handler({**good, "rules": '[{"Origin": []}]'}, **_ADMIN)
+        make_bucket_cors_set_handler({**good, "rules": [{"Origin": []}]}, **_ADMIN)
         is None
     )
     assert make_bucket_cors_set_handler(good, admin_url="", admin_token="") is None

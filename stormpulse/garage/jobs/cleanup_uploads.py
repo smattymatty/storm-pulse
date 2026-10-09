@@ -16,20 +16,37 @@ the parameter has no default, so a caller must state the age it means.
 The admin token is the node's, resolved from config and bound in by the factory
 builder, never sent over the wire (ADR buckets/000).
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class CleanupUploadsResult:
+    """What ``garage_bucket_cleanup_uploads`` returns under ``result``."""
+
+    bucket_id: str
+    older_than_secs: int
+    duration_seconds: float
+    error: str | None = None
+    uploads_aborted: int | None = None
+
+
 def make_cleanup_uploads_handler(
-    params: dict[str, str], *, admin_url: str, admin_token: str,
+    params: dict[str, str],
+    *,
+    admin_url: str,
+    admin_token: str,
 ) -> JobHandler | None:
     """Build a JobHandler for ``garage_bucket_cleanup_uploads``.
 
@@ -103,7 +120,7 @@ async def run_cleanup_uploads(
             success=False,
             exit_code=-1,
             stderr=f"CleanupIncompleteUploads failed: {err}",
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
             extras={
                 "duration_seconds": _elapsed(started_at),
                 "error": err,

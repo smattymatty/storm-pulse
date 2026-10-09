@@ -72,7 +72,7 @@ def test_shipper_added_fields_name_a_real_parser() -> None:
     assert set(SHIPPER_ADDED) <= set(PARSERS)
 
 
-def test_caddy_json_emits_bucket_and_path() -> None:
+def test_caddy_json_emits_bucket_and_s3_op() -> None:
     """A consumer meters per-bucket egress from `bucket` alone.
 
     The access row carried only `path` until 2026-10-08, and the meter
@@ -80,7 +80,16 @@ def test_caddy_json_emits_bucket_and_path() -> None:
     fact, so dropping either field fails here before any consumer goes quiet.
     """
     assert "bucket" in emitted_fields("caddy_json")
-    assert "path" in emitted_fields("caddy_json")
+    assert "s3_op" in emitted_fields("caddy_json")
+
+
+@pytest.mark.parametrize("parser", ["garage_s3", "caddy_json"])
+def test_access_rows_carry_peer_ip_and_s3_op_never_the_path(parser: str) -> None:
+    """Minimised at the source (CORE-011 decision 10): the operation rides,
+    the request path and the legacy address name do not."""
+    fields = emitted_fields(parser)
+    assert {"peer_ip", "s3_op"} <= fields
+    assert not {"path", "client_ip"} & fields
 
 
 def test_the_artifact_shape_is_stable() -> None:
@@ -94,4 +103,8 @@ def test_the_artifact_shape_is_stable() -> None:
     # The precomputed union is what a consumer asserts against, so it must
     # actually contain the shipper half rather than only the parser's own keys.
     assert "bucket_id" in art["parsers"]["garage_s3"]["all_fields"]
+    assert (
+        art["parsers"]["garage_s3"]["variants"]["admin"]
+        == (art["parsers"]["garage_s3"]["variants"]["request"])
+    )
     assert "bucket" in art["parsers"]["caddy_json"]["all_fields"]

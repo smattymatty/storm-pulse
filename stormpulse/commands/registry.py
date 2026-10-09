@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import subprocess
@@ -10,14 +9,23 @@ import time
 from typing import Any
 
 from stormpulse.config import CommandSpec, ParamDef, ProjectConfig
-from stormpulse.config.param_schema import ParamSchema, schema_violation
-from stormpulse.protocol import CommandResultPayload
+from stormpulse.config.param_schema import schema_violation
+from stormpulse.protocol import CommandResultPayload, FailureReason
+from stormpulse.sdk.declaration import canonical_json
 
 logger = logging.getLogger(__name__)
 
 
 class CommandError(Exception):
-    """Raised for unknown command names or invalid registry state."""
+    """The whitelist refused a name; ``reason`` is what the result carries:
+    ``unknown_command`` for a name it has never heard of, ``forbidden`` for
+    one it knows but will not run in this form."""
+
+    def __init__(
+        self, message: str, *, reason: FailureReason = FailureReason.UNKNOWN_COMMAND
+    ) -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class ParamValidationError(Exception):
@@ -134,33 +142,21 @@ def build_registry(
     }
 
 
-def _refuse_folded_values(cmd_def: CommandSpec, runtime_params: dict[str, str]) -> None:
-    # The signed form joins params as k=v&k=v, so a value holding "&<param>="
-    # would sign the same as a different param set. Refuse it.
-    for name, value in runtime_params.items():
-        folded = set(re.findall(r"&([^&=]+)=", value)) & cmd_def.params.keys()
-        if folded:
-            raise ParamValidationError(
-                f"Value of {name!r} holds '&{min(folded)}=', ambiguous once signed"
-            )
-
-
 def validate_params(
     cmd_def: CommandSpec,
-    runtime_params: dict[str, str],
-) -> dict[str, str]:
+    runtime_params: dict[str, Any],
+) -> dict[str, Any]:
     """Validate runtime params against a command's ParamDefs.
 
     Returns merged dict: ParamDef defaults overridden by valid runtime params.
-    Raises ParamValidationError for unknown params, pattern mismatches,
-    or missing values (param has no default and no runtime override).
+    Raises ParamValidationError for unknown params, a value of the wrong JSON
+    type, a pattern, byte-cap or schema miss (CORE-011 d9).
     """
     unknown = set(runtime_params) - set(cmd_def.params)
     if unknown:
         raise ParamValidationError(f"Unknown params: {', '.join(sorted(unknown))}")
-    _refuse_folded_values(cmd_def, runtime_params)
 
-    merged: dict[str, str] = {}
+    merged: dict[str, Any] = {}
     for name, pdef in cmd_def.params.items():
         if name in runtime_params:
             value = runtime_params[name]
@@ -168,60 +164,47 @@ def validate_params(
             value = pdef.default
         else:
             continue  # no static default - config provides the fallback
-        # Regex validation: short identifiers, bucket names, key IDs.
-        if pdef.pattern is not None:
-            if not re.fullmatch(pdef.pattern, value):
-                # A secret's value must never ride the error: it lands in logs + stderr.
-                if pdef.secret:
-                    raise ParamValidationError(
-                        f"Param {name!r} value ({len(value)} chars, withheld: "
-                        f"secret) does not match pattern {pdef.pattern!r}"
-                    )
-                raise ParamValidationError(
-                    f"Param {name!r} value {value!r} "
-                    f"does not match pattern {pdef.pattern!r}"
-                )
-        # Byte-cap validation: opaque content blobs like a Caddyfile
-        # fragment. Counts UTF-8 bytes (not characters) to match what
-        # actually traverses the wire.
-        if pdef.max_bytes is not None:
-            byte_size = len(value.encode("utf-8"))
-            if byte_size > pdef.max_bytes:
-                raise ParamValidationError(
-                    f"Param {name!r} is {byte_size} bytes, "
-                    f"exceeds max_bytes={pdef.max_bytes}"
-                )
-        # Shape validation: a JSON blob decoded (after the byte cap) and walked
-        # against its declared schema. Detail carries paths and rules, no values.
-        if pdef.schema is not None:
-            problem = _schema_problem(value, pdef.schema)
-            if problem is not None:
-                detail = "withheld: secret" if pdef.secret else problem
-                raise ParamValidationError(f"Param {name!r} {detail}")
+        problem = _param_problem(pdef, value)
+        if problem is not None:
+            raise ParamValidationError(f"Param {name!r} {problem}")
         merged[name] = value
 
     return merged
 
 
-def _schema_problem(value: str, schema: ParamSchema) -> str | None:
-    # A decode error's position is all that rides out; the document never does.
-    where: str | None = None
-    try:
-        decoded = json.loads(value)
-    except json.JSONDecodeError as exc:
-        where = f"line {exc.lineno} column {exc.colno}"
-    except RecursionError:
-        where = "nesting too deep"
-    if where is not None:
-        return f"is not valid JSON: {where}"
-    violation = schema_violation(decoded, schema)
-    return None if violation is None else f"does not match schema: {violation}"
+def _param_problem(pdef: ParamDef, value: Any) -> str | None:
+    """Why ``value`` fails ``pdef``, or None. A secret's value never rides the
+    message: it lands in logs and stderr. Shape detail carries paths and rules."""
+    if pdef.schema is None and not isinstance(value, str):
+        return f"is {type(value).__name__}, expected {pdef.wire_type}"
+    # Regex validation: short identifiers, bucket names, key IDs.
+    if pdef.pattern is not None and not re.fullmatch(pdef.pattern, value):
+        shown = (
+            f"({len(value)} chars, withheld: secret)" if pdef.secret else repr(value)
+        )
+        return f"value {shown} does not match pattern {pdef.pattern!r}"
+    # Byte cap: a string as its UTF-8 bytes (what rides the wire; an ASCII escape
+    # would inflate it), any other JSON value as its canonical encoding.
+    if pdef.max_bytes is not None:
+        encoded = value if isinstance(value, str) else canonical_json(value)
+        byte_size = len(encoded.encode("utf-8"))
+        if byte_size > pdef.max_bytes:
+            return f"is {byte_size} bytes, exceeds max_bytes={pdef.max_bytes}"
+    if pdef.schema is not None:
+        violation = schema_violation(value, pdef.schema)
+        if violation is not None:
+            return (
+                "withheld: secret"
+                if pdef.secret
+                else f"does not match schema: {violation}"
+            )
+    return None
 
 
 def non_secret_params(
     cmd_def: CommandSpec,
-    params: dict[str, str],
-) -> dict[str, str]:
+    params: dict[str, Any],
+) -> dict[str, Any]:
     """Drop ``secret``-flagged params, for event/log context. The handler keeps the full set."""
     return {
         name: value
@@ -233,7 +216,7 @@ def non_secret_params(
 def _resolve_command(
     template: list[str],
     config: ProjectConfig,
-    param_overrides: dict[str, str] | None = None,
+    param_overrides: dict[str, Any] | None = None,
 ) -> list[str]:
     """Replace placeholders with values from local config and param overrides.
 
@@ -285,7 +268,8 @@ def get_command(name: str, *, registry: dict[str, CommandSpec]) -> CommandSpec:
     if cmd_def.mode != "subprocess":
         raise CommandError(
             f"Command {name!r} is a {cmd_def.mode} command; send it on its own, "
-            "not in a sequence"
+            "not in a sequence",
+            reason=FailureReason.FORBIDDEN,
         )
     return cmd_def
 
@@ -297,7 +281,7 @@ def execute_command(
     sequence_id: str | None = None,
     *,
     registry: dict[str, CommandSpec],
-    runtime_params: dict[str, str] | None = None,
+    runtime_params: dict[str, Any] | None = None,
 ) -> CommandResultPayload:
     """Execute a whitelisted command and return the result.
 
@@ -334,7 +318,7 @@ def execute_command(
             stderr=proc.stderr,
             duration_ms=duration_ms,
             sequence_id=sequence_id,
-            failure_reason=None if proc.returncode == 0 else "exit_code",
+            failure_reason=None if proc.returncode == 0 else FailureReason.EXIT_CODE,
         )
     except subprocess.TimeoutExpired as exc:
         duration_ms = int((time.monotonic() - start) * 1000)
@@ -351,7 +335,7 @@ def execute_command(
             stderr=stderr,
             duration_ms=duration_ms,
             sequence_id=sequence_id,
-            failure_reason="timeout",
+            failure_reason=FailureReason.TIMEOUT,
         )
     except FileNotFoundError:
         duration_ms = int((time.monotonic() - start) * 1000)
@@ -365,7 +349,7 @@ def execute_command(
             stderr=f"Binary not found: {resolved[0]}",
             duration_ms=duration_ms,
             sequence_id=sequence_id,
-            failure_reason="not_found",
+            failure_reason=FailureReason.NOT_FOUND,
         )
     except OSError as exc:
         duration_ms = int((time.monotonic() - start) * 1000)
@@ -379,5 +363,5 @@ def execute_command(
             stderr=str(exc),
             duration_ms=duration_ms,
             sequence_id=sequence_id,
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
         )

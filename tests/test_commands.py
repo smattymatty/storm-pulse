@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -105,6 +106,36 @@ def test_execute_command_refuses_job_spec(mock_run: MagicMock) -> None:
     with pytest.raises(CommandError, match="job command"):
         execute_command("some_job", MagicMock(), "rid", registry={"some_job": job})
     mock_run.assert_not_called()
+
+
+def test_command_spec_result_is_a_dataclass_on_a_job_only() -> None:
+    """``result`` names the shape under ``command.result.result`` (CORE-011 d9):
+    a dataclass the typed walker can declare, on the one mode that returns one."""
+
+    @dataclass(frozen=True)
+    class Figures:
+        deleted_count: int
+
+    job = CommandSpec(
+        group="g",
+        command=["j"],
+        timeout=5,
+        mode="job",
+        handler=lambda p: None,
+        result=Figures,
+    )
+    assert job.result is Figures
+    with pytest.raises(ValueError, match="result must be a dataclass on a 'job'"):
+        CommandSpec(group="g", command=["/bin/true"], timeout=5, result=Figures)
+    with pytest.raises(ValueError, match="result must be a dataclass on a 'job'"):
+        CommandSpec(
+            group="g",
+            command=["j"],
+            timeout=5,
+            mode="job",
+            handler=lambda p: None,
+            result=dict,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -620,25 +651,42 @@ def test_validate_params_secret_pattern_mismatch_withholds_value() -> None:
     assert "SuperSecretValue123" not in str(excinfo.value)
 
 
-def test_validate_params_refuses_value_folding_another_param() -> None:
-    """Folding a param into another's value signs identically, so it is refused."""
+def test_validate_params_keeps_a_value_naming_another_param() -> None:
+    """The MAC signs the params as canonical JSON (CORE-011 d4), so a value
+    folding ``&other=`` is just a value: nothing to refuse any more."""
     cmd = _cmd_with_params(
         dst_key=ParamDef(
             placeholder="dst_key", default=None, max_bytes=256, secret=True
         ),
         src_id=ParamDef(placeholder="src_id", default=None, pattern="[A-Z0-9]+"),
     )
-    with pytest.raises(ParamValidationError, match="ambiguous") as excinfo:
-        validate_params(cmd, {"dst_key": "S3CR3T&src_id=GK123"})
-    assert "S3CR3T" not in str(excinfo.value)
+    value = "S3CR3T&src_id=GK123"
+    assert validate_params(cmd, {"dst_key": value}) == {"dst_key": value}
 
 
-def test_validate_params_allows_ampersand_that_names_no_param() -> None:
+@pytest.mark.parametrize("value", [7, True, None, ["web"], {"name": "web"}])
+def test_validate_params_pattern_param_refuses_a_non_string(value: Any) -> None:
+    """A pattern or byte cap declares a string; any other JSON type is refused
+    before the regex ever runs (CORE-011 d9)."""
     cmd = _cmd_with_params(
+        service=ParamDef(placeholder="service", default=None, pattern="[a-z]+"),
         apply=ParamDef(placeholder="apply", default=None, max_bytes=256),
     )
-    value = "make build && make install&x=1"
-    assert validate_params(cmd, {"apply": value}) == {"apply": value}
+    for name in ("service", "apply"):
+        with pytest.raises(ParamValidationError, match="expected string") as excinfo:
+            validate_params(cmd, {name: value})
+        assert f"Param {name!r} is {type(value).__name__}" in str(excinfo.value)
+
+
+def test_validate_params_secret_non_string_rides_no_value() -> None:
+    cmd = _cmd_with_params(
+        secret_key=ParamDef(
+            placeholder="secret_key", default=None, pattern=".+", secret=True
+        ),
+    )
+    with pytest.raises(ParamValidationError) as excinfo:
+        validate_params(cmd, {"secret_key": {"LeakedKey": "LeakedValue"}})
+    assert "Leaked" not in str(excinfo.value)
 
 
 def test_validate_params_none_default_no_override_skips() -> None:
@@ -674,45 +722,94 @@ _RULES_SCHEMA = {
 }
 
 
-def _rules_cmd(**overrides: Any) -> CommandSpec:
-    return _cmd_with_params(
-        rules=ParamDef(
-            placeholder="rules",
-            default=None,
-            max_bytes=4096,
-            schema=_RULES_SCHEMA,
-            **overrides,
-        ),
+def _rules_param(default: Any = None, **overrides: Any) -> ParamDef:
+    return ParamDef(
+        placeholder="rules",
+        default=default,
+        max_bytes=4096,
+        schema=_RULES_SCHEMA,
+        **overrides,
     )
 
 
-def test_validate_params_schema_accepts_a_conforming_blob_verbatim() -> None:
-    blob = '[{"AllowedOrigin": ["*"]}]'
-    assert validate_params(_rules_cmd(), {"rules": blob}) == {"rules": blob}
+def _rules_cmd(**overrides: Any) -> CommandSpec:
+    return _cmd_with_params(rules=_rules_param(**overrides))
+
+
+def test_validate_params_schema_accepts_a_conforming_value_verbatim() -> None:
+    value = [{"AllowedOrigin": ["*"]}]
+    validated = validate_params(_rules_cmd(), {"rules": value})
+    assert validated == {"rules": value} and validated["rules"] is value
 
 
 @pytest.mark.parametrize(
-    ("blob", "fragment"),
+    ("value", "fragment"),
     [
-        ("[{", "is not valid JSON"),
         (
-            '[{"ID": "x"}]',
+            '[{"AllowedOrigin": ["*"]}]',
+            "does not match schema: $: expected array, got str",
+        ),
+        (
+            {"AllowedOrigin": ["*"]},
+            "does not match schema: $: expected array, got dict",
+        ),
+        (
+            [{"ID": "x"}],
             "does not match schema: $[0]: missing required key 'AllowedOrigin'",
         ),
     ],
 )
-def test_validate_params_schema_names_the_decode_or_shape_failure(
-    blob: str, fragment: str
+def test_validate_params_schema_refuses_a_string_or_the_wrong_shape(
+    value: Any, fragment: str
 ) -> None:
-    # The walker's own table lives in tests/test_param_schema.py; this pins the seam.
+    """The JSON value is walked as it rides: a string holding JSON is not decoded,
+    it is a string where an array was declared (CORE-011 d9). The walker's own
+    table lives in tests/test_param_schema.py; this pins the seam."""
     with pytest.raises(ParamValidationError, match="Param 'rules' ") as excinfo:
-        validate_params(_rules_cmd(), {"rules": blob})
+        validate_params(_rules_cmd(), {"rules": value})
     assert fragment in str(excinfo.value)
 
 
 def test_validate_params_schema_runs_after_the_byte_cap() -> None:
-    with pytest.raises(ParamValidationError, match="exceeds max_bytes=4096"):
-        validate_params(_rules_cmd(), {"rules": "[" * 5000})
+    """The cap reads the value's canonical encoding: 4096 bytes is 4096 bytes of
+    ``[{"AllowedOrigin":["..."]}]``, however the sender spaced it."""
+    origin = "é" * 700  # 2 UTF-8 bytes each; 6 once canonical_json escapes it
+    rules = [{"AllowedOrigin": [origin]}]
+    with pytest.raises(
+        ParamValidationError, match="is 4224 bytes, exceeds max_bytes=4096"
+    ):
+        validate_params(_rules_cmd(), {"rules": rules})
+
+
+def test_validate_params_byte_cap_reads_a_string_as_utf8_not_escaped() -> None:
+    """Shell text is capped on the bytes that ride, so an accent costs two, not six."""
+    cmd = _cmd_with_params(
+        apply=ParamDef(placeholder="apply", default=None, max_bytes=8)
+    )
+    assert validate_params(cmd, {"apply": "éééé"}) == {"apply": "éééé"}
+    with pytest.raises(ParamValidationError, match="is 10 bytes, exceeds max_bytes=8"):
+        validate_params(cmd, {"apply": "ééééé"})
+
+
+def test_param_def_names_its_wire_type_from_the_schema() -> None:
+    assert ParamDef(placeholder="p", default=None, pattern=".*").wire_type == "string"
+    assert ParamDef(placeholder="p", default=None, max_bytes=8).wire_type == "string"
+    assert _rules_cmd().params["rules"].wire_type == "array"
+    shaped = ParamDef(
+        placeholder="p", default=None, max_bytes=8, schema={"type": "object"}
+    )
+    assert shaped.wire_type == "object"
+
+
+def test_param_def_default_must_be_a_value_of_the_declared_type() -> None:
+    """A ``"{}"`` default on an object param would fail every dispatch that omits it."""
+    with pytest.raises(ValueError, match="default .*expected array, got str"):
+        _rules_param(default="[]")
+    assert _rules_param(default=[]).default == []
+    with pytest.raises(ValueError, match="default .*expected string, got int"):
+        ParamDef(placeholder="tail", default=100, pattern="[0-9]+")
+    with pytest.raises(ValueError, match="default .*missing required key"):
+        _rules_param(default=[{"ID": "x"}])
 
 
 def test_validate_params_secret_schema_failure_withholds_detail() -> None:
@@ -727,7 +824,7 @@ def test_validate_params_secret_schema_failure_withholds_detail() -> None:
         ),
     )
     with pytest.raises(ParamValidationError, match="withheld: secret") as excinfo:
-        validate_params(cmd, {"secret_blob": '{"LeakedKeyName": "LeakedValue"}'})
+        validate_params(cmd, {"secret_blob": {"LeakedKeyName": "LeakedValue"}})
     text = str(excinfo.value)
     assert "LeakedKeyName" not in text and "LeakedValue" not in text and "$" not in text
 

@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
@@ -42,6 +43,7 @@ from stormpulse.garage.s3 import (
     S3AuthError,
     S3Error,
 )
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,27 @@ _MAX_NO_PROGRESS_ROUNDS = 3  # Consecutive rounds freeing zero objects before gi
 # a no-progress kill reported as ``clear_stalled`` with the window measured on a
 # real run rather than copied from _MAX_NO_PROGRESS_ROUNDS, and that window as a
 # parameter so a harness reaches the stalled outcome in seconds.
-_MAX_WALL_SECONDS = 1800  # Hard backstop: a clear never runs longer than this (600 until 0.5.1).
+_MAX_WALL_SECONDS = (
+    1800  # Hard backstop: a clear never runs longer than this (600 until 0.5.1).
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ClearBucketResult:
+    """What ``garage_bucket_clear`` returns under ``result``; the purge path adds
+    the credential-less fields and the upload abort count."""
+
+    deleted_count: int
+    bytes_freed: int
+    failed_count: int
+    errors: list[dict[str, str]]
+    duration_seconds: float
+    error: str | None = None
+    unfinished_uploads: int | None = None
+    uploads_aborted: int | None = None
+    credential_less: bool | None = None
+    purge_key_id: str | None = None
+    manual_cleanup_required: list[dict[str, str]] | None = None
 
 
 def make_clear_bucket_handler(
@@ -170,7 +192,7 @@ async def run_clear_bucket_credential_less(
     if not (admin_url and admin_token):
         # Fail loud: a credential-less clear never silently no-ops.
         return _credential_less_failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
                 "[garage] admin_url and admin_token_file."
@@ -184,13 +206,15 @@ async def run_clear_bucket_credential_less(
     await progress("starting", 0, None, "Minting temporary purge key")
     key_info, err = await asyncio.to_thread(
         admin_api.create_key,
-        admin_url=admin_url, admin_token=admin_token, name=purge_name,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        name=purge_name,
     )
     access_key_id = (key_info or {}).get("accessKeyId") or ""
     temp_secret = (key_info or {}).get("secretAccessKey") or ""
     if not (access_key_id and temp_secret):
         return _credential_less_failure(
-            failure_reason="purge_key_mint_failed",
+            failure_reason=FailureReason.PURGE_KEY_MINT_FAILED,
             stderr=(
                 f"CreateKey failed for purge key {purge_name!r}: "
                 f"{err or 'no key material in response'}"
@@ -214,7 +238,8 @@ async def run_clear_bucket_credential_less(
     finally:
         key_deleted, delete_err = await asyncio.to_thread(
             admin_api.delete_key,
-            admin_url=admin_url, admin_token=admin_token,
+            admin_url=admin_url,
+            admin_token=admin_token,
             access_key_id=access_key_id,
         )
         if not key_deleted:
@@ -224,7 +249,9 @@ async def run_clear_bucket_credential_less(
             logger.error(
                 "purge key %s could not be deleted after clear of bucket %s: %s; "
                 "delete it via the admin API (DeleteKey)",
-                access_key_id, bucket_id[:16], delete_err,
+                access_key_id,
+                bucket_id[:16],
+                delete_err,
             )
 
     outcome.extras["credential_less"] = True
@@ -255,26 +282,31 @@ async def _clear_with_temp_key(
     """Grant + alias the minted key, then run the ordinary clear via the alias."""
     ok, err = await asyncio.to_thread(
         admin_api.allow_bucket_key,
-        admin_url=admin_url, admin_token=admin_token,
-        bucket_ref=bucket_id, access_key_id=access_key_id,
-        read=True, write=True,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=access_key_id,
+        read=True,
+        write=True,
     )
     if not ok:
         return _credential_less_failure(
-            failure_reason="purge_key_grant_failed",
+            failure_reason=FailureReason.PURGE_KEY_GRANT_FAILED,
             stderr=f"AllowBucketKey failed for bucket {bucket_id[:16]}: {err}",
             started_at=started_at,
         )
 
     ok, err = await asyncio.to_thread(
         admin_api.add_bucket_alias_local,
-        admin_url=admin_url, admin_token=admin_token,
-        bucket_ref=bucket_id, access_key_id=access_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=access_key_id,
         local_alias=purge_alias,
     )
     if not ok:
         return _credential_less_failure(
-            failure_reason="purge_alias_failed",
+            failure_reason=FailureReason.PURGE_ALIAS_FAILED,
             stderr=(
                 f"AddBucketAlias (local) failed for bucket {bucket_id[:16]}: "
                 f"{err}. Without a key-scoped alias the minted key cannot "
@@ -292,7 +324,7 @@ async def _clear_with_temp_key(
         )
     except ValueError as exc:
         return _credential_less_failure(
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
             stderr=f"Failed to construct S3 client for purge clear: {exc}",
             started_at=started_at,
         )
@@ -330,7 +362,10 @@ async def _abort_all_uploads(client: GarageS3Client, bucket: str) -> int:
         except S3Error as exc:
             logger.warning(
                 "could not abort upload %s of %s in %s: %s",
-                upload.upload_id[:12], upload.key, bucket, exc,
+                upload.upload_id[:12],
+                upload.key,
+                bucket,
+                exc,
             )
             continue
         aborted += 1
@@ -339,7 +374,7 @@ async def _abort_all_uploads(client: GarageS3Client, bucket: str) -> int:
 
 def _credential_less_failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     stderr: str,
     started_at: float,
 ) -> JobOutcome:
@@ -478,9 +513,7 @@ async def run_clear_bucket(
     # quota, bytes the cap never governed).
     unfinished = await _count_unfinished_uploads(client, bucket)
 
-    await progress(
-        "finalizing", deleted_total, None, "Done", bytes_freed=bytes_freed
-    )
+    await progress("finalizing", deleted_total, None, "Done", bytes_freed=bytes_freed)
     return JobOutcome(
         success=True,
         exit_code=0,
@@ -496,9 +529,7 @@ async def run_clear_bucket(
     )
 
 
-async def _count_unfinished_uploads(
-    client: GarageS3Client, bucket: str
-) -> int | None:
+async def _count_unfinished_uploads(client: GarageS3Client, bucket: str) -> int | None:
     """How many multipart uploads are still in flight. None if unknowable.
 
     Best-effort by design: a failure to run this check must not fail a clear
@@ -511,7 +542,8 @@ async def _count_unfinished_uploads(
         logger.warning(
             "could not list multipart uploads for %s after clear; "
             "cannot confirm the bucket holds nothing: %s",
-            bucket, exc,
+            bucket,
+            exc,
         )
         return None
     return len(result.uploads)
@@ -538,7 +570,7 @@ def _auth_failure(exc: S3Error, started_at: float) -> JobOutcome:
         success=False,
         exit_code=-1,
         stderr=f"Authentication failed: {exc}",
-        failure_reason="auth_failed",
+        failure_reason=FailureReason.AUTH_FAILED,
         extras={
             "deleted_count": 0,
             "bytes_freed": 0,
@@ -566,7 +598,7 @@ def _clear_stalled(
         success=False,
         exit_code=-1,
         stderr=f"Clear stalled after freeing {deleted_total} object(s): {detail}",
-        failure_reason="clear_stalled",
+        failure_reason=FailureReason.CLEAR_STALLED,
         extras={
             "deleted_count": deleted_total,
             "bytes_freed": bytes_freed,

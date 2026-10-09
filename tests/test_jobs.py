@@ -7,7 +7,12 @@ import asyncio
 import pytest
 
 from stormpulse.commands.jobs import JobManager, JobOutcome, ProgressCallback
-from stormpulse.protocol import Envelope, MessageType, TransferStats
+from stormpulse.protocol import (
+    Envelope,
+    FailureReason,
+    MessageType,
+    TransferStats,
+)
 
 
 class _FakeWire:
@@ -45,7 +50,10 @@ async def test_progress_envelope_carries_the_structured_transfer_fields() -> Non
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         await progress(
-            "running", 2048, 4096, "1 of 2 objects",
+            "running",
+            2048,
+            4096,
+            "1 of 2 objects",
             transfer=TransferStats(
                 rate_bytes_per_sec=1024,
                 objects_current=1,
@@ -82,7 +90,10 @@ async def test_a_non_transfer_job_leaves_the_transfer_fields_absent() -> None:
 
     payload = wire.sent[0].payload
     for key in (
-        "rate_bytes_per_sec", "eta_seconds", "objects_current", "objects_total",
+        "rate_bytes_per_sec",
+        "eta_seconds",
+        "objects_current",
+        "objects_total",
     ):
         assert payload[key] is None
 
@@ -169,10 +180,12 @@ async def test_cancellation_skips_terminal_result() -> None:
     await started.wait()
     await mgr.shutdown_all()
 
-    # We saw the starting progress, but no terminal result.
+    # We saw the starting progress, but no terminal result, and no cancelled
+    # frame either: no reason means no socket to send one on.
     types = [e.type for e in wire.sent]
     assert MessageType.COMMAND_PROGRESS in types
     assert MessageType.COMMAND_RESULT not in types
+    assert MessageType.COMMAND_CANCELLED not in types
     assert mgr.active_count() == 0
 
 
@@ -214,6 +227,39 @@ async def test_concurrent_jobs_run_independently() -> None:
     barrier.set()
     await asyncio.wait_for(mgr._jobs["slow"], timeout=1.0)
     assert mgr.active_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_in_flight_lists_the_running_request_ids_only() -> None:
+    """The register-time declaration (CORE-011 d7): ids of jobs still running,
+    nothing of their params, and a finished job drops out."""
+    mgr = JobManager("agent-1", _FakeWire().send)
+    barrier = asyncio.Event()
+
+    async def parked(progress: ProgressCallback) -> JobOutcome:
+        await barrier.wait()
+        return JobOutcome(success=True)
+
+    async def quick(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(success=True)
+
+    assert mgr.in_flight() == []
+    mgr.start("req-parked", "rclone_migrate", "buckets", parked, params={"src": "x"})
+    mgr.start("req-quick", "cmd_quick", "test", quick)
+    await asyncio.wait_for(mgr._jobs["req-quick"], timeout=1.0)
+    assert mgr.in_flight() == ["req-parked"]
+
+    # Cancelled before its first tick: the task is done but its own reap never
+    # ran, so the entry lingers in ``_jobs`` (same done-ness ``_quota_pending`` uses).
+    mgr.start("req-never-ran", "cmd_quick", "test", quick)
+    mgr._jobs["req-never-ran"].cancel()
+    await asyncio.gather(mgr._jobs["req-never-ran"], return_exceptions=True)
+    assert "req-never-ran" in mgr._jobs
+    assert mgr.in_flight() == ["req-parked"]
+
+    barrier.set()
+    await asyncio.wait_for(mgr._jobs["req-parked"], timeout=1.0)
+    assert mgr.in_flight() == []
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +312,71 @@ async def test_progress_send_failure_does_not_crash_job() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The wire shape of command.result (CORE-011 d9)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_job_figures_ride_under_result_and_a_failure_carries_an_error() -> None:
+    """What the socket sees: extras nested under ``result``, never merged into the
+    top level; a failed job's reason and stderr as its ``error``, a success's null."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    async def cleared(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(success=True, extras={"deleted_count": 3, "success": False})
+
+    async def stalled(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(
+            success=False,
+            exit_code=-1,
+            stderr="Clear stalled: 503",
+            failure_reason=FailureReason.CLEAR_STALLED,
+            extras={"deleted_count": 1},
+        )
+
+    mgr.start("ok", "garage_bucket_clear", "buckets", cleared)
+    mgr.start("bad", "garage_bucket_clear", "buckets", stalled)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+
+    by_id = {e.payload["request_id"]: e.payload for e in wire.sent}
+    assert by_id["ok"]["result"] == {"deleted_count": 3, "success": False}
+    assert by_id["ok"]["success"] is True and by_id["ok"]["error"] is None
+    assert "deleted_count" not in by_id["ok"]
+    assert by_id["bad"]["result"] == {"deleted_count": 1}
+    assert by_id["bad"]["error"] == {
+        "code": "clear_stalled",
+        "http_status": None,
+        "upstream_code": None,
+        "message": "Clear stalled: 503",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_handler_that_parsed_an_upstream_code_keeps_it() -> None:
+    """A ``JobOutcome``'s ``upstream_code`` (rclone's exit) or ``error_code`` (an
+    adapter's own word) rides as the result's ``error``; the derived one is
+    only for a handler that set neither."""
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+
+    async def exited(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(
+            success=False,
+            exit_code=42,
+            stderr="rclone: boom",
+            failure_reason=FailureReason.RCLONE_ERROR,
+            upstream_code="42",
+        )
+
+    mgr.start("x", "rclone_migrate", "rclone", exited)
+    await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
+    (sent,) = wire.sent
+    assert sent.payload["failure_reason"] == "rclone_error"
+    assert sent.payload["error"]["upstream_code"] == "42"
+
+
+# ---------------------------------------------------------------------------
 # send_now: one-off envelope emission for synthetic failures
 # ---------------------------------------------------------------------------
 
@@ -286,7 +397,7 @@ async def test_send_now_puts_envelope_on_wire() -> None:
         stdout="",
         stderr="no handler",
         duration_ms=0,
-        failure_reason="os_error",
+        failure_reason=FailureReason.OS_ERROR,
     )
     await mgr.send_now(make_command_result("agent-1", payload))
     assert len(wire.sent) == 1
@@ -325,7 +436,7 @@ async def test_on_success_does_not_fire_on_failure_outcome() -> None:
         callback_calls.append("should-not-fire")
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
-        return JobOutcome(success=False, failure_reason="auth_failed")
+        return JobOutcome(success=False, failure_reason=FailureReason.AUTH_FAILED)
 
     mgr.start("req-fail", "cmd", "test", handler, on_success=on_success)
     await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
@@ -407,7 +518,7 @@ async def test_send_now_swallows_send_errors() -> None:
         stdout="",
         stderr="",
         duration_ms=0,
-        failure_reason="os_error",
+        failure_reason=FailureReason.OS_ERROR,
     )
     # Should not raise
     await mgr.send_now(make_command_result("agent-1", payload))
@@ -529,8 +640,11 @@ async def test_load_reports_pending_and_caps_running_at_the_semaphore() -> None:
     wire = _FakeWire()
     mgr = JobManager("agent-1", wire.send)
     assert mgr.load() == {
-        "pending": 0, "running": 0,
-        "quota_pending": 0, "quota_running": 0, "quota_rejected": 0,
+        "pending": 0,
+        "running": 0,
+        "quota_pending": 0,
+        "quota_running": 0,
+        "quota_rejected": 0,
     }
 
     barrier = asyncio.Event()
@@ -551,34 +665,40 @@ async def test_load_reports_pending_and_caps_running_at_the_semaphore() -> None:
 
     load = mgr.load()
     assert load["running"] == JobManager.MAX_CONCURRENT_JOBS  # capped, not stampeding
-    assert load["pending"] == n                               # all accepted, none done
-    assert load["pending"] - load["running"] == 2             # parked on the semaphore
+    assert load["pending"] == n  # all accepted, none done
+    assert load["pending"] - load["running"] == 2  # parked on the semaphore
     # These were non-quota jobs, so the quota-specific gauges stay at zero.
     assert load["quota_pending"] == 0
     assert load["quota_running"] == 0
 
     barrier.set()
     await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
-    assert mgr.load() == {                                     # permits + tasks released
-        "pending": 0, "running": 0,
-        "quota_pending": 0, "quota_running": 0, "quota_rejected": 0,
+    assert mgr.load() == {  # permits + tasks released
+        "pending": 0,
+        "running": 0,
+        "quota_pending": 0,
+        "quota_running": 0,
+        "quota_rejected": 0,
     }
 
 
 class TestParamContext:
     """Job params ride the job_result event as story context: which
-    bucket, which quota. Big values and typed-field collisions stay off
+    bucket, which quota. Big values and typed-field duplicates stay off
     the wire."""
 
     def test_small_params_ride_reserved_and_big_skipped(self) -> None:
         from stormpulse.commands.jobs import _param_context
 
-        out = _param_context({
-            "bucket_id": "abc",            # reserved: typed field, explicit
-            "max_size": "5000000000",      # the quota story
-            "command": "collides",         # reserved: typed field
-            "tenants": "x" * 5000,         # a manifest; too big for context
-        })
+        out = _param_context(
+            {
+                "bucket_id": "abc",  # a typed field already carries it
+                "max_size": "5000000000",  # the quota story
+                "command": "collides",  # a typed field already carries it
+                "trigger": "job",  # the envelope already carries it
+                "tenants": "x" * 5000,  # a manifest; too big for context
+            }
+        )
         assert out == {"max_size": "5000000000"}
 
     def test_none_params_is_empty(self) -> None:
@@ -612,15 +732,15 @@ async def test_quota_admission_open_until_the_ceiling() -> None:
     mgr = JobManager("agent-1", wire.send)
 
     for i in range(JobManager.MAX_CONCURRENT_JOBS):
-        assert mgr.quota_admission_open() is True   # room before this accept
+        assert mgr.quota_admission_open() is True  # room before this accept
         mgr.start(f"q-{i}", QUOTA, "buckets", _parked)
 
-    assert mgr.quota_admission_open() is False       # six accepted -> shut
+    assert mgr.quota_admission_open() is False  # six accepted -> shut
     assert mgr.should_shed_quota(QUOTA) is True
     assert mgr.should_shed_quota("rclone_migrate") is False  # non-quota unaffected
 
     await mgr.shutdown_all()
-    assert mgr.quota_admission_open() is True         # reopens after drain
+    assert mgr.quota_admission_open() is True  # reopens after drain
 
 
 @pytest.mark.asyncio
@@ -638,6 +758,7 @@ async def test_seventh_quota_job_is_shed_and_its_handler_never_runs() -> None:
             ran.append(rid)
             await barrier.wait()
             return JobOutcome(success=True)
+
         return handler
 
     admitted: list[str] = []
@@ -646,7 +767,9 @@ async def test_seventh_quota_job_is_shed_and_its_handler_never_runs() -> None:
         # This is byte-for-byte the branch dispatch_long_running takes.
         if mgr.should_shed_quota(QUOTA):
             await mgr.reject_quota_overloaded(
-                rid, QUOTA, "buckets",
+                rid,
+                QUOTA,
+                "buckets",
                 params={"bucket_id": f"bkt-{i}", "max_size": "5000000000"},
             )
         else:
@@ -659,7 +782,7 @@ async def test_seventh_quota_job_is_shed_and_its_handler_never_runs() -> None:
         if len(ran) >= JobManager.MAX_CONCURRENT_JOBS:
             break
         await asyncio.sleep(0)
-    assert sorted(ran) == sorted(admitted)   # the shed 7th never ran
+    assert sorted(ran) == sorted(admitted)  # the shed 7th never ran
     assert "q-6" not in ran
 
     shed = [e for e in wire.sent if e.payload.get("request_id") == "q-6"]
@@ -683,13 +806,16 @@ async def test_reject_emits_a_queryable_job_result_event_with_pressure() -> None
     events.buffer().drain("flush-before")  # clear anything from earlier tests
 
     await mgr.reject_quota_overloaded(
-        "q-x", QUOTA, "buckets",
+        "q-x",
+        QUOTA,
+        "buckets",
         params={"bucket_id": "bkt", "max_size": "9000000000"},
     )
 
     batch = events.buffer().drain("capture")
     rejected = [
-        e for e in batch
+        e
+        for e in batch
         if e.get("kind") == "job_result" and e.get("status") == "rejected"
     ]
     assert len(rejected) == 1
@@ -698,8 +824,28 @@ async def test_reject_emits_a_queryable_job_result_event_with_pressure() -> None
     assert ev["command_ref"] == "q-x"
     assert ev["failure_reason"] == "agent_overloaded"
     assert ev["bucket_id"] == "bkt"
-    assert ev["max_size"] == "9000000000"    # the requested quota rode as context
-    assert ev["quota_rejected"] == 1          # cumulative pressure gauge
+    assert ev["params"] == {"max_size": "9000000000"}  # the quota rode as context
+    assert ev["quota_rejected"] == 1  # cumulative pressure gauge
+
+
+@pytest.mark.asyncio
+async def test_a_job_with_no_context_params_rides_without_the_field() -> None:
+    """Every param a typed field already carries leaves ``params`` empty, and an
+    empty one is elided (CORE-011 d6: sparse events), never shipped as ``{}``."""
+    from stormpulse import events
+
+    mgr = JobManager("agent-1", _FakeWire().send)
+    events.buffer().drain("flush-before")
+
+    await mgr.reject_quota_overloaded(
+        "q-y", QUOTA, "buckets", params={"bucket_id": "bkt"}
+    )
+
+    (ev,) = [
+        e for e in events.buffer().drain("capture") if e.get("kind") == "job_result"
+    ]
+    assert ev["bucket_id"] == "bkt"
+    assert "params" not in ev
 
 
 @pytest.mark.asyncio
@@ -741,8 +887,8 @@ async def test_quota_running_caps_at_six_and_pending_drains() -> None:
             break
 
     load = mgr.load()
-    assert load["quota_running"] == JobManager.MAX_CONCURRENT_JOBS   # capped
-    assert load["quota_pending"] == n                               # overflow queued
+    assert load["quota_running"] == JobManager.MAX_CONCURRENT_JOBS  # capped
+    assert load["quota_pending"] == n  # overflow queued
 
     barrier.set()
     await asyncio.gather(*mgr._jobs.values(), return_exceptions=True)
@@ -756,13 +902,17 @@ async def test_quota_rejected_is_cumulative_and_survives_drain() -> None:
     wire = _FakeWire()
     mgr = JobManager("agent-1", wire.send)
 
-    await mgr.reject_quota_overloaded("r1", QUOTA, "buckets", params={"bucket_id": "b1"})
-    await mgr.reject_quota_overloaded("r2", QUOTA, "buckets", params={"bucket_id": "b2"})
+    await mgr.reject_quota_overloaded(
+        "r1", QUOTA, "buckets", params={"bucket_id": "b1"}
+    )
+    await mgr.reject_quota_overloaded(
+        "r2", QUOTA, "buckets", params={"bucket_id": "b2"}
+    )
 
     load = mgr.load()
-    assert load["quota_rejected"] == 2   # cumulative
-    assert load["quota_pending"] == 0    # nothing queued
-    assert load["quota_running"] == 0    # nothing running
+    assert load["quota_rejected"] == 2  # cumulative
+    assert load["quota_pending"] == 0  # nothing queued
+    assert load["quota_running"] == 0  # nothing running
 
 
 @pytest.mark.asyncio
@@ -773,7 +923,7 @@ async def test_quota_counters_stay_correct_when_queued_jobs_are_cancelled() -> N
     wire = _FakeWire()
     mgr = JobManager("agent-1", wire.send)
 
-    n = JobManager.MAX_CONCURRENT_JOBS + 2   # 2 wait on the semaphore
+    n = JobManager.MAX_CONCURRENT_JOBS + 2  # 2 wait on the semaphore
     for i in range(n):
         mgr.start(f"q-{i}", QUOTA, "buckets", _parked)
 
@@ -781,14 +931,16 @@ async def test_quota_counters_stay_correct_when_queued_jobs_are_cancelled() -> N
         await asyncio.sleep(0)
         if mgr.load()["quota_running"] >= JobManager.MAX_CONCURRENT_JOBS:
             break
-    assert mgr.load()["quota_running"] == JobManager.MAX_CONCURRENT_JOBS  # never exceeds
+    assert (
+        mgr.load()["quota_running"] == JobManager.MAX_CONCURRENT_JOBS
+    )  # never exceeds
     assert mgr.load()["quota_pending"] == n
 
     await mgr.shutdown_all()
     load = mgr.load()
     assert load["quota_running"] == 0
     assert load["quota_pending"] == 0
-    assert mgr._job_command == {}            # command map fully reaped
+    assert mgr._job_command == {}  # command map fully reaped
 
 
 @pytest.mark.asyncio
@@ -800,7 +952,9 @@ async def test_expanded_jobs_block_rides_the_metrics_envelope() -> None:
 
     wire = _FakeWire()
     mgr = JobManager("agent-1", wire.send)
-    await mgr.reject_quota_overloaded("r1", QUOTA, "buckets", params={"bucket_id": "b1"})
+    await mgr.reject_quota_overloaded(
+        "r1", QUOTA, "buckets", params={"bucket_id": "b1"}
+    )
 
     job_load = mgr.load()
     envelope = make_metrics_push("agent-1", FAKE_METRICS, job_load=job_load)
@@ -808,3 +962,95 @@ async def test_expanded_jobs_block_rides_the_metrics_envelope() -> None:
 
     assert round_tripped.payload["jobs"] == job_load
     assert round_tripped.payload["jobs"]["quota_rejected"] == 1
+
+
+# ---------------------------------------------------------------------------
+# A graceful stop: command.cancelled per in-flight job (CORE-011 d9)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_graceful_stop_sends_one_command_cancelled_per_in_flight_job() -> None:
+    """A running job and one parked on the semaphore each get the frame, after
+    their cancel settled so nothing of theirs follows it; a job that already
+    sent its result gets none. Without a reason (the socket is gone) the
+    existing test above holds: nothing is sent."""
+    from stormpulse.protocol import CancelReason
+
+    order: list[str] = []
+    wire = _FakeWire()
+
+    async def send(envelope: Envelope) -> None:
+        order.append(f"sent:{envelope.type.value}")
+        await wire.send(envelope)
+
+    mgr = JobManager("agent-1", send)
+    mgr._sem = asyncio.Semaphore(1)
+    started = asyncio.Event()
+
+    async def blocks(progress: ProgressCallback) -> JobOutcome:
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            order.append("cancelled")
+            raise
+        return JobOutcome(success=True)
+
+    async def quick(progress: ProgressCallback) -> JobOutcome:
+        return JobOutcome(success=True)
+
+    mgr.start("req-done", "cmd_quick", "test", quick)
+    await asyncio.wait_for(mgr._jobs["req-done"], timeout=1.0)
+    mgr.start("req-run", "garage_bucket_clear", "garage", blocks)
+    await started.wait()
+    mgr.start("req-parked", "rclone_migrate", "buckets", blocks)
+    await asyncio.sleep(0)
+    assert mgr.in_flight() == ["req-run", "req-parked"]
+
+    await mgr.shutdown_all(CancelReason.SHUTDOWN)
+
+    cancelled = [e for e in wire.sent if e.type is MessageType.COMMAND_CANCELLED]
+    assert [e.payload for e in cancelled] == [
+        {
+            "request_id": "req-run",
+            "command": "garage_bucket_clear",
+            "reason": "shutdown",
+        },
+        {"request_id": "req-parked", "command": "rclone_migrate", "reason": "shutdown"},
+    ]
+    # The parked job never ran, so one "cancelled"; both frames go out after it.
+    assert order == [
+        "sent:command.result",
+        "cancelled",
+        "sent:command.cancelled",
+        "sent:command.cancelled",
+    ]
+    assert mgr.active_count() == 0
+    assert mgr.in_flight() == []
+
+
+@pytest.mark.asyncio
+async def test_a_graceful_stop_survives_a_socket_that_dies_mid_fan_out() -> None:
+    """A SIGTERM can land on a socket already half-dead. The cancelled frames go
+    through the swallowing send, so a raise there never escapes ``shutdown_all``:
+    the watcher still reaches ``ws.close()`` instead of systemd's SIGKILL."""
+    from stormpulse.protocol import CancelReason
+
+    wire = _FakeWire()
+    mgr = JobManager("agent-1", wire.send)
+    started = asyncio.Event()
+
+    async def blocks(progress: ProgressCallback) -> JobOutcome:
+        started.set()
+        await asyncio.sleep(60)
+        return JobOutcome(success=True)
+
+    mgr.start("req-run", "garage_bucket_clear", "garage", blocks)
+    await started.wait()
+    wire.raise_on_send = ConnectionError("socket gone")
+
+    await mgr.shutdown_all(CancelReason.SHUTDOWN)
+
+    assert wire.sent == []
+    assert mgr.active_count() == 0 and mgr.in_flight() == []

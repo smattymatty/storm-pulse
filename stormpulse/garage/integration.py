@@ -19,7 +19,7 @@ from stormpulse.integrations import (
     InvestigationSpec,
     register_integration,
 )
-from stormpulse.sdk import Capability
+from stormpulse.sdk import Capability, SdkComponent
 
 
 def _enabled(config: GarageConfig) -> bool:
@@ -71,6 +71,13 @@ def _log_enricher(state: object) -> BucketIdResolver:
     )
 
 
+def _components(config: GarageConfig, state: object) -> tuple[SdkComponent, ...]:
+    """The daemon's version from the last state read; nothing before the first."""
+    if not isinstance(state, GarageState):
+        return ()
+    return (SdkComponent("garage", state.version, ""),)
+
+
 GARAGE_INTEGRATION = Integration(
     id="garage",
     parse_config=parse_garage_config,
@@ -83,6 +90,7 @@ GARAGE_INTEGRATION = Integration(
     read_affected=_read_affected,
     log_enrichers={"garage_s3": _log_enricher},
     capabilities=(Capability("garage.admin.v1", "garage"),),
+    components=_components,
     investigations=(
         InvestigationSpec(
             name="health",

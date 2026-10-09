@@ -10,20 +10,36 @@ builder, never sent over the wire (ADR buckets/000). If the admin API is not
 configured the handler fails loudly rather than leaving the flag in an unknown
 state.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class SetAccountKeyCapabilityResult:
+    """What ``garage_set_account_key_create_bucket`` returns under ``result``."""
+
+    access_key_id: str
+    enable: bool
+    duration_seconds: float
+    error: str | None = None
+
+
 def make_set_account_key_capability_handler(
-    params: dict[str, str], *, admin_url: str, admin_token: str,
+    params: dict[str, str],
+    *,
+    admin_url: str,
+    admin_token: str,
 ) -> JobHandler | None:
     """Build a JobHandler for ``garage_set_account_key_create_bucket``.
 
@@ -37,7 +53,8 @@ def make_set_account_key_capability_handler(
         logger.error(
             "garage_set_account_key_create_bucket bad params: "
             "access_key_id=%r enable=%r",
-            access_key_id, raw_enable,
+            access_key_id,
+            raw_enable,
         )
         return None
     if not admin_url or not admin_token:
@@ -86,7 +103,7 @@ async def run_set_account_key_capability(
             success=False,
             exit_code=-1,
             stderr=f"UpdateKey createBucket failed: {err}",
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
             extras={
                 "duration_seconds": _elapsed(started_at),
                 "error": err,

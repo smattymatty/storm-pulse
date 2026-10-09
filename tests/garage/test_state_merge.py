@@ -7,7 +7,10 @@ source state is untouched, the result a new object.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from stormpulse.garage.state import GarageBucket, GarageState
+from stormpulse.integrations import Freshness, FreshState
 from tests.helpers import make_garage_bucket
 
 ID_A = "aaaa000000000000" + "0" * 48
@@ -96,3 +99,14 @@ def test_source_state_is_untouched() -> None:
     # The original list and its bucket are unchanged (frozen state, new object).
     assert state.buckets[0].size_bytes == 1
     assert merged.buckets[0].size_bytes == 2
+
+
+def test_freshness_rides_the_envelope_not_the_blob() -> None:
+    # CORE-011 d5: the push envelope carries what a read says of itself; the
+    # state blob (the digest's bytes) does not repeat it, and a merge keeps it.
+    read = Freshness(False, "2026-10-09T00:00:00Z", (ID_A,))
+    state = replace(_state([make_garage_bucket(ID_A)]), read=read)
+    assert isinstance(state, FreshState)
+    assert state.freshness() == read
+    assert "read" not in state.to_dict()
+    assert state.with_items([make_garage_bucket(ID_B)]).freshness() == state.freshness()

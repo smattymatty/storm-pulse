@@ -19,14 +19,15 @@ transient failure, retried next tick.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +35,23 @@ logger = logging.getLogger(__name__)
 _TOTAL_STEPS = 2
 
 
+@dataclass(frozen=True, slots=True)
+class ConvergeAccountKeyRotationResult:
+    """What ``garage_converge_account_key_rotation`` returns under ``result``."""
+
+    old_key_id: str
+    new_key_id: str
+    converged: bool
+    remaining: int
+    manual_cleanup_required: list[dict[str, Any]]
+    garage_stderr: str
+    duration_seconds: float
+    transferred: list[str] | None = None
+
+
 def make_converge_account_key_rotation_handler(
     garage_config: GarageConfig,
-    params: dict[str, str],
+    params: dict[str, Any],
 ) -> JobHandler | None:
     """Build a JobHandler from runtime params.
 
@@ -52,23 +67,13 @@ def make_converge_account_key_rotation_handler(
     old_key_id = params["old_key_id"]
     new_key_id = params["new_key_id"]
 
-    # Leak path: an explicit owned-bucket snapshot, captured
-    # before the old key was reaped, fed in as JSON. When present, converge
-    # from it instead of reading the (now-dead) old key.
+    # Leak path: an explicit owned-bucket snapshot, captured before the old
+    # key was reaped, fed in as a JSON array (shape-checked at dispatch). When
+    # present, converge from it instead of reading the (now-dead) old key.
     bucket_snapshot = None
-    raw = params.get("bucket_snapshot")
-    if raw:
-        try:
-            parsed = json.loads(raw)
-        except (ValueError, TypeError):
-            logger.error(
-                "garage_converge_account_key_rotation: bad bucket_snapshot JSON",
-            )
-            return None
-        if isinstance(parsed, list):
-            bucket_snapshot = [
-                e for e in parsed if isinstance(e, dict) and e.get("id")
-            ]
+    parsed = params.get("bucket_snapshot")
+    if isinstance(parsed, list):
+        bucket_snapshot = [e for e in parsed if isinstance(e, dict) and e.get("id")]
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_converge_account_key_rotation(
@@ -107,7 +112,8 @@ def _owned(kinfo: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def _covers(
-    new_entry: dict[str, Any] | None, old_perms: tuple[bool, bool, bool],
+    new_entry: dict[str, Any] | None,
+    old_perms: tuple[bool, bool, bool],
 ) -> bool:
     """True if the new key already holds every tier the old key had on a bucket
     (so nothing needs transferring for it)."""
@@ -135,8 +141,9 @@ async def run_converge_account_key_rotation(
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
         return _failure(
-            failure_reason="admin_api_unconfigured",
-            old_key_id=old_key_id, new_key_id=new_key_id,
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
+            old_key_id=old_key_id,
+            new_key_id=new_key_id,
             stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
                 "[garage] admin_url and admin_token_file."
@@ -165,28 +172,38 @@ async def run_converge_account_key_rotation(
     else:
         old_info, old_err = await asyncio.to_thread(
             admin_api.get_key_info,
-            admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
+            admin_url=admin_url,
+            admin_token=admin_token,
+            access_key_id=old_key_id,
         )
         if old_info is None:
             if admin_api.is_not_found(old_err):
                 # Old key already gone: nothing left to transfer, converged.
-                return _converged(old_key_id, new_key_id, transferred=[], started_at=started_at)
+                return _converged(
+                    old_key_id, new_key_id, transferred=[], started_at=started_at
+                )
             return _failure(
-                failure_reason="old_key_read_failed",
-                old_key_id=old_key_id, new_key_id=new_key_id,
-                stderr=old_err, started_at=started_at,
+                failure_reason=FailureReason.OLD_KEY_READ_FAILED,
+                old_key_id=old_key_id,
+                new_key_id=new_key_id,
+                stderr=old_err,
+                started_at=started_at,
             )
         old_owned = _owned(old_info)
 
     new_info, new_err = await asyncio.to_thread(
         admin_api.get_key_info,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=new_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=new_key_id,
     )
     if new_info is None:
         return _failure(
-            failure_reason="new_key_read_failed",
-            old_key_id=old_key_id, new_key_id=new_key_id,
-            stderr=new_err, started_at=started_at,
+            failure_reason=FailureReason.NEW_KEY_READ_FAILED,
+            old_key_id=old_key_id,
+            new_key_id=new_key_id,
+            stderr=new_err,
+            started_at=started_at,
         )
 
     new_owned = _owned(new_info)
@@ -194,7 +211,8 @@ async def run_converge_account_key_rotation(
     # held on it (tier-aware). Re-granting an existing grant is a
     # no-op, so passes stay idempotent.
     to_transfer = [
-        bid for bid, v in old_owned.items()
+        bid
+        for bid, v in old_owned.items()
         if not _covers(new_owned.get(bid), v["perms"])
     ]
 
@@ -203,16 +221,22 @@ async def run_converge_account_key_rotation(
         return _converged(old_key_id, new_key_id, transferred=[], started_at=started_at)
 
     # ---- Step 2: grant the new key the old key's tier + alias per bucket ----
-    await progress("running", 1, _TOTAL_STEPS, f"Transferring {len(to_transfer)} bucket(s)")
+    await progress(
+        "running", 1, _TOTAL_STEPS, f"Transferring {len(to_transfer)} bucket(s)"
+    )
     transferred: list[str] = []
     manual: list[dict[str, Any]] = []
     for full_id in to_transfer:
         read, write, owner = old_owned[full_id]["perms"]
         ok, err = await asyncio.to_thread(
             admin_api.allow_bucket_key,
-            admin_url=admin_url, admin_token=admin_token,
-            bucket_ref=full_id, access_key_id=new_key_id,
-            read=read, write=write, owner=owner,
+            admin_url=admin_url,
+            admin_token=admin_token,
+            bucket_ref=full_id,
+            access_key_id=new_key_id,
+            read=read,
+            write=write,
+            owner=owner,
         )
         if not ok:
             manual.append({"type": "grant", "bucket_id": full_id[:16], "error": err})
@@ -222,8 +246,10 @@ async def run_converge_account_key_rotation(
             # Cosmetic: replicate the old key's name for the bucket on the new key.
             await asyncio.to_thread(
                 admin_api.add_bucket_alias_local,
-                admin_url=admin_url, admin_token=admin_token,
-                bucket_ref=full_id, access_key_id=new_key_id,
+                admin_url=admin_url,
+                admin_token=admin_token,
+                bucket_ref=full_id,
+                access_key_id=new_key_id,
                 local_alias=aliases[0],
             )
         transferred.append(full_id)
@@ -248,7 +274,11 @@ async def run_converge_account_key_rotation(
 
 
 def _converged(
-    old_key_id: str, new_key_id: str, *, transferred: list[str], started_at: float,
+    old_key_id: str,
+    new_key_id: str,
+    *,
+    transferred: list[str],
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=True,
@@ -269,7 +299,7 @@ def _converged(
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     old_key_id: str,
     new_key_id: str,
     stderr: str,

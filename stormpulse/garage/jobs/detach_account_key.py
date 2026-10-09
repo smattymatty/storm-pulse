@@ -23,16 +23,31 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class DetachAccountKeyResult:
+    """What ``garage_detach_account_key`` returns under ``result``."""
+
+    bucket_id: str
+    account_key_id: str
+    confirmed_detached: bool
+    manual_cleanup_required: list[dict[str, Any]]
+    garage_stderr: str
+    duration_seconds: float
+    alias_removed: bool | None = None
 
 
 def make_detach_account_key_handler(
@@ -81,7 +96,7 @@ async def run_detach_account_key(
     if not (admin_url and admin_token):
         # Fail loud: a migrated operation never silently no-ops.
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             bucket_id=bucket_id,
             account_key_id=account_key_id,
             stderr=(
@@ -95,13 +110,17 @@ async def run_detach_account_key(
     await progress("starting", 0, _TOTAL_STEPS, "Revoking account-key grant")
     ok, err = await asyncio.to_thread(
         admin_api.deny_bucket_key,
-        admin_url=admin_url, admin_token=admin_token,
-        bucket_ref=bucket_id, access_key_id=account_key_id,
-        read=True, write=True, owner=True,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=account_key_id,
+        read=True,
+        write=True,
+        owner=True,
     )
     if not ok:
         return _failure(
-            failure_reason="grant_revoke_failed",
+            failure_reason=FailureReason.GRANT_REVOKE_FAILED,
             bucket_id=bucket_id,
             account_key_id=account_key_id,
             stderr=err,
@@ -112,22 +131,28 @@ async def run_detach_account_key(
     await progress("running", 1, _TOTAL_STEPS, "Dropping account-key alias")
     alias_ok, _ = await asyncio.to_thread(
         admin_api.remove_bucket_alias_local,
-        admin_url=admin_url, admin_token=admin_token,
-        bucket_ref=bucket_id, access_key_id=account_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
+        access_key_id=account_key_id,
         local_alias=local_alias,
     )
     manual: list[dict[str, Any]] = []
     if not alias_ok:
-        manual.append({
-            "type": "local_alias",
-            "key_id": account_key_id, "alias": local_alias,
-        })
+        manual.append(
+            {
+                "type": "local_alias",
+                "key_id": account_key_id,
+                "alias": local_alias,
+            }
+        )
 
     # ---- Step 3: read-back confirmation (the Q1 grant-absent proof) ----
     await progress("running", 2, _TOTAL_STEPS, "Confirming grant removed")
     kinfo, kerr = await asyncio.to_thread(
         admin_api.get_key_info,
-        admin_url=admin_url, admin_token=admin_token,
+        admin_url=admin_url,
+        admin_token=admin_token,
         access_key_id=account_key_id,
     )
     if kinfo is None:
@@ -135,7 +160,7 @@ async def run_detach_account_key(
         # detach should never destroy the key; treat an unreadable key as
         # unconfirmed rather than asserting success.
         return _failure(
-            failure_reason="grant_absence_unconfirmed",
+            failure_reason=FailureReason.GRANT_ABSENCE_UNCONFIRMED,
             bucket_id=bucket_id,
             account_key_id=account_key_id,
             stderr=f"read-back GetKeyInfo failed: {kerr}",
@@ -143,7 +168,7 @@ async def run_detach_account_key(
         )
     if _still_granted(kinfo, bucket_id):
         return _failure(
-            failure_reason="grant_still_present",
+            failure_reason=FailureReason.GRANT_STILL_PRESENT,
             bucket_id=bucket_id,
             account_key_id=account_key_id,
             stderr=(
@@ -189,7 +214,7 @@ def _still_granted(kinfo: dict[str, Any], bucket_id: str) -> bool:
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     bucket_id: str,
     account_key_id: str,
     stderr: str,

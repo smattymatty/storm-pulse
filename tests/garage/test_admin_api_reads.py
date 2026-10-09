@@ -5,6 +5,7 @@ JSON path. We patch the single transport (``admin_api._request``) and assert the
 request shape (``?id=`` vs ``?search=``), the prefix-match guard, and the
 failure mapping to ``(None, error)`` so a bad read never raises.
 """
+
 from __future__ import annotations
 
 import json
@@ -22,7 +23,8 @@ _RequestFn = Callable[..., tuple[int | None, str]]
 
 
 def _fake_request(
-    status: int | None, body: str,
+    status: int | None,
+    body: str,
 ) -> tuple[_RequestFn, dict[str, str]]:
     """Build a drop-in for admin_api._request that records the path it saw."""
     seen: dict[str, str] = {}
@@ -67,7 +69,8 @@ class TestClusterReads:
         assert seen["path"] == "/v2/ListKeys"
 
     def test_list_keys_non_list_is_error(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         req, _seen = _fake_request(200, json.dumps({"oops": 1}))
         monkeypatch.setattr(admin_api, "_request", req)
@@ -76,7 +79,8 @@ class TestClusterReads:
         assert "non-list" in err
 
     def test_get_key_info_returns_buckets(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         body = json.dumps({"accessKeyId": "GK1", "buckets": [{"id": "b1"}]})
         req, seen = _fake_request(200, body)
@@ -98,7 +102,8 @@ class TestGetBucketInfo:
         assert "search=" not in seen["path"]
 
     def test_prefix_uses_search_and_verifies_match(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         req, seen = _fake_request(200, json.dumps({"id": _FULL_ID, "bytes": 9}))
         monkeypatch.setattr(admin_api, "_request", req)
@@ -108,7 +113,8 @@ class TestGetBucketInfo:
         assert f"search={_PREFIX}" in seen["path"]
 
     def test_prefix_mismatch_is_rejected(
-        self, monkeypatch: pytest.MonkeyPatch,
+        self,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # search returned a bucket whose id does NOT start with the prefix.
         req, _ = _fake_request(200, json.dumps({"id": "ffff" + "0" * 60}))
@@ -198,3 +204,10 @@ class TestEventTarget:
         assert admin_api._event_target("ListBuckets", "/v2/ListBuckets") == {}
         assert admin_api._event_target("GetClusterStatus", "/v2/GetClusterStatus") == {}
         assert admin_api._event_target("GetNodeInfo", "/v2/GetNodeInfo?id=n1") == {}
+
+    def test_both_targets_are_declared_admin_call_fields(self) -> None:
+        # The splat the AST fitness check cannot follow, pinned here instead.
+        from stormpulse.events import declared_events
+
+        declared = declared_events()["garage_admin"]["admin_call"]
+        assert {"bucket_id", "key_id"} <= set(declared)

@@ -19,9 +19,11 @@ import json
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
+from stormpulse.protocol import FailureReason
 from stormpulse.rclone.config import RcloneConfig
 from stormpulse.rclone.jobs import failure_outcome, remote_from_params
 from stormpulse.rclone.runner import (
@@ -51,6 +53,28 @@ _CHECK_MISMATCH_EXIT = 1
 # rclone filters treat glob metacharacters specially; a key like
 # "photo[1].jpg" must be escaped or the check filter matches nothing.
 _GLOB_CHARS = re.compile(r"([\\*?\[\]{}])")
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreSample:
+    """One object the restore test copied and verified, and why it was picked."""
+
+    key: str
+    bytes: int
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreTestResult:
+    """What ``rclone_restore_test`` returns under ``result``. Every field is
+    optional: a failed test that could not purge its scratch prefix reports
+    the cleanup alone."""
+
+    samples: list[RestoreSample] | None = None
+    sample_object: str | None = None
+    sample_bytes: int | None = None
+    duration_seconds: float | None = None
+    manual_cleanup_required: list[dict[str, str]] | None = None
 
 
 def _escape_filter(path: str) -> str:
@@ -90,22 +114,19 @@ async def run_restore_test(
     samples = select_samples(listed)
     if not samples:
         return failure_outcome(
-            "no_sample_object",
+            FailureReason.NO_SAMPLE_OBJECT,
             "Bucket has no non-empty object outside the scratch prefix; "
             "nothing to verify.",
         )
 
     try:
-        outcome = await _round_trip(
-            progress, config, env, bucket, samples, started_at
-        )
+        outcome = await _round_trip(progress, config, env, bucket, samples, started_at)
     finally:
         cleanup_ok = await _purge_scratch(config, env, bucket)
     if not cleanup_ok:
         # Leftover scratch is customer-visible clutter in their own bucket.
         logger.error(
-            "restore-test scratch prefix %s/%s could not be deleted; "
-            "purge it manually",
+            "restore-test scratch prefix %s/%s could not be deleted; purge it manually",
             bucket,
             SCRATCH_PREFIX,
         )
@@ -132,15 +153,21 @@ async def _list_bucket(
             timeout=_STEP_TIMEOUT_SECONDS,
         )
     except TimeoutError:
-        return failure_outcome("timeout", f"listing timed out after {_STEP_TIMEOUT_SECONDS}s")
+        return failure_outcome(
+            FailureReason.TIMEOUT, f"listing timed out after {_STEP_TIMEOUT_SECONDS}s"
+        )
     except OSError as exc:
-        return failure_outcome("os_error", str(exc))
+        return failure_outcome(FailureReason.OS_ERROR, str(exc))
     if code != 0:
-        return failure_outcome(reason_for_exit(code), tail_capped(stderr), exit_code=code)
+        return failure_outcome(
+            reason_for_exit(code), tail_capped(stderr), exit_code=code
+        )
     try:
         entries: list[dict[str, Any]] = json.loads(stdout)
     except ValueError:
-        return failure_outcome("unparseable_output", "rclone lsjson returned unparseable JSON")
+        return failure_outcome(
+            FailureReason.UNPARSEABLE_OUTPUT, "rclone lsjson returned unparseable JSON"
+        )
     return entries
 
 
@@ -210,7 +237,9 @@ async def _round_trip(
 
     for i, (path, _size, _reason) in enumerate(samples, start=1):
         await progress(
-            "running", i, total_steps,
+            "running",
+            i,
+            total_steps,
             f"Copying sample {i}/{len(samples)} to scratch prefix",
         )
         try:
@@ -223,14 +252,20 @@ async def _round_trip(
                 timeout=_STEP_TIMEOUT_SECONDS,
             )
         except TimeoutError:
-            return failure_outcome("timeout", f"copy timed out after {_STEP_TIMEOUT_SECONDS}s")
+            return failure_outcome(
+                FailureReason.TIMEOUT, f"copy timed out after {_STEP_TIMEOUT_SECONDS}s"
+            )
         except OSError as exc:
-            return failure_outcome("os_error", str(exc))
+            return failure_outcome(FailureReason.OS_ERROR, str(exc))
         if code != 0:
-            return failure_outcome(reason_for_exit(code), tail_capped(stderr), exit_code=code)
+            return failure_outcome(
+                reason_for_exit(code), tail_capped(stderr), exit_code=code
+            )
 
     await progress(
-        "running", len(samples) + 1, total_steps,
+        "running",
+        len(samples) + 1,
+        total_steps,
         "Verifying restored copies against the Storm copies",
     )
     include_filters: list[str] = []
@@ -249,12 +284,14 @@ async def _round_trip(
             timeout=_STEP_TIMEOUT_SECONDS,
         )
     except TimeoutError:
-        return failure_outcome("timeout", f"check timed out after {_STEP_TIMEOUT_SECONDS}s")
+        return failure_outcome(
+            FailureReason.TIMEOUT, f"check timed out after {_STEP_TIMEOUT_SECONDS}s"
+        )
     except OSError as exc:
-        return failure_outcome("os_error", str(exc))
+        return failure_outcome(FailureReason.OS_ERROR, str(exc))
     if code != 0:
         reason = (
-            "restore_mismatch"
+            FailureReason.RESTORE_MISMATCH
             if code == _CHECK_MISMATCH_EXIT
             else reason_for_exit(code)
         )
@@ -265,10 +302,7 @@ async def _round_trip(
     return JobOutcome(
         success=True,
         exit_code=0,
-        stdout=(
-            f"Restored and verified {len(samples)} object(s), "
-            f"{total_bytes} bytes"
-        ),
+        stdout=(f"Restored and verified {len(samples)} object(s), {total_bytes} bytes"),
         extras={
             # The full receipt: which objects, how big, and why each was
             # selected - so the dashboard can state exactly what this test

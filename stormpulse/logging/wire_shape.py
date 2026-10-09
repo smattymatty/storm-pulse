@@ -30,6 +30,10 @@ GOLDEN_LINES: dict[str, dict[str, str]] = {
             "192.0.2.10 (via [::1]:37780) (key GKdeadbeef1234567890abcdef) "
             "HEAD /usr-0-example-bucket/some/key.txt"
         ),
+        "admin": (
+            "2026-04-17T10:12:19.432094Z  INFO garage_api_admin::api_server: "
+            "Proxied admin API request: CreateKey"
+        ),
     },
     "caddy_json": {
         "access": json.dumps(
@@ -87,36 +91,41 @@ GOLDEN_LINES: dict[str, dict[str, str]] = {
     },
 }
 
+# One shape for both garage_s3 variants: an admin row carries the same keys
+# with s3_op, peer_ip and the request fields empty.
+_GARAGE_S3_FIELDS = (
+    "bucket",
+    "key_id",
+    "level",
+    "message",
+    "method",
+    "object_key",
+    "peer_ip",
+    "proxy",
+    "response_code",
+    "s3_op",
+    "truncated",
+    "ts",
+)
+
 # Declared parser fields, sorted for readable artifact diffs.
 # Parser field changes require updating these declarations.
 DECLARED: dict[str, dict[str, tuple[str, ...]]] = {
     "garage_s3": {
-        "request": (
-            "bucket",
-            "client_ip",
-            "key_id",
-            "level",
-            "message",
-            "method",
-            "object_key",
-            "path",
-            "proxy",
-            "response_code",
-            "truncated",
-            "ts",
-        ),
+        "request": _GARAGE_S3_FIELDS,
+        "admin": _GARAGE_S3_FIELDS,
     },
     "caddy_json": {
         "access": (
             "bucket",
             "bytes_sent",
-            "client_ip",
             "duration_ms",
             "host",
             "level",
             "message",
             "method",
-            "path",
+            "peer_ip",
+            "s3_op",
             "status",
             "truncated",
             "ts",

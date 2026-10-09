@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 
 CHECK_INTERVAL_SECONDS = 86_400.0
 _FAILED = "cert_renew_failed"
+events.declare_event("cert", _FAILED, {"reason", "days_remaining"})
+events.declare_event("cert", "cert_renew_succeeded", {"days_remaining"})
 
 
 def _load(agent: Agent) -> LoadedTls:

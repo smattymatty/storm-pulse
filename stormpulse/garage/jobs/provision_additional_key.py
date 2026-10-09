@@ -22,6 +22,7 @@ from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.tiers import TIER_PERMS
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,22 @@ _TOTAL_STEPS = 3
 # Here the ``all`` tier mints an owner key onto a bucket whose owner slot is
 # free - the claim-admin path for an adopted bucket. rw/ro remain non-owner
 # tiered keys added to a bucket that already has one.
+
+
+@dataclass(frozen=True, slots=True)
+class ProvisionAdditionalKeyResult:
+    """What ``garage_provision_additional_key`` returns under ``result``."""
+
+    new_key_id: str | None
+    key_tier: str
+    step_completed: str | None
+    step_failed: str | None
+    rollback_status: str
+    manual_cleanup_required: list[dict[str, str]]
+    garage_stderr: str
+    duration_seconds: float
+    new_secret: str | None = None
+    new_key_name: str | None = None
 
 
 def make_provision_additional_key_handler(
@@ -109,7 +126,7 @@ async def run_provision_additional_key(
     if key_tier not in TIER_PERMS:
         # Defensive: handler factory rejects this, but enforce here too.
         return _failure(
-            failure_reason="invalid_key_tier",
+            failure_reason=FailureReason.INVALID_KEY_TIER,
             step_failed=None,
             state=state,
             stderr=f"key_tier must be one of {tuple(TIER_PERMS)}, got {key_tier!r}",
@@ -122,7 +139,7 @@ async def run_provision_additional_key(
     if not (admin_url and admin_token):
         # Fail loud: a migrated operation never silently no-ops.
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             step_failed=None,
             state=state,
             stderr=(
@@ -147,7 +164,7 @@ async def run_provision_additional_key(
     )
     if info is None:
         return _failure(
-            failure_reason="new_key_create_failed",
+            failure_reason=FailureReason.NEW_KEY_CREATE_FAILED,
             step_failed="new_key_create",
             state=state,
             stderr=err,
@@ -161,7 +178,7 @@ async def run_provision_additional_key(
         # The key was created but the response didn't identify it; we can't
         # roll it back without its id, so flag it for manual cleanup.
         return _failure(
-            failure_reason="new_key_create_failed",
+            failure_reason=FailureReason.NEW_KEY_CREATE_FAILED,
             step_failed="new_key_create",
             state=state,
             stderr="CreateKey response missing accessKeyId",
@@ -191,7 +208,7 @@ async def run_provision_additional_key(
     if not ok:
         rollback = await _rollback(garage_config, state)
         return _failure(
-            failure_reason="new_key_permission_grant_failed",
+            failure_reason=FailureReason.NEW_KEY_PERMISSION_GRANT_FAILED,
             step_failed="new_key_permission_grant",
             state=state,
             stderr=err,
@@ -215,7 +232,7 @@ async def run_provision_additional_key(
     if not ok:
         rollback = await _rollback(garage_config, state)
         return _failure(
-            failure_reason="new_key_alias_attach_failed",
+            failure_reason=FailureReason.NEW_KEY_ALIAS_ATTACH_FAILED,
             step_failed="new_key_alias_attach",
             state=state,
             stderr=err,
@@ -327,7 +344,7 @@ def _remaining_after_perm_halt(
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     step_failed: str | None,
     state: _AdditionalKeyState,
     stderr: str,
@@ -346,7 +363,11 @@ def _failure(
         "duration_seconds": _elapsed(started_at),
     }
     extras.update(extras_extra)
-    final_reason = "rollback_failed" if rollback_status == "partial" else failure_reason
+    final_reason = (
+        FailureReason.ROLLBACK_FAILED
+        if rollback_status == "partial"
+        else failure_reason
+    )
     return JobOutcome(
         success=False,
         exit_code=-1,

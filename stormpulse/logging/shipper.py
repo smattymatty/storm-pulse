@@ -76,14 +76,12 @@ class LogShipper:
         self,
         bucket_id_resolver: BucketIdResolver | None = None,
     ) -> Batch | None:
-        """Read new lines, filter, parse, and return a batch ready to ship.
+        """Read, filter and parse new lines from a worker thread.
 
-        ``None`` when nothing ship-worthy came (no new lines, or none for this
-        group); a Batch with ``lines=[]`` and ``dropped > 0`` when every line
-        failed to parse, the signal for an unparseable source.
-        ``bucket_id_resolver`` is the tick-fresh ``(key_id, name) -> bucket_id``
-        map: a ``garage_s3`` group stamps ``bucket_id`` on every line (``''``
-        when unknown); other groups carry no key_id and ignore it. Call from a thread.
+        Return None when no lines match, or an empty batch with a drop count
+        when every matching line fails parsing. The current-state resolver maps
+        (key_id, bucket name) to bucket_id for garage_s3; unresolved IDs are empty.
+        Other parsers ignore the resolver.
         """
         max_batch = self._group.max_lines_per_batch
         raw_lines, from_pos, to_pos = self._tailer.read_new_lines(max_batch)
@@ -91,9 +89,7 @@ class LogShipper:
             return None
 
         filter_substr = self._group.filter_contains
-        stamp_bucket_id = (
-            bucket_id_resolver is not None and self._group.parser == _BUCKET_ID_PARSER
-        )
+        stamp_bucket_id = self._group.parser == _BUCKET_ID_PARSER
         parsed: list[dict[str, Any]] = []
         dropped = 0
         any_matched_filter = False
@@ -108,10 +104,10 @@ class LogShipper:
                 dropped += 1
                 continue
             if stamp_bucket_id:
-                assert bucket_id_resolver is not None  # narrowed by stamp_bucket_id
-                entry["bucket_id"] = bucket_id_resolver(
-                    entry.get("key_id", ""),
-                    entry.get("bucket", ""),
+                entry["bucket_id"] = (
+                    bucket_id_resolver(entry.get("key_id", ""), entry.get("bucket", ""))
+                    if bucket_id_resolver is not None
+                    else ""
                 )
             parsed.append(entry)
 

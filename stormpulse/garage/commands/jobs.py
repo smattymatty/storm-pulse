@@ -77,47 +77,79 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
     # its specs, so a garage-less host never imports handler code. Each thunk
     # fires at dispatch, when validated params exist.
     from stormpulse.garage.jobs.attach_account_key import (
+        AttachAccountKeyResult,
         make_attach_account_key_handler,
     )
     from stormpulse.garage.jobs.bucket_cors import (
+        BucketCorsResult,
         make_bucket_cors_get_handler,
         make_bucket_cors_set_handler,
     )
-    from stormpulse.garage.jobs.cleanup_uploads import make_cleanup_uploads_handler
-    from stormpulse.garage.jobs.clear_bucket import make_clear_bucket_handler
+    from stormpulse.garage.jobs.cleanup_uploads import (
+        CleanupUploadsResult,
+        make_cleanup_uploads_handler,
+    )
+    from stormpulse.garage.jobs.clear_bucket import (
+        ClearBucketResult,
+        make_clear_bucket_handler,
+    )
     from stormpulse.garage.jobs.converge_account_key_rotation import (
+        ConvergeAccountKeyRotationResult,
         make_converge_account_key_rotation_handler,
     )
-    from stormpulse.garage.jobs.delete_key import make_delete_key_handler
+    from stormpulse.garage.jobs.delete_key import (
+        DeleteKeyResult,
+        make_delete_key_handler,
+    )
     from stormpulse.garage.jobs.delete_provisioned_bucket import (
+        DeleteProvisionedBucketResult,
         make_delete_provisioned_bucket_handler,
     )
     from stormpulse.garage.jobs.detach_account_key import (
+        DetachAccountKeyResult,
         make_detach_account_key_handler,
     )
     from stormpulse.garage.jobs.enforce_account_key_tier import (
+        EnforceAccountKeyTierResult,
         make_enforce_account_key_tier_handler,
     )
-    from stormpulse.garage.jobs.get_bucket_owners import make_get_bucket_owners_handler
-    from stormpulse.garage.jobs.get_key_buckets import make_get_key_buckets_handler
+    from stormpulse.garage.jobs.get_bucket_owners import (
+        GetBucketOwnersResult,
+        make_get_bucket_owners_handler,
+    )
+    from stormpulse.garage.jobs.get_key_buckets import (
+        GetKeyBucketsResult,
+        make_get_key_buckets_handler,
+    )
     from stormpulse.garage.jobs.provision_account_key import (
+        ProvisionAccountKeyResult,
         make_provision_account_key_handler,
     )
     from stormpulse.garage.jobs.provision_additional_key import (
+        ProvisionAdditionalKeyResult,
         make_provision_additional_key_handler,
     )
     from stormpulse.garage.jobs.provision_bucket import (
+        ProvisionBucketResult,
         make_provision_customer_bucket_handler,
     )
-    from stormpulse.garage.jobs.rotate_key import make_rotate_customer_key_handler
+    from stormpulse.garage.jobs.rotate_key import (
+        RotateKeyResult,
+        make_rotate_customer_key_handler,
+    )
     from stormpulse.garage.jobs.set_account_key_capability import (
+        SetAccountKeyCapabilityResult,
         make_set_account_key_capability_handler,
     )
-    from stormpulse.garage.jobs.set_quota import make_set_quota_handler
+    from stormpulse.garage.jobs.set_quota import SetQuotaResult, make_set_quota_handler
     from stormpulse.garage.jobs.snapshot_and_reap_account_key import (
+        SnapshotAndReapAccountKeyResult,
         make_snapshot_and_reap_account_key_handler,
     )
-    from stormpulse.garage.jobs.walk_bucket_stats import make_walk_bucket_stats_handler
+    from stormpulse.garage.jobs.walk_bucket_stats import (
+        WalkBucketStatsResult,
+        make_walk_bucket_stats_handler,
+    )
 
     return {
         # The Headroom wall, applied via the Garage admin HTTP API
@@ -132,6 +164,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             timeout=30,  # single admin API call; long_running ignores this for duration
             description="Set the max-size Headroom quota on a bucket via the Garage admin API",
             mode="job",
+            result=SetQuotaResult,
             # The recompute's OWN action: a post-success push would re-enter the
             # recompute and dispatch more set_quotas (a feedback loop), and a quota
             # change alters no customer-visible usage. No post-mutation refresh.
@@ -163,6 +196,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "own rule shape. The caller feeds them back as expected_rules."
             ),
             mode="job",
+            result=BucketCorsResult,
             handler=lambda params: make_bucket_cors_get_handler(
                 params,
                 admin_url=config.admin_url,
@@ -184,6 +218,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "live rules differ from expected_rules. An empty rules list clears."
             ),
             mode="job",
+            result=BucketCorsResult,
             handler=lambda params: make_bucket_cors_set_handler(
                 params,
                 admin_url=config.admin_url,
@@ -211,6 +246,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             timeout=30,  # single admin API call; long_running ignores this for duration
             description="Set or clear an account key's allow_create_bucket capability via the Garage admin API.",
             mode="job",
+            result=SetAccountKeyCapabilityResult,
             handler=lambda params: make_set_account_key_capability_handler(
                 params,
                 admin_url=config.admin_url,
@@ -238,8 +274,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             ],  # internal - handled by JobManager
             timeout=600,  # per-step reference; long_running ignores it for total duration
             description="Orchestrated bucket + admin key provisioning. Atomic with rollback. The rw/ro keys are added on demand via garage_provision_additional_key.",
-            sensitive_output=True,  # secrets ride in stdout/extras
+            sensitive_output=True,  # secrets ride in stdout/result
             mode="job",
+            result=ProvisionBucketResult,
             handler=lambda params: make_provision_customer_bucket_handler(
                 config, params
             ),
@@ -267,6 +304,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             requires_confirmation=True,
             description="Orchestrated bucket deletion: detaches all aliases (using a temp global to bypass the orphan-rule deadlock when only locals exist), then deletes. Atomic with rollback.",
             mode="job",
+            result=DeleteProvisionedBucketResult,
             handler=lambda params: make_delete_provisioned_bucket_handler(
                 config, params
             ),
@@ -283,8 +321,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             ],  # internal - handled by JobManager
             timeout=120,
             description="Orchestrated provisioning of an additional rw or ro key on an existing bucket. Atomic with rollback.",
-            sensitive_output=True,  # the new secret rides in stdout/extras
+            sensitive_output=True,  # the new secret rides in stdout/result
             mode="job",
+            result=ProvisionAdditionalKeyResult,
             handler=lambda params: make_provision_additional_key_handler(
                 config, params
             ),
@@ -316,8 +355,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             ],  # internal - handled by JobManager
             timeout=60,
             description="Orchestrated provisioning of an account key for customer aws cli / terraform bucket lifecycle. The tier governs create capability: an Admin key is minted with key-level allow_create_bucket, a Read-Write/Read-Only key with create disabled. One step, no rollback - owns no bucket until the customer creates one over S3.",
-            sensitive_output=True,  # the one-time secret rides in stdout/extras
+            sensitive_output=True,  # the one-time secret rides in stdout/result
             mode="job",
+            result=ProvisionAccountKeyResult,
             handler=lambda params: make_provision_account_key_handler(config, params),
             params={
                 "new_key_name": ParamDef(
@@ -339,8 +379,9 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             command=["garage_rotate_customer_key"],  # internal - handled by JobManager
             timeout=120,
             description="Orchestrated key rotation: create new key, attach local alias, delete old key. Atomic with rollback.",
-            sensitive_output=True,  # secrets ride in stdout/extras
+            sensitive_output=True,  # secrets ride in stdout/result
             mode="job",
+            result=RotateKeyResult,
             handler=lambda params: make_rotate_customer_key_handler(config, params),
             params={
                 "old_key_id": ParamDef(
@@ -382,6 +423,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "dead."
             ),
             mode="job",
+            result=DeleteKeyResult,
             handler=lambda params: make_delete_key_handler(config, params),
             params={
                 "key_id": key_id_param("Garage key ID to delete"),
@@ -400,6 +442,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "key survives. Confirmed by the deny op's own result, never a 404."
             ),
             mode="job",
+            result=DetachAccountKeyResult,
             handler=lambda params: make_detach_account_key_handler(config, params),
             params={
                 "bucket_id": bucket_id_param("Bucket UUID (16 or 64-char Garage ID)"),
@@ -427,6 +470,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "widening of a root credential, least-privilege by tier."
             ),
             mode="job",
+            result=AttachAccountKeyResult,
             handler=lambda params: make_attach_account_key_handler(config, params),
             params={
                 "bucket_id": bucket_id_param("Bucket UUID (16 or 64-char Garage ID)"),
@@ -459,6 +503,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "idempotent when already enforced."
             ),
             mode="job",
+            result=EnforceAccountKeyTierResult,
             handler=lambda params: make_enforce_account_key_tier_handler(
                 config, params
             ),
@@ -492,6 +537,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "Additive only (4a); the old key keeps its access until 4b."
             ),
             mode="job",
+            result=ConvergeAccountKeyRotationResult,
             # Re-dispatched each tick until it converges, so no single success is
             # the "did it land" moment; each pass's grant changes ride the periodic
             # walk already. No post-mutation refresh.
@@ -538,6 +584,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "buckets. The new key converges from the returned snapshot."
             ),
             mode="job",
+            result=SnapshotAndReapAccountKeyResult,
             handler=lambda params: make_snapshot_and_reap_account_key_handler(
                 config, params
             ),
@@ -562,6 +609,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "at-risk split come from this live read."
             ),
             mode="job",
+            result=GetKeyBucketsResult,
             handler=lambda params: make_get_key_buckets_handler(config, params),
             params={
                 "key_id": key_id_param(
@@ -581,6 +629,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
                 "provenance line."
             ),
             mode="job",
+            result=GetBucketOwnersResult,
             handler=lambda params: make_get_bucket_owners_handler(config, params),
             params={
                 "bucket_id": bucket_id_param("Bucket UUID (16 or 64-char Garage ID)"),
@@ -601,6 +650,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             requires_confirmation=True,
             sensitive_output=True,  # the secret arrives in params; never log them
             mode="job",
+            result=ClearBucketResult,
             handler=lambda params: make_clear_bucket_handler(config, params),
             params={
                 "bucket_name": bucket_name_param(
@@ -627,6 +677,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             ),
             requires_confirmation=True,
             mode="job",
+            result=CleanupUploadsResult,
             handler=lambda params: make_cleanup_uploads_handler(
                 params,
                 admin_url=config.admin_url,
@@ -661,6 +712,7 @@ def build_job_specs(config: GarageConfig) -> dict[str, CommandSpec]:
             ),
             sensitive_output=True,  # the secret arrives in params
             mode="job",
+            result=WalkBucketStatsResult,
             handler=make_walk_bucket_stats_handler,
             params={
                 "bucket_name": bucket_name_param(

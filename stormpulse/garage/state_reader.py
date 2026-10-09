@@ -12,12 +12,14 @@ import logging
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 
 from stormpulse import events
 from stormpulse.garage import state
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.hint import HintRead, Refusal, read_hint
 from stormpulse.garage.state import GarageBucket, GarageState, Topology
+from stormpulse.integrations import Freshness
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +86,9 @@ class GarageStateReader:
         self._absorbed: dict[str, GarageBucket] | None = None
         # Hinted ids not yet read, most recent first: the latest file leads.
         self._pending: list[str] = []
+        # What the last full read said of itself (CORE-011 d5); incomplete until
+        # the next clean full read once a listed id's ``GetBucketInfo`` failed.
+        self._full = Freshness()
         self._last_refusal: Refusal | None = None
         self._ticks = 0
         self._topology_due = _Every(self.TOPOLOGY_EVERY, lambda: self._ticks)
@@ -117,21 +122,36 @@ class GarageStateReader:
         if topology is None:
             logger.warning("No garage topology read yet; skipping state this tick")
             return None
-        if fresh or not config.hint_file or self._reread_due.due():
-            if not self._refresh(config, every=True):
-                logger.warning("Bucket state unavailable this tick; skipping push")
-                return None
-            # A full re-read satisfies the diff too, so both cadences restart.
-            self._reread_due.mark()
-            self._sweep_due.mark()
-        else:
-            if self._sweep_due.due() and self._refresh(config, every=False):
-                self._sweep_due.mark()
-            self.read_buckets(config, self._drain())
+        changed = self._changed_this_tick(config, fresh=fresh)
+        if changed is None:
+            logger.warning("Bucket state unavailable this tick; skipping push")
+            return None
         with self._lock:
             assert self._buckets is not None  # a refresh has produced
             buckets = list(self._buckets.values())
-        return state.compose(config, topology, buckets)
+            freshness = replace(self._full, changed_ids=tuple(changed))
+        return state.compose(config, topology, buckets, freshness=freshness)
+
+    def _changed_this_tick(
+        self, config: GarageConfig, *, fresh: bool
+    ) -> list[str] | None:
+        """The ids this tick re-read: a full re-read when due (None when its
+        list fails), else a due membership diff plus the hinted buckets."""
+        if fresh or not config.hint_file or self._reread_due.due():
+            read = self._refresh(config, every=True)
+            if read is not None:
+                # A full re-read satisfies the diff too, so both cadences restart.
+                self._reread_due.mark()
+                self._sweep_due.mark()
+            return read
+        changed: list[str] = []
+        if self._sweep_due.due():
+            read = self._refresh(config, every=False)
+            if read is not None:
+                self._sweep_due.mark()
+                changed = read
+        hinted = self.read_buckets(config, self._drain())
+        return changed + [b.id for b in hinted if b.id and b.id not in changed]
 
     def _read_topology(self, config: GarageConfig, *, fresh: bool) -> Topology | None:
         """The cached topology, re-read when ``fresh`` or due; a failed read
@@ -143,15 +163,15 @@ class GarageStateReader:
                 self._topology_due.mark()
         return self._topology
 
-    def _refresh(self, config: GarageConfig, *, every: bool) -> bool:
+    def _refresh(self, config: GarageConfig, *, every: bool) -> list[str] | None:
         """One ``ListBuckets``, then ``GetBucketInfo`` on every listed id (the full
         re-read, which also clears the pending hints) or only on the ids the
-        cache lacks (the minute membership diff). Ids no longer listed drop from
-        the cache unless a read absorbed them while the list was in flight, and
-        the open walk hears the drop count. False, cache untouched, on a failed list."""
+        cache lacks (the minute membership diff). Returns the ids read, in cache
+        order; None, cache untouched, on a failed list. Ids no longer listed drop
+        unless a read absorbed them while the list was in flight."""
         with self._lock:
             self._absorbed = {}
-        ids, buckets = None, []
+        ids, buckets, read = None, [], None
         try:
             ids = state.list_bucket_ids(config)
             if ids is not None:
@@ -163,14 +183,29 @@ class GarageStateReader:
             with self._lock:
                 absorbed, self._absorbed = self._absorbed or {}, None
                 if ids is not None:
-                    prior = self._buckets or {}
-                    self._buckets, gone = _merge(
-                        prior, ids, buckets, absorbed, every=every
-                    )
-                    events.record_dropped(gone)
-                    if every:
-                        self._pending.clear()
-        return ids is not None
+                    read = self._absorb_listing(ids, buckets, absorbed, every=every)
+        return read
+
+    def _absorb_listing(
+        self,
+        ids: list[str],
+        buckets: list[GarageBucket],
+        absorbed: dict[str, GarageBucket],
+        *,
+        every: bool,
+    ) -> list[str]:
+        """Merge one listing into the cache, tell the open walk the drop count
+        and, on a full read, record what it said of itself; the ids read, in
+        cache order. The caller holds ``_lock``."""
+        self._buckets, gone = _merge(
+            self._buckets or {}, ids, buckets, absorbed, every=every
+        )
+        events.record_dropped(gone)
+        if every:
+            self._pending.clear()
+            self._full = state.full_read_freshness(ids, list(self._buckets.values()))
+        fresh = {b.id for b in buckets} | absorbed.keys()
+        return [i for i in self._buckets if i in fresh]
 
     def read_buckets(self, config: GarageConfig, ids: list[str]) -> list[GarageBucket]:
         """Targeted read of *ids*, absorbed into the cache by id (a no-op before

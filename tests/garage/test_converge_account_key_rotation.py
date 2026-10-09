@@ -32,7 +32,9 @@ _B2 = "b2" + "0" * 62
 
 def _make_config(*, configured: bool = True) -> GarageConfig:
     return GarageConfig(
-        enabled=True, container_name="garaged", garage_binary="/garage",
+        enabled=True,
+        container_name="garaged",
+        garage_binary="/garage",
         docker_binary="/usr/bin/docker",
         config_path=Path("/opt/garage/garage.toml"),
         admin_url="http://127.0.0.1:3903" if configured else "",
@@ -64,18 +66,34 @@ class _FakeAdmin:
         self.calls.append(("get_key_info", {"id": access_key_id}))
         return self.key_info.get(access_key_id, ({"buckets": []}, ""))
 
-    def allow_bucket_key(self, *, admin_url, admin_token, bucket_ref,
-                         access_key_id, read, write, owner):
-        self.calls.append(("allow_bucket_key", {
-            "bucket_ref": bucket_ref, "read": read, "write": write, "owner": owner,
-        }))
+    def allow_bucket_key(
+        self, *, admin_url, admin_token, bucket_ref, access_key_id, read, write, owner
+    ):
+        self.calls.append(
+            (
+                "allow_bucket_key",
+                {
+                    "bucket_ref": bucket_ref,
+                    "read": read,
+                    "write": write,
+                    "owner": owner,
+                },
+            )
+        )
         return self.allow_result
 
-    def add_bucket_alias_local(self, *, admin_url, admin_token, bucket_ref,
-                               access_key_id, local_alias):
-        self.calls.append(("add_bucket_alias_local", {
-            "bucket_ref": bucket_ref, "local_alias": local_alias,
-        }))
+    def add_bucket_alias_local(
+        self, *, admin_url, admin_token, bucket_ref, access_key_id, local_alias
+    ):
+        self.calls.append(
+            (
+                "add_bucket_alias_local",
+                {
+                    "bucket_ref": bucket_ref,
+                    "local_alias": local_alias,
+                },
+            )
+        )
         return (True, "")
 
     def ops(self):
@@ -94,8 +112,10 @@ def _install(monkeypatch):
 
 async def _run(fake, *, config=None) -> JobOutcome:
     return await run_converge_account_key_rotation(
-        progress=_Progress(), garage_config=config or _make_config(),
-        old_key_id=_OLD, new_key_id=_NEW,
+        progress=_Progress(),
+        garage_config=config or _make_config(),
+        old_key_id=_OLD,
+        new_key_id=_NEW,
     )
 
 
@@ -106,15 +126,20 @@ async def test_converge_from_snapshot_skips_old_read(monkeypatch) -> None:
     fake = _install(monkeypatch)
     fake.key_info = {_NEW: ({"buckets": []}, "")}  # only new is read
     outcome = await run_converge_account_key_rotation(
-        progress=_Progress(), garage_config=_make_config(),
-        old_key_id=_OLD, new_key_id=_NEW,
+        progress=_Progress(),
+        garage_config=_make_config(),
+        old_key_id=_OLD,
+        new_key_id=_NEW,
         bucket_snapshot=[{"id": _B1, "alias": "vault"}],
     )
     assert outcome.success is True
     assert outcome.extras["transferred"] == [_B1[:16]]
     # The dead old key is never read.
     assert all(c[1]["id"] != _OLD for c in fake.calls if c[0] == "get_key_info")
-    assert ("add_bucket_alias_local", {"bucket_ref": _B1, "local_alias": "vault"}) in fake.calls
+    assert (
+        "add_bucket_alias_local",
+        {"bucket_ref": _B1, "local_alias": "vault"},
+    ) in fake.calls
 
 
 def _graded(full_id, *, read, write, owner, aliases=()):
@@ -174,10 +199,15 @@ async def test_transfers_pending_buckets(monkeypatch) -> None:
     fake = _install(monkeypatch)
     # Old owns B1 + B2; new owns neither -> transfer both, not yet converged.
     fake.key_info = {
-        _OLD: ({"buckets": [
-            _bucket(_B1, owner=True, aliases=["vault"]),
-            _bucket(_B2, owner=True),
-        ]}, ""),
+        _OLD: (
+            {
+                "buckets": [
+                    _bucket(_B1, owner=True, aliases=["vault"]),
+                    _bucket(_B2, owner=True),
+                ]
+            },
+            "",
+        ),
         _NEW: ({"buckets": []}, ""),
     }
     outcome = await _run(fake)
@@ -187,7 +217,10 @@ async def test_transfers_pending_buckets(monkeypatch) -> None:
     grants = [c for c in fake.calls if c[0] == "allow_bucket_key"]
     assert all(g[1]["owner"] is True for g in grants)
     # B1 had an alias; it is replicated on the new key. B2 had none.
-    assert ("add_bucket_alias_local", {"bucket_ref": _B1, "local_alias": "vault"}) in fake.calls
+    assert (
+        "add_bucket_alias_local",
+        {"bucket_ref": _B1, "local_alias": "vault"},
+    ) in fake.calls
 
 
 @pytest.mark.asyncio
@@ -195,10 +228,15 @@ async def test_only_owned_buckets_transfer(monkeypatch) -> None:
     fake = _install(monkeypatch)
     # Old has a non-owner grant on B2; only owned buckets are transferred.
     fake.key_info = {
-        _OLD: ({"buckets": [
-            _bucket(_B1, owner=True),
-            _bucket(_B2, owner=False),
-        ]}, ""),
+        _OLD: (
+            {
+                "buckets": [
+                    _bucket(_B1, owner=True),
+                    _bucket(_B2, owner=False),
+                ]
+            },
+            "",
+        ),
         _NEW: ({"buckets": []}, ""),
     }
     outcome = await _run(fake)
@@ -253,6 +291,31 @@ def test_factory_requires_params() -> None:
     cfg = _make_config()
     assert make_converge_account_key_rotation_handler(cfg, {}) is None
     assert make_converge_account_key_rotation_handler(cfg, {"old_key_id": _OLD}) is None
-    assert make_converge_account_key_rotation_handler(
-        cfg, {"old_key_id": _OLD, "new_key_id": _NEW},
-    ) is not None
+    assert (
+        make_converge_account_key_rotation_handler(
+            cfg,
+            {"old_key_id": _OLD, "new_key_id": _NEW},
+        )
+        is not None
+    )
+
+
+@pytest.mark.asyncio
+async def test_factory_feeds_the_snapshot_array_through_as_decoded(monkeypatch) -> None:
+    """``bucket_snapshot`` arrives as the JSON array it is (CORE-011 d9); the
+    factory hands it to the run without decoding, so the dead old key is never read."""
+    fake = _install(monkeypatch)
+    fake.key_info = {_NEW: ({"buckets": []}, "")}
+    handler = make_converge_account_key_rotation_handler(
+        _make_config(),
+        {
+            "old_key_id": _OLD,
+            "new_key_id": _NEW,
+            "bucket_snapshot": [{"id": _B1, "alias": "vault"}],
+        },
+    )
+    assert handler is not None
+    outcome = await handler(_Progress())
+    assert outcome.success is True
+    assert outcome.extras["transferred"] == [_B1[:16]]
+    assert all(c[1]["id"] != _OLD for c in fake.calls if c[0] == "get_key_info")

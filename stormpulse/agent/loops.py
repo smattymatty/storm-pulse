@@ -13,7 +13,10 @@ from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
 from stormpulse import events
-from stormpulse.agent.integrations_runtime import build_metrics_envelope
+from stormpulse.agent.integrations_runtime import (
+    build_metrics_envelope,
+    replace_runtime_state,
+)
 from stormpulse.integrations import LogEnricher
 from stormpulse.protocol import make_events_batch, make_heartbeat, make_log_batch
 
@@ -81,7 +84,7 @@ async def integration_state_loop(
         try:
             state = await asyncio.to_thread(descriptor.collect_state, runtime.config)
             if state is not None:
-                runtime.state = state
+                replace_runtime_state(runtime, state)
                 logger.debug("Refreshed %s state", integ_id)
         except Exception:
             logger.warning("Failed to collect %s state", integ_id, exc_info=True)

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage.s3 import (
@@ -26,11 +27,23 @@ from stormpulse.garage.s3 import (
     S3AuthError,
     S3Error,
 )
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
 _DEFAULT_MAX_OBJECTS = 100_000  # mirrors stormbuckets._STATS_MAX_OBJECTS
+
+
+@dataclass(frozen=True, slots=True)
+class WalkBucketStatsResult:
+    """What ``garage_walk_bucket_stats`` returns under ``result``."""
+
+    count: int
+    bytes: int
+    truncated: bool
+    duration_seconds: float
+    error: str | None = None
 
 
 def make_walk_bucket_stats_handler(params: dict[str, str]) -> JobHandler | None:
@@ -114,7 +127,7 @@ async def run_walk_bucket_stats(
             success=False,
             exit_code=-1,
             stderr=f"Authentication failed: {exc}",
-            failure_reason="auth_failed",
+            failure_reason=FailureReason.AUTH_FAILED,
             extras={
                 "count": 0,
                 "bytes": 0,
@@ -128,7 +141,7 @@ async def run_walk_bucket_stats(
             success=False,
             exit_code=-1,
             stderr=f"Bucket pre-flight failed: {exc}",
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
             extras={
                 "count": 0,
                 "bytes": 0,
@@ -159,7 +172,7 @@ async def run_walk_bucket_stats(
                 success=False,
                 exit_code=-1,
                 stderr=f"List failed: {exc}",
-                failure_reason="os_error",
+                failure_reason=FailureReason.OS_ERROR,
                 extras={
                     "count": count,
                     "bytes": total_bytes,

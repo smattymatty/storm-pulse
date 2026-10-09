@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 
 from stormpulse.commands.registry import SEALED_COMMANDS as SEALED_COMMANDS
 from stormpulse.config import CommandSpec
-from stormpulse.protocol import CommandResultPayload
+from stormpulse.protocol import CommandResultPayload, FailureReason
 from stormpulse.signoff import SignoffState
 
 
@@ -63,7 +63,7 @@ def sealed_refusal_result(
             "to re-enable verify-block and apply-block dispatch."
         ),
         duration_ms=0,
-        failure_reason="signoff_sealed",
+        failure_reason=FailureReason.SIGNOFF_SEALED,
     )
 
 
@@ -75,7 +75,7 @@ def restart_pending_result(
 
     Distinct from ``sealed_refusal_result`` (the agent is *unsealed* here) and
     from a whitelist rejection (the command is legitimate, just not yet in the
-    boot-built registry). ``failure_reason="restart_required"`` keeps it out of
+    boot-built registry). ``failure_reason=FailureReason.RESTART_REQUIRED`` keeps it out of
     the whitelist-violation security signal.
     """
     return CommandResultPayload(
@@ -93,5 +93,5 @@ def restart_pending_result(
             "This is a pending restart, not a whitelist violation."
         ),
         duration_ms=0,
-        failure_reason="restart_required",
+        failure_reason=FailureReason.RESTART_REQUIRED,
     )

@@ -21,6 +21,7 @@ from stormpulse.integrations.external.model import (
     InstallReceiptV1,
     PackageError,
 )
+from stormpulse.sdk import SDK_API
 
 _DIR_MODE = 0o700
 
@@ -56,14 +57,21 @@ def read_receipt(path: Path) -> InstallReceiptV1:
     try:
         data = layout.read_json(path)
     except (ValueError, OSError):
-        raise PackageError(FailureCode.F11, f"receipt {path.name} is unreadable") from None
+        raise PackageError(
+            FailureCode.F11, f"receipt {path.name} is unreadable"
+        ) from None
     receipt = from_dict(data, path.name)
     # The location must agree with the content: a receipt sitting in
     # receipts/<id>/<hex>.json cannot claim a different id or digest.
     if path.stem != receipt.package_digest.split(":", 1)[1]:
-        raise PackageError(FailureCode.F11, f"receipt {path.name} filename disagrees with its digest")
+        raise PackageError(
+            FailureCode.F11, f"receipt {path.name} filename disagrees with its digest"
+        )
     if path.parent.name != receipt.integration_id:
-        raise PackageError(FailureCode.F11, f"receipt {path.name} directory disagrees with its integration id")
+        raise PackageError(
+            FailureCode.F11,
+            f"receipt {path.name} directory disagrees with its integration id",
+        )
     return receipt
 
 
@@ -77,7 +85,9 @@ def to_dict(receipt: InstallReceiptV1) -> dict[str, object]:
         "package_digest": receipt.package_digest,
         "manifest_digest": receipt.manifest_digest,
         "publisher_fingerprint": receipt.publisher_fingerprint,
-        "requested_capabilities": [capability.value for capability in receipt.requested_capabilities],
+        "requested_capabilities": [
+            capability.value for capability in receipt.requested_capabilities
+        ],
         "installed_relpath": receipt.installed_relpath,
         "installed_at": receipt.installed_at,
     }
@@ -96,13 +106,17 @@ def from_dict(data: Any, name: str) -> InstallReceiptV1:
 
     integration_id = _req_str(data, "integration_id", name)
     if not INTEGRATION_ID_RE.match(integration_id):
-        raise PackageError(FailureCode.F11, f"receipt {name} has a malformed integration id")
+        raise PackageError(
+            FailureCode.F11, f"receipt {name} has a malformed integration id"
+        )
     version = _req_str(data, "version", name)
     if not VERSION_RE.match(version):
         raise PackageError(FailureCode.F11, f"receipt {name} has a malformed version")
     sdk_api = _req_int(data, "sdk_api", name)
-    if sdk_api != 1:
-        raise PackageError(FailureCode.F11, f"receipt {name} has an unsupported sdk_api")
+    if not 1 <= sdk_api <= SDK_API:  # what the manifest gate accepts, no wider
+        raise PackageError(
+            FailureCode.F11, f"receipt {name} has an unsupported sdk_api"
+        )
 
     package_digest = _req_digest(data, "package_digest", name)
     manifest_digest = _req_digest(data, "manifest_digest", name)
@@ -112,7 +126,10 @@ def from_dict(data: Any, name: str) -> InstallReceiptV1:
     # tampered receipt cannot walk a consumer out of the state tree.
     expected_relpath = f"packages/sha256/{package_digest.split(':', 1)[1]}"
     if _req_str(data, "installed_relpath", name) != expected_relpath:
-        raise PackageError(FailureCode.F11, f"receipt {name} installed_relpath does not match its digest")
+        raise PackageError(
+            FailureCode.F11,
+            f"receipt {name} installed_relpath does not match its digest",
+        )
 
     return InstallReceiptV1(
         agent_id=_req_str(data, "agent_id", name),
@@ -122,7 +139,9 @@ def from_dict(data: Any, name: str) -> InstallReceiptV1:
         package_digest=package_digest,
         manifest_digest=manifest_digest,
         publisher_fingerprint=publisher_fingerprint,
-        requested_capabilities=_capabilities(data.get("requested_capabilities", []), name),
+        requested_capabilities=_capabilities(
+            data.get("requested_capabilities", []), name
+        ),
         installed_relpath=expected_relpath,
         installed_at=_req_str(data, "installed_at", name),
         command_specs_digest=_opt_digest(data, "command_specs_digest", name),
@@ -132,15 +151,21 @@ def from_dict(data: Any, name: str) -> InstallReceiptV1:
 
 def _capabilities(raw: Any, name: str) -> tuple[CapabilityRequest, ...]:
     if not isinstance(raw, list):
-        raise PackageError(FailureCode.F11, f"receipt {name} has malformed capabilities")
+        raise PackageError(
+            FailureCode.F11, f"receipt {name} has malformed capabilities"
+        )
     result: list[CapabilityRequest] = []
     for item in raw:
         if not isinstance(item, str):
-            raise PackageError(FailureCode.F11, f"receipt {name} has a non-string capability")
+            raise PackageError(
+                FailureCode.F11, f"receipt {name} has a non-string capability"
+            )
         try:
             result.append(CapabilityRequest(item))
         except ValueError:
-            raise PackageError(FailureCode.F11, f"receipt {name} has an unknown capability") from None
+            raise PackageError(
+                FailureCode.F11, f"receipt {name} has an unknown capability"
+            ) from None
     return tuple(result)
 
 
@@ -170,12 +195,16 @@ def _opt_str(data: dict[str, Any], key: str, name: str) -> str | None:
 def _req_digest(data: dict[str, Any], key: str, name: str) -> str:
     value = _req_str(data, key, name)
     if not DIGEST_RE.match(value):
-        raise PackageError(FailureCode.F11, f"receipt {name} field '{key}' is not a digest")
+        raise PackageError(
+            FailureCode.F11, f"receipt {name} field '{key}' is not a digest"
+        )
     return value
 
 
 def _opt_digest(data: dict[str, Any], key: str, name: str) -> str | None:
     value = _opt_str(data, key, name)
     if value is not None and not DIGEST_RE.match(value):
-        raise PackageError(FailureCode.F11, f"receipt {name} field '{key}' is not a digest")
+        raise PackageError(
+            FailureCode.F11, f"receipt {name} field '{key}' is not a digest"
+        )
     return value

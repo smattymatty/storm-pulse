@@ -91,7 +91,9 @@ def _check_sdk_purity() -> None:
         "print('\\n'.join(m for m in sys.modules"
         " if m.startswith('stormpulse.') and not m.startswith('stormpulse.sdk')))"
     )
-    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    out = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
     leaked = [m for m in out.stdout.splitlines() if m]
     assert leaked == [], f"stormpulse.sdk leaked modules: {leaked}"
 
@@ -126,13 +128,15 @@ class _FailingProvider:
 
 
 def _check_engine(tmp: Path) -> None:
-    data = b"guard"
     # commit
     env = _env(tmp / "a", restart=lambda u, a: None, health=lambda u: True)
     plan = InitPlan(
         sdk_api=SDK_API,
         integration_id="demo",
-        mutations=(ClaimTomlSection("demo", {"enabled": True}), RestartOrReload("stormpulse")),
+        mutations=(
+            ClaimTomlSection("demo", {"enabled": True}),
+            RestartOrReload("stormpulse"),
+        ),
         summary="commit",
     )
     assert apply_plan(plan, env, agent_id="a").status == STATUS_COMMITTED
@@ -178,19 +182,23 @@ def _check_rclone_equivalence(tmp: Path) -> None:
         restart=lambda u, a: None,
         health=lambda u: True,
     )
-    answers = answers_from([Answer("binary_path", "/usr/bin/rclone"), Answer("as_runner", "yes")])
+    answers = answers_from(
+        [Answer("binary_path", "/usr/bin/rclone"), Answer("as_runner", "yes")]
+    )
     plan = RCLONE_WIZARD.plan(answers, InitContext(mode="user", config_path=str(sdk)))
     assert apply_plan(plan, env, agent_id="a").status == STATUS_COMMITTED
-    assert sdk.read_bytes() == legacy.read_bytes(), "rclone SDK config differs from legacy"
+    assert sdk.read_bytes() == legacy.read_bytes(), (
+        "rclone SDK config differs from legacy"
+    )
 
 
 def _check_no_p3_p4_surface() -> None:
     # Neither the command surface (P4) nor the external-state surface (P3) is
-    # offered by this Pulse version: both host capabilities resolve unmet, and the
-    # SDK is still at v1. Proves P2 did not quietly light up a later phase.
+    # offered by this Pulse version: both host capabilities resolve unmet. SDK 2
+    # is the components hook (CORE-011 d7), not a later phase lighting up.
     from stormpulse.integrations.readiness import resolve_host_capability
 
-    assert SDK_API == 1
+    assert SDK_API == 2
     for token in ("pulse.integration.commands.v1", "pulse.integration.state.v1"):
         status = resolve_host_capability(token)
         assert status.liveness is CapabilityLiveness.UNMET, token

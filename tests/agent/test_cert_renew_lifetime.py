@@ -103,6 +103,7 @@ async def test_session_teardowns_do_not_add_attempts(
         patch(URLOPEN, side_effect=server),
         patch("stormpulse.agent.reconnect.connect", _conn),
         patch("stormpulse.agent.reconnect.send_register", AsyncMock()),
+        patch("stormpulse.agent.reconnect.await_register_ok", AsyncMock()),
         patch("stormpulse.agent.reconnect.dispatch.receive_loop", drop),
     ):
         await agent.run()

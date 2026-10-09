@@ -6,8 +6,10 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
+from stormpulse.protocol import FailureReason
 from stormpulse.rclone.config import RcloneConfig
 from stormpulse.rclone.jobs import failure_outcome, remote_from_params
 from stormpulse.rclone.runner import (
@@ -21,6 +23,15 @@ from stormpulse.rclone.runner import (
 
 # Listing a large source bucket is slow, not hung.
 _ESTIMATE_TIMEOUT_SECONDS = 1800
+
+
+@dataclass(frozen=True, slots=True)
+class EstimateResult:
+    """What ``rclone_estimate`` returns under ``result``."""
+
+    bytes: int
+    objects: int
+    duration_seconds: float
 
 
 def make_estimate_handler(
@@ -60,10 +71,11 @@ async def run_estimate(
         )
     except TimeoutError:
         return failure_outcome(
-            "timeout", f"rclone size timed out after {_ESTIMATE_TIMEOUT_SECONDS}s"
+            FailureReason.TIMEOUT,
+            f"rclone size timed out after {_ESTIMATE_TIMEOUT_SECONDS}s",
         )
     except OSError as exc:
-        return failure_outcome("os_error", str(exc))
+        return failure_outcome(FailureReason.OS_ERROR, str(exc))
     if code != 0:
         return failure_outcome(
             reason_for_exit(code), tail_capped(stderr), exit_code=code
@@ -74,7 +86,8 @@ async def run_estimate(
         objects = int(data["count"])
     except (ValueError, KeyError, TypeError):
         return failure_outcome(
-            "unparseable_output", "rclone size returned unparseable JSON",
+            FailureReason.UNPARSEABLE_OUTPUT,
+            "rclone size returned unparseable JSON",
             exit_code=code,
         )
     return JobOutcome(

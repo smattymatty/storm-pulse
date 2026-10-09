@@ -22,6 +22,7 @@ from stormpulse.integrations.external import digest, grants, install, trust
 from stormpulse.integrations.external.model import CapabilityRequest
 from stormpulse.sdk import (
     SdkCommandSpec,
+    SdkComponent,
     SdkJobOutcome,
     SdkParamDef,
     command_specs_digest,
@@ -48,7 +49,7 @@ def _adapter_source(integration_id: str, *, raise_on_import: bool = False) -> st
     if raise_on_import:
         return "raise RuntimeError('boom at import')\n"
     return (
-        "from stormpulse.sdk import SdkIntegration, SdkCommandSpec, SdkParamDef, SdkJobOutcome\n"
+        "from stormpulse.sdk import SdkIntegration, SdkCommandSpec, SdkParamDef, SdkJobOutcome, SdkComponent\n"
         "\n"
         "async def _do(progress):\n"
         "    await progress('starting', 0, 1, 'go')\n"
@@ -65,6 +66,7 @@ def _adapter_source(integration_id: str, *, raise_on_import: bool = False) -> st
         "    parse_config=lambda section: section,\n"
         "    enabled=lambda cfg: True,\n"
         "    specs=_specs,\n"
+        f"    components=lambda cfg: (SdkComponent('{integration_id}-daemon', '1.0.0', ''),),\n"
         ")\n"
     )
 
@@ -96,6 +98,7 @@ def _install_and_seal(
     capabilities: tuple[str, ...] = ("integration_load", "command_contributor"),
     command_specs_digest_value: str | None = None,
     raise_on_import: bool = False,
+    sdk_api: int | None = None,
 ) -> str:
     pkg = tmp_path / f"src-{integration_id}"
     (pkg / integration_id).mkdir(parents=True)
@@ -112,6 +115,7 @@ def _install_and_seal(
         f'id = "{integration_id}"',
         'version = "1.0.0"',
         f'entry_module = "{integration_id}.integration"',
+        *([f"sdk_api = {sdk_api}"] if sdk_api is not None else []),
         "",
         "[publisher]",
         f'fingerprint = "{fingerprint}"',
@@ -171,6 +175,137 @@ def test_loads_translates_and_registers_with_commands(tmp_path: Path) -> None:
     built = integ.specs({})  # gate passes: command_contributor granted + digest matches
     assert "advalid_do" in built
     assert built["advalid_do"].group == "advalid"
+    # The receipt the register carries: the pinned digest, nothing fenced.
+    assert integ.command_gate is not None
+    assert integ.command_gate({}) == (_expected_digest("advalid"), None)
+    # The SDK hook takes config alone; the host calls it with (config, state).
+    assert integ.components is not None
+    assert integ.components({}, None) == (SdkComponent("advalid-daemon", "1.0.0", ""),)
+
+
+def test_adapter_honest_about_sdk_two_installs_seals_and_loads(tmp_path: Path) -> None:
+    """The components hook is SDK 2; a manifest saying so passes the manifest gate,
+    its receipt reads back for the seal, and the adapter registers with the hook."""
+    from stormpulse.integrations.external import ledger
+    from stormpulse.sdk import SDK_API
+
+    private, fp = keypair()
+    state = state_dir(tmp_path)
+    approve(state, tmp_path, private)
+    _install_and_seal(
+        tmp_path, state, private, fp, integration_id="adtwo", sdk_api=SDK_API
+    )
+    assert [r.sdk_api for r in ledger.list_receipts(state)] == [SDK_API]
+    assert "adtwo" in load_and_register_external(state)
+    integ = _registered("adtwo")
+    assert integ is not None and integ.components is not None
+    assert integ.components({}, None) == (SdkComponent("adtwo-daemon", "1.0.0", ""),)
+
+
+def test_gate_evaluates_the_adapter_once_per_bootstrap() -> None:
+    """One seam (CORE-011 d4): the receipt the register carries is the evaluation
+    whose commands were registered, so ``specs`` runs once and the declaration
+    answers from it; asked cold, the receipt still evaluates on its own."""
+    from stormpulse.agent.bootstrap import _resolve_integration
+    from stormpulse.agent.external_adapters import _translate
+    from stormpulse.integrations.external.model import SealedGrantV1
+    from stormpulse.sdk import SdkIntegration
+
+    calls: list[object] = []
+    spec = SdkCommandSpec(group="adonce", command=["/bin/true"], timeout=5)
+
+    def specs(config: object) -> dict[str, SdkCommandSpec]:
+        calls.append(config)
+        return {"adonce_ping": spec}
+
+    sdk = SdkIntegration(
+        id="adonce", parse_config=lambda s: dict(s), enabled=lambda c: True, specs=specs
+    )
+    grant = SealedGrantV1(
+        agent_id=_AGENT,
+        integration_id="adonce",
+        publisher_fingerprint="sha256:" + "ab" * 32,
+        package_digest="sha256:" + "cd" * 32,
+        manifest_digest="sha256:" + "ef" * 32,
+        granted_capabilities=(
+            CapabilityRequest.INTEGRATION_LOAD,
+            CapabilityRequest.COMMAND_CONTRIBUTOR,
+        ),
+        sealed_at="2026-01-01T00:00:00Z",
+        command_specs_digest=command_specs_digest({"adonce_ping": spec}),
+    )
+    integ = _translate(sdk, grant)
+    runtime = _resolve_integration(integ, {}, {}, frozenset({"adonce"}))
+    assert runtime.status == "live"
+    assert runtime.command_specs_digest == grant.command_specs_digest
+    assert runtime.commands_fenced is None
+    assert len(calls) == 1
+    # A fresh config object is a fresh evaluation, never a stale receipt.
+    assert integ.command_gate is not None
+    assert integ.command_gate({}) == (grant.command_specs_digest, None)
+    assert len(calls) == 2
+
+
+def _grant(integration_id: str, *caps: CapabilityRequest, **fields: object) -> object:
+    from stormpulse.integrations.external.model import SealedGrantV1
+
+    return SealedGrantV1(
+        agent_id=_AGENT,
+        integration_id=integration_id,
+        publisher_fingerprint="sha256:" + "ab" * 32,
+        package_digest="sha256:" + "cd" * 32,
+        manifest_digest="sha256:" + "ef" * 32,
+        granted_capabilities=caps,
+        sealed_at="2026-01-01T00:00:00Z",
+        **fields,  # type: ignore[arg-type]
+    )
+
+
+def test_adapter_without_commands_registers_live_with_an_empty_receipt() -> None:
+    """A state-only adapter (no ``specs``) has no gate to evaluate: it registers
+    live, its receipt is ``("", None)`` and nothing in the pair is an object
+    bootstrap would try to call (CORE-011 d4)."""
+    from stormpulse.agent.bootstrap import _resolve_integration
+    from stormpulse.agent.external_adapters import _translate
+    from stormpulse.sdk import SdkIntegration
+
+    sdk = SdkIntegration(
+        id="adstate", parse_config=lambda s: dict(s), enabled=lambda c: True
+    )
+    integ = _translate(sdk, _grant("adstate", CapabilityRequest.INTEGRATION_LOAD))  # type: ignore[arg-type]
+    assert integ.specs is None
+    assert integ.command_gate is None
+    assert integ.components is None
+    runtime = _resolve_integration(integ, {}, {}, frozenset({"adstate"}))
+    assert runtime.status == "live"
+    assert (runtime.command_specs_digest, runtime.commands_fenced) == ("", None)
+
+
+def test_fenced_build_logs_one_warning_naming_the_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The node-local receipt beside the wire one: building fenced commands
+    warns once, with the adapter id and the same reason the register carries."""
+    from stormpulse.agent.external_adapters import _translate
+    from stormpulse.sdk import SdkIntegration
+
+    spec = SdkCommandSpec(group="adquiet", command=["/bin/true"], timeout=5)
+    sdk = SdkIntegration(
+        id="adquiet",
+        parse_config=lambda s: dict(s),
+        enabled=lambda c: True,
+        specs=lambda config: {"adquiet_ping": spec},
+    )
+    integ = _translate(sdk, _grant("adquiet", CapabilityRequest.INTEGRATION_LOAD))  # type: ignore[arg-type]
+    assert integ.specs is not None
+    with caplog.at_level("WARNING", logger="stormpulse.agent.external_adapters"):
+        assert integ.specs({}) == {}
+    fences = [r for r in caplog.records if "commands fenced" in r.getMessage()]
+    assert len(fences) == 1
+    assert fences[0].levelname == "WARNING"
+    assert fences[0].getMessage() == (
+        "external adapter 'adquiet': command_contributor not granted; commands fenced"
+    )
 
 
 def test_command_contributor_revoked_loads_command_less(tmp_path: Path) -> None:
@@ -187,6 +322,11 @@ def test_command_contributor_revoked_loads_command_less(tmp_path: Path) -> None:
     integ = _registered("adfenced")
     assert integ is not None and integ.specs is not None
     assert integ.specs({}) == {}  # commands fenced
+    assert integ.command_gate is not None
+    assert integ.command_gate({}) == (
+        _expected_digest("adfenced"),
+        "command_contributor not granted",
+    )
 
 
 def test_digest_mismatch_loads_command_less(tmp_path: Path) -> None:
@@ -207,6 +347,52 @@ def test_digest_mismatch_loads_command_less(tmp_path: Path) -> None:
     integ = _registered("adliar")
     assert integ is not None and integ.specs is not None
     assert integ.specs({}) == {}  # mismatch => commands fenced, adapter still loads
+
+
+def test_digest_mismatch_registers_with_the_fence_receipt(tmp_path: Path) -> None:
+    """On the wire a fenced adapter is live, command-less, and says why (CORE-011
+    d4): ``commands_fenced`` names the mismatch and ``command_specs_digest`` is
+    what it would have contributed, so the control plane sees the pin it refused."""
+    from dataclasses import replace
+
+    from stormpulse.agent.bootstrap import build_agent_dependencies
+    from stormpulse.agent.integrations_runtime import (
+        build_integrations_payload,
+        integration_components,
+    )
+    from stormpulse.config import StorageConfig
+    from stormpulse.protocol import Component
+    from tests.helpers import build_config
+
+    private, fp = keypair()
+    state = state_dir(tmp_path)
+    approve(state, tmp_path, private)
+    sealed = "sha256:" + "0" * 64
+    _install_and_seal(
+        tmp_path,
+        state,
+        private,
+        fp,
+        integration_id="adliar",
+        command_specs_digest_value=sealed,
+    )
+    cfg = replace(
+        build_config(tmp_path, integrations={"adliar": {}}),
+        storage=StorageConfig(db_path=state / "agent.db"),
+    )
+    deps = build_agent_dependencies(cfg, signoff_sealed=False, log_position_store=None)
+    assert "adliar_do" not in deps.registry
+    report = build_integrations_payload(deps.integrations)["adliar"]
+    assert report["status"] == "live"
+    assert report["command_specs_digest"] == _expected_digest("adliar")
+    assert report["commands_fenced"] == (
+        f"command_specs_digest mismatch: built {_expected_digest('adliar')}, "
+        f"sealed {sealed}"
+    )
+    # Fenced commands do not fence components: the daemon it fronts still registers.
+    assert integration_components(deps.integrations) == [
+        Component("adliar-daemon", "1.0.0", "")
+    ]
 
 
 def test_id_collision_with_builtin_is_quarantined(tmp_path: Path) -> None:

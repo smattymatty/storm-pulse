@@ -11,6 +11,8 @@ import re
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from stormpulse.logging.s3_op import classify_s3_op, split_bucket_key
+
 MAX_LINE_BYTES = 4096
 
 
@@ -71,18 +73,6 @@ _GARAGE_ADMIN_MUTATIONS: frozenset[str] = frozenset(
 )
 
 
-def _split_bucket_key(path: str) -> tuple[str, str]:
-    """Split a path-style request path into ``(bucket, object_key)``.
-
-    The bucket is the first segment, the key the rest; the query string
-    is dropped. Anything not rooted at ``/`` yields two empty strings.
-    """
-    if not isinstance(path, str) or not path.startswith("/"):
-        return "", ""
-    parts = path.split("?", 1)[0][1:].split("/", 1)
-    return parts[0], parts[1] if len(parts) > 1 else ""
-
-
 def parse_garage_s3(line: str) -> dict[str, Any] | None:
     """Parse a Garage S3 access log line.
 
@@ -107,16 +97,14 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
         if m is not None:
             status = int(m.group("status"))
     if m is not None:
+        # The raw path stops here: the operation name and the split segments
+        # ride, the query string (a presigned URL's signature) never does.
         path = m.group("path")
-        bucket, object_key = _split_bucket_key(path)
-
         method = m.group("method")
-        if object_key:
-            message = f"{method} {bucket}/{object_key}"
-        elif bucket:
-            message = f"{method} {bucket}"
-        else:
-            message = f"{method} {path}"
+        bucket, object_key = split_bucket_key(path)
+        s3_op = classify_s3_op(method, path)
+
+        message = f"{s3_op} {bucket}" if bucket else s3_op
         if status is not None:
             message = f"{message} -> {status}"
 
@@ -124,11 +112,11 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
             "ts": m.group("ts"),
             "level": "info" if status is None or status < 500 else "warning",
             "message": message,
-            "client_ip": m.group("ip"),
+            "peer_ip": m.group("ip"),
             "proxy": m.group("proxy"),
             "key_id": m.group("key_id"),
             "method": method,
-            "path": path,
+            "s3_op": s3_op,
             "bucket": bucket,
             "object_key": object_key,
             "response_code": status,
@@ -147,11 +135,11 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
             "ts": am.group("ts"),
             "level": "info",
             "message": operation,
-            "client_ip": "",
+            "peer_ip": "",
             "proxy": "",
             "key_id": "",
             "method": "ADMIN",
-            "path": "",
+            "s3_op": "",
             "bucket": "",
             "object_key": "",
             "response_code": None,
@@ -285,17 +273,19 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
 
     method = request.get("method", "") or ""
     uri = request.get("uri", "") or ""
-    bucket, _ = _split_bucket_key(uri)
+    bucket, _ = split_bucket_key(uri)
+    s3_op = classify_s3_op(method, uri)
     host = request.get("host", "") or ""
-    client_ip = request.get("remote_ip", "") or request.get("client_ip", "") or ""
+    peer_ip = request.get("remote_ip", "") or request.get("client_ip", "") or ""
     status = obj.get("status", 0)
 
     ua = _request_user_agent(request)
     ua_brief = _summarize_user_agent(ua)
 
-    message = f"{method} {host}{uri} -> {status}"
-    if client_ip:
-        message += f" from {client_ip}"
+    # The uri stops here: the operation name rides in its place.
+    message = " ".join(p for p in (method, host, s3_op) if p) + f" -> {status}"
+    if peer_ip:
+        message += f" from {peer_ip}"
     if ua_brief:
         message += f" ({ua_brief})"
 
@@ -303,10 +293,10 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
         "ts": _ts_iso(obj.get("ts")),
         "level": obj.get("level", "info"),
         "message": message,
-        "client_ip": client_ip,
+        "peer_ip": peer_ip,
         "method": method,
+        "s3_op": s3_op,
         "host": host,
-        "path": uri,
         "bucket": bucket,
         "status": status,
         "user_agent": ua,

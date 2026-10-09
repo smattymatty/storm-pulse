@@ -1,7 +1,6 @@
 """Wide-event emission: one record per unit of agent work, buffered in-process
 and shipped as ``events.batch``, released on the dashboard's ack. A full buffer
 drops oldest and the next drain says so with ``dropped_events``.
-
 Foundation-tier: every layer imports it downward; plain dicts, no protocol types.
 Ids, never identities: bucket/key/command ids, no user ids, no IPs. One aggregate:
 an open ``walk`` folds routine calls into one ``walk_summary``; every failure
@@ -13,9 +12,9 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from collections.abc import Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Iterable
+from contextlib import ContextDecorator
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -24,6 +23,38 @@ MAX_BUFFERED_EVENTS = 4096
 MAX_BATCH_EVENTS = 500
 MAX_IN_FLIGHT_BATCHES = 32
 _MAX_ERROR_CHARS = 500
+# Free text from a process or the control plane; capped so it cannot bloat the wire.
+_CAPPED_FIELDS = frozenset({"error", "reason"})
+
+_SOURCE = "events"
+# Stamped by emit or the buffer on every event, never declared per kind.
+ENVELOPE_FIELDS = frozenset({"ts", "source", "kind", "seq", "trigger", "command_ref"})
+_WALK_FIELDS = frozenset(
+    {"calls", "failures", "slowest_endpoint", "slowest_ms", "total_ms"}
+)
+_DROPPED_FIELDS = frozenset({"dropped", "undeclared"})
+_NACKED_FIELDS = frozenset({"batch_id", "dropped", "reason"})
+
+# (source, kind) -> the fields emit keeps. Declared at import by the
+# module that emits, per item by walk(); the artifact publishes it.
+_REGISTRY: dict[tuple[str, str], frozenset[str]] = {}
+
+
+def declare_event(source: str, kind: str, fields: Iterable[str]) -> None:
+    """Declare the shape of one (source, kind); a second call adds fields.
+    ``emit`` keeps those fields and counts the rest as ``undeclared`` beside
+    ``dropped``; the buffer stamps ``seq``, monotone per process (CORE-011 d6)."""
+    key = (source, kind)
+    _REGISTRY[key] = _REGISTRY.get(key, frozenset()) | frozenset(fields)
+
+
+def declared_events() -> dict[str, dict[str, list[str]]]:
+    """The registry as ``{source: {kind: [fields]}}``, sorted, for the artifact."""
+    out: dict[str, dict[str, list[str]]] = {}
+    for (source, kind), fields in sorted(_REGISTRY.items()):
+        out.setdefault(source, {})[kind] = sorted(fields)
+    return out
+
 
 # What triggered the work an event describes (periodic_walk, job). Set
 # by the owning loop or the job manager; propagates into ``to_thread``
@@ -62,34 +93,56 @@ def is_failure(status: int | None) -> bool:
     return status is None or status >= 400
 
 
-@contextmanager
-def walk(*, source: str, item: str) -> Iterator[None]:
+def walk(*, source: str, item: str) -> _WalkScope:
     """Fold every ``record_call`` inside into one ``walk_summary`` on exit.
 
     A success carrying ``<item>_id`` counts as ``<item>s_read``. The summary
     emits when the walk read, dropped (``record_dropped``) or failed; a walk
     that only made calls (a quiet membership list, a topology-only tick)
-    emits nothing. Failures are counted and still emitted on their own.
+    emits nothing. Its shape is declared here, per item, for the artifact.
     """
-    if _walk_var.get() is not None:
-        yield
-        return
-    totals = _Walk(item=item)
-    token = _walk_var.set(totals)
-    start = time.monotonic()
-    try:
-        yield
-    finally:
+    declare_event(
+        source, "walk_summary", _WALK_FIELDS | {f"{item}s_read", f"{item}s_dropped"}
+    )
+    return _WalkScope(source, item)
+
+
+class _WalkScope(ContextDecorator):
+    """One ``walk``, as a ``with`` block or a decorator (a fresh scope per call).
+    A nested scope joins the outer one and emits nothing of its own."""
+
+    def __init__(self, source: str, item: str) -> None:
+        self._source = source
+        self._item = item
+        self._totals: _Walk | None = None
+        self._token: Token[_Walk | None] | None = None
+        self._start = 0.0
+
+    def _recreate_cm(self) -> _WalkScope:
+        return _WalkScope(self._source, self._item)
+
+    def __enter__(self) -> None:
+        if _walk_var.get() is not None:
+            return
+        self._totals = _Walk(item=self._item)
+        self._token = _walk_var.set(self._totals)
+        self._start = time.monotonic()
+
+    def __exit__(self, *exc: object) -> None:
+        totals, token = self._totals, self._token
+        if totals is None or token is None:
+            return
         _walk_var.reset(token)
+        self._totals = self._token = None
         if totals.items_read or totals.dropped or totals.failures:
             emit(
                 "walk_summary",
-                source=source,
+                source=self._source,
                 calls=totals.calls,
                 failures=totals.failures,
                 slowest_endpoint=totals.slowest_endpoint,
                 slowest_ms=totals.slowest_ms,
-                total_ms=int((time.monotonic() - start) * 1000.0),
+                total_ms=int((time.monotonic() - self._start) * 1000.0),
                 **{
                     f"{totals.item}s_read": totals.items_read,
                     f"{totals.item}s_dropped": totals.dropped,
@@ -143,21 +196,32 @@ def record_dropped(count: int) -> None:
 class EventBuffer:
     """Bounded, thread-safe event buffer with in-flight ack tracking.
 
-    ``drain`` moves events into an in-flight slot keyed by batch id;
-    ``ack`` discards them; ``requeue_unacked`` puts every in-flight batch
-    back at the front (called when a fresh session starts, so batches
-    that died with the previous connection are re-shipped).
+    ``append`` stamps ``seq``, the one place it is assigned, so the synthesized
+    ``dropped_events`` carries one too and a requeued batch keeps its own.
+    ``drain`` moves events into an in-flight slot keyed by batch id; ``ack``
+    discards them; ``requeue_unacked`` puts every in-flight batch back in front.
     """
 
     def __init__(self, max_events: int = MAX_BUFFERED_EVENTS) -> None:
         self._lock = threading.Lock()
         self._buf: deque[dict[str, Any]] = deque()
         self._max = max_events
+        self._seq = 0
         self._dropped = 0
+        self._undeclared = 0
         self._in_flight: dict[str, list[dict[str, Any]]] = {}
 
-    def append(self, event: dict[str, Any]) -> None:
+    def _stamp(self, event: dict[str, Any]) -> dict[str, Any]:
+        """Assign the next ``seq``; the caller holds the lock."""
+        self._seq += 1
+        event["seq"] = self._seq
+        return event
+
+    def append(self, event: dict[str, Any], *, undeclared: int = 0) -> None:
+        """Buffer one event, counting the fields emit refused for it."""
         with self._lock:
+            self._stamp(event)
+            self._undeclared += undeclared
             if len(self._buf) >= self._max:
                 self._buf.popleft()
                 self._dropped += 1
@@ -167,16 +231,20 @@ class EventBuffer:
         self, batch_id: str, max_events: int = MAX_BATCH_EVENTS
     ) -> list[dict[str, Any]]:
         with self._lock:
-            if self._dropped:
+            if self._dropped or self._undeclared:
                 self._buf.appendleft(
-                    {
-                        "ts": _now_iso(),
-                        "source": "events",
-                        "kind": "dropped_events",
-                        "dropped": self._dropped,
-                    }
+                    self._stamp(
+                        {
+                            "ts": _now_iso(),
+                            "source": _SOURCE,
+                            "kind": "dropped_events",
+                            "dropped": self._dropped,
+                            "undeclared": self._undeclared,
+                        }
+                    )
                 )
                 self._dropped = 0
+                self._undeclared = 0
             out: list[dict[str, Any]] = []
             while self._buf and len(out) < max_events:
                 out.append(self._buf.popleft())
@@ -194,6 +262,16 @@ class EventBuffer:
     def ack(self, batch_id: str) -> bool:
         with self._lock:
             return self._in_flight.pop(batch_id, None) is not None
+
+    def nack(self, batch_id: str) -> int | None:
+        """Drop a refused in-flight batch; the count dropped, ``None`` if unknown.
+
+        Never requeued: a batch the control plane refused would be refused
+        again. The loss rides on ``events_nacked``, not the ``dropped`` tally.
+        """
+        with self._lock:
+            batch = self._in_flight.pop(batch_id, None)
+            return None if batch is None else len(batch)
 
     def requeue_unacked(self) -> int:
         """Put every in-flight batch back at the buffer front, oldest first.
@@ -219,6 +297,8 @@ class EventBuffer:
 
 
 _BUFFER = EventBuffer()
+declare_event(_SOURCE, "dropped_events", _DROPPED_FIELDS)
+declare_event(_SOURCE, "events_nacked", _NACKED_FIELDS)
 
 
 def _now_iso() -> str:
@@ -228,9 +308,10 @@ def _now_iso() -> str:
 def emit(kind: str, *, source: str, **fields: Any) -> None:
     """Record one wide event. Cheap, non-blocking, never touches the network.
 
-    ``None`` and empty-string fields are elided so events stay sparse;
-    ``error`` text is capped at ``_MAX_ERROR_CHARS`` so a runaway stderr
-    cannot bloat the wire.
+    ``None`` and empty-string fields are elided so events stay sparse; a
+    field the (source, kind) never declared is dropped and counted, so a
+    forbidden identifier cannot reach the wire; ``error`` and ``reason`` text
+    is capped at ``_MAX_ERROR_CHARS`` so a runaway stderr cannot bloat the wire.
     """
     event: dict[str, Any] = {
         "ts": _now_iso(),
@@ -240,16 +321,21 @@ def emit(kind: str, *, source: str, **fields: Any) -> None:
     trigger = trigger_var.get()
     if trigger:
         event["trigger"] = trigger
-    command_ref = command_ref_var.get()
-    if command_ref and not fields.get("command_ref"):
+    command_ref = fields.pop("command_ref", "") or command_ref_var.get()
+    if command_ref:
         event["command_ref"] = command_ref
+    declared = _REGISTRY.get((source, kind), frozenset())
+    undeclared = 0
     for key, value in fields.items():
         if value is None or value == "":
             continue
-        if key == "error":
+        if key not in declared:
+            undeclared += 1
+            continue
+        if key in _CAPPED_FIELDS:
             value = str(value)[:_MAX_ERROR_CHARS]
         event[key] = value
-    _BUFFER.append(event)
+    _BUFFER.append(event, undeclared=undeclared)
 
 
 def buffer() -> EventBuffer:

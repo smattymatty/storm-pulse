@@ -89,6 +89,19 @@ class _AdminCallMeter:
 
 
 _METER = _AdminCallMeter()
+events.declare_event(
+    "garage_admin",
+    "admin_call",
+    {
+        "endpoint",
+        "duration_ms",
+        "status",
+        "http_method",
+        "error",
+        "bucket_id",
+        "key_id",
+    },
+)
 
 
 def admin_call_stats() -> dict[str, AdminCallStats]:

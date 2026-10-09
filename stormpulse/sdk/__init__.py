@@ -17,6 +17,7 @@ from stormpulse.sdk.declaration import (
     SdkCommandHandler,
     SdkCommandMode,
     SdkCommandSpec,
+    SdkComponent,
     SdkConfigError,
     SdkDeploySubject,
     SdkIntegration,
@@ -61,7 +62,8 @@ from stormpulse.sdk.readiness import (
 )
 from stormpulse.sdk.wizard import IntegrationWizard
 
-SDK_API: int = 1
+# 2: ``SdkIntegration.components`` and ``SdkComponent`` (CORE-011 d7), additive.
+SDK_API: int = 2
 
 __all__ = [
     "SDK_API",
@@ -69,6 +71,7 @@ __all__ = [
     "SdkCommandHandler",
     "SdkCommandMode",
     "SdkCommandSpec",
+    "SdkComponent",
     "SdkDeploySubject",
     "SdkConfigError",
     "SdkIntegration",

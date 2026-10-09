@@ -11,12 +11,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from stormpulse.agent import Agent, dispatch, refresh
 from stormpulse.garage.state_reader import GarageStateReader
+from stormpulse.integrations import Freshness
 from tests.helpers import (
     FAKE_METRICS,
     get_garage_state,
@@ -51,6 +53,34 @@ async def test_garage_refresh_command_success(
     assert result_env["payload"]["success"] is True
     assert metrics_env["type"] == "metrics.push"
     assert get_garage_state(ag) is fake_state
+
+
+@pytest.mark.asyncio
+@patch("stormpulse.agent.integrations_runtime.collect_metrics")
+@patch.object(GarageStateReader, "collect")
+async def test_garage_refresh_push_carries_what_the_fresh_read_said_of_itself(
+    mock_collect: MagicMock,
+    mock_metrics: MagicMock,
+    agent_with_garage: Callable[..., Agent],
+) -> None:
+    """CORE-011 d5: the ids a refresh re-read are owed to the push it triggers,
+    and a refresh that skipped a bucket says incomplete on that same push."""
+    mock_collect.return_value = replace(
+        make_fake_garage_state(), read=Freshness(False, "t0", ("a" * 64,))
+    )
+    mock_metrics.return_value = FAKE_METRICS
+    ag = agent_with_garage()
+    ws = AsyncMock()
+
+    await dispatch.dispatch_message(
+        ag, ws, sign_command_request(command="garage_refresh")
+    )
+
+    push = json.loads(ws.send.call_args_list[1][0][0])
+    report = push["payload"]["integrations"]["garage"]
+    assert (report["complete"], report["last_full_read_at"]) == (False, "t0")
+    assert report["changed_ids"] == ["a" * 64]
+    assert report["generation"] == 1
 
 
 @pytest.mark.asyncio

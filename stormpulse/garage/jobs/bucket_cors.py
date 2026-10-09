@@ -9,13 +9,14 @@ loaded as ``expected_rules``; live rules that differ are refused with
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,16 @@ _LIST_KEYS = ("AllowedOrigin", "AllowedMethod", "AllowedHeader", "ExposeHeader")
 _SCALAR_KEYS = ("ID", "MaxAgeSeconds")
 _RULE_KEYS = frozenset(_LIST_KEYS + _SCALAR_KEYS)
 _BUCKET_ID = "bucket_id"
+
+
+@dataclass(frozen=True, slots=True)
+class BucketCorsResult:
+    """What both CORS commands return under ``result``: the rules as they stand."""
+
+    bucket_id: str
+    duration_seconds: float
+    rules: list[dict[str, Any]] | None = None
+    error: str | None = None
 
 
 def cors_rules_shape_problem(rules: object) -> str | None:
@@ -82,27 +93,24 @@ def make_bucket_cors_get_handler(
 
 
 def make_bucket_cors_set_handler(
-    params: dict[str, str],
+    params: dict[str, Any],
     *,
     admin_url: str,
     admin_token: str,
 ) -> JobHandler | None:
     """Build the write handler. Required: ``bucket_id``, ``rules`` and
-    ``expected_rules`` (JSON lists, shape-checked at dispatch)."""
+    ``expected_rules`` (JSON lists, shape-checked at dispatch; ``[]`` is a value)."""
     bucket_id = params.get(_BUCKET_ID, "")
-    missing = [k for k in (_BUCKET_ID, "rules", "expected_rules") if not params.get(k)]
+    missing = [k for k in ("rules", "expected_rules") if k not in params]
+    if not bucket_id:
+        missing.insert(0, _BUCKET_ID)
     if missing:
         logger.error("garage_bucket_cors_set missing required params: %s", missing)
     if missing or not _admin_configured(
         "garage_bucket_cors_set", admin_url, admin_token
     ):
         return None
-    try:
-        rules = json.loads(params["rules"])
-        expected = json.loads(params["expected_rules"])
-    except ValueError:
-        logger.error("garage_bucket_cors_set: rules or expected_rules is not JSON")
-        return None
+    rules, expected = params["rules"], params["expected_rules"]
     for label, value in (("rules", rules), ("expected_rules", expected)):
         problem = cors_rules_shape_problem(value)
         if problem is not None:
@@ -183,7 +191,7 @@ async def run_bucket_cors_set(
     if current != expected_rules:
         # Never write over rules the caller has not seen: return them instead.
         return _failure(
-            "cors_rules_stale",
+            FailureReason.CORS_RULES_STALE,
             bucket_id,
             "Bucket CORS rules changed since they were loaded; reload and retry.",
             started_at,
@@ -200,7 +208,7 @@ async def run_bucket_cors_set(
     )
     if not ok:
         return _failure(
-            "cors_update_failed",
+            FailureReason.CORS_UPDATE_FAILED,
             bucket_id,
             f"UpdateBucket corsRules failed: {err}",
             started_at,
@@ -224,7 +232,9 @@ async def _read_current_rules(
     )
     if info is None:
         reason = (
-            "bucket_not_found" if admin_api.is_not_found(err) else "bucket_info_failed"
+            FailureReason.BUCKET_NOT_FOUND
+            if admin_api.is_not_found(err)
+            else FailureReason.BUCKET_INFO_FAILED
         )
         return [], _failure(reason, bucket_id, err, started_at)
     raw = info.get("corsRules")
@@ -235,7 +245,7 @@ async def _read_current_rules(
     problem = cors_rules_shape_problem(raw)
     if problem is not None:
         return [], _failure(
-            "cors_rules_unreadable",
+            FailureReason.CORS_RULES_UNREADABLE,
             bucket_id,
             f"GetBucketInfo corsRules {problem}",
             started_at,
@@ -255,7 +265,7 @@ def _admin_configured(command: str, admin_url: str, admin_token: str) -> bool:
 
 
 def _failure(
-    failure_reason: str,
+    failure_reason: FailureReason,
     bucket_id: str,
     stderr: str,
     started_at: float,

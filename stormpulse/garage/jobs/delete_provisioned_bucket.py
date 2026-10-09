@@ -10,15 +10,31 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 2
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteProvisionedBucketResult:
+    """What ``garage_delete_provisioned_bucket`` returns under ``result``."""
+
+    bucket_id: str
+    step_completed: str | None
+    step_failed: str | None
+    rollback_status: str
+    manual_cleanup_required: list[dict[str, str]]
+    garage_stderr: str
+    duration_seconds: float
+    already_absent: bool | None = None
 
 
 def make_delete_provisioned_bucket_handler(
@@ -57,7 +73,7 @@ async def run_delete_provisioned_bucket(
     if not (admin_url and admin_token):
         # Fail loud: a migrated operation never silently no-ops.
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             step_failed=None,
             bucket_id=bucket_id,
             step_completed=None,
@@ -81,7 +97,7 @@ async def run_delete_provisioned_bucket(
         if admin_api.is_not_found(err):
             return _already_gone(bucket_id, started_at)
         return _failure(
-            failure_reason="bucket_info_failed",
+            failure_reason=FailureReason.BUCKET_INFO_FAILED,
             step_failed="bucket_info",
             bucket_id=bucket_id,
             step_completed=None,
@@ -92,7 +108,7 @@ async def run_delete_provisioned_bucket(
     if int(info.get("objects") or 0) > 0:
         # Customer-actionable: surface it before any mutation.
         return _failure(
-            failure_reason="bucket_not_empty",
+            failure_reason=FailureReason.BUCKET_NOT_EMPTY,
             step_failed="bucket_info",
             bucket_id=bucket_id,
             step_completed=None,
@@ -114,7 +130,9 @@ async def run_delete_provisioned_bucket(
     if not ok:
         # A race (objects added after the check) surfaces as not-empty here too.
         reason = (
-            "bucket_not_empty" if "not empty" in err.lower() else "bucket_delete_failed"
+            FailureReason.BUCKET_NOT_EMPTY
+            if "not empty" in err.lower()
+            else FailureReason.BUCKET_DELETE_FAILED
         )
         return _failure(
             failure_reason=reason,
@@ -164,7 +182,7 @@ def _already_gone(bucket_id: str, started_at: float) -> JobOutcome:
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     step_failed: str | None,
     bucket_id: str,
     step_completed: str | None,

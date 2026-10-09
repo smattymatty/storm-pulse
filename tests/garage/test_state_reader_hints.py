@@ -224,3 +224,40 @@ def test_drain_reads_in_the_writers_order_latest_file_first(tmp_path: Path) -> N
         hex_id(0xB),
         *ids[MAX_HINTED_READS:],
     ]
+
+
+def test_hinted_read_changes_the_hinted_ids_and_keeps_other_stamps(
+    tmp_path: Path,
+) -> None:
+    reader = GarageStateReader(clock=Clock())
+    hint = _hint(tmp_path, [])
+    three = MagicMock(return_value=([{"id": hex_id(i)} for i in range(1, 4)], ""))
+    with (
+        patched(list_buckets=three),
+        patch("stormpulse.garage.state.stamp_now", return_value="t0"),
+    ):
+        assert reader.collect(reader_config(hint_file=hint)) is not None
+    _hint(tmp_path, [hex_id(1), hex_id(3)])
+    with patched(), patch("stormpulse.garage.state.stamp_now", return_value="t1"):
+        state = reader.collect(reader_config(hint_file=hint))
+    assert state is not None
+    assert state.freshness().changed_ids == (hex_id(1), hex_id(3))
+    assert {b.id: b.read_at for b in state.buckets} == {
+        hex_id(1): "t1",
+        hex_id(2): "t0",
+        hex_id(3): "t1",
+    }
+
+
+def test_hint_cap_deferral_leaves_the_snapshot_complete(tmp_path: Path) -> None:
+    # The cap defers, never drops: the deferred ids are still in the snapshot
+    # from the last walk, so nothing reads as a deletion.
+    reader = GarageStateReader(clock=Clock())
+    hint = _hint(tmp_path, [])
+    _warm(reader, reader_config(hint_file=hint))
+    _hint(tmp_path, [hex_id(i) for i in range(1, 41)])
+    with patched():
+        state = reader.collect(reader_config(hint_file=hint))
+    assert state is not None
+    assert state.freshness().complete is True
+    assert len(state.freshness().changed_ids) == MAX_HINTED_READS

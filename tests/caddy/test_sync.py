@@ -10,7 +10,6 @@ against a real socket.
 from __future__ import annotations
 
 import asyncio
-import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -23,7 +22,7 @@ from stormpulse.caddy.commands import PER_TENANT_MAX_BYTES
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.caddy.sync import (
     _atomic_write_or_remove,
-    _decode_manifest,
+    _check_manifest,
     _plan_reconcile,
     _post_caddy_load,
     _read_and_absolutize_imports,
@@ -36,11 +35,11 @@ def _params(
     *,
     region: str = "vancouver-1",
     authorize_bulk: bool = False,
-) -> dict[str, str]:
-    """Build the string-valued param dict the handler receives off the wire."""
+) -> dict[str, Any]:
+    """Build the param dict the handler receives off the wire: the manifest an object."""
     return {
         "region": region,
-        "tenants": json.dumps(tenants),
+        "tenants": tenants,
         "authorize_bulk": "true" if authorize_bulk else "false",
     }
 
@@ -489,13 +488,13 @@ class TestCaddySyncHandler:
         ) as mock_conn_cls:
             handler = make_caddy_sync_handler(
                 cfg,
-                {"region": "vancouver-1", "tenants": "not json"},
+                {"region": "vancouver-1", "tenants": "{}"},
             )
             outcome = asyncio.run(_run_handler(handler))
 
         assert outcome.success is False
         assert outcome.failure_reason == "config_invalid"
-        assert "not valid JSON" in outcome.stderr
+        assert "must be a JSON object, got str" in outcome.stderr
         mock_conn_cls.assert_not_called()
         # Nothing was written.
         assert list(cfg.drop_in_path.parent.glob("site-*.caddy")) == []
@@ -565,47 +564,47 @@ class TestCaddySyncHandler:
 
 
 # ---------------------------------------------------------------------------
-# _decode_manifest - pure JSON + safety validation, no mocks
+# _check_manifest - pure shape + safety validation on the decoded value, no mocks
 # ---------------------------------------------------------------------------
 
 
-class TestDecodeManifest:
+class TestCheckManifest:
     def test_valid_manifest(self) -> None:
-        raw = json.dumps({"abcdef0123456789": "example.com { }\n"})
-        manifest, err = _decode_manifest(raw)
+        manifest, err = _check_manifest({"abcdef0123456789": "example.com { }\n"})
         assert err is None
         assert manifest == {"abcdef0123456789": "example.com { }\n"}
 
-    def test_bad_json_rejected(self) -> None:
-        manifest, err = _decode_manifest("not json")
+    def test_string_rejected(self) -> None:
+        # JSON text where the object itself was expected: nothing is decoded here.
+        manifest, err = _check_manifest('{"abc": "x"}')
         assert manifest is None
-        assert err is not None and "not valid JSON" in err
+        assert err is not None and "must be a JSON object, got str" in err
 
     def test_non_object_rejected(self) -> None:
-        manifest, err = _decode_manifest("[1, 2, 3]")
+        manifest, err = _check_manifest([1, 2, 3])
         assert manifest is None
         assert err is not None and "must be a JSON object" in err
 
     def test_non_string_value_rejected(self) -> None:
-        manifest, err = _decode_manifest('{"abc": 123}')
+        manifest, err = _check_manifest({"abc": 123})
         assert manifest is None
         assert err is not None and "must be strings" in err
 
     def test_unsafe_key_rejected(self) -> None:
         # A key feeds a filename; a path separator must never pass.
-        manifest, err = _decode_manifest('{"../../etc/passwd": "x"}')
+        manifest, err = _check_manifest({"../../etc/passwd": "x"})
         assert manifest is None
         assert err is not None and "safe filename" in err
 
     def test_dotted_key_rejected(self) -> None:
         # Dots are barred too, so a key can never form a `..` traversal.
-        manifest, err = _decode_manifest('{"a.b": "x"}')
+        manifest, err = _check_manifest({"a.b": "x"})
         assert manifest is None
         assert err is not None and "safe filename" in err
 
     def test_oversize_fragment_rejected(self) -> None:
         oversize = "a" * (PER_TENANT_MAX_BYTES + 1)
-        manifest, err = _decode_manifest(json.dumps({"abc": oversize}))
+        manifest, err = _check_manifest({"abc": oversize})
         assert manifest is None
         assert err is not None and "exceeds per-bucket cap" in err
 

@@ -1,10 +1,9 @@
 """Background-task substrate for long-running commands.
 
-Jobs do not survive an agent reconnect: on WebSocket close every in-flight
-task is cancelled, no terminal ``command.result`` is emitted, and the
-dashboard infers failure from the disconnect. Handler exceptions other
-than ``CancelledError`` become a failure result with
-``failure_reason="os_error"``.
+Jobs do not survive an agent reconnect: every in-flight task is cancelled and
+no terminal ``command.result`` follows. Graceful stop: each gets a
+``command.cancelled``; lost socket: the dashboard infers it from the disconnect.
+Handler exceptions other than ``CancelledError`` become a failure, ``os_error``.
 """
 
 from __future__ import annotations
@@ -18,10 +17,14 @@ from typing import Any, Protocol
 
 from stormpulse import events
 from stormpulse.protocol import (
+    CancelReason,
     CommandProgressPayload,
     CommandResultPayload,
     Envelope,
+    FailureReason,
+    ResultError,
     TransferStats,
+    make_command_cancelled,
     make_command_progress,
     make_command_result,
 )
@@ -56,30 +59,39 @@ class ProgressCallback(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class JobOutcome:
-    """Result body returned by a long-running handler.
-
-    The job manager wraps this in a ``CommandResultPayload``, supplying
-    ``request_id``, ``command``, ``group``, and ``duration_ms`` itself.
-    Handlers stay focused on what they actually computed.
-
-    ``extras`` is for command-specific summary fields that ride at the top
-    level of the wire payload - e.g. ``garage_bucket_clear`` reports
-    ``deleted_count``, ``failed_count``, ``errors``, ``error``. Keys must
-    not collide with standard ``CommandResultPayload`` field names; the
-    job manager merges them via ``make_command_result(extras=...)``.
-    """
+    """Result body returned by a long-running handler; the manager wraps it in a
+    ``CommandResultPayload`` with the wire identity and ``duration_ms``.
+    ``extras`` ride under ``result``, never the top level; ``CommandSpec.result``
+    declares their shape. ``error_code`` (an adapter's own word) and
+    ``upstream_code`` (an exit or Garage code) are the finer error a handler
+    parsed; without them the reason and stderr become the ``ResultError``."""
 
     success: bool
     exit_code: int = 0
     stdout: str = ""
     stderr: str = ""
-    failure_reason: str | None = None
+    failure_reason: FailureReason | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+    error_code: str | None = None
+    upstream_code: str | None = None
+
+    def finer_error(self) -> ResultError | None:
+        """The ``ResultError`` a handler parsed, or None for the derived default."""
+        if self.success or (self.error_code is None and self.upstream_code is None):
+            return None
+        return ResultError(
+            code=self.error_code or str(self.failure_reason or "unspecified"),
+            http_status=None,
+            upstream_code=self.upstream_code,
+            message=self.stderr,
+        )
 
 
 JobHandler = Callable[[ProgressCallback], Awaitable[JobOutcome]]
 
-LongRunningFactory = Callable[[dict[str, str]], "JobHandler | None"]  # skylos: ignore - published Feature contract type
+LongRunningFactory = Callable[
+    [dict[str, Any]], "JobHandler | None"
+]  # skylos: ignore - published Feature contract type
 """Given the validated runtime params, build the ``JobHandler`` for a
 long-running command. Returns ``None`` when the command is registered
 but cannot be served on this install (e.g. its feature config is
@@ -97,28 +109,40 @@ SendCallback = Callable[[Envelope], Awaitable[None]]
 """How the manager puts a message on the wire."""
 
 
-_RESERVED_EVENT_FIELDS = frozenset({
-    "ts", "source", "kind", "trigger", "status", "failure_reason",
-    "error", "duration_ms", "command", "command_ref", "concurrent",
-    "bucket_id", "quota_pending", "quota_running", "quota_rejected",
-})
+_JOB_RESULT_FIELDS = frozenset(
+    {
+        "command",
+        "status",
+        "failure_reason",
+        "error",
+        "duration_ms",
+        "concurrent",
+        "bucket_id",
+        "quota_pending",
+        "quota_running",
+        "quota_rejected",
+        "params",
+    }
+)
+_JOB_RESULT = "job_result"
 _PARAM_CONTEXT_MAX_CHARS = 100
+events.declare_event("jobs", _JOB_RESULT, _JOB_RESULT_FIELDS)
 
 
-def _param_context(params: dict[str, str] | None) -> dict[str, str]:
+def _param_context(params: dict[str, Any] | None) -> dict[str, Any]:
     """A job's small params, as wide-event context.
 
     A quota event should say which quota it set; the params carry that
-    story. Values longer than the cap (a caddy tenants manifest) and
-    keys that would collide with a typed event field are skipped, so
-    context rides the attrs long tail without bloating the wire.
+    story. Values longer than the cap (a caddy tenants manifest) and keys
+    a typed field already carries are not repeated, so context rides as
+    one nested ``params`` field without bloating the wire.
     """
     if not params:
         return {}
     return {
         key: value
         for key, value in params.items()
-        if key not in _RESERVED_EVENT_FIELDS
+        if key not in _JOB_RESULT_FIELDS | events.ENVELOPE_FIELDS
         and len(str(value)) <= _PARAM_CONTEXT_MAX_CHARS
     }
 
@@ -138,14 +162,9 @@ class JobManager:
     # execution is capped (see ``_run``).
     MAX_CONCURRENT_JOBS = 6
 
-    # The one command whose ACCEPTANCE is bounded, not just its execution
-    # The Headroom loop
-    # re-dispatches the same set_quota mismatches every metrics tick (~5s) until
-    # Garage's observed cap catches up; without an admission ceiling that backlog
-    # queues without bound behind the six execution permits. One full wave
-    # (MAX_CONCURRENT_JOBS accepted quota jobs) is allowed; the next is shed as
-    # agent_overloaded so the website stops spinning and the mismatch is retried
-    # on a later tick. Quota-only: no other command's acceptance is touched.
+    # Cap accepted quota jobs at one execution wave to bound repeated retries.
+    # Excess requests receive agent_overloaded and retry on a later tick.
+    # Other commands retain their existing admission behavior.
     QUOTA_COMMAND = "garage_bucket_set_quota"
 
     def __init__(self, agent_id: str, send: SendCallback) -> None:
@@ -154,7 +173,7 @@ class JobManager:
         self._jobs: dict[str, asyncio.Task[None]] = {}
         # request_id -> command, so quota jobs can be counted without parsing
         # task names. Cleaned up wherever ``_jobs`` is (both pop sites + clear).
-        self._job_command: dict[str, str] = {}
+        self._job_command: dict[str, Any] = {}
         self._sem = asyncio.Semaphore(self.MAX_CONCURRENT_JOBS)
         # Jobs currently holding an execution permit (running the handler/hook),
         # distinct from accepted-but-queued. The gap between this and
@@ -173,7 +192,7 @@ class JobManager:
         group: str,
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """Spawn a background task for ``handler``.
 
@@ -207,6 +226,10 @@ class JobManager:
         """Return True if a task for ``request_id`` exists and isn't done."""
         task = self._jobs.get(request_id)
         return task is not None and not task.done()
+
+    def in_flight(self) -> list[str]:
+        """Request ids of jobs still running, ids only (CORE-011 d7), start order."""
+        return [rid for rid, task in self._jobs.items() if not task.done()]
 
     async def send_now(self, envelope: Envelope) -> None:
         """Push an envelope to the wire using this connection's send callback.
@@ -256,7 +279,8 @@ class JobManager:
         reaped - the count never inflates.
         """
         return sum(
-            1 for rid, task in self._jobs.items()
+            1
+            for rid, task in self._jobs.items()
             if not task.done() and self._job_command.get(rid) == self.QUOTA_COMMAND
         )
 
@@ -284,25 +308,25 @@ class JobManager:
         request_id: str,
         command: str,
         group: str,
-        params: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """Shed a quota job past the admission ceiling.
 
         Bumps the cumulative rejected counter, emits a queryable ``job_result``
         event carrying current quota pressure (the story an investigator reads a
         week later), and sends the terminal ``agent_overloaded``
-        ``command.result`` so the website's dispatch fails fast instead of
+        ``command.result`` so the control plane's dispatch fails fast instead of
         waiting on a job that was never accepted. Runs no handler and mutates no
         Garage/quota state - the mismatch is left for a later tick to retry.
         """
         self._quota_rejected += 1
         events.emit(
-            "job_result",
+            _JOB_RESULT,
             source="jobs",
             command=command,
             command_ref=request_id,
             status="rejected",
-            failure_reason="agent_overloaded",
+            failure_reason=FailureReason.AGENT_OVERLOADED,
             error="quota admission ceiling reached",
             duration_ms=0,
             concurrent=len(self._jobs),
@@ -310,7 +334,7 @@ class JobManager:
             quota_pending=self._quota_pending(),
             quota_running=self._quota_running,
             quota_rejected=self._quota_rejected,
-            **_param_context(params),
+            params=_param_context(params) or None,
         )
         result = CommandResultPayload(
             request_id=request_id,
@@ -321,30 +345,45 @@ class JobManager:
             stdout="",
             stderr="Agent quota admission ceiling reached; retry next tick.",
             duration_ms=0,
-            failure_reason="agent_overloaded",
+            failure_reason=FailureReason.AGENT_OVERLOADED,
         )
         await self.send_now(make_command_result(self._agent_id, result))
 
-    async def shutdown_all(self) -> None:
-        """Cancel every in-flight job and wait for them to finish.
+    async def shutdown_all(self, reason: CancelReason | None = None) -> None:
+        """Cancel every in-flight job, wait for them to settle, then, given a
+        ``reason`` (the socket is still open), send each one ``command.cancelled``.
 
-        Called when the WebSocket connection closes. Jobs that were running
-        will receive ``CancelledError`` and exit without emitting a terminal
-        result - the dashboard will see the disconnect and reconcile.
+        An in-flight job is one whose handler has not returned: its result
+        was never sent, so the cancelled frame is the last word for its id.
+        Without a reason (the socket is gone) nothing is sent.
         """
-        active = [t for t in self._jobs.values() if not t.done()]
+        active = {
+            rid: (task, self._job_command.get(rid, ""))
+            for rid, task in self._jobs.items()
+            if not task.done()
+        }
         if not active:
             self._jobs.clear()
             self._job_command.clear()
             return
         logger.info("Cancelling %d in-flight long-running job(s)", len(active))
-        for task in active:
+        for task, _ in active.values():
             task.cancel()
         # Wait for cancellations to settle. return_exceptions swallows the
         # CancelledErrors so gather doesn't propagate them.
-        await asyncio.gather(*active, return_exceptions=True)
+        await asyncio.gather(
+            *(task for task, _ in active.values()), return_exceptions=True
+        )
         self._jobs.clear()
         self._job_command.clear()
+        if reason is None:
+            return
+        for rid, (_, command) in active.items():
+            await self.send_now(
+                make_command_cancelled(
+                    self._agent_id, request_id=rid, command=command, reason=reason
+                )
+            )
 
     # ------------------------------------------------------------------
     # Internals
@@ -357,7 +396,7 @@ class JobManager:
         group: str,
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """Acquire one execution permit, then drive the job to its terminal result.
 
@@ -385,7 +424,9 @@ class JobManager:
             if is_quota:
                 self._quota_running += 1
             try:
-                await self._execute(request_id, command, group, handler, on_success, params)
+                await self._execute(
+                    request_id, command, group, handler, on_success, params
+                )
             finally:
                 self._running -= 1
                 if is_quota:
@@ -398,7 +439,7 @@ class JobManager:
         group: str,
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
-        params: dict[str, str] | None = None,
+        params: dict[str, Any] | None = None,
     ) -> None:
         """Drive one job from handler through terminal result and on_success hook.
 
@@ -444,7 +485,7 @@ class JobManager:
                 success=False,
                 exit_code=-1,
                 stderr=f"Internal error: {exc}",
-                failure_reason="os_error",
+                failure_reason=FailureReason.OS_ERROR,
             )
 
         self._jobs.pop(request_id, None)
@@ -464,7 +505,7 @@ class JobManager:
         # this event is what an investigator queries a week later
         # (the evaporated-os_error lesson, 2026-07-03).
         events.emit(
-            "job_result",
+            _JOB_RESULT,
             source="jobs",
             command=command,
             command_ref=request_id,
@@ -474,9 +515,9 @@ class JobManager:
             duration_ms=duration_ms,
             concurrent=concurrent,
             bucket_id=(params or {}).get("bucket_id", ""),
-            **_param_context(params),
+            params=_param_context(params) or None,
         )
-        result = CommandResultPayload(
+        payload = CommandResultPayload(
             request_id=request_id,
             command=command,
             group=group,
@@ -486,12 +527,10 @@ class JobManager:
             stderr=outcome.stderr,
             duration_ms=duration_ms,
             failure_reason=outcome.failure_reason,
+            result=outcome.extras or None,
+            error=outcome.finer_error(),
         )
-        envelope = make_command_result(
-            self._agent_id,
-            result,
-            extras=outcome.extras or None,
-        )
+        envelope = make_command_result(self._agent_id, payload)
         try:
             await self._send(envelope)
         except Exception:

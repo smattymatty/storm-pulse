@@ -31,6 +31,24 @@ class MergeableState(StateBlob, Protocol):
     def with_items(self, items: Iterable[Any], /) -> MergeableState: ...
 
 
+@dataclass(frozen=True, slots=True)
+class Freshness:
+    """What one collect says about itself (CORE-011 d5): ``complete`` is false iff
+    a listed item's read failed in the last full read, ``last_full_read_at`` is
+    ISO-8601 UTC (``""`` before the first), ``changed_ids`` the items this read re-read."""
+
+    complete: bool = True
+    last_full_read_at: str = ""
+    changed_ids: tuple[str, ...] = ()
+
+
+@runtime_checkable
+class FreshState(StateBlob, Protocol):
+    """State that reports its own freshness; a blob without it pushes as complete and unchanged."""
+
+    def freshness(self) -> Freshness: ...
+
+
 # Capability signatures. The parsed config is integration-owned, so it types as
 # Any here and the static type re-forms in each Integration's own module.
 ParseConfig = Callable[[dict[str, Any]], Any]
@@ -45,7 +63,7 @@ BuildSpecs = Callable[[Any], dict[str, CommandSpec]]
 CollectState = Callable[[Any], "StateBlob | None"]
 # Post-mutation targeted re-read: given config, the current snapshot (id planning
 # only), and the mutation's params, return only the freshly re-read items.
-ReadAffected = Callable[[Any, Any, Mapping[str, str]], list[Any]]
+ReadAffected = Callable[[Any, Any, Mapping[str, Any]], list[Any]]
 # Deploy subjects an Integration contributes (CORE-005 D14). Returns SDK
 # SdkDeploySubject values; typed loosely here so Framework does not reach
 # sideways into a Feature's shapes.
@@ -61,6 +79,13 @@ BuildLogEnricher = Callable[[Any], LogEnricher]
 # Runs on the doctor/readiness/init path, NEVER under ``config check`` (CORE-000
 # side-effect-free rule; ADR CORE-007 readiness graph).
 ReadinessProbe = Callable[[Any], tuple[CapabilityStatus, ...]]
+# Components an Integration declares at register (CORE-011 d7): given its parsed
+# config and latest state blob (None before the first collect), the SdkComponent
+# values it fronts. Read-only, no I/O beyond what the Integration already holds.
+Components = Callable[[Any, Any], tuple[Any, ...]]
+# The command gate's receipt (CORE-007 D2, CORE-011 d4): the command_specs_digest
+# of what this Integration would contribute and why it is fenced, None when it is not.
+CommandGate = Callable[[Any], tuple[str, str | None]]
 
 
 # One Investigation's runner: given the parsed integration config and the
@@ -128,6 +153,12 @@ class Integration:
     # the wire contract can build this Integration's commands in any process.
     # Required with ``specs`` or ``collect_state`` (Function 5); values are placeholders.
     declared_config: Mapping[str, Any] | None = None
+    # Optional components hook: what this Integration fronts, versioned, on
+    # every register. An external adapter holds no state; its hook ignores it.
+    components: Components | None = None
+    # Set only by the external translator, where a sealed grant gates ``specs``.
+    # In-tree commands have no gate: bootstrap digests ``specs`` itself.
+    command_gate: CommandGate | None = None
 
 
 # Kept byte-identical to the pre-single-source ``garage_refresh`` entry so the

@@ -2,16 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from stormpulse.auth import (
-    canonical_command_request,
-    canonical_command_sequence,
-    generate_nonce,
-    sign,
-)
+from stormpulse.auth import generate_nonce, sign_envelope
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.config import (
     AgentConfig,
@@ -26,11 +23,12 @@ from stormpulse.config import (
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.state import GarageBucket, GarageKeyRef, GarageState
 from stormpulse.protocol import (
+    SPEAKS,
     CommandResultPayload,
     Envelope,
+    FailureReason,
     MessageType,
     MetricsPayload,
-    format_timestamp,
 )
 
 # ---------------------------------------------------------------------------
@@ -40,6 +38,39 @@ from stormpulse.protocol import (
 SECRET = b"test-secret-key-256-bits-long!!!"
 AGENT_ID = "test-01"
 PULSE_TOKEN = "tok-test-123"
+# Digests with the real shape and no real meaning: fixtures only.
+CONTRACT_DIGEST = "sha256:" + "0f" * 32
+WIRE_DIGEST = "sha256:" + "1f" * 32
+
+
+def register_fields(**overrides: Any) -> dict[str, Any]:
+    """Every ``make_register`` keyword at its empty value: a quiet, sealed node.
+    Override only what a test asserts on."""
+    return {
+        "contract_digest": CONTRACT_DIGEST,
+        "wire_contract": WIRE_DIGEST,
+        "commands": {},
+        "integrations": {},
+        "log_groups": [],
+        "system_inventory": {},
+        "signoff_sealed": True,
+        "unsealed_since": None,
+        "boot_id": "b0ot-1d",
+        "agent_started_at": "2026-02-21T11:00:00Z",
+        "components": [],
+        "in_flight": [],
+    } | overrides
+
+
+def register_payload(**overrides: Any) -> dict[str, Any]:
+    """A full ``register`` payload as the wire carries it; see ``register_fields``."""
+    return {
+        "version": "0.1.0",
+        "pulse_token": PULSE_TOKEN,
+        "speaks": list(SPEAKS),
+        **register_fields(),
+    } | overrides
+
 
 FAKE_METRICS = MetricsPayload(
     cpu_percent=10.0,
@@ -206,80 +237,101 @@ def build_garage_config(tmp_path: Path) -> GarageConfig:
     )
 
 
-def sign_command_request(
+def envelope(
+    type: MessageType,
+    payload: dict[str, Any],
+    *,
+    v: int = SPEAKS[-1],
+    agent_id: str = AGENT_ID,
+    id: str | None = None,
+    ts: datetime | None = None,
+) -> Envelope:
+    """A hand-built Envelope at the spoken version; override only what a test asserts on."""
+    return Envelope(
+        v=v,
+        type=type,
+        id=id if id is not None else str(uuid.uuid4()),
+        ts=ts if ts is not None else datetime.now(UTC),
+        agent_id=agent_id,
+        payload=payload,
+    )
+
+
+def signed(env: Envelope, secret: bytes = SECRET) -> Envelope:
+    """*env* signed the way the control plane signs it, then parsed off the wire
+    so it carries ``received``, exactly as every frame ``verify_envelope`` sees."""
+    frame = env.to_dict()
+    frame["payload"] = {**frame["payload"], "hmac": sign_envelope(frame, secret)}
+    return Envelope.from_json(json.dumps(frame))
+
+
+def signed_command_request(
     command: str = "git_pull",
     *,
     agent_id: str = AGENT_ID,
     nonce: str | None = None,
     ts: datetime | None = None,
     secret: bytes = SECRET,
-    params: dict[str, str] | None = None,
-) -> str:
-    """Build a signed command.request envelope as a JSON string."""
-    if ts is None:
-        ts = datetime.now(UTC)
-    if nonce is None:
-        nonce = generate_nonce()
-    ts_str = format_timestamp(ts)
-    canonical = canonical_command_request(command, nonce, ts_str, params)
-    sig = sign(canonical, secret)
-    envelope = Envelope(
-        v=1,
-        type=MessageType.COMMAND_REQUEST,
-        id=str(uuid.uuid4()),
-        ts=ts,
-        agent_id=agent_id,
-        payload={
-            "command": command,
-            "params": params or {},
-            "hmac": sig,
-            "nonce": nonce,
-        },
+    params: dict[str, Any] | None = None,
+) -> Envelope:
+    """A signed command.request envelope; override only what a test asserts on."""
+    return signed(
+        envelope(
+            MessageType.COMMAND_REQUEST,
+            {
+                "command": command,
+                "params": params or {},
+                "nonce": nonce if nonce is not None else generate_nonce(),
+            },
+            agent_id=agent_id,
+            ts=ts,
+        ),
+        secret,
     )
-    return envelope.to_json()
 
 
-def sign_command_sequence(
-    commands: list[str],
+def signed_command_sequence(
+    commands: list[str] | None = None,
     *,
+    steps: list[dict[str, Any]] | None = None,
     stop_on_failure: bool = True,
     agent_id: str = AGENT_ID,
     nonce: str | None = None,
     ts: datetime | None = None,
     secret: bytes = SECRET,
     sequence_id: str | None = None,
-) -> str:
-    """Build a signed command.sequence envelope as a JSON string."""
-    if ts is None:
-        ts = datetime.now(UTC)
-    if nonce is None:
-        nonce = generate_nonce()
-    if sequence_id is None:
-        sequence_id = str(uuid.uuid4())
-    ts_str = format_timestamp(ts)
-    canonical = canonical_command_sequence(
-        sequence_id,
-        commands,
-        stop_on_failure=stop_on_failure,
-        nonce=nonce,
-        timestamp=ts_str,
+) -> Envelope:
+    """A signed command.sequence envelope; override only what a test asserts on.
+    ``commands`` are names with no params; ``steps`` is the wire shape, verbatim."""
+    if steps is None:
+        names = commands if commands is not None else ["git_pull", "docker_logs"]
+        steps = [{"command": name, "params": {}} for name in names]
+    return signed(
+        envelope(
+            MessageType.COMMAND_SEQUENCE,
+            {
+                "sequence_id": sequence_id
+                if sequence_id is not None
+                else str(uuid.uuid4()),
+                "steps": steps,
+                "stop_on_failure": stop_on_failure,
+                "nonce": nonce if nonce is not None else generate_nonce(),
+            },
+            agent_id=agent_id,
+            ts=ts,
+        ),
+        secret,
     )
-    sig = sign(canonical, secret)
-    envelope = Envelope(
-        v=1,
-        type=MessageType.COMMAND_SEQUENCE,
-        id=str(uuid.uuid4()),
-        ts=ts,
-        agent_id=agent_id,
-        payload={
-            "sequence_id": sequence_id,
-            "commands": commands,
-            "stop_on_failure": stop_on_failure,
-            "hmac": sig,
-            "nonce": nonce,
-        },
-    )
-    return envelope.to_json()
+
+
+def sign_command_request(command: str = "git_pull", **kwargs: Any) -> str:
+    """``signed_command_request`` as the JSON string the wire carries."""
+    return signed_command_request(command, **kwargs).to_json()
+
+
+def sign_command_sequence(commands: list[str], **kwargs: Any) -> str:
+    """``signed_command_sequence`` as the JSON string the wire carries."""
+    return signed_command_sequence(commands, **kwargs).to_json()
 
 
 def make_successful_result(
@@ -315,5 +367,5 @@ def make_failed_result(
         stderr="error\n",
         duration_ms=50,
         sequence_id=sequence_id,
-        failure_reason="exit_code",
+        failure_reason=FailureReason.EXIT_CODE,
     )

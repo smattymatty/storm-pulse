@@ -13,6 +13,7 @@ from stormpulse.integrations.external.model import (
     FailureCode,
     PackageError,
 )
+from stormpulse.sdk import SDK_API
 
 _FP = "sha256:" + "ab" * 32
 _PKG = "sha256:" + "cd" * 32
@@ -20,7 +21,9 @@ _CSD = "sha256:" + "ef" * 32
 _SMD = "sha256:" + "0f" * 32
 _SIG64 = base64.b64encode(b"\x01" * 64).decode("ascii")
 
-_DEFAULT_INTEGRATION = 'id = "obs"\nversion = "1.0.0"\nentry_module = "obs.integration"\n'
+_DEFAULT_INTEGRATION = (
+    'id = "obs"\nversion = "1.0.0"\nentry_module = "obs.integration"\n'
+)
 
 
 def _manifest(
@@ -78,18 +81,56 @@ def test_no_requests_table_means_no_capabilities() -> None:
     [
         _manifest(extra_root="unexpected = 1\n"),
         _manifest(integration_body=_DEFAULT_INTEGRATION + "bogus = 1\n"),
-        _manifest(integration_body='version = "1.0.0"\nentry_module = "obs.integration"\n'),
-        _manifest(integration_body='id = "obs"\nversion = 1\nentry_module = "obs.integration"\n'),
+        _manifest(
+            integration_body='version = "1.0.0"\nentry_module = "obs.integration"\n'
+        ),
+        _manifest(
+            integration_body='id = "obs"\nversion = 1\nentry_module = "obs.integration"\n'
+        ),
         _manifest(schema_version="2"),
-        _manifest(integration_body=_DEFAULT_INTEGRATION + "sdk_api = 2\n"),
-        _manifest(integration_body='id = "Obs"\nversion = "1.0.0"\nentry_module = "Obs.integration"\n'),
-        _manifest(integration_body='id = "obs"\nversion = "1.x.0"\nentry_module = "obs.integration"\n'),
-        _manifest(integration_body='id = "obs"\nversion = "1.0.0"\nentry_module = "other.integration"\n'),
+        _manifest(integration_body=_DEFAULT_INTEGRATION + f"sdk_api = {SDK_API + 1}\n"),
+        _manifest(
+            integration_body='id = "Obs"\nversion = "1.0.0"\nentry_module = "Obs.integration"\n'
+        ),
+        _manifest(
+            integration_body='id = "obs"\nversion = "1.x.0"\nentry_module = "obs.integration"\n'
+        ),
+        _manifest(
+            integration_body='id = "obs"\nversion = "1.0.0"\nentry_module = "other.integration"\n'
+        ),
         _manifest(publisher_body='fingerprint = "sha256:nothex"\n'),
     ],
 )
 def test_t09_structural_failures_are_f4(raw: bytes) -> None:
     with pytest.raises(PackageError) as excinfo:
+        parse_manifest(raw)
+    assert excinfo.value.code is FailureCode.F4
+
+
+@pytest.mark.parametrize("sdk_api", list(range(1, SDK_API + 1)))
+def test_sdk_api_up_to_the_host_is_accepted(sdk_api: int) -> None:
+    """Every SDK bump is additive, so a manifest honest about SDK 2 (the
+    components hook) loads; the gate is the range, not the literal 1."""
+    raw = _manifest(integration_body=_DEFAULT_INTEGRATION + f"sdk_api = {sdk_api}\n")
+    assert parse_manifest(raw).sdk_api == sdk_api
+
+
+def test_sdk_api_past_the_host_names_the_range() -> None:
+    raw = _manifest(
+        integration_body=_DEFAULT_INTEGRATION + f"sdk_api = {SDK_API + 1}\n"
+    )
+    with pytest.raises(PackageError, match=f"accepts 1 to {SDK_API}"):
+        parse_manifest(raw)
+
+
+@pytest.mark.parametrize("sdk_api", [0, -1])
+def test_sdk_api_below_one_is_f4(sdk_api: int) -> None:
+    """The range starts at 1: an SDK that never existed is refused the same way
+    one past the host is, never let in as "older than anything"."""
+    raw = _manifest(integration_body=_DEFAULT_INTEGRATION + f"sdk_api = {sdk_api}\n")
+    with pytest.raises(
+        PackageError, match=f"unsupported sdk_api {sdk_api} "
+    ) as excinfo:
         parse_manifest(raw)
     assert excinfo.value.code is FailureCode.F4
 
@@ -116,7 +157,9 @@ def test_invalid_toml_is_f4() -> None:
 
 
 def test_t10_command_contributor_requires_digest() -> None:
-    raw = _manifest(requests_body='capabilities = ["integration_load", "command_contributor"]\n')
+    raw = _manifest(
+        requests_body='capabilities = ["integration_load", "command_contributor"]\n'
+    )
     with pytest.raises(PackageError) as excinfo:
         parse_manifest(raw)
     assert excinfo.value.code is FailureCode.F4
@@ -132,14 +175,18 @@ def test_t10_digest_without_command_contributor() -> None:
 
 
 def test_t10_command_contributor_with_digest_ok() -> None:
-    raw = _manifest(requests_body=f'capabilities = ["command_contributor"]\ncommand_specs_digest = "{_CSD}"\n')
+    raw = _manifest(
+        requests_body=f'capabilities = ["command_contributor"]\ncommand_specs_digest = "{_CSD}"\n'
+    )
     manifest = parse_manifest(raw)
     assert CapabilityRequest.COMMAND_CONTRIBUTOR in manifest.requested_capabilities
     assert manifest.command_specs_digest == _CSD
 
 
 def test_t10_duplicate_capability_is_f4() -> None:
-    raw = _manifest(requests_body='capabilities = ["integration_load", "integration_load"]\n')
+    raw = _manifest(
+        requests_body='capabilities = ["integration_load", "integration_load"]\n'
+    )
     with pytest.raises(PackageError) as excinfo:
         parse_manifest(raw)
     assert excinfo.value.code is FailureCode.F4

@@ -25,15 +25,28 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 1
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteKeyResult:
+    """What ``garage_delete_key`` returns under ``result``."""
+
+    key_id: str
+    outcome: str
+    confirmed_absent: bool
+    garage_stderr: str
+    duration_seconds: float
 
 
 def make_delete_key_handler(
@@ -81,7 +94,9 @@ async def run_delete_key(
     await progress("starting", 0, _TOTAL_STEPS, "Deleting key")
     ok, err = await asyncio.to_thread(
         admin_api.delete_key,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=key_id,
     )
     if ok:
         return _confirmed(key_id, "deleted", started_at)
@@ -116,7 +131,7 @@ def _failure(*, key_id: str, stderr: str, started_at: float) -> JobOutcome:
         exit_code=-1,
         stdout="",
         stderr=stderr,
-        failure_reason="key_delete_failed",
+        failure_reason=FailureReason.KEY_DELETE_FAILED,
         extras={
             "key_id": key_id,
             "outcome": "transient_error",

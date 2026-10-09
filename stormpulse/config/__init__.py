@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from stormpulse.config.param_schema import ParamSchema, schema_declaration_error
+from stormpulse.config.param_schema import (
+    ParamSchema,
+    schema_declaration_error,
+    schema_violation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +73,15 @@ class StorageConfig:
 
 @dataclass(frozen=True, slots=True)
 class ParamDef:
-    """Declares an overridable placeholder for a command.
-
-    Validated by ``pattern`` (regex for short identifiers), ``max_bytes`` (size
-    cap for opaque blobs like shell text), or ``schema`` (a JSON blob's declared
-    shape, checked after decoding; needs ``max_bytes`` so the blob is capped
-    before it is parsed). Unvalidated params fail at construction.
-    """
+    """An overridable command placeholder, validated by ``pattern`` (regex for
+    short identifiers), ``max_bytes`` (size cap for opaque blobs like shell
+    text) or ``schema`` (a JSON value's shape; needs ``max_bytes``, the cap on
+    its canonical encoding); an unvalidated one fails at construction.
+    ``wire_type`` is string unless ``schema`` says otherwise; ``default`` is a
+    value of that type."""
 
     placeholder: str
-    default: str | None
+    default: Any
     pattern: str | None = None
     description: str = ""
     max_bytes: int | None = None
@@ -86,6 +89,11 @@ class ParamDef:
     # redacted from the wide-event context at dispatch, never a durable record.
     secret: bool = False
     schema: ParamSchema | None = None
+
+    @property
+    def wire_type(self) -> str:
+        """The JSON type a value of this param rides as (CORE-011 d9)."""
+        return "string" if self.schema is None else str(self.schema["type"])
 
     def __post_init__(self) -> None:
         if self.pattern is None and self.max_bytes is None:
@@ -111,6 +119,18 @@ class ParamDef:
                 f"ParamDef {self.placeholder!r}: credential-shaped name requires "
                 f"secret=True (redacts it from event and log context)"
             )
+        # A default rides the wire as a value of the declared type; a str where
+        # an object is declared would fail every dispatch that omits the param.
+        if self.default is not None:
+            problem = (
+                schema_violation(self.default, self.schema)
+                if self.schema is not None
+                else None
+                if isinstance(self.default, str)
+                else f"$: expected string, got {type(self.default).__name__}"
+            )
+            if problem is not None:
+                raise ValueError(f"ParamDef {self.placeholder!r}: default {problem}")
 
 
 # Execution-mode discriminator the dispatcher routes on. Subprocess vs job vs
@@ -121,7 +141,7 @@ CommandMode = Literal["subprocess", "job", "refresh"]
 # A "job" command's lazy handler thunk: validated runtime params -> JobHandler,
 # or None when unservable on this host. Typed loosely: the concrete types live in
 # Framework (commands/jobs.py), which Foundation must not import (CORE-000).
-CommandHandler = Callable[[dict[str, str]], Any]
+CommandHandler = Callable[[dict[str, Any]], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +172,9 @@ class CommandSpec:
     self_reconciling: bool = False
     handler: CommandHandler | None = None
     params: dict[str, ParamDef] = dataclasses.field(default_factory=dict)
+    # The dataclass naming what rides under ``command.result.result`` (CORE-011
+    # d9): declared in the artifact, so a consumer reads keys it was told about.
+    result: type | None = None
 
     def __post_init__(self) -> None:
         if self.mode == "job":
@@ -165,6 +188,13 @@ class CommandSpec:
             raise ValueError(
                 f"CommandSpec {self.command!r}: mode {self.mode!r} must not carry a "
                 "handler (only 'job' commands have one)"
+            )
+        if self.result is not None and not (
+            self.mode == "job" and dataclasses.is_dataclass(self.result)
+        ):
+            raise ValueError(
+                f"CommandSpec {self.command!r}: result must be a dataclass on a "
+                f"'job' command, got {self.result!r} on mode {self.mode!r}"
             )
         if self.mode == "subprocess" and (
             not self.command or not self.command[0].startswith("/")

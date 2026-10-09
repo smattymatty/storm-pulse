@@ -4,7 +4,6 @@
       "all_fields": [
         "bucket",
         "bytes_sent",
-        "client_ip",
         "duration_ms",
         "error",
         "host",
@@ -15,7 +14,8 @@
         "method",
         "msg",
         "names",
-        "path",
+        "peer_ip",
+        "s3_op",
         "status",
         "truncated",
         "ts",
@@ -26,13 +26,13 @@
         "access": [
           "bucket",
           "bytes_sent",
-          "client_ip",
           "duration_ms",
           "host",
           "level",
           "message",
           "method",
-          "path",
+          "peer_ip",
+          "s3_op",
           "status",
           "truncated",
           "ts",
@@ -89,15 +89,15 @@
       "all_fields": [
         "bucket",
         "bucket_id",
-        "client_ip",
         "key_id",
         "level",
         "message",
         "method",
         "object_key",
-        "path",
+        "peer_ip",
         "proxy",
         "response_code",
+        "s3_op",
         "truncated",
         "ts"
       ],
@@ -105,17 +105,31 @@
         "bucket_id"
       ],
       "variants": {
-        "request": [
+        "admin": [
           "bucket",
-          "client_ip",
           "key_id",
           "level",
           "message",
           "method",
           "object_key",
-          "path",
+          "peer_ip",
           "proxy",
           "response_code",
+          "s3_op",
+          "truncated",
+          "ts"
+        ],
+        "request": [
+          "bucket",
+          "key_id",
+          "level",
+          "message",
+          "method",
+          "object_key",
+          "peer_ip",
+          "proxy",
+          "response_code",
+          "s3_op",
           "truncated",
           "ts"
         ]

@@ -29,8 +29,9 @@ from stormpulse.sdk import (
 from stormpulse.sdk.plan import MutationKind
 
 
-def test_sdk_api_is_one() -> None:
-    assert SDK_API == 1
+def test_sdk_api_is_two() -> None:
+    # 2 added the components hook (CORE-011 d7); a plan built against 1 still applies.
+    assert SDK_API == 2
 
 
 @pytest.mark.parametrize(
@@ -53,7 +54,9 @@ def test_capability_token_regex(token: str, ok: bool) -> None:
 def test_choice_question_requires_choices() -> None:
     bad = Question(key="k", kind=QuestionKind.CHOICE, prompt="pick")
     assert bad.validate() is not None
-    good = Question(key="k", kind=QuestionKind.CHOICE, prompt="pick", choices=("a", "b"))
+    good = Question(
+        key="k", kind=QuestionKind.CHOICE, prompt="pick", choices=("a", "b")
+    )
     assert good.validate() is None
 
 
@@ -63,9 +66,22 @@ def test_non_choice_question_must_not_carry_choices() -> None:
 
 
 def test_bounds_only_on_numeric_kinds_and_ordered() -> None:
-    assert Question(key="k", kind=QuestionKind.TEXT, prompt="p", min=1).validate() is not None
-    assert Question(key="k", kind=QuestionKind.PORT, prompt="p", min=1, max=65535).validate() is None
-    assert Question(key="k", kind=QuestionKind.INTEGER, prompt="p", min=5, max=1).validate() is not None
+    assert (
+        Question(key="k", kind=QuestionKind.TEXT, prompt="p", min=1).validate()
+        is not None
+    )
+    assert (
+        Question(
+            key="k", kind=QuestionKind.PORT, prompt="p", min=1, max=65535
+        ).validate()
+        is None
+    )
+    assert (
+        Question(
+            key="k", kind=QuestionKind.INTEGER, prompt="p", min=5, max=1
+        ).validate()
+        is not None
+    )
 
 
 def test_answers_from_rejects_duplicate_keys() -> None:
@@ -96,15 +112,22 @@ def test_dependency_requirement_defaults_to_ready() -> None:
 
 
 def test_capability_status_fields() -> None:
-    cs = CapabilityStatus("garage.admin.v1", CapabilityLiveness.UNMET, reason="no token", repair="fix it")
+    cs = CapabilityStatus(
+        "garage.admin.v1", CapabilityLiveness.UNMET, reason="no token", repair="fix it"
+    )
     assert cs.liveness is CapabilityLiveness.UNMET
     assert cs.repair == "fix it"
 
 
 def test_mutation_kind_reads_classvar() -> None:
-    assert mutation_kind(ClaimTomlSection("rclone", {"enabled": True})) is MutationKind.CLAIM_TOML_SECTION
+    assert (
+        mutation_kind(ClaimTomlSection("rclone", {"enabled": True}))
+        is MutationKind.CLAIM_TOML_SECTION
+    )
     assert mutation_kind(VerifyProbe("garage.admin.v1")) is MutationKind.VERIFY_PROBE
-    assert mutation_kind(RestartOrReload("stormpulse")) is MutationKind.RESTART_OR_RELOAD
+    assert (
+        mutation_kind(RestartOrReload("stormpulse")) is MutationKind.RESTART_OR_RELOAD
+    )
 
 
 def test_init_plan_carries_sdk_api() -> None:
@@ -114,7 +137,7 @@ def test_init_plan_carries_sdk_api() -> None:
         mutations=(ClaimTomlSection("rclone", {"enabled": True}),),
         summary="configure rclone",
     )
-    assert plan.sdk_api == 1
+    assert plan.sdk_api == SDK_API
     first = plan.mutations[0]
     assert isinstance(first, ClaimTomlSection)
     assert first.section == "rclone"
@@ -127,4 +150,8 @@ def test_finding_severity_order() -> None:
         Finding(Severity.WARNING, "careful"),
     ]
     ordered = sorted(findings, key=lambda f: (severity_rank(f.severity), f.message))
-    assert [f.severity for f in ordered] == [Severity.REFUSAL, Severity.WARNING, Severity.OK]
+    assert [f.severity for f in ordered] == [
+        Severity.REFUSAL,
+        Severity.WARNING,
+        Severity.OK,
+    ]

@@ -12,9 +12,17 @@ from stormpulse.integrations.external import digest, install, layout, ledger, tr
 from stormpulse.integrations.external.model import FailureCode, PackageError
 from tests.integrations.external._helpers import (
     approve as _approve,
+)
+from tests.integrations.external._helpers import (
     installed_dir as _installed_dir,
+)
+from tests.integrations.external._helpers import (
     keypair as _keypair,
+)
+from tests.integrations.external._helpers import (
     make_package as _make_package,
+)
+from tests.integrations.external._helpers import (
     state_dir as _state,
 )
 
@@ -31,7 +39,9 @@ def test_t19_install_valid(tmp_path: Path) -> None:
     assert receipt.package_digest == package_digest
     assert receipt.integration_id == "obs"
     assert receipt.agent_id == "agent-1"
-    assert receipt.installed_relpath == f"packages/sha256/{package_digest.split(':')[1]}"
+    assert (
+        receipt.installed_relpath == f"packages/sha256/{package_digest.split(':')[1]}"
+    )
 
     installed = _installed_dir(state, package_digest)
     assert installed.is_dir()
@@ -82,7 +92,9 @@ def test_install_tampered_package_is_f6(tmp_path: Path) -> None:
     _approve(state, tmp_path, private)
     src = tmp_path / "src"
     _make_package(src, private, fingerprint)
-    (src / "code.py").write_bytes(b"tampered\n")  # digest changes; signature no longer matches
+    (src / "code.py").write_bytes(
+        b"tampered\n"
+    )  # digest changes; signature no longer matches
     with pytest.raises(PackageError) as excinfo:
         install.commit_install(src, state_dir=state, agent_id="a")
     assert excinfo.value.code is FailureCode.F6
@@ -137,7 +149,9 @@ def test_installed_tree_is_read_only_including_subdirs(tmp_path: Path) -> None:
     state = _state(tmp_path)
     _approve(state, tmp_path, private)
     src = tmp_path / "src"
-    package_digest = _make_package(src, private, fingerprint, extra={"sub/nested.py": b"nested\n"})
+    package_digest = _make_package(
+        src, private, fingerprint, extra={"sub/nested.py": b"nested\n"}
+    )
     install.commit_install(src, state_dir=state, agent_id="a")
     installed = _installed_dir(state, package_digest)
     assert installed.stat().st_mode & 0o777 == 0o555
@@ -155,7 +169,9 @@ def test_idempotent_reinstall_reseals_mode_drift(tmp_path: Path) -> None:
     install.commit_install(src, state_dir=state, agent_id="a")
     drifted = _installed_dir(state, package_digest) / "code.py"
     os.chmod(drifted, 0o644)  # someone made it writable
-    install.commit_install(src, state_dir=state, agent_id="a")  # idempotent reinstall re-seals
+    install.commit_install(
+        src, state_dir=state, agent_id="a"
+    )  # idempotent reinstall re-seals
     assert drifted.stat().st_mode & 0o222 == 0
 
 
@@ -181,7 +197,9 @@ def _valid_receipt(**overrides: object) -> dict[str, object]:
     return base
 
 
-def _write_raw_receipt(state: Path, integration_id: str, filename: str, payload: object) -> Path:
+def _write_raw_receipt(
+    state: Path, integration_id: str, filename: str, payload: object
+) -> Path:
     directory = layout.receipts_dir(state) / integration_id
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / filename
@@ -191,15 +209,53 @@ def _write_raw_receipt(state: Path, integration_id: str, filename: str, payload:
 
 def test_receipt_relpath_traversal_is_f11(tmp_path: Path) -> None:
     state = _state(tmp_path)
-    path = _write_raw_receipt(state, "obs", f"{_HEX}.json", _valid_receipt(installed_relpath="../../../../etc"))
+    path = _write_raw_receipt(
+        state,
+        "obs",
+        f"{_HEX}.json",
+        _valid_receipt(installed_relpath="../../../../etc"),
+    )
     with pytest.raises(PackageError) as excinfo:
+        ledger.read_receipt(path)
+    assert excinfo.value.code is FailureCode.F11
+
+
+def test_receipt_sdk_api_within_the_host_range_reads(tmp_path: Path) -> None:
+    """A receipt the manifest gate let in (sdk_api up to SDK_API) reads back;
+    one past the host is F11, the same line the loader draws."""
+    from stormpulse.sdk import SDK_API
+
+    state = _state(tmp_path)
+    path = _write_raw_receipt(
+        state, "obs", f"{_HEX}.json", _valid_receipt(sdk_api=SDK_API)
+    )
+    assert ledger.read_receipt(path).sdk_api == SDK_API
+    path = _write_raw_receipt(
+        state, "obs", f"{_HEX}.json", _valid_receipt(sdk_api=SDK_API + 1)
+    )
+    with pytest.raises(PackageError) as excinfo:
+        ledger.read_receipt(path)
+    assert excinfo.value.code is FailureCode.F11
+
+
+@pytest.mark.parametrize("sdk_api", [0, -1])
+def test_receipt_sdk_api_below_one_is_f11(tmp_path: Path, sdk_api: int) -> None:
+    """The ledger's range is the manifest gate's, no wider at the bottom either:
+    a receipt edited to an SDK that never existed does not read."""
+    state = _state(tmp_path)
+    path = _write_raw_receipt(
+        state, "obs", f"{_HEX}.json", _valid_receipt(sdk_api=sdk_api)
+    )
+    with pytest.raises(PackageError, match="unsupported sdk_api") as excinfo:
         ledger.read_receipt(path)
     assert excinfo.value.code is FailureCode.F11
 
 
 def test_receipt_bad_digest_is_f11(tmp_path: Path) -> None:
     state = _state(tmp_path)
-    path = _write_raw_receipt(state, "obs", f"{_HEX}.json", _valid_receipt(package_digest="sha256:nothex"))
+    path = _write_raw_receipt(
+        state, "obs", f"{_HEX}.json", _valid_receipt(package_digest="sha256:nothex")
+    )
     with pytest.raises(PackageError) as excinfo:
         ledger.read_receipt(path)
     assert excinfo.value.code is FailureCode.F11
@@ -207,7 +263,9 @@ def test_receipt_bad_digest_is_f11(tmp_path: Path) -> None:
 
 def test_receipt_filename_disagrees_with_digest_is_f11(tmp_path: Path) -> None:
     state = _state(tmp_path)
-    wrong_name = "deadbeef" + "00" * 28 + ".json"  # 64 hex, but not the receipt's digest
+    wrong_name = (
+        "deadbeef" + "00" * 28 + ".json"
+    )  # 64 hex, but not the receipt's digest
     path = _write_raw_receipt(state, "obs", wrong_name, _valid_receipt())
     with pytest.raises(PackageError) as excinfo:
         ledger.read_receipt(path)
@@ -216,7 +274,9 @@ def test_receipt_filename_disagrees_with_digest_is_f11(tmp_path: Path) -> None:
 
 def test_receipt_wrong_parent_dir_is_f11(tmp_path: Path) -> None:
     state = _state(tmp_path)
-    path = _write_raw_receipt(state, "bar", f"{_HEX}.json", _valid_receipt(integration_id="obs"))
+    path = _write_raw_receipt(
+        state, "bar", f"{_HEX}.json", _valid_receipt(integration_id="obs")
+    )
     with pytest.raises(PackageError) as excinfo:
         ledger.read_receipt(path)
     assert excinfo.value.code is FailureCode.F11

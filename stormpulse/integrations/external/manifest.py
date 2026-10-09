@@ -22,6 +22,7 @@ from stormpulse.integrations.external.model import (
     ManifestV1,
     PackageError,
 )
+from stormpulse.sdk import SDK_API
 
 # Reserving stdlib top-levels (and our own root) stops a package id like ``json``
 # or ``os`` from later resolving an entry module that shadows the standard library.
@@ -33,7 +34,9 @@ _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 _SCHEMA_VERSION = 1
-_SUPPORTED_SDK_API = 1
+# A manifest declares the SDK it was written against; every SDK bump is additive
+# (CORE-007), so this host loads 1 through what it offers. Omitted means 1.
+_SUPPORTED_SDK_APIS = range(1, SDK_API + 1)
 _MAX_ENTRY_MODULE_BYTES = 200
 _MAX_ENTRY_OBJECT_BYTES = 64
 _ED25519_SIGNATURE_BYTES = 64
@@ -60,7 +63,9 @@ def parse_manifest(raw: bytes) -> ManifestV1:
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as exc:
-        raise PackageError(FailureCode.F4, f"manifest is not valid TOML: {exc}") from None
+        raise PackageError(
+            FailureCode.F4, f"manifest is not valid TOML: {exc}"
+        ) from None
 
     _reject_unknown(data, _MANIFEST_ROOT_KEYS, "manifest")
     _require_schema_version(data, "manifest")
@@ -71,16 +76,23 @@ def parse_manifest(raw: bytes) -> ManifestV1:
     if not _ID_RE.match(integration_id):
         raise PackageError(FailureCode.F4, "integration id is malformed")
     if integration_id in _RESERVED_INTEGRATION_IDS:
-        raise PackageError(FailureCode.F4, f"integration id '{integration_id}' is reserved")
+        raise PackageError(
+            FailureCode.F4, f"integration id '{integration_id}' is reserved"
+        )
     version = _string(integration, "version", "[integration]")
     if not _VERSION_RE.match(version):
         raise PackageError(FailureCode.F4, "version is malformed")
-    sdk_api = _int_default(integration, "sdk_api", _SUPPORTED_SDK_API, "[integration]")
-    if sdk_api != _SUPPORTED_SDK_API:
-        raise PackageError(FailureCode.F4, "unsupported sdk_api (this loader requires 1)")
+    sdk_api = _int_default(integration, "sdk_api", 1, "[integration]")
+    if sdk_api not in _SUPPORTED_SDK_APIS:
+        raise PackageError(
+            FailureCode.F4,
+            f"unsupported sdk_api {sdk_api} (this loader accepts 1 to {SDK_API})",
+        )
     entry_module = _string(integration, "entry_module", "[integration]")
     _validate_entry_module(entry_module, integration_id)
-    entry_object = _string_default(integration, "entry_object", "INTEGRATION", "[integration]")
+    entry_object = _string_default(
+        integration, "entry_object", "INTEGRATION", "[integration]"
+    )
     _validate_entry_object(entry_object)
 
     publisher = _table(data, "publisher", "manifest")
@@ -97,20 +109,26 @@ def parse_manifest(raw: bytes) -> ManifestV1:
         if "capabilities" in requests:
             capabilities = _parse_capabilities(requests["capabilities"])
         if "command_specs_digest" in requests:
-            command_specs_digest = _string(requests, "command_specs_digest", "[requests]")
+            command_specs_digest = _string(
+                requests, "command_specs_digest", "[requests]"
+            )
             _validate_digest(command_specs_digest, "command_specs_digest")
         if "service_manifest_digest" in requests:
-            service_manifest_digest = _string(requests, "service_manifest_digest", "[requests]")
+            service_manifest_digest = _string(
+                requests, "service_manifest_digest", "[requests]"
+            )
             _validate_digest(service_manifest_digest, "service_manifest_digest")
 
     wants_commands = CapabilityRequest.COMMAND_CONTRIBUTOR in capabilities
     if wants_commands and command_specs_digest is None:
         raise PackageError(
-            FailureCode.F4, "command_specs_digest is required when command_contributor is requested"
+            FailureCode.F4,
+            "command_specs_digest is required when command_contributor is requested",
         )
     if command_specs_digest is not None and not wants_commands:
         raise PackageError(
-            FailureCode.F4, "command_specs_digest is set without requesting command_contributor"
+            FailureCode.F4,
+            "command_specs_digest is set without requesting command_contributor",
         )
 
     return ManifestV1(
@@ -131,13 +149,17 @@ def parse_signature(raw: bytes) -> DetachedSignatureV1:
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise PackageError(FailureCode.F4, f"signature is not valid JSON: {exc}") from None
+        raise PackageError(
+            FailureCode.F4, f"signature is not valid JSON: {exc}"
+        ) from None
 
     _reject_unknown(data, _SIGNATURE_KEYS, "signature")
     _require_schema_version(data, "signature")
     algorithm = _string_default(data, "algorithm", "ed25519", "signature")
     if algorithm != "ed25519":
-        raise PackageError(FailureCode.F5, f"unsupported signature algorithm '{algorithm}'")
+        raise PackageError(
+            FailureCode.F5, f"unsupported signature algorithm '{algorithm}'"
+        )
     publisher_fingerprint = _string(data, "publisher_fingerprint", "signature")
     _validate_digest(publisher_fingerprint, "publisher_fingerprint")
     package_digest = _string(data, "package_digest", "signature")
@@ -158,13 +180,21 @@ def _reject_unknown(mapping: Any, allowed: set[str], context: str) -> None:
         raise PackageError(FailureCode.F4, f"{context} must be a table/object")
     extra = {str(key) for key in mapping} - allowed
     if extra:
-        raise PackageError(FailureCode.F4, f"unknown field(s) {sorted(extra)} in {context}")
+        raise PackageError(
+            FailureCode.F4, f"unknown field(s) {sorted(extra)} in {context}"
+        )
 
 
 def _require_schema_version(mapping: Any, context: str) -> None:
     value = _get(mapping, "schema_version", context)
-    if isinstance(value, bool) or not isinstance(value, int) or value != _SCHEMA_VERSION:
-        raise PackageError(FailureCode.F4, f"{context} schema_version must be {_SCHEMA_VERSION}")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value != _SCHEMA_VERSION
+    ):
+        raise PackageError(
+            FailureCode.F4, f"{context} schema_version must be {_SCHEMA_VERSION}"
+        )
 
 
 def _table(mapping: Any, key: str, context: str) -> dict[str, Any]:
@@ -231,7 +261,9 @@ def _validate_entry_module(entry_module: str, integration_id: str) -> None:
     if not all(_IDENTIFIER_RE.match(segment) for segment in segments):
         raise PackageError(FailureCode.F4, "entry_module is not a dotted identifier")
     if segments[0] != integration_id:
-        raise PackageError(FailureCode.F4, "entry_module first segment must equal the integration id")
+        raise PackageError(
+            FailureCode.F4, "entry_module first segment must equal the integration id"
+        )
 
 
 def _validate_entry_object(entry_object: str) -> None:
@@ -250,7 +282,9 @@ def _validate_signature_bytes(signature_b64: str) -> None:
     try:
         decoded = base64.b64decode(signature_b64, validate=True)
     except ValueError:
-        raise PackageError(FailureCode.F4, "signature_b64 is not valid base64") from None
+        raise PackageError(
+            FailureCode.F4, "signature_b64 is not valid base64"
+        ) from None
     if len(decoded) != _ED25519_SIGNATURE_BYTES:
         raise PackageError(
             FailureCode.F4, f"signature must decode to {_ED25519_SIGNATURE_BYTES} bytes"

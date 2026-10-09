@@ -9,20 +9,36 @@ builder, never sent over the wire (ADR buckets/000). If the admin API is not
 configured, the handler fails loudly rather than leaving the bucket silently
 uncapped, the lesson from the poisoned-anchor incident.
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class SetQuotaResult:
+    """What ``garage_bucket_set_quota`` returns under ``result``."""
+
+    bucket_id: str
+    max_size_bytes: int
+    duration_seconds: float
+    error: str | None = None
+
+
 def make_set_quota_handler(
-    params: dict[str, str], *, admin_url: str, admin_token: str,
+    params: dict[str, str],
+    *,
+    admin_url: str,
+    admin_token: str,
 ) -> JobHandler | None:
     """Build a JobHandler for ``garage_bucket_set_quota``.
 
@@ -44,7 +60,9 @@ def make_set_quota_handler(
         logger.error("garage_bucket_set_quota: max_size not an integer: %r", raw_max)
         return None
     if max_size_bytes < 0:
-        logger.error("garage_bucket_set_quota: max_size must be >= 0, got %d", max_size_bytes)
+        logger.error(
+            "garage_bucket_set_quota: max_size must be >= 0, got %d", max_size_bytes
+        )
         return None
     if not admin_url or not admin_token:
         logger.error(
@@ -93,7 +111,7 @@ async def run_set_quota(
             success=False,
             exit_code=-1,
             stderr=f"UpdateBucket quota failed: {err}",
-            failure_reason="os_error",
+            failure_reason=FailureReason.OS_ERROR,
             extras={
                 "duration_seconds": _elapsed(started_at),
                 "error": err,

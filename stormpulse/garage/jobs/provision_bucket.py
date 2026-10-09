@@ -22,6 +22,7 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,29 @@ logger = logging.getLogger(__name__)
 _TOTAL_STEPS = 2
 
 _ADMIN_PERMS = {"read": True, "write": True, "owner": True}
+
+
+@dataclass(frozen=True, slots=True)
+class ProvisionedKey:
+    """The admin key a provision hands back, secret included (sensitive_output)."""
+
+    key_id: str
+    secret: str
+    key_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProvisionBucketResult:
+    """What ``garage_provision_customer_bucket`` returns under ``result``."""
+
+    bucket_uuid: str | None
+    step_completed: str | None
+    step_failed: str | None
+    rollback_status: str
+    manual_cleanup_required: list[dict[str, str]]
+    garage_stderr: str
+    duration_seconds: float
+    admin: ProvisionedKey | None = None
 
 
 def make_provision_customer_bucket_handler(
@@ -83,7 +107,7 @@ async def run_provision_customer_bucket(
     if not (admin_url and admin_token):
         # Fail loud: a migrated operation never silently no-ops.
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             step_failed=None,
             step_completed=None,
             bucket_uuid=None,
@@ -100,11 +124,13 @@ async def run_provision_customer_bucket(
     await progress("starting", 0, _TOTAL_STEPS, "Creating admin key")
     info, err = await asyncio.to_thread(
         admin_api.create_key,
-        admin_url=admin_url, admin_token=admin_token, name=key_name_admin,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        name=key_name_admin,
     )
     if info is None:
         return _failure(
-            failure_reason="admin_key_create_failed",
+            failure_reason=FailureReason.ADMIN_KEY_CREATE_FAILED,
             step_failed="admin_key_create",
             step_completed=None,
             bucket_uuid=None,
@@ -116,7 +142,7 @@ async def run_provision_customer_bucket(
     admin_key_id = info.get("accessKeyId") or ""
     if not admin_key_id:
         return _failure(
-            failure_reason="admin_key_create_failed",
+            failure_reason=FailureReason.ADMIN_KEY_CREATE_FAILED,
             step_failed="admin_key_create",
             step_completed=None,
             bucket_uuid=None,
@@ -149,7 +175,7 @@ async def run_provision_customer_bucket(
     )
     if bucket is None:
         return _failure(
-            failure_reason="bucket_create_failed",
+            failure_reason=FailureReason.BUCKET_CREATE_FAILED,
             step_failed="bucket_create",
             step_completed="admin_key_create",
             bucket_uuid=None,
@@ -160,7 +186,7 @@ async def run_provision_customer_bucket(
     bucket_uuid = bucket.get("id") or ""
     if not bucket_uuid:
         return _failure(
-            failure_reason="bucket_create_failed",
+            failure_reason=FailureReason.BUCKET_CREATE_FAILED,
             step_failed="bucket_create",
             step_completed="admin_key_create",
             bucket_uuid=None,
@@ -212,13 +238,15 @@ async def _rollback_orphan_key(
         return {"rollback_status": "complete", "extras_extra": {}}
     return {
         "rollback_status": "partial",
-        "extras_extra": {"manual_cleanup_required": [{"type": "key", "id": admin_key_id}]},
+        "extras_extra": {
+            "manual_cleanup_required": [{"type": "key", "id": admin_key_id}]
+        },
     }
 
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     step_failed: str | None,
     step_completed: str | None,
     bucket_uuid: str | None,
@@ -238,7 +266,11 @@ def _failure(
         "duration_seconds": _elapsed(started_at),
     }
     extras.update(extras_extra)
-    final_reason = "rollback_failed" if rollback_status == "partial" else failure_reason
+    final_reason = (
+        FailureReason.ROLLBACK_FAILED
+        if rollback_status == "partial"
+        else failure_reason
+    )
     return JobOutcome(
         success=False,
         exit_code=-1,

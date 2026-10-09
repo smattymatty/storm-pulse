@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.state import collect_garage_state
+from stormpulse.integrations import Freshness
 
 ADMIN_URL = "http://127.0.0.1:3903"
 # A full 64-char Garage bucket id; Storm stores its first 16 chars.
@@ -106,7 +107,10 @@ _ListResult = tuple[list[dict[str, Any]] | None, str]
 
 _STATUS_OK: _StatusResult = ({"nodes": [_node()]}, "")
 _STATS_OK: _StatsResult = ({"totalObjectCount": 5, "bucketCount": 1}, "")
-_KEYS_OK: _KeysResult = ([{"id": "GKfeedface0987654321fedcba", "name": "example-key"}], "")
+_KEYS_OK: _KeysResult = (
+    [{"id": "GKfeedface0987654321fedcba", "name": "example-key"}],
+    "",
+)
 
 
 @contextmanager
@@ -121,16 +125,29 @@ def _patched(
     """Patch the five admin reads the state collector uses."""
 
     def info_side_effect(
-        *, admin_url: str, admin_token: str, bucket_ref: str,
+        *,
+        admin_url: str,
+        admin_token: str,
+        bucket_ref: str,
     ) -> tuple[dict[str, Any] | None, str]:
         return info_by_id.get(bucket_ref, (None, f"not found: {bucket_ref}"))
 
     with (
-        patch("stormpulse.garage.state.admin_api.get_cluster_status", return_value=status),
-        patch("stormpulse.garage.state.admin_api.get_cluster_statistics", return_value=stats),
+        patch(
+            "stormpulse.garage.state.admin_api.get_cluster_status", return_value=status
+        ),
+        patch(
+            "stormpulse.garage.state.admin_api.get_cluster_statistics",
+            return_value=stats,
+        ),
         patch("stormpulse.garage.state.admin_api.list_keys", return_value=keys),
-        patch("stormpulse.garage.state.admin_api.list_buckets", return_value=list_result),
-        patch("stormpulse.garage.state.admin_api.get_bucket_info", side_effect=info_side_effect),
+        patch(
+            "stormpulse.garage.state.admin_api.list_buckets", return_value=list_result
+        ),
+        patch(
+            "stormpulse.garage.state.admin_api.get_bucket_info",
+            side_effect=info_side_effect,
+        ),
     ):
         yield
 
@@ -145,7 +162,9 @@ class TestCollectGarageState:
             global_aliases=("example-vault",),
             keys=(_admin_key("GKfeedface0987654321fedcba", "example-key"),),
         )
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -184,9 +203,15 @@ class TestCollectGarageState:
     def test_bucket_with_quotas(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         info = _admin_info(
-            FULL_ID, bytes_=10, objects=1, max_size=1_000_000_000, max_objects=1000,
+            FULL_ID,
+            bytes_=10,
+            objects=1,
+            max_size=1_000_000_000,
+            max_objects=1000,
         )
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -206,7 +231,9 @@ class TestCollectGarageState:
                 _admin_key("GKrw", "rw-key", read=True, write=True, owner=False),
             ),
         )
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -214,11 +241,12 @@ class TestCollectGarageState:
         assert perms == {"GKread": "R", "GKrw": "RW"}
 
     def test_s3_created_bucket_surfaces_owner_local_alias(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """A bucket created over S3 has no global alias; its name
         lives in the owning account key's local aliases, which the manifest
-        must carry so the website's adopt branch can name it."""
+        must carry so the control plane's adopt branch can name it."""
         cfg = _make_config(tmp_path)
         info = _admin_info(
             FULL_ID,
@@ -227,11 +255,16 @@ class TestCollectGarageState:
             global_aliases=(),  # S3-created: no global alias
             keys=(
                 _admin_key(
-                    "GKacct", "acct-key", owner=True, local_aliases=("media",),
+                    "GKacct",
+                    "acct-key",
+                    owner=True,
+                    local_aliases=("media",),
                 ),
             ),
         )
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -247,7 +280,9 @@ class TestCollectGarageState:
             objects=0,
             keys=(_admin_key("GKplain", "plain-key"),),
         )
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -261,7 +296,9 @@ class TestCollectGarageState:
             objects=0,
             website={"indexDocument": "home.html", "errorDocument": "404.html"},
         )
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -274,7 +311,9 @@ class TestCollectGarageState:
         """Buckets with no global alias still collect; alias is empty, id is full."""
         cfg = _make_config(tmp_path)
         info = _admin_info(FULL_ID, bytes_=5800, objects=2)
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None
@@ -284,11 +323,18 @@ class TestCollectGarageState:
     def test_multi_bucket_all_collected(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         infos = {
-            FULL_ID: (_admin_info(FULL_ID, bytes_=1, objects=1, global_aliases=("a",)), ""),
-            FULL_ID_2: (_admin_info(FULL_ID_2, bytes_=2, objects=2, global_aliases=("b",)), ""),
+            FULL_ID: (
+                _admin_info(FULL_ID, bytes_=1, objects=1, global_aliases=("a",)),
+                "",
+            ),
+            FULL_ID_2: (
+                _admin_info(FULL_ID_2, bytes_=2, objects=2, global_aliases=("b",)),
+                "",
+            ),
         }
         with _patched(
-            list_result=([{"id": FULL_ID}, {"id": FULL_ID_2}], ""), info_by_id=infos,
+            list_result=([{"id": FULL_ID}, {"id": FULL_ID_2}], ""),
+            info_by_id=infos,
         ):
             state = collect_garage_state(cfg)
 
@@ -299,16 +345,53 @@ class TestCollectGarageState:
         """A single bucket whose GetBucketInfo fails is skipped, not fatal."""
         cfg = _make_config(tmp_path)
         infos = {
-            FULL_ID: (_admin_info(FULL_ID, bytes_=1, objects=1, global_aliases=("ok",)), ""),
+            FULL_ID: (
+                _admin_info(FULL_ID, bytes_=1, objects=1, global_aliases=("ok",)),
+                "",
+            ),
             FULL_ID_2: (None, "HTTP 500"),
         }
         with _patched(
-            list_result=([{"id": FULL_ID}, {"id": FULL_ID_2}], ""), info_by_id=infos,
+            list_result=([{"id": FULL_ID}, {"id": FULL_ID_2}], ""),
+            info_by_id=infos,
         ):
             state = collect_garage_state(cfg)
 
         assert state is not None
         assert [b.alias for b in state.buckets] == ["ok"]
+
+    def test_a_skipped_bucket_makes_the_full_read_say_incomplete(
+        self, tmp_path: Path
+    ) -> None:
+        """CORE-011 d5 on the discovery path: the skipped bucket is absent from
+        the snapshot, so the read says it is not the whole cluster, stamps the
+        buckets it did read, and a clean read says complete again."""
+        cfg = _make_config(tmp_path)
+        infos = {
+            FULL_ID: (
+                _admin_info(FULL_ID, bytes_=1, objects=1, global_aliases=("ok",)),
+                "",
+            ),
+            FULL_ID_2: (None, "HTTP 500"),
+        }
+        with (
+            _patched(
+                list_result=([{"id": FULL_ID}, {"id": FULL_ID_2}], ""), info_by_id=infos
+            ),
+            patch("stormpulse.garage.state.stamp_now", return_value="t0"),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert state.freshness() == Freshness(False, "t0", (FULL_ID,))
+        assert [b.read_at for b in state.buckets] == ["t0"]
+
+        with (
+            _patched(list_result=([{"id": FULL_ID}], ""), info_by_id=infos),
+            patch("stormpulse.garage.state.stamp_now", return_value="t1"),
+        ):
+            state = collect_garage_state(cfg)
+        assert state is not None
+        assert state.freshness() == Freshness(True, "t1", (FULL_ID,))
 
     def test_list_buckets_failure_skips_tick(self, tmp_path: Path) -> None:
         """ListBuckets unreachable -> None (skip the whole push, don't report empty)."""
@@ -330,7 +413,9 @@ class TestCollectGarageState:
 
     def test_status_failure_returns_none(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
-        with _patched(status=(None, "unreachable"), list_result=([], ""), info_by_id={}):
+        with _patched(
+            status=(None, "unreachable"), list_result=([], ""), info_by_id={}
+        ):
             assert collect_garage_state(cfg) is None
 
     def test_no_nodes_returns_none(self, tmp_path: Path) -> None:
@@ -348,7 +433,8 @@ class TestCollectGarageState:
         assert state.buckets == []
 
     def test_key_list_failure_empties_top_level_not_bucket_keys(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         """A ListKeys failure empties the top-level inventory, but bucket keys
         survive because GetBucketInfo carries their names inline."""
@@ -387,7 +473,9 @@ class TestCollectGarageState:
         assert state is not None
         assert len(state.peers) == 3
         assert {p.hostname for p in state.peers} == {
-            "garage-one", "garage-two", "garage-pi",
+            "garage-one",
+            "garage-two",
+            "garage-pi",
         }
         assert state.node_id == NODE_ID
 
@@ -409,7 +497,9 @@ class TestCollectGarageState:
             keys=(_admin_key("GKfeedface0987654321fedcba", "example-key"),),
         )
         with _patched(
-            keys=keys, list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")},
+            keys=keys,
+            list_result=([{"id": FULL_ID}], ""),
+            info_by_id={FULL_ID: (info, "")},
         ):
             state = collect_garage_state(cfg)
         assert state is not None
@@ -419,9 +509,14 @@ class TestCollectGarageState:
     def test_to_dict(self, tmp_path: Path) -> None:
         cfg = _make_config(tmp_path)
         info = _admin_info(
-            FULL_ID, bytes_=5800, objects=2, global_aliases=("example-vault",),
+            FULL_ID,
+            bytes_=5800,
+            objects=2,
+            global_aliases=("example-vault",),
         )
-        with _patched(list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}):
+        with _patched(
+            list_result=([{"id": FULL_ID}], ""), info_by_id={FULL_ID: (info, "")}
+        ):
             state = collect_garage_state(cfg)
 
         assert state is not None

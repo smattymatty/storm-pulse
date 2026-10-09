@@ -10,24 +10,40 @@ from typing import Any
 import pytest
 
 from stormpulse.protocol import (
+    MESSAGES,
+    SPEAKS,
+    CancelReason,
+    CommandCancelledPayload,
     CommandProgressPayload,
     CommandRequestPayload,
     CommandResultPayload,
     CommandSequencePayload,
+    Component,
     ContainerInfo,
     Envelope,
+    FailureReason,
     LogBatchPayload,
     MessageType,
     MetricsPayload,
     ProtocolError,
     RegisterPayload,
+    ResultError,
+    Step,
     TransferStats,
+    make_command_cancelled,
     make_command_progress,
     make_command_result,
+    make_error,
     make_heartbeat,
     make_log_batch,
     make_metrics_push,
     make_register,
+)
+from tests.helpers import (
+    FAKE_METRICS,
+    envelope,
+    register_fields,
+    register_payload,
 )
 
 # ---------------------------------------------------------------------------
@@ -38,7 +54,7 @@ from stormpulse.protocol import (
 @pytest.fixture
 def heartbeat_dict() -> dict[str, Any]:
     return {
-        "v": 1,
+        "v": SPEAKS[-1],
         "type": "heartbeat",
         "id": "550e8400-e29b-41d4-a716-446655440000",
         "ts": "2026-02-21T12:00:00Z",
@@ -50,7 +66,7 @@ def heartbeat_dict() -> dict[str, Any]:
 @pytest.fixture
 def metrics_dict() -> dict[str, Any]:
     return {
-        "v": 1,
+        "v": SPEAKS[-1],
         "type": "metrics.push",
         "id": "550e8400-e29b-41d4-a716-446655440001",
         "ts": "2026-02-21T12:00:00Z",
@@ -76,7 +92,7 @@ def metrics_dict() -> dict[str, Any]:
 @pytest.fixture
 def command_request_dict() -> dict[str, Any]:
     return {
-        "v": 1,
+        "v": SPEAKS[-1],
         "type": "command.request",
         "id": "550e8400-e29b-41d4-a716-446655440002",
         "ts": "2026-02-21T12:00:00Z",
@@ -93,7 +109,7 @@ def command_request_dict() -> dict[str, Any]:
 @pytest.fixture
 def command_result_dict() -> dict[str, Any]:
     return {
-        "v": 1,
+        "v": SPEAKS[-1],
         "type": "command.result",
         "id": "550e8400-e29b-41d4-a716-446655440003",
         "ts": "2026-02-21T12:00:00Z",
@@ -114,14 +130,17 @@ def command_result_dict() -> dict[str, Any]:
 @pytest.fixture
 def command_sequence_dict() -> dict[str, Any]:
     return {
-        "v": 1,
+        "v": SPEAKS[-1],
         "type": "command.sequence",
         "id": "550e8400-e29b-41d4-a716-446655440004",
         "ts": "2026-02-21T12:00:00Z",
         "agent_id": "vps-toronto-01",
         "payload": {
             "sequence_id": "seq-001",
-            "commands": ["git_pull", "docker_logs"],
+            "steps": [
+                {"command": "git_pull", "params": {}},
+                {"command": "docker_logs", "params": {"tail": "100"}},
+            ],
             "stop_on_failure": True,
             "hmac": "def456",
             "nonce": "nonce-2",
@@ -132,12 +151,12 @@ def command_sequence_dict() -> dict[str, Any]:
 @pytest.fixture
 def register_dict() -> dict[str, Any]:
     return {
-        "v": 1,
+        "v": SPEAKS[-1],
         "type": "register",
         "id": "550e8400-e29b-41d4-a716-446655440005",
         "ts": "2026-02-21T12:00:00Z",
         "agent_id": "vps-toronto-01",
-        "payload": {"version": "0.1.0", "pulse_token": "tok-abc-123"},
+        "payload": register_payload(),
     }
 
 
@@ -151,7 +170,7 @@ def test_parse_heartbeat(heartbeat_dict: dict[str, Any]) -> None:
     assert env.type == MessageType.HEARTBEAT
     assert env.payload == {}
     assert env.agent_id == "vps-toronto-01"
-    assert env.v == 1
+    assert env.v == SPEAKS[-1]
 
 
 def test_parse_from_bytes(heartbeat_dict: dict[str, Any]) -> None:
@@ -184,7 +203,7 @@ def test_parse_command_result(command_result_dict: dict[str, Any]) -> None:
 def test_parse_command_sequence(command_sequence_dict: dict[str, Any]) -> None:
     env = Envelope.from_json(json.dumps(command_sequence_dict))
     assert env.type == MessageType.COMMAND_SEQUENCE
-    assert len(env.payload["commands"]) == 2
+    assert len(env.payload["steps"]) == 2
     assert env.payload["stop_on_failure"] is True
 
 
@@ -214,11 +233,14 @@ def test_roundtrip_heartbeat() -> None:
 
 
 def test_roundtrip_register() -> None:
-    original = make_register("test-agent", "0.1.0", "tok-abc-123")
+    original = make_register("test-agent", "0.1.0", "tok-abc-123", **register_fields())
     rebuilt = Envelope.from_json(original.to_json())
     assert rebuilt.payload["version"] == "0.1.0"
     assert rebuilt.payload["pulse_token"] == "tok-abc-123"
-    assert rebuilt.payload["commands"] is None
+    assert rebuilt.payload["commands"] == {}
+    assert RegisterPayload.from_dict(rebuilt.payload) == RegisterPayload.from_dict(
+        original.payload
+    )
 
 
 def test_roundtrip_register_with_commands() -> None:
@@ -240,7 +262,9 @@ def test_roundtrip_register_with_commands() -> None:
             "params": {},
         },
     }
-    original = make_register("test-agent", "0.1.0", "tok-abc-123", commands=commands)
+    original = make_register(
+        "test-agent", "0.1.0", "tok-abc-123", **register_fields(commands=commands)
+    )
     rebuilt = Envelope.from_json(original.to_json())
     assert rebuilt.payload["commands"] == commands
 
@@ -309,13 +333,36 @@ def test_roundtrip_command_result_with_failure_reason() -> None:
         stdout="",
         stderr="",
         duration_ms=10000,
-        failure_reason="timeout",
+        failure_reason=FailureReason.TIMEOUT,
     )
     original = make_command_result("test-agent", result)
     rebuilt = Envelope.from_json(original.to_json())
     assert rebuilt.payload["failure_reason"] == "timeout"
     payload = CommandResultPayload.from_dict(rebuilt.payload)
-    assert payload.failure_reason == "timeout"
+    assert payload.failure_reason is FailureReason.TIMEOUT
+
+
+def test_command_result_lifts_a_member_string_and_refuses_a_stranger() -> None:
+    """CORE-011 d9: ``failure_reason`` is the closed ``FailureReason`` set. The
+    string off the wire becomes the member; a word outside the set is a bug."""
+    lifted = CommandResultPayload.from_dict(
+        {
+            "request_id": "r",
+            "command": "c",
+            "group": "g",
+            "success": False,
+            "exit_code": 1,
+            "stdout": "",
+            "stderr": "",
+            "duration_ms": 1,
+            "failure_reason": "unknown_command",
+        }
+    )
+    assert lifted.failure_reason is FailureReason.UNKNOWN_COMMAND
+    with pytest.raises(ValueError, match="'typo' is not a FailureReason"):
+        _result(success=False, exit_code=1, failure_reason="typo")
+    for name in ("unknown_command", "forbidden", "cancelled", "integration_failed"):
+        assert FailureReason(name).value == name
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +390,10 @@ def test_command_sequence_payload_from_dict(
 ) -> None:
     payload = CommandSequencePayload.from_dict(command_sequence_dict["payload"])
     assert payload.sequence_id == "seq-001"
-    assert len(payload.commands) == 2
+    assert payload.steps == [
+        Step(command="git_pull", params={}),
+        Step(command="docker_logs", params={"tail": "100"}),
+    ]
 
 
 def test_command_result_payload_from_dict(command_result_dict: dict[str, Any]) -> None:
@@ -372,7 +422,8 @@ def test_command_result_payload_with_sequence_id() -> None:
 def test_register_payload_from_dict(register_dict: dict[str, Any]) -> None:
     payload = RegisterPayload.from_dict(register_dict["payload"])
     assert payload.version == "0.1.0"
-    assert payload.commands is None
+    assert payload.commands == {}
+    assert payload.unsealed_since is None
 
 
 def test_register_payload_from_dict_with_commands() -> None:
@@ -386,23 +437,19 @@ def test_register_payload_from_dict_with_commands() -> None:
             "params": {},
         },
     }
-    data: dict[str, Any] = {
-        "version": "0.2.0",
-        "pulse_token": "tok-123",
-        "commands": commands,
-    }
-    payload = RegisterPayload.from_dict(data)
+    payload = RegisterPayload.from_dict(register_payload(commands=commands))
     assert payload.commands == commands
 
 
-def test_register_payload_from_dict_null_commands() -> None:
-    data: dict[str, Any] = {
-        "version": "0.2.0",
-        "pulse_token": "tok-123",
-        "commands": None,
-    }
-    payload = RegisterPayload.from_dict(data)
-    assert payload.commands is None
+def test_register_payload_from_dict_builds_components() -> None:
+    """``components`` is the one nested class under register; each item is typed."""
+    raw = [{"name": "stormpulse", "version": "0.7.0", "digest": ""}]
+    payload = RegisterPayload.from_dict(register_payload(components=raw))
+    assert payload.components == [Component("stormpulse", "0.7.0", "")]
+    with pytest.raises(ProtocolError, match="Component: missing fields"):
+        RegisterPayload.from_dict(register_payload(components=[{"name": "x"}]))
+    with pytest.raises(ProtocolError, match="components: expected list"):
+        RegisterPayload.from_dict(register_payload(components={}))
 
 
 def test_container_info_from_dict() -> None:
@@ -617,10 +664,14 @@ def test_missing_multiple_fields_raises(heartbeat_dict: dict[str, Any]) -> None:
         Envelope.from_json(json.dumps(heartbeat_dict))
 
 
-def test_unsupported_version_raises(heartbeat_dict: dict[str, Any]) -> None:
-    heartbeat_dict["v"] = 99
-    with pytest.raises(ProtocolError, match="Unsupported protocol version"):
+@pytest.mark.parametrize("v", [1, SPEAKS[-1] + 1, True, 2.0, "2"])
+def test_unsupported_version_raises(heartbeat_dict: dict[str, Any], v: object) -> None:
+    """A version outside SPEAKS, a v1 frame first, is refused with its reason."""
+    heartbeat_dict["v"] = v
+    with pytest.raises(ProtocolError, match="Unsupported protocol version") as exc:
         Envelope.from_json(json.dumps(heartbeat_dict))
+    assert exc.value.reason == "unsupported_version"
+    assert str(exc.value).endswith(f"this agent speaks {list(SPEAKS)}")
 
 
 def test_unknown_message_type_raises(heartbeat_dict: dict[str, Any]) -> None:
@@ -704,9 +755,18 @@ def test_command_request_missing_command_raises() -> None:
         CommandRequestPayload.from_dict({"params": {}, "hmac": "x", "nonce": "y"})
 
 
-def test_register_missing_version_raises() -> None:
-    with pytest.raises(ProtocolError, match="missing fields"):
+def test_register_names_every_missing_field() -> None:
+    """CORE-011 d7: no register field has a default, so an empty dict is refused
+    naming all fifteen, ``unsealed_since`` among them (nullable, never absent)."""
+    with pytest.raises(ProtocolError, match="RegisterPayload: missing fields") as info:
         RegisterPayload.from_dict({})
+    names = {f.name for f in fields(RegisterPayload)}
+    assert len(names) == 15
+    assert all(f"'{name}'" in str(info.value) for name in names)
+    with pytest.raises(ProtocolError, match=r"missing fields: \{'unsealed_since'\}"):
+        RegisterPayload.from_dict(
+            {k: v for k, v in register_payload().items() if k != "unsealed_since"}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -723,12 +783,37 @@ def test_make_heartbeat_valid() -> None:
 
 
 def test_make_register_valid() -> None:
-    env = make_register("test-01", "0.1.0", "tok-abc-123")
+    env = make_register("test-01", "0.1.0", "tok-abc-123", **register_fields())
     assert env.type == MessageType.REGISTER
     assert env.payload["version"] == "0.1.0"
     assert env.payload["pulse_token"] == "tok-abc-123"
-    assert env.payload["commands"] is None
+    assert env.payload["commands"] == {}
+    assert env.payload["speaks"] == list(SPEAKS)
     Envelope.from_json(env.to_json())
+
+
+def test_make_register_carries_every_field_and_no_default() -> None:
+    """The wire shows what the factory was given, field for field; a caller
+    cannot leave one out, and ``speaks`` is never a caller's."""
+    given = register_fields(
+        components=[
+            Component("stormpulse", "0.7.0", ""),
+            Component("garage", "2.4.0", ""),
+        ],
+        in_flight=["req-1"],
+        boot_id="",
+    )
+    env = make_register("test-01", "0.1.0", "tok-abc-123", **given)
+    assert env.payload == {
+        "version": "0.1.0",
+        "pulse_token": "tok-abc-123",
+        "speaks": list(SPEAKS),
+        **given,
+        "components": [asdict(c) for c in given["components"]],
+    }
+    without = {k: v for k, v in given.items() if k != "in_flight"}
+    with pytest.raises(TypeError, match="in_flight"):
+        make_register("test-01", "0.1.0", "tok", **without)
 
 
 def test_make_register_with_commands() -> None:
@@ -742,7 +827,9 @@ def test_make_register_with_commands() -> None:
             "params": {},
         },
     }
-    env = make_register("test-01", "0.1.0", "tok-abc-123", commands=commands)
+    env = make_register(
+        "test-01", "0.1.0", "tok-abc-123", **register_fields(commands=commands)
+    )
     assert env.payload["commands"] == commands
     Envelope.from_json(env.to_json())
 
@@ -791,6 +878,29 @@ def test_make_metrics_push_carries_job_load() -> None:
     Envelope.from_json(env.to_json())
 
 
+def test_metrics_payload_round_trips_the_jobs_it_carries() -> None:
+    """``jobs`` is a field (CORE-011 d3), so the far end's ``from_dict`` keeps it."""
+    metrics = MetricsPayload(
+        cpu_percent=5.0,
+        memory_percent=10.0,
+        memory_used_mb=512.0,
+        memory_total_mb=1024.0,
+        disk_percent=20.0,
+        disk_used_gb=8.0,
+        disk_total_gb=40.0,
+        load_avg_1m=0.0,
+        load_avg_5m=0.0,
+        uptime_seconds=100.0,
+        containers=[],
+    )
+    env = make_metrics_push("test-01", metrics, job_load={"pending": 8, "running": 6})
+    parsed = MetricsPayload.from_dict(Envelope.from_json(env.to_json()).payload)
+    assert parsed.jobs == {"pending": 8, "running": 6}
+    assert (
+        MetricsPayload.from_dict(make_metrics_push("t", metrics).payload).jobs is None
+    )
+
+
 def test_make_command_result_valid() -> None:
     result = CommandResultPayload(
         request_id="r1",
@@ -807,6 +917,82 @@ def test_make_command_result_valid() -> None:
     Envelope.from_json(env.to_json())
 
 
+def _result(**overrides: Any) -> CommandResultPayload:
+    base: dict[str, Any] = dict(
+        request_id="r1",
+        command="garage_bucket_clear",
+        group="buckets",
+        success=True,
+        exit_code=0,
+        stdout="",
+        stderr="",
+        duration_ms=5,
+    )
+    return CommandResultPayload(**(base | overrides))
+
+
+def test_command_result_carries_the_figures_under_result_only() -> None:
+    """CORE-011 d9: a job's extras ride under ``result``, never the top level,
+    so the clobber mutant (an extra named ``success``) changes nothing standard."""
+    payload = Envelope.from_json(
+        make_command_result(
+            "t", _result(result={"deleted_count": 3, "success": False})
+        ).to_json()
+    ).payload
+    assert payload["result"] == {"deleted_count": 3, "success": False}
+    assert payload["success"] is True
+    assert "deleted_count" not in payload
+    assert payload["error"] is None
+    assert make_command_result("t", _result()).payload["result"] is None
+
+
+def test_command_result_failure_derives_its_error_from_reason_and_stderr() -> None:
+    failed = _result(
+        success=False,
+        exit_code=-1,
+        stderr="UpdateBucket quota failed: 503",
+        failure_reason=FailureReason.OS_ERROR,
+    )
+    payload = Envelope.from_json(make_command_result("t", failed).to_json()).payload
+    assert payload["error"] == {
+        "code": "os_error",
+        "http_status": None,
+        "upstream_code": None,
+        "message": "UpdateBucket quota failed: 503",
+    }
+    rebuilt = CommandResultPayload.from_dict(payload)
+    assert rebuilt.error == ResultError(
+        "os_error", None, None, "UpdateBucket quota failed: 503"
+    )
+    # A failure with no reason still names one; a parsed error wins over derivation.
+    bare = make_command_result("t", _result(success=False, exit_code=1)).payload
+    assert bare["error"]["code"] == "unspecified"
+    parsed = ResultError("bucket_delete_failed", 404, "NoSuchBucket", "gone")
+    finer = _result(success=False, failure_reason=FailureReason.OS_ERROR, error=parsed)
+    assert make_command_result("t", finer).payload["error"] == asdict(parsed)
+
+
+def test_command_result_refuses_an_error_on_a_success() -> None:
+    with pytest.raises(ValueError, match="cannot succeed with an error"):
+        _result(error=ResultError("x", None, None, ""))
+
+
+def test_command_result_from_dict_types_the_nested_error() -> None:
+    data = asdict(_result(success=False))
+    data["error"] = {
+        "code": "timeout",
+        "http_status": None,
+        "upstream_code": None,
+        "message": "slow",
+    }
+    assert CommandResultPayload.from_dict(data).error == ResultError(
+        "timeout", None, None, "slow"
+    )
+    data["error"] = "timeout"
+    with pytest.raises(ProtocolError, match="ResultError: expected dict"):
+        CommandResultPayload.from_dict(data)
+
+
 # ---------------------------------------------------------------------------
 # Edge cases
 # ---------------------------------------------------------------------------
@@ -819,13 +1005,9 @@ def test_extra_envelope_fields_ignored(heartbeat_dict: dict[str, Any]) -> None:
 
 
 def test_extra_payload_fields_ignored() -> None:
-    data: dict[str, Any] = {
-        "version": "0.1.0",
-        "pulse_token": "tok",
-        "extra": "ignored",
-    }
-    payload = RegisterPayload.from_dict(data)
+    payload = RegisterPayload.from_dict(register_payload(extra="ignored"))
     assert payload.version == "0.1.0"
+    assert not hasattr(payload, "extra")
 
 
 def test_empty_containers_valid() -> None:
@@ -860,6 +1042,30 @@ def test_message_type_enum_values() -> None:
     assert MessageType.ERROR.value == "error"
 
 
+def test_make_error_carries_reason_and_type_only() -> None:
+    """The error reply is a reason code and the refused type: no payload, no raw frame."""
+    env = make_error("test-01", "unknown_type", "command.undo")
+    assert env.type is MessageType.ERROR
+    assert env.v == SPEAKS[-1]
+    assert env.payload == {"error": "unknown_type", "type": "command.undo"}
+    assert make_error("test-01", "bad_envelope", None).payload["type"] is None
+
+
+def test_unknown_type_error_quotes_at_most_64_chars_of_the_type() -> None:
+    """A refused frame's ``type`` rides on the exception, capped; a non-string type is None."""
+    frame = make_heartbeat("test-01").to_dict()
+    frame["type"] = "z" * 100
+    with pytest.raises(ProtocolError) as exc_info:
+        Envelope.from_json(json.dumps(frame))
+    assert exc_info.value.reason == "unknown_type"
+    assert exc_info.value.msg_type == "z" * 64
+    frame["type"] = 7
+    with pytest.raises(ProtocolError) as exc_info:
+        Envelope.from_json(json.dumps(frame))
+    assert exc_info.value.msg_type is None
+    assert ProtocolError("x").msg_type is None
+
+
 def test_to_json_uses_compact_separators() -> None:
     env = make_heartbeat("test-01")
     raw = env.to_json()
@@ -890,7 +1096,7 @@ def test_envelope_immutable() -> None:
 
 
 def test_payload_immutable() -> None:
-    payload = RegisterPayload(version="0.1.0", pulse_token="tok")
+    payload = RegisterPayload.from_dict(register_payload())
     with pytest.raises(AttributeError):
         payload.version = "0.2.0"  # type: ignore[misc]
 
@@ -963,10 +1169,7 @@ def test_log_batch_ack_message_type_valid() -> None:
 
 def test_register_with_log_groups() -> None:
     env = make_register(
-        "agent-1",
-        "0.3.0",
-        "tok",
-        log_groups=["storage", "pulse"],
+        "agent-1", "0.3.0", "tok", **register_fields(log_groups=["storage", "pulse"])
     )
     assert env.payload["log_groups"] == ["storage", "pulse"]
 
@@ -1025,9 +1228,11 @@ def test_make_register_with_integrations_and_log_groups() -> None:
         "agent-1",
         "1.0.0",
         "tok",
-        commands={"git_pull": {"group": "deploy"}},
-        integrations=integrations,
-        log_groups=["storage"],
+        **register_fields(
+            commands={"git_pull": {"group": "deploy"}},
+            integrations=integrations,
+            log_groups=["storage"],
+        ),
     )
     rt = Envelope.from_json(env.to_json())
     assert rt.payload["integrations"] == integrations
@@ -1049,18 +1254,13 @@ def test_make_register_with_integrations_and_log_groups() -> None:
 )
 def test_ack_envelope_round_trip(ack_type: MessageType) -> None:
     """Dashboard-origin ack messages must round-trip through from_json/to_json unchanged."""
-    import uuid
     from datetime import datetime
 
-    from stormpulse.protocol import Envelope
-
-    original = Envelope(
-        v=1,
-        type=ack_type,
-        id=str(uuid.uuid4()),
-        ts=datetime.now(UTC).replace(microsecond=0),
+    original = envelope(
+        ack_type,
+        {"detail": "ok"},
         agent_id="agent-1",
-        payload={"detail": "ok"},
+        ts=datetime.now(UTC).replace(microsecond=0),
     )
     rt = Envelope.from_json(original.to_json())
     assert rt.type is ack_type
@@ -1070,36 +1270,19 @@ def test_ack_envelope_round_trip(ack_type: MessageType) -> None:
 
 
 def test_envelope_post_init_rejects_unsupported_version() -> None:
-    """Directly constructing with v!=1 must raise (not just from_json)."""
-    from datetime import datetime
-
-    from stormpulse.protocol import Envelope
-
-    with pytest.raises(ProtocolError, match="Unsupported protocol version"):
-        Envelope(
-            v=2,
-            type=MessageType.HEARTBEAT,
-            id="x",
-            ts=datetime.now(UTC),
-            agent_id="a",
-            payload={},
-        )
+    """Directly constructing with a version outside SPEAKS must raise (not just from_json)."""
+    with pytest.raises(ProtocolError, match="Unsupported protocol version") as exc:
+        envelope(MessageType.HEARTBEAT, {}, v=SPEAKS[-1] + 1, id="x", agent_id="a")
+    assert exc.value.reason == "unsupported_version"
 
 
 def test_envelope_post_init_rejects_naive_timestamp() -> None:
     from datetime import datetime
 
-    from stormpulse.protocol import Envelope
-
     with pytest.raises(ProtocolError, match="timezone-aware"):
-        Envelope(
-            v=1,
-            type=MessageType.HEARTBEAT,
-            id="x",
-            ts=datetime(2026, 1, 1),  # naive
-            agent_id="a",
-            payload={},
-        )
+        envelope(
+            MessageType.HEARTBEAT, {}, id="x", agent_id="a", ts=datetime(2026, 1, 1)
+        )  # naive
 
 
 # ---------------------------------------------------------------------------
@@ -1126,3 +1309,99 @@ def test_builders_emit_the_payload_class_the_catalogue_names() -> None:
     batch = make_events_batch("test-01", batch_id="b1", events=[{"kind": "x"}])
     assert batch.payload == {"batch_id": "b1", "events": [{"kind": "x"}]}
     assert {f.name for f in fields(EventsBatchPayload)} == set(batch.payload)
+
+
+def test_from_dict_rebuilds_integration_reports_from_a_mapping() -> None:
+    """``integrations`` nests ``IntegrationReport`` under a dict, not a list: the
+    parser follows the annotation's container, so a register or a metrics push
+    reads back as the class the artifact declares, and a null stays null."""
+    from stormpulse.protocol import IntegrationReport
+
+    report = {
+        "status": "live",
+        "disabled_reason": None,
+        "state": {"node_id": "n"},
+        "command_specs_digest": "sha256:" + "ab" * 32,
+        "commands_fenced": None,
+        "generation": 3,
+        "complete": False,
+        "last_full_read_at": "2026-10-09T00:00:00Z",
+        "changed_ids": ["b1"],
+    }
+    register = RegisterPayload.from_dict(
+        register_payload(integrations={"garage": report})
+    )
+    assert register.integrations == {"garage": IntegrationReport(**report)}  # type: ignore[arg-type]
+    assert asdict(register)["integrations"] == {"garage": report}
+    metrics = MetricsPayload.from_dict({**asdict(FAKE_METRICS), "integrations": None})
+    assert metrics.integrations is None
+    with pytest.raises(ProtocolError, match="integrations: expected dict"):
+        RegisterPayload.from_dict(register_payload(integrations=[report]))
+
+
+def test_events_batch_nack_is_inbound_and_needs_batch_id_and_reason() -> None:
+    """CORE-011 d6: the nack rides with its reason; a nack naming no batch is refused."""
+    from stormpulse.protocol import MESSAGES, Direction, EventsBatchNackPayload
+
+    spec = MESSAGES[MessageType.EVENTS_BATCH_NACK]
+    assert spec.direction is Direction.DASHBOARD_TO_AGENT
+    assert spec.payload is EventsBatchNackPayload
+    nack = EventsBatchNackPayload.from_dict({"batch_id": "b1", "reason": "bad"})
+    assert (nack.batch_id, nack.reason) == ("b1", "bad")
+    with pytest.raises(ProtocolError, match="missing fields"):
+        EventsBatchNackPayload.from_dict({"batch_id": "b1"})
+
+
+# -- cancelled and steps (CORE-011 d9) --------------------------------------
+
+
+def test_command_sequence_steps_are_typed_and_the_wrong_shape_is_refused() -> None:
+    """A step is ``Step(command, params)`` built from its dict; the names-only
+    list the sequence used to carry, a step with no params and a step object
+    where the list should be are each refused at the seam."""
+    base = {"sequence_id": "s", "stop_on_failure": True, "hmac": "h", "nonce": "n"}
+    payload = CommandSequencePayload.from_dict(
+        {**base, "steps": [{"command": "git_pull", "params": {"depth": "1"}}]}
+    )
+    assert payload.steps == [Step(command="git_pull", params={"depth": "1"})]
+    with pytest.raises(ProtocolError, match="Step: expected dict, got str"):
+        CommandSequencePayload.from_dict({**base, "steps": ["git_pull"]})
+    with pytest.raises(ProtocolError, match="Step: missing fields"):
+        CommandSequencePayload.from_dict({**base, "steps": [{"command": "git_pull"}]})
+    with pytest.raises(ProtocolError, match="steps: expected list, got dict"):
+        CommandSequencePayload.from_dict({**base, "steps": {"command": "git_pull"}})
+
+
+def test_command_cancelled_is_outbound_and_names_the_job_and_the_reason() -> None:
+    """One frame per job that will send no result: its id, its command and why."""
+    from stormpulse.protocol import Direction
+
+    spec = MESSAGES[MessageType.COMMAND_CANCELLED]
+    assert spec.direction is Direction.AGENT_TO_DASHBOARD
+    assert spec.payload is CommandCancelledPayload
+    env = make_command_cancelled(
+        "a1",
+        request_id="r1",
+        command="garage_bucket_clear",
+        reason=CancelReason.SHUTDOWN,
+    )
+    assert env.type is MessageType.COMMAND_CANCELLED
+    assert Envelope.from_json(env.to_json()).payload == {
+        "request_id": "r1",
+        "command": "garage_bucket_clear",
+        "reason": "shutdown",
+    }
+    assert {r.value for r in CancelReason} == {"shutdown", "operator"}
+
+
+def test_step_index_rides_a_result_and_is_null_outside_a_sequence(
+    command_result_dict: dict[str, Any],
+) -> None:
+    single = CommandResultPayload.from_dict(command_result_dict["payload"])
+    assert single.step_index is None
+    assert make_command_result("a1", single).payload["step_index"] is None
+    step = CommandResultPayload.from_dict(
+        {**command_result_dict["payload"], "sequence_id": "s", "step_index": 1}
+    )
+    sent = make_command_result("a1", step).payload
+    assert (sent["sequence_id"], sent["step_index"]) == ("s", 1)

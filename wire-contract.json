@@ -7,16 +7,18 @@
           "max_bytes": null,
           "pattern": "true|false",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "region": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{0,40}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "tenants": {
-          "default": "{}",
+          "default": {},
           "max_bytes": 1000000,
           "pattern": null,
           "schema": {
@@ -29,8 +31,36 @@
             },
             "type": "object"
           },
-          "secret": false
+          "secret": false,
+          "type": "object"
         }
+      },
+      "result": {
+        "classes": {
+          "CaddySyncResult": {
+            "deleted": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "rail_tripped": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "region": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "tenants": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            }
+          }
+        },
+        "root": "CaddySyncResult"
       }
     },
     "caddy_cert_status": {
@@ -39,8 +69,46 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9.-]{1,253}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "CertStatusResult": {
+            "cert_live": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "domain": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "issuer": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "not_after": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "probe_error": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "CertStatusResult"
       }
     },
     "docker_logs": {
@@ -49,16 +117,19 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "tail_lines": {
           "default": "100",
           "max_bytes": null,
           "pattern": "[0-9]{1,5}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_attach_account_key": {
       "params": {
@@ -66,26 +137,77 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "bucket_id": {
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "local_alias": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "tier": {
           "max_bytes": null,
           "pattern": "(?:ro|rw|owner)",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "AttachAccountKeyResult": {
+            "account_key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "alias_added": {
+              "nullable": true,
+              "required": false,
+              "type": "boolean"
+            },
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "confirmed_attached": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "tier": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "AttachAccountKeyResult"
       }
     },
     "garage_bucket_alias_global_add": {
@@ -94,15 +216,18 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "new_alias": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_alias_global_remove": {
       "params": {
@@ -110,9 +235,11 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_alias_local_add": {
       "params": {
@@ -120,21 +247,25 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "new_alias": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_alias_local_remove": {
       "params": {
@@ -142,15 +273,18 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_allow": {
       "params": {
@@ -158,15 +292,18 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_allow_ro": {
       "params": {
@@ -174,15 +311,18 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_allow_rw": {
       "params": {
@@ -190,15 +330,18 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_cleanup_uploads": {
       "params": {
@@ -206,14 +349,48 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "older_than_secs": {
           "max_bytes": null,
           "pattern": "[0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "CleanupUploadsResult": {
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "error": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "older_than_secs": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "uploads_aborted": {
+              "nullable": true,
+              "required": false,
+              "type": "integer"
+            }
+          }
+        },
+        "root": "CleanupUploadsResult"
       }
     },
     "garage_bucket_clear": {
@@ -222,38 +399,106 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "bucket_id": {
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "bucket_name": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "region": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "s3_endpoint": {
           "max_bytes": null,
           "pattern": "^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "secret_access_key": {
           "max_bytes": null,
           "pattern": ".+",
           "schema": null,
-          "secret": true
+          "secret": true,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "ClearBucketResult": {
+            "bytes_freed": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "credential_less": {
+              "nullable": true,
+              "required": false,
+              "type": "boolean"
+            },
+            "deleted_count": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "error": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "errors": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "failed_count": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "manual_cleanup_required": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            },
+            "purge_key_id": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "unfinished_uploads": {
+              "nullable": true,
+              "required": false,
+              "type": "integer"
+            },
+            "uploads_aborted": {
+              "nullable": true,
+              "required": false,
+              "type": "integer"
+            }
+          }
+        },
+        "root": "ClearBucketResult"
       }
     },
     "garage_bucket_cors_get": {
@@ -262,8 +507,36 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "BucketCorsResult": {
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "error": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "rules": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            }
+          }
+        },
+        "root": "BucketCorsResult"
       }
     },
     "garage_bucket_cors_set": {
@@ -272,7 +545,8 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "expected_rules": {
           "max_bytes": 65536,
@@ -334,7 +608,8 @@
             "max_items": 100,
             "type": "array"
           },
-          "secret": false
+          "secret": false,
+          "type": "array"
         },
         "rules": {
           "max_bytes": 65536,
@@ -396,8 +671,36 @@
             "max_items": 100,
             "type": "array"
           },
-          "secret": false
+          "secret": false,
+          "type": "array"
         }
+      },
+      "result": {
+        "classes": {
+          "BucketCorsResult": {
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "error": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "rules": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            }
+          }
+        },
+        "root": "BucketCorsResult"
       }
     },
     "garage_bucket_create": {
@@ -406,9 +709,11 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_delete": {
       "params": {
@@ -416,9 +721,11 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_deny": {
       "params": {
@@ -426,15 +733,18 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_info": {
       "params": {
@@ -442,12 +752,15 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_list": {
-      "params": {}
+      "params": {},
+      "result": null
     },
     "garage_bucket_set_quota": {
       "params": {
@@ -455,14 +768,43 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "max_size": {
           "max_bytes": null,
           "pattern": "[0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "SetQuotaResult": {
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "error": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "max_size_bytes": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            }
+          }
+        },
+        "root": "SetQuotaResult"
       }
     },
     "garage_bucket_website_allow": {
@@ -471,23 +813,27 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "error_document": {
           "default": "404.html",
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9._/-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "index_document": {
           "default": "index.html",
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9._/-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_bucket_website_deny": {
       "params": {
@@ -495,9 +841,11 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_converge_account_key_rotation": {
       "params": {
@@ -531,20 +879,70 @@
             "max_items": 1000,
             "type": "array"
           },
-          "secret": false
+          "secret": false,
+          "type": "array"
         },
         "new_key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "old_key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "ConvergeAccountKeyRotationResult": {
+            "converged": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "new_key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "old_key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "remaining": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "transferred": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            }
+          }
+        },
+        "root": "ConvergeAccountKeyRotationResult"
       }
     },
     "garage_delete_key": {
@@ -553,8 +951,41 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "DeleteKeyResult": {
+            "confirmed_absent": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "outcome": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "DeleteKeyResult"
       }
     },
     "garage_delete_provisioned_bucket": {
@@ -563,8 +994,56 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "DeleteProvisionedBucketResult": {
+            "already_absent": {
+              "nullable": true,
+              "required": false,
+              "type": "boolean"
+            },
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "rollback_status": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "step_completed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "step_failed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "DeleteProvisionedBucketResult"
       }
     },
     "garage_detach_account_key": {
@@ -573,20 +1052,65 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "bucket_id": {
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "local_alias": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "DetachAccountKeyResult": {
+            "account_key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "alias_removed": {
+              "nullable": true,
+              "required": false,
+              "type": "boolean"
+            },
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "confirmed_detached": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            }
+          }
+        },
+        "root": "DetachAccountKeyResult"
       }
     },
     "garage_enforce_account_key_tier": {
@@ -595,14 +1119,53 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "tier": {
           "max_bytes": null,
           "pattern": "(?:all|rw|ro)",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "EnforceAccountKeyTierResult": {
+            "account_key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "narrowed_buckets": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "strand_risk": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            },
+            "tier": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "EnforceAccountKeyTierResult"
       }
     },
     "garage_get_bucket_owners": {
@@ -611,8 +1174,41 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "GetBucketOwnersResult": {
+            "bucket_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "key_grants": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            },
+            "owner_key_ids": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            }
+          }
+        },
+        "root": "GetBucketOwnersResult"
       }
     },
     "garage_get_key_buckets": {
@@ -621,8 +1217,41 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "GetKeyBucketsResult": {
+            "bucket_grants": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "owned_buckets": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            }
+          }
+        },
+        "root": "GetKeyBucketsResult"
       }
     },
     "garage_key_create": {
@@ -631,12 +1260,15 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "garage_key_list": {
-      "params": {}
+      "params": {},
+      "result": null
     },
     "garage_provision_account_key": {
       "params": {
@@ -645,14 +1277,73 @@
           "max_bytes": null,
           "pattern": "(?:true|false)",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "new_key_name": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "ProvisionAccountKeyResult": {
+            "can_create_bucket": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "new_key_id": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "new_key_name": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "new_secret": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "rollback_status": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "step_completed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "step_failed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "ProvisionAccountKeyResult"
       }
     },
     "garage_provision_additional_key": {
@@ -661,26 +1352,87 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_tier": {
           "max_bytes": null,
           "pattern": "(?:all|rw|ro)",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "local_alias": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "new_key_name": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "ProvisionAdditionalKeyResult": {
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "key_tier": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "new_key_id": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "new_key_name": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "new_secret": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "rollback_status": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "step_completed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "step_failed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "ProvisionAdditionalKeyResult"
       }
     },
     "garage_provision_customer_bucket": {
@@ -689,18 +1441,85 @@
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_name_admin": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "ProvisionBucketResult": {
+            "admin": {
+              "nullable": true,
+              "required": false,
+              "type": "ProvisionedKey"
+            },
+            "bucket_uuid": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "rollback_status": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "step_completed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "step_failed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "ProvisionedKey": {
+            "key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "key_name": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "secret": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "ProvisionBucketResult"
       }
     },
     "garage_refresh": {
-      "params": {}
+      "params": {},
+      "result": null
     },
     "garage_rotate_customer_key": {
       "params": {
@@ -708,32 +1527,89 @@
           "max_bytes": null,
           "pattern": "[a-f0-9]{16,64}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "key_tier": {
           "max_bytes": null,
           "pattern": "(?:all|rw|ro)",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "local_alias": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "new_key_name": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_][a-zA-Z0-9_-]*",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "old_key_id": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "RotateKeyResult": {
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "manual_cleanup_required": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            },
+            "new_key_id": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "new_key_name": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "new_secret": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "rollback_status": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "step_completed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            },
+            "step_failed": {
+              "nullable": true,
+              "required": true,
+              "type": "string"
+            }
+          }
+        },
+        "root": "RotateKeyResult"
       }
     },
     "garage_set_account_key_create_bucket": {
@@ -742,14 +1618,43 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "enable": {
           "max_bytes": null,
           "pattern": "(?:true|false)",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "SetAccountKeyCapabilityResult": {
+            "access_key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "enable": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "error": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            }
+          }
+        },
+        "root": "SetAccountKeyCapabilityResult"
       }
     },
     "garage_snapshot_and_reap_account_key": {
@@ -758,15 +1663,50 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "SnapshotAndReapAccountKeyResult": {
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "garage_stderr": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "old_key_id": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "reaped": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            },
+            "snapshot": {
+              "nullable": false,
+              "required": true,
+              "type": "array"
+            }
+          }
+        },
+        "root": "SnapshotAndReapAccountKeyResult"
       }
     },
     "garage_stats": {
-      "params": {}
+      "params": {},
+      "result": null
     },
     "garage_status": {
-      "params": {}
+      "params": {},
+      "result": null
     },
     "garage_walk_bucket_stats": {
       "params": {
@@ -774,50 +1714,90 @@
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "bucket_name": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "max_objects": {
           "default": "100000",
           "max_bytes": null,
           "pattern": "[0-9]{1,7}",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "prefix": {
           "default": "",
           "max_bytes": null,
           "pattern": "|[^/\\x00-\\x1f\\x7f-\\x9f][^\\x00-\\x1f\\x7f-\\x9f]*/",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "region": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "s3_endpoint": {
           "max_bytes": null,
           "pattern": "^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "secret_access_key": {
           "max_bytes": null,
           "pattern": ".+",
           "schema": null,
-          "secret": true
+          "secret": true,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "WalkBucketStatsResult": {
+            "bytes": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "count": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "error": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "truncated": {
+              "nullable": false,
+              "required": true,
+              "type": "boolean"
+            }
+          }
+        },
+        "root": "WalkBucketStatsResult"
       }
     },
     "git_pull": {
-      "params": {}
+      "params": {},
+      "result": null
     },
     "rclone_estimate": {
       "params": {
@@ -825,32 +1805,59 @@
           "max_bytes": null,
           "pattern": "[A-Za-z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_bucket": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_endpoint": {
           "max_bytes": null,
           "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_region": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_secret_access_key": {
           "max_bytes": 256,
           "pattern": null,
           "schema": null,
-          "secret": true
+          "secret": true,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "EstimateResult": {
+            "bytes": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "objects": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            }
+          }
+        },
+        "root": "EstimateResult"
       }
     },
     "rclone_migrate": {
@@ -859,62 +1866,94 @@
           "max_bytes": null,
           "pattern": "[A-Za-z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_bucket": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_endpoint": {
           "max_bytes": null,
           "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_region": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_secret_access_key": {
           "max_bytes": 256,
           "pattern": null,
           "schema": null,
-          "secret": true
+          "secret": true,
+          "type": "string"
         },
         "src_access_key_id": {
           "max_bytes": null,
           "pattern": "[A-Za-z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_bucket": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_endpoint": {
           "max_bytes": null,
           "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_region": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "src_secret_access_key": {
           "max_bytes": 256,
           "pattern": null,
           "schema": null,
-          "secret": true
+          "secret": true,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "MigrateResult": {
+            "bytes_transferred": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "duration_seconds": {
+              "nullable": false,
+              "required": true,
+              "type": "number"
+            },
+            "objects_transferred": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            }
+          }
+        },
+        "root": "MigrateResult"
       }
     },
     "rclone_restore_test": {
@@ -923,32 +1962,86 @@
           "max_bytes": null,
           "pattern": "[A-Za-z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_bucket": {
           "max_bytes": null,
           "pattern": "[a-z0-9][a-z0-9.\\-]{1,61}[a-z0-9]",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_endpoint": {
           "max_bytes": null,
           "pattern": "^https://[a-zA-Z0-9.-]+(:[0-9]+)?$",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_region": {
           "max_bytes": null,
           "pattern": "[a-zA-Z0-9_-]+",
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         },
         "dst_secret_access_key": {
           "max_bytes": 256,
           "pattern": null,
           "schema": null,
-          "secret": true
+          "secret": true,
+          "type": "string"
         }
+      },
+      "result": {
+        "classes": {
+          "RestoreSample": {
+            "bytes": {
+              "nullable": false,
+              "required": true,
+              "type": "integer"
+            },
+            "key": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            },
+            "reason": {
+              "nullable": false,
+              "required": true,
+              "type": "string"
+            }
+          },
+          "RestoreTestResult": {
+            "duration_seconds": {
+              "nullable": true,
+              "required": false,
+              "type": "number"
+            },
+            "manual_cleanup_required": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            },
+            "sample_bytes": {
+              "nullable": true,
+              "required": false,
+              "type": "integer"
+            },
+            "sample_object": {
+              "nullable": true,
+              "required": false,
+              "type": "string"
+            },
+            "samples": {
+              "nullable": true,
+              "required": false,
+              "type": "array"
+            }
+          }
+        },
+        "root": "RestoreTestResult"
       }
     },
     "run_apply_block": {
@@ -957,9 +2050,11 @@
           "max_bytes": 16384,
           "pattern": null,
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     },
     "run_verify_block": {
       "params": {
@@ -967,12 +2062,15 @@
           "max_bytes": 4096,
           "pattern": null,
           "schema": null,
-          "secret": false
+          "secret": false,
+          "type": "string"
         }
-      }
+      },
+      "result": null
     }
   },
-  "digest": "sha256:f7ba4418f3d174c758c9e10449d9127b1c8b8765f2f9c21c4f9d349279451e55",
+  "contract_digest": "sha256:3cd5196a74c7f3b8d590cabe800aec2836db95e11a119eb1252eb0a07f9e58b8",
+  "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
   "integrations": {
     "garage": {
@@ -990,6 +2088,7 @@
           "object_count": null,
           "quota_max_objects": null,
           "quota_max_size_bytes": null,
+          "read_at": null,
           "size_bytes": null,
           "unfinished_upload_bytes": null,
           "unfinished_uploads": null,
@@ -1032,5 +2131,922 @@
       "root": "GarageState"
     }
   },
-  "schema": 2
+  "messages": {
+    "command.cancelled": {
+      "classes": {
+        "CommandCancelledPayload": {
+          "command": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "reason": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "request_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "CommandCancelledPayload"
+    },
+    "command.progress": {
+      "classes": {
+        "CommandProgressPayload": {
+          "bytes_freed": {
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          },
+          "command": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "current": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "eta_seconds": {
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          },
+          "group": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "message": {
+            "nullable": false,
+            "required": false,
+            "type": "string"
+          },
+          "objects_current": {
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          },
+          "objects_total": {
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          },
+          "rate_bytes_per_sec": {
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          },
+          "request_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "stage": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "total": {
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "CommandProgressPayload"
+    },
+    "command.request": {
+      "classes": {
+        "CommandRequestPayload": {
+          "command": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "hmac": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "nonce": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "params": {
+            "nullable": false,
+            "required": true,
+            "type": "object"
+          }
+        }
+      },
+      "direction": "dashboard->agent",
+      "root": "CommandRequestPayload"
+    },
+    "command.result": {
+      "classes": {
+        "CommandResultPayload": {
+          "command": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "duration_ms": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "error": {
+            "nullable": true,
+            "required": false,
+            "type": "ResultError"
+          },
+          "exit_code": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "failure_reason": {
+            "nullable": true,
+            "required": false,
+            "type": "string"
+          },
+          "group": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "request_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "result": {
+            "nullable": true,
+            "required": false,
+            "type": "object"
+          },
+          "sequence_id": {
+            "nullable": true,
+            "required": false,
+            "type": "string"
+          },
+          "stderr": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "stdout": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "step_index": {
+            "nullable": true,
+            "required": false,
+            "type": "integer"
+          },
+          "success": {
+            "nullable": false,
+            "required": true,
+            "type": "boolean"
+          }
+        },
+        "ResultError": {
+          "code": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "http_status": {
+            "nullable": true,
+            "required": true,
+            "type": "integer"
+          },
+          "message": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "upstream_code": {
+            "nullable": true,
+            "required": true,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "CommandResultPayload"
+    },
+    "command.result.ack": {
+      "classes": {
+        "AckPayload": {}
+      },
+      "direction": "dashboard->agent",
+      "root": "AckPayload"
+    },
+    "command.sequence": {
+      "classes": {
+        "CommandSequencePayload": {
+          "hmac": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "nonce": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "sequence_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "steps": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "stop_on_failure": {
+            "nullable": false,
+            "required": true,
+            "type": "boolean"
+          }
+        },
+        "Step": {
+          "command": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "params": {
+            "nullable": false,
+            "required": true,
+            "type": "object"
+          }
+        }
+      },
+      "direction": "dashboard->agent",
+      "root": "CommandSequencePayload"
+    },
+    "envelope": {
+      "classes": {
+        "Envelope": {
+          "agent_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "payload": {
+            "nullable": false,
+            "required": true,
+            "type": "object"
+          },
+          "ts": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "type": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "v": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          }
+        }
+      },
+      "root": "Envelope"
+    },
+    "error": {
+      "classes": {
+        "ErrorPayload": {
+          "error": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "type": {
+            "nullable": true,
+            "required": false,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "both",
+      "root": "ErrorPayload"
+    },
+    "events.batch": {
+      "classes": {
+        "EventsBatchPayload": {
+          "batch_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "events": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "EventsBatchPayload",
+      "sources": {
+        "auth": {
+          "signature_failure": [
+            "error",
+            "failure_reason",
+            "status"
+          ]
+        },
+        "cert": {
+          "cert_renew_failed": [
+            "days_remaining",
+            "reason"
+          ],
+          "cert_renew_succeeded": [
+            "days_remaining"
+          ]
+        },
+        "commands": {
+          "whitelist_rejection": [
+            "command",
+            "error",
+            "status"
+          ]
+        },
+        "events": {
+          "dropped_events": [
+            "dropped",
+            "undeclared"
+          ],
+          "events_nacked": [
+            "batch_id",
+            "dropped",
+            "reason"
+          ]
+        },
+        "garage_admin": {
+          "admin_call": [
+            "bucket_id",
+            "duration_ms",
+            "endpoint",
+            "error",
+            "http_method",
+            "key_id",
+            "status"
+          ],
+          "walk_summary": [
+            "buckets_dropped",
+            "buckets_read",
+            "calls",
+            "failures",
+            "slowest_endpoint",
+            "slowest_ms",
+            "total_ms"
+          ]
+        },
+        "jobs": {
+          "job_result": [
+            "bucket_id",
+            "command",
+            "concurrent",
+            "duration_ms",
+            "error",
+            "failure_reason",
+            "params",
+            "quota_pending",
+            "quota_rejected",
+            "quota_running",
+            "status"
+          ]
+        },
+        "ws": {
+          "reconnect": [
+            "category",
+            "error",
+            "reason"
+          ]
+        }
+      }
+    },
+    "events.batch.ack": {
+      "classes": {
+        "EventsBatchAckPayload": {
+          "batch_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "dashboard->agent",
+      "root": "EventsBatchAckPayload"
+    },
+    "events.batch.nack": {
+      "classes": {
+        "EventsBatchNackPayload": {
+          "batch_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "reason": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "dashboard->agent",
+      "root": "EventsBatchNackPayload"
+    },
+    "heartbeat": {
+      "classes": {
+        "HeartbeatPayload": {}
+      },
+      "direction": "agent->dashboard",
+      "root": "HeartbeatPayload"
+    },
+    "heartbeat.ack": {
+      "classes": {
+        "AckPayload": {}
+      },
+      "direction": "dashboard->agent",
+      "root": "AckPayload"
+    },
+    "log.batch": {
+      "classes": {
+        "LogBatchPayload": {
+          "batch_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "dropped": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "from_position": {
+            "nullable": false,
+            "required": true,
+            "type": [
+              "integer",
+              "string"
+            ]
+          },
+          "group": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "lines": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "parser": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "to_position": {
+            "nullable": false,
+            "required": true,
+            "type": [
+              "integer",
+              "string"
+            ]
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "LogBatchPayload"
+    },
+    "log.batch.ack": {
+      "classes": {
+        "LogBatchAckPayload": {
+          "batch_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "group": {
+            "nullable": true,
+            "required": false,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "dashboard->agent",
+      "root": "LogBatchAckPayload"
+    },
+    "metrics.ack": {
+      "classes": {
+        "AckPayload": {}
+      },
+      "direction": "dashboard->agent",
+      "root": "AckPayload"
+    },
+    "metrics.push": {
+      "_note": "jobs is omitted, never null, when the agent runs no job manager",
+      "classes": {
+        "ContainerInfo": {
+          "image": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "name": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "status": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        },
+        "IntegrationReport": {
+          "changed_ids": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "command_specs_digest": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "commands_fenced": {
+            "nullable": true,
+            "required": true,
+            "type": "string"
+          },
+          "complete": {
+            "nullable": false,
+            "required": true,
+            "type": "boolean"
+          },
+          "disabled_reason": {
+            "nullable": true,
+            "required": true,
+            "type": "string"
+          },
+          "generation": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "last_full_read_at": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "state": {
+            "nullable": true,
+            "required": true,
+            "type": "object"
+          },
+          "status": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        },
+        "MetricsPayload": {
+          "containers": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "cpu_percent": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "disk_percent": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "disk_total_gb": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "disk_used_gb": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "integrations": {
+            "nullable": true,
+            "required": false,
+            "type": "object"
+          },
+          "jobs": {
+            "nullable": true,
+            "required": false,
+            "type": "object"
+          },
+          "load_avg_1m": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "load_avg_5m": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "memory_percent": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "memory_total_mb": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "memory_used_mb": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          },
+          "uptime_seconds": {
+            "nullable": false,
+            "required": true,
+            "type": "number"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "MetricsPayload"
+    },
+    "register": {
+      "classes": {
+        "Component": {
+          "digest": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "name": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "version": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        },
+        "IntegrationReport": {
+          "changed_ids": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "command_specs_digest": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "commands_fenced": {
+            "nullable": true,
+            "required": true,
+            "type": "string"
+          },
+          "complete": {
+            "nullable": false,
+            "required": true,
+            "type": "boolean"
+          },
+          "disabled_reason": {
+            "nullable": true,
+            "required": true,
+            "type": "string"
+          },
+          "generation": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "last_full_read_at": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "state": {
+            "nullable": true,
+            "required": true,
+            "type": "object"
+          },
+          "status": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        },
+        "RegisterPayload": {
+          "agent_started_at": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "boot_id": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "commands": {
+            "nullable": false,
+            "required": true,
+            "type": "object"
+          },
+          "components": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "contract_digest": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "in_flight": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "integrations": {
+            "nullable": false,
+            "required": true,
+            "type": "object"
+          },
+          "log_groups": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "pulse_token": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "signoff_sealed": {
+            "nullable": false,
+            "required": true,
+            "type": "boolean"
+          },
+          "speaks": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "system_inventory": {
+            "nullable": false,
+            "required": true,
+            "type": "object"
+          },
+          "unsealed_since": {
+            "nullable": true,
+            "required": true,
+            "type": "string"
+          },
+          "version": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "wire_contract": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "RegisterPayload"
+    },
+    "register.ok": {
+      "classes": {
+        "RegisterOkPayload": {
+          "contract_digest": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "protocol": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          }
+        }
+      },
+      "direction": "dashboard->agent",
+      "root": "RegisterOkPayload"
+    },
+    "signoff.state": {
+      "classes": {
+        "SignoffStatePayload": {
+          "signoff_sealed": {
+            "nullable": false,
+            "required": true,
+            "type": "boolean"
+          },
+          "unsealed_since": {
+            "nullable": true,
+            "required": false,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "SignoffStatePayload"
+    },
+    "signoff.state.ack": {
+      "classes": {
+        "AckPayload": {}
+      },
+      "direction": "dashboard->agent",
+      "root": "AckPayload"
+    }
+  },
+  "schema": 4,
+  "vectors": {
+    "command.request": {
+      "envelope": {
+        "agent_id": "vector-agent",
+        "id": "00000000-0000-4000-8000-000000000001",
+        "payload": {
+          "command": "git_pull",
+          "hmac": "91a76194da38b8ddac3449ba3d53908c9f9c84ebd087f8d6207812230415098b",
+          "nonce": "vector-nonce-request",
+          "params": {
+            "branch": "main",
+            "depth": "1"
+          }
+        },
+        "ts": "2026-10-09T00:00:00Z",
+        "type": "command.request",
+        "v": 2
+      },
+      "hmac": "91a76194da38b8ddac3449ba3d53908c9f9c84ebd087f8d6207812230415098b",
+      "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    },
+    "command.sequence": {
+      "envelope": {
+        "agent_id": "vector-agent",
+        "id": "00000000-0000-4000-8000-000000000002",
+        "payload": {
+          "hmac": "86e63e762f8ce326c9103110b56e06c7357d7e530499546627da29611950d26b",
+          "nonce": "vector-nonce-sequence",
+          "sequence_id": "00000000-0000-4000-8000-000000000003",
+          "steps": [
+            {
+              "command": "git_pull",
+              "params": {}
+            },
+            {
+              "command": "docker_logs",
+              "params": {
+                "tail": "100"
+              }
+            }
+          ],
+          "stop_on_failure": true
+        },
+        "ts": "2026-10-09T00:00:00Z",
+        "type": "command.sequence",
+        "v": 2
+      },
+      "hmac": "86e63e762f8ce326c9103110b56e06c7357d7e530499546627da29611950d26b",
+      "secret": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+    }
+  }
 }

@@ -6,26 +6,30 @@ import logging
 from typing import Any
 
 from stormpulse.commands.jobs import JobOutcome
+from stormpulse.protocol import FailureReason
 from stormpulse.rclone.runner import S3Remote
 
 logger = logging.getLogger(__name__)
 
 
 def failure_outcome(
-    reason: str,
+    reason: FailureReason,
     stderr: str,
     *,
     exit_code: int = -1,
     extras: dict[str, Any] | None = None,
 ) -> JobOutcome:
-    """A failed JobOutcome with a named reason."""
+    """A failed JobOutcome with a named reason; a nonzero rclone exit rides as
+    ``error.upstream_code``, the one place the raw code is kept."""
     return JobOutcome(
         success=False,
         exit_code=exit_code,
         stderr=stderr,
         failure_reason=reason,
         extras=extras or {},
+        upstream_code=str(exit_code) if exit_code > 0 else None,
     )
+
 
 _REMOTE_FIELDS = ("endpoint", "region", "bucket", "access_key_id", "secret_access_key")
 

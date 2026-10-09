@@ -37,6 +37,10 @@ async def test_rclone_failure_names_reason_and_caps_stderr(
     assert outcome.success is False
     assert outcome.failure_reason == "path_not_found"
     assert "directory not found" in outcome.stderr
+    # The raw rclone exit rides as the error's upstream code (CORE-011 d9).
+    error = outcome.finer_error()
+    assert error is not None
+    assert (error.upstream_code, error.code) == ("3", "path_not_found")
 
 
 @pytest.mark.asyncio
@@ -50,6 +54,10 @@ async def test_unparseable_json_is_a_named_failure(
     )
     assert outcome.success is False
     assert outcome.failure_reason == "unparseable_output"
+    # rclone exited 0 and the agent refused its output: no upstream code to
+    # name, so the error derives from the reason alone (CORE-011 d9).
+    assert outcome.exit_code == 0
+    assert outcome.finer_error() is None
 
 
 @pytest.mark.asyncio

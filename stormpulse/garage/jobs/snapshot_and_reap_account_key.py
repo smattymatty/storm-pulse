@@ -21,16 +21,29 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 2
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotAndReapAccountKeyResult:
+    """What ``garage_snapshot_and_reap_account_key`` returns under ``result``."""
+
+    old_key_id: str
+    reaped: bool
+    snapshot: list[dict[str, str]]
+    garage_stderr: str
+    duration_seconds: float
 
 
 def make_snapshot_and_reap_account_key_handler(
@@ -45,7 +58,9 @@ def make_snapshot_and_reap_account_key_handler(
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_snapshot_and_reap_account_key(
-            progress=progress, garage_config=garage_config, old_key_id=old_key_id,
+            progress=progress,
+            garage_config=garage_config,
+            old_key_id=old_key_id,
         )
 
     return handler
@@ -70,11 +85,13 @@ def _owned_snapshot(kinfo: dict[str, Any]) -> list[dict[str, Any]]:
         if not (full_id and (read or write or owner)):
             continue
         aliases = entry.get("localAliases") or []
-        snapshot.append({
-            "id": full_id,
-            "alias": aliases[0] if aliases else "",
-            "perms": [read, write, owner],
-        })
+        snapshot.append(
+            {
+                "id": full_id,
+                "alias": aliases[0] if aliases else "",
+                "perms": [read, write, owner],
+            }
+        )
     return snapshot
 
 
@@ -88,7 +105,7 @@ async def run_snapshot_and_reap_account_key(
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             old_key_id=old_key_id,
             stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
@@ -101,7 +118,9 @@ async def run_snapshot_and_reap_account_key(
     await progress("starting", 0, _TOTAL_STEPS, "Snapshotting owned buckets")
     kinfo, kerr = await asyncio.to_thread(
         admin_api.get_key_info,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=old_key_id,
     )
     if kinfo is None:
         if admin_api.is_not_found(kerr):
@@ -109,8 +128,10 @@ async def run_snapshot_and_reap_account_key(
             # manual re-claim is the customer's path (no snapshot to converge).
             return _success(old_key_id, snapshot=[], started_at=started_at)
         return _failure(
-            failure_reason="snapshot_read_failed",
-            old_key_id=old_key_id, stderr=kerr, started_at=started_at,
+            failure_reason=FailureReason.SNAPSHOT_READ_FAILED,
+            old_key_id=old_key_id,
+            stderr=kerr,
+            started_at=started_at,
         )
     snapshot = _owned_snapshot(kinfo)
 
@@ -118,21 +139,28 @@ async def run_snapshot_and_reap_account_key(
     await progress("running", 1, _TOTAL_STEPS, "Deleting compromised key")
     ok, err = await asyncio.to_thread(
         admin_api.delete_key,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=old_key_id,
     )
     if not (ok or admin_api.is_not_found(err)):
         # The kill did not land: do NOT certify gone. Storm retries the whole
         # snapshot-and-reap (re-snapshot is idempotent).
         return _failure(
-            failure_reason="reap_failed",
-            old_key_id=old_key_id, stderr=err, started_at=started_at,
+            failure_reason=FailureReason.REAP_FAILED,
+            old_key_id=old_key_id,
+            stderr=err,
+            started_at=started_at,
         )
 
     return _success(old_key_id, snapshot=snapshot, started_at=started_at)
 
 
 def _success(
-    old_key_id: str, *, snapshot: list[dict[str, str]], started_at: float,
+    old_key_id: str,
+    *,
+    snapshot: list[dict[str, str]],
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=True,
@@ -149,7 +177,11 @@ def _success(
 
 
 def _failure(
-    *, failure_reason: str, old_key_id: str, stderr: str, started_at: float,
+    *,
+    failure_reason: FailureReason,
+    old_key_id: str,
+    stderr: str,
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=False,

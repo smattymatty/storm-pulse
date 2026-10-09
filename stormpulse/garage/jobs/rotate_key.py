@@ -24,12 +24,27 @@ from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
 from stormpulse.garage.tiers import TIER_PERMS
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
 
 _TOTAL_STEPS = 4
 
+
+@dataclass(frozen=True, slots=True)
+class RotateKeyResult:
+    """What ``garage_rotate_customer_key`` returns under ``result``."""
+
+    new_key_id: str | None
+    step_completed: str | None
+    step_failed: str | None
+    rollback_status: str
+    manual_cleanup_required: list[dict[str, str]]
+    garage_stderr: str
+    duration_seconds: float
+    new_secret: str | None = None
+    new_key_name: str | None = None
 
 
 def make_rotate_customer_key_handler(
@@ -128,7 +143,7 @@ async def run_rotate_customer_key(
     if not (admin_url and admin_token):
         # Fail loud: a migrated operation never silently no-ops.
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             step_failed=None,
             state=state,
             stderr=(
@@ -144,11 +159,13 @@ async def run_rotate_customer_key(
     await progress("starting", 0, _TOTAL_STEPS, "Creating new key")
     info, err = await asyncio.to_thread(
         admin_api.create_key,
-        admin_url=admin_url, admin_token=admin_token, name=new_key_name,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        name=new_key_name,
     )
     if info is None:
         return _failure(
-            failure_reason="new_key_create_failed",
+            failure_reason=FailureReason.NEW_KEY_CREATE_FAILED,
             step_failed="new_key_create",
             state=state,
             stderr=err,
@@ -161,7 +178,7 @@ async def run_rotate_customer_key(
         # New key exists but the response didn't identify it; operator must
         # clean it up by name, which is the name we asked for.
         return _failure(
-            failure_reason="new_key_create_failed",
+            failure_reason=FailureReason.NEW_KEY_CREATE_FAILED,
             step_failed="new_key_create",
             state=state,
             stderr="CreateKey response missing accessKeyId",
@@ -193,7 +210,7 @@ async def run_rotate_customer_key(
     if not ok:
         rollback = await _rollback(garage_config, state)
         return _failure(
-            failure_reason="new_key_permission_grant_failed",
+            failure_reason=FailureReason.NEW_KEY_PERMISSION_GRANT_FAILED,
             step_failed="new_key_permission_grant",
             state=state,
             stderr=err,
@@ -217,7 +234,7 @@ async def run_rotate_customer_key(
     if not ok:
         rollback = await _rollback(garage_config, state)
         return _failure(
-            failure_reason="new_key_alias_attach_failed",
+            failure_reason=FailureReason.NEW_KEY_ALIAS_ATTACH_FAILED,
             step_failed="new_key_alias_attach",
             state=state,
             stderr=err,
@@ -232,12 +249,14 @@ async def run_rotate_customer_key(
     await progress("running", 3, _TOTAL_STEPS, "Deleting old key")
     ok, err = await asyncio.to_thread(
         admin_api.delete_key,
-        admin_url=admin_url, admin_token=admin_token, access_key_id=old_key_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        access_key_id=old_key_id,
     )
     if not ok:
         rollback = await _rollback(garage_config, state)
         return _failure(
-            failure_reason="old_key_delete_failed",
+            failure_reason=FailureReason.OLD_KEY_DELETE_FAILED,
             step_failed="old_key_delete",
             state=state,
             stderr=err,
@@ -348,7 +367,7 @@ async def _rollback(
 
 def _failure(
     *,
-    failure_reason: str,
+    failure_reason: FailureReason,
     step_failed: str | None,
     state: _RotateState,
     stderr: str,
@@ -366,7 +385,11 @@ def _failure(
         "duration_seconds": _elapsed(started_at),
     }
     extras.update(extras_extra)
-    final_reason = "rollback_failed" if rollback_status == "partial" else failure_reason
+    final_reason = (
+        FailureReason.ROLLBACK_FAILED
+        if rollback_status == "partial"
+        else failure_reason
+    )
     return JobOutcome(
         success=False,
         exit_code=-1,

@@ -12,13 +12,26 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class GetBucketOwnersResult:
+    """What ``garage_get_bucket_owners`` returns under ``result``."""
+
+    bucket_id: str
+    owner_key_ids: list[str]
+    garage_stderr: str
+    duration_seconds: float
+    key_grants: list[dict[str, Any]] | None = None
 
 
 def make_get_bucket_owners_handler(
@@ -33,7 +46,9 @@ def make_get_bucket_owners_handler(
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
         return await run_get_bucket_owners(
-            progress=progress, garage_config=garage_config, bucket_id=bucket_id,
+            progress=progress,
+            garage_config=garage_config,
+            bucket_id=bucket_id,
         )
 
     return handler
@@ -49,7 +64,7 @@ async def run_get_bucket_owners(
     admin_url, admin_token = garage_config.admin_url, garage_config.admin_token
     if not (admin_url and admin_token):
         return _failure(
-            failure_reason="admin_api_unconfigured",
+            failure_reason=FailureReason.ADMIN_API_UNCONFIGURED,
             bucket_id=bucket_id,
             stderr=(
                 "Garage admin API not configured (admin_url + admin_token); set "
@@ -61,16 +76,23 @@ async def run_get_bucket_owners(
     await progress("starting", 0, 1, "Reading bucket owners")
     info, err = await asyncio.to_thread(
         admin_api.get_bucket_info,
-        admin_url=admin_url, admin_token=admin_token, bucket_ref=bucket_id,
+        admin_url=admin_url,
+        admin_token=admin_token,
+        bucket_ref=bucket_id,
     )
     if info is None:
         if admin_api.is_not_found(err):
             return _success(
-                bucket_id, owner_key_ids=[], key_grants=[], started_at=started_at,
+                bucket_id,
+                owner_key_ids=[],
+                key_grants=[],
+                started_at=started_at,
             )
         return _failure(
-            failure_reason="bucket_read_failed",
-            bucket_id=bucket_id, stderr=err, started_at=started_at,
+            failure_reason=FailureReason.BUCKET_READ_FAILED,
+            bucket_id=bucket_id,
+            stderr=err,
+            started_at=started_at,
         )
 
     owner_key_ids: list[str] = []
@@ -83,20 +105,27 @@ async def run_get_bucket_owners(
             continue
         perms = entry.get("permissions") or {}
         r, w, o = (
-            bool(perms.get("read")), bool(perms.get("write")), bool(perms.get("owner")),
+            bool(perms.get("read")),
+            bool(perms.get("write")),
+            bool(perms.get("owner")),
         )
         key_grants.append({"key_id": kid, "read": r, "write": w, "owner": o})
         if o:
             owner_key_ids.append(kid)
     return _success(
-        bucket_id, owner_key_ids=owner_key_ids, key_grants=key_grants,
+        bucket_id,
+        owner_key_ids=owner_key_ids,
+        key_grants=key_grants,
         started_at=started_at,
     )
 
 
 def _success(
-    bucket_id: str, *, owner_key_ids: list[str],
-    key_grants: list[dict[str, Any]], started_at: float,
+    bucket_id: str,
+    *,
+    owner_key_ids: list[str],
+    key_grants: list[dict[str, Any]],
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=True,
@@ -113,7 +142,11 @@ def _success(
 
 
 def _failure(
-    *, failure_reason: str, bucket_id: str, stderr: str, started_at: float,
+    *,
+    failure_reason: FailureReason,
+    bucket_id: str,
+    stderr: str,
+    started_at: float,
 ) -> JobOutcome:
     return JobOutcome(
         success=False,

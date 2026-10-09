@@ -61,8 +61,11 @@ def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
     """
     # Lazy handler imports: loaded only when a live caddy integration builds its
     # specs. Each thunk fires at dispatch.
-    from stormpulse.caddy.cert_status import make_caddy_cert_status_handler
-    from stormpulse.caddy.sync import make_caddy_sync_handler
+    from stormpulse.caddy.cert_status import (
+        CertStatusResult,
+        make_caddy_cert_status_handler,
+    )
+    from stormpulse.caddy.sync import CaddySyncResult, make_caddy_sync_handler
 
     return {
         BUCKETS_CUSTOM_DOMAIN_CADDY_SYNC: CommandSpec(
@@ -75,6 +78,7 @@ def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
                 "via the admin API."
             ),
             mode="job",
+            result=CaddySyncResult,
             handler=lambda params: make_caddy_sync_handler(config, params),
             params={
                 "region": ParamDef(
@@ -85,7 +89,7 @@ def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
                 ),
                 "tenants": ParamDef(
                     placeholder="tenants",
-                    default="{}",
+                    default={},
                     max_bytes=_MANIFEST_MAX_BYTES,
                     schema=_MANIFEST_SCHEMA,
                     description=(
@@ -123,6 +127,7 @@ def build_caddy_specs(config: CaddyConfig) -> dict[str, CommandSpec]:
                 "outbound loopback handshake."
             ),
             mode="job",
+            result=CertStatusResult,
             read_only=True,
             handler=lambda params: make_caddy_cert_status_handler(config, params),
             params={

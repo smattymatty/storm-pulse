@@ -25,7 +25,7 @@ import hashlib
 import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from typing import Any, Literal, Protocol
 
 from stormpulse.sdk.readiness import Capability, CapabilityStatus
@@ -82,7 +82,10 @@ class SdkParamDef:
 @dataclass(frozen=True, slots=True)
 class SdkJobOutcome:
     """Result body a job handler returns. Mirror of ``commands.jobs.JobOutcome``;
-    the loader translates it to the internal type."""
+    the loader translates it to the internal type. ``failure_reason`` is a
+    string here (the SDK imports nothing from the host, CORE-000): a name the
+    host's ``FailureReason`` knows passes through, any other word rides as
+    ``integration_failed`` with the word kept in ``error.code``."""
 
     success: bool
     exit_code: int = 0
@@ -115,7 +118,7 @@ SdkJobHandler = Callable[[SdkProgress], Awaitable[SdkJobOutcome]]
 # A "job" command's lazy handler thunk: given validated runtime params, build the
 # job handler (or None when unservable on this host). Mirror of the internal
 # ``CommandHandler`` factory shape.
-SdkCommandHandler = Callable[[dict[str, str]], "SdkJobHandler | None"]
+SdkCommandHandler = Callable[[dict[str, Any]], "SdkJobHandler | None"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,9 +126,9 @@ class SdkCommandSpec:
     """A single command an adapter contributes. Full-parity mirror of
     ``config.CommandSpec``. ``mode`` discriminates: ``subprocess`` runs an
     absolute-path argv (``command[0]`` must be absolute); ``job`` carries a
-    ``handler``; ``refresh`` is the agent-owned state re-collect and carries no
-    handler. Illegal combinations are rejected at construction, exactly as the
-    internal spec does."""
+    ``handler`` and may declare ``result``, the dataclass its ``extras`` fill
+    (CORE-011 d9; declared in the wire contract, outside the digest). Illegal
+    combinations are rejected at construction, exactly as the internal spec does."""
 
     group: str
     command: list[str]
@@ -138,6 +141,7 @@ class SdkCommandSpec:
     self_reconciling: bool = False
     handler: SdkCommandHandler | None = None
     params: dict[str, SdkParamDef] = field(default_factory=dict)
+    result: type | None = None
 
     def __post_init__(self) -> None:
         if self.mode == "job":
@@ -148,6 +152,13 @@ class SdkCommandSpec:
         elif self.handler is not None:
             raise ValueError(
                 f"SdkCommandSpec {self.command!r}: mode {self.mode!r} must not carry a handler"
+            )
+        if self.result is not None and not (
+            self.mode == "job" and is_dataclass(self.result)
+        ):
+            raise ValueError(
+                f"SdkCommandSpec {self.command!r}: result must be a dataclass on a "
+                f"'job' command, got {self.result!r} on mode {self.mode!r}"
             )
         if self.mode == "subprocess" and (
             not self.command or not self.command[0].startswith("/")
@@ -187,6 +198,17 @@ class SdkDeploySubject:
 
 
 @dataclass(frozen=True, slots=True)
+class SdkComponent:
+    """One versioned piece of the node an Integration declares at register
+    (CORE-011 d7): the daemon it fronts, the package it ships. ``digest`` is
+    ``""`` where the component has none. Data only, outside ``command_specs_digest``."""
+
+    name: str
+    version: str
+    digest: str
+
+
+@dataclass(frozen=True, slots=True)
 class SdkIntegration:
     """A declared external integration (CORE-007). Required core is ``id``,
     ``parse_config``, ``enabled``; every other capability is opt-in. The loader
@@ -211,6 +233,9 @@ class SdkIntegration:
     # configured rather than guessed. Data only: never digest-covered, always
     # overridable by the node's own [investigate.deploy.<subject>] table.
     deploy_subjects: Callable[[Any], tuple[SdkDeploySubject, ...]] | None = None
+    # Optional components this Integration declares on every register (CORE-011
+    # d7), from its parsed config alone: read-only, no I/O, outside the digest.
+    components: Callable[[Any], tuple[SdkComponent, ...]] | None = None
 
 
 def canonical_digest(payload: Any) -> str:

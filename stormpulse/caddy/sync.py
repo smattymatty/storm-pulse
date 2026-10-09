@@ -9,17 +9,18 @@ from __future__ import annotations
 import asyncio
 import fnmatch
 import http.client
-import json
 import logging
 import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlparse
 
 from stormpulse.caddy.commands import PER_TENANT_MAX_BYTES, TENANT_KEY_PATTERN
 from stormpulse.caddy.config import CaddyConfig
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
+from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,16 @@ _TENANT_KEY_RE = re.compile(TENANT_KEY_PATTERN)
 # More than one deletion per sync requires authorize_bulk.
 # Count the legacy drop-in removal too.
 _INLINE_DELETE_CADENCE = 1
+
+
+@dataclass(frozen=True, slots=True)
+class CaddySyncResult:
+    """What ``buckets_custom_domain_caddy_sync`` returns under ``result``."""
+
+    region: str
+    tenants: int
+    deleted: int
+    rail_tripped: bool
 
 
 def verify_drop_in_imported(
@@ -108,15 +119,11 @@ class ReconcilePlan:
     rail_tripped: bool = False
 
 
-def _decode_manifest(raw: str) -> tuple[dict[str, str] | None, str | None]:
-    """Validate tenant JSON; return (manifest, None) or (None, error).
+def _check_manifest(parsed: Any) -> tuple[dict[str, str] | None, str | None]:
+    """Validate the decoded tenants value; return (manifest, None) or (None, error).
 
-    Reject the whole manifest for invalid JSON, non-string entries, unsafe filename
+    Reject the whole manifest for a non-object, non-string entries, unsafe filename
     keys, or oversized fragments. Never persist a partially valid manifest."""
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return None, f"tenants manifest is not valid JSON: {exc}"
     if not isinstance(parsed, dict):
         return None, (
             f"tenants manifest must be a JSON object, got {type(parsed).__name__}"
@@ -195,7 +202,7 @@ class _SyncFailure(Exception):
 
 def make_caddy_sync_handler(
     caddy: CaddyConfig,
-    params: dict[str, str],
+    params: dict[str, Any],
 ) -> JobHandler:
     """Build a sync handler serialized per drop-in directory.
 
@@ -211,7 +218,7 @@ def make_caddy_sync_handler(
 
     async def _sync_once(progress: ProgressCallback) -> JobOutcome:
         region = params.get("region", "")
-        tenants_raw = params.get("tenants", "{}")
+        tenants_raw = params.get("tenants", {})
         authorize_bulk = params.get("authorize_bulk", "false") == "true"
 
         try:
@@ -270,9 +277,9 @@ def make_caddy_sync_handler(
     return handler
 
 
-def _validate_manifest(region: str, tenants_raw: str) -> dict[str, str]:
-    """Step 1: decode + validate the tenants manifest before anything touches disk."""
-    tenants, manifest_err = _decode_manifest(tenants_raw)
+def _validate_manifest(region: str, tenants_raw: Any) -> dict[str, str]:
+    """Step 1: validate the tenants manifest before anything touches disk."""
+    tenants, manifest_err = _check_manifest(tenants_raw)
     if tenants is None:
         logger.warning(
             "caddy_sync: rejected manifest for region=%s: %s",
@@ -287,7 +294,7 @@ def _validate_manifest(region: str, tenants_raw: str) -> dict[str, str]:
                     f"Rejected Caddy sync for region {region}: {manifest_err}. "
                     "The running Caddy is untouched."
                 ),
-                failure_reason="config_invalid",
+                failure_reason=FailureReason.CONFIG_INVALID,
             )
         )
     return tenants
@@ -318,7 +325,7 @@ def _scan_and_plan(
                 success=False,
                 exit_code=-1,
                 stderr=f"Failed to scan drop-in directory {drop_in_dir}: {exc}",
-                failure_reason="persist_failed",
+                failure_reason=FailureReason.PERSIST_FAILED,
             )
         ) from exc
 
@@ -362,7 +369,7 @@ async def _persist_plan(caddy: CaddyConfig, region: str, plan: ReconcilePlan) ->
                 success=False,
                 exit_code=-1,
                 stderr=f"Failed to persist drop-in files to {drop_in_dir}: {exc}",
-                failure_reason="persist_failed",
+                failure_reason=FailureReason.PERSIST_FAILED,
             )
         ) from exc
 
@@ -388,7 +395,7 @@ async def _preflight_composed(caddy: CaddyConfig, region: str) -> str:
                 success=False,
                 exit_code=-1,
                 stderr=(f"Drop-in persisted but main Caddyfile read failed: {exc}"),
-                failure_reason="reload_failed",
+                failure_reason=FailureReason.RELOAD_FAILED,
             )
         ) from exc
     ok, err = await asyncio.to_thread(
@@ -413,7 +420,7 @@ async def _preflight_composed(caddy: CaddyConfig, region: str) -> str:
                     "or two drop-ins declaring the same site address - check "
                     f"the files next to {caddy.drop_in_path}."
                 ),
-                failure_reason="config_invalid",
+                failure_reason=FailureReason.CONFIG_INVALID,
             )
         )
     return load_body
@@ -439,7 +446,7 @@ async def _reload_caddy(caddy: CaddyConfig, region: str, load_body: str) -> None
                 success=False,
                 exit_code=-1,
                 stderr=f"Caddy admin /load rejected reload: {err}",
-                failure_reason="reload_failed",
+                failure_reason=FailureReason.RELOAD_FAILED,
             )
         )
 
@@ -471,7 +478,7 @@ def _terminal_outcome(region: str, plan: ReconcilePlan) -> JobOutcome:
                 "under-returning and should be investigated before the "
                 "files are removed."
             ),
-            failure_reason="delete_rail_tripped",
+            failure_reason=FailureReason.DELETE_RAIL_TRIPPED,
             extras=extras,
         )
 
