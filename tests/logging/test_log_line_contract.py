@@ -81,6 +81,10 @@ def test_caddy_json_emits_bucket_and_s3_op() -> None:
     """
     assert "bucket" in emitted_fields("caddy_json")
     assert "s3_op" in emitted_fields("caddy_json")
+    row = PARSERS["caddy_json"](GOLDEN_LINES["caddy_json"]["access"])
+    assert row is not None
+    assert row["bucket"] == "bucket"
+    assert row["s3_op"] == ""
 
 
 @pytest.mark.parametrize("parser", ["garage_s3", "caddy_json"])

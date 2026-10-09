@@ -273,8 +273,8 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
 
     method = request.get("method", "") or ""
     uri = request.get("uri", "") or ""
+    # Retained for existing path-style egress consumers; not proof of S3 routing.
     bucket, _ = split_bucket_key(uri)
-    s3_op = classify_s3_op(method, uri)
     host = request.get("host", "") or ""
     peer_ip = request.get("remote_ip", "") or request.get("client_ip", "") or ""
     status = obj.get("status", 0)
@@ -282,8 +282,8 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
     ua = _request_user_agent(request)
     ua_brief = _summarize_user_agent(ua)
 
-    # The uri stops here: the operation name rides in its place.
-    message = " ".join(p for p in (method, host, s3_op) if p) + f" -> {status}"
+    # A generic HTTP log has no routing context to identify an S3 operation.
+    message = " ".join(p for p in (method, host) if p) + f" -> {status}"
     if peer_ip:
         message += f" from {peer_ip}"
     if ua_brief:
@@ -295,7 +295,7 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
         "message": message,
         "peer_ip": peer_ip,
         "method": method,
-        "s3_op": s3_op,
+        "s3_op": "",
         "host": host,
         "bucket": bucket,
         "status": status,

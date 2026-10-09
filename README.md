@@ -81,16 +81,16 @@ closes, so no request id ends in silence. A `command.sequence` is `steps`,
 each `{command, params}`, and every step's result echoes the `sequence_id` and
 its `step_index`, the three refusals included.
 
-Shipped S3 and Caddy access lines name the operation, never the request. Each
-carries `s3_op` (`GetObject`, `PutObject`, `DeleteObjects`, `UploadPart`,
-`ListObjectsV2` and the rest of a closed table, `Unknown` otherwise), classified
-on the node from the method, the sub-resource and whether a key is present;
-the path and any query string (a presigned URL's signature among them) stop
-at the parser and never reach `message` either; `bucket` and `object_key`
-ride as before, on Garage lines only. The address rides as `peer_ip`, and
-every Garage S3 line carries `bucket_id`, `""` when the node cannot resolve
-it. `log-line-contract.json` declares the fields of every
-parser.
+Garage S3 access logs name the operation in `s3_op`, keep their existing
+`bucket` and `object_key`, and never ship raw URLs or query strings. Garage
+also supplies `bucket_id`, empty when it cannot resolve one. Both Garage S3
+and Caddy access logs use `peer_ip`.
+
+Caddy access logs describe HTTP method, host and status, with `s3_op` empty:
+the generic parser cannot infer storage routing from a URI. Their existing
+first-path-segment `bucket` field stays available to egress consumers; correct
+attribution on custom domains requires integration-owned serving context.
+`log-line-contract.json` declares every parser's fields.
 
 Read the [Protocol Specification](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Protocol-Specification) for exact information.
 

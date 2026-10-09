@@ -148,6 +148,11 @@ The agent emits the S3 operation, never the request path; the legacy
 `client_ip` name is gone; `bucket_id` is required on object lines. Every
 new field carries the four-question privacy stanza in the ADR that adds it.
 
+This operation requirement applies to S3 traffic. Generic HTTP access logs
+report method, host and status with request URLs redacted; a URI alone cannot
+establish S3 routing or bucket identity. Such semantics belong to the serving
+Integration, not the kernel's generic HTTP parser.
+
 ### 11. The v1 page is archived, not grown
 
 The wiki's `Protocol-Specification` is renamed `Protocol-Specification-v1`

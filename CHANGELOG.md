@@ -40,6 +40,9 @@ a control plane that only speaks v1.
 
 ### Changed
 
+- **Caddy logs describe HTTP traffic.** Requests to normal websites no longer
+  get guessed S3 operation names. URLs remain redacted, and the existing
+  `bucket` field is retained for egress accounting.
 - **Malformed commands fail clearly.** Command fields and sequence controls
   are checked before execution. Invalid signatures remain authentication
   refusals; malformed signed payloads receive an error response.
@@ -65,7 +68,8 @@ a control plane that only speaks v1.
   under `result`, errors under `error`, and sequences use `steps` instead of
   `commands`. Job event parameters now live under `attrs.params`.
 - `path` and `client_ip` from Garage S3 and Caddy access logs. Log consumers should
-  use `s3_op` and `peer_ip`; Garage object keys are still included.
+  use `peer_ip` on both and `s3_op` on Garage S3 logs; Caddy leaves `s3_op` empty.
+  Garage object keys are still included.
 - The two-second new-bucket detector and `detector_interval_seconds` setting.
   New buckets are discovered on the next full read, or the next minute's
   membership check when hints are enabled.

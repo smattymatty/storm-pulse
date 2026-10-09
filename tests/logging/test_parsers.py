@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from stormpulse.logging.parsers import (
     MAX_LINE_BYTES,
     parse_caddy_json,
@@ -386,6 +388,40 @@ _REAL_CERTMAGIC_OCSP = (
 
 
 class TestParseCaddyJson:
+    @pytest.mark.parametrize(
+        ("host", "uri"),
+        [
+            ("app.example.ca", "/login"),
+            ("app.example.ca", "/api/health"),
+            ("app.example.ca", "/"),
+            ("media.s3.example.ca", "/photo.jpg"),
+            ("site.example.ca", "/index.html"),
+            ("s3.example.ca", "/media/photo.jpg?X-Amz-Signature=secret"),
+        ],
+    )
+    def test_generic_http_routes_never_guess_storage_operations(
+        self, host: str, uri: str
+    ) -> None:
+        result = parse_caddy_json(
+            json.dumps(
+                {
+                    "ts": "2026-04-10T13:00:00Z",
+                    "status": 206,
+                    "duration": 0.012,
+                    "size": 8192,
+                    "request": {"method": "GET", "host": host, "uri": uri},
+                }
+            )
+        )
+        assert result is not None
+        assert result["s3_op"] == ""
+        assert result["message"] == f"GET {host} -> 206"
+        assert result["bytes_sent"] == 8192
+        assert result["duration_ms"] == 12
+        assert "path" not in result
+        assert "X-Amz" not in json.dumps(result)
+        assert "secret" not in json.dumps(result)
+
     def test_access_log_valid(self) -> None:
         line = json.dumps(
             {
@@ -407,9 +443,9 @@ class TestParseCaddyJson:
         assert result["peer_ip"] == "1.2.3.4"
         assert "client_ip" not in result
 
-    def test_access_log_names_the_operation_never_the_uri(self) -> None:
+    def test_access_log_describes_http_never_the_uri(self) -> None:
         # A presigned GET carries its signature in the query string; the
-        # entry names the operation and the bucket, nothing of the uri.
+        # generic HTTP log keeps method/host/status, never the raw URI.
         uri = "/media/photos/x.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=s3cr3t"
         line = json.dumps(
             {
@@ -425,9 +461,9 @@ class TestParseCaddyJson:
         )
         result = parse_caddy_json(line)
         assert result is not None
-        assert result["s3_op"] == "GetObject"
+        assert result["s3_op"] == ""
         assert result["bucket"] == "media"
-        assert result["message"] == "GET alpha.example.ca GetObject -> 200 from 1.2.3.4"
+        assert result["message"] == "GET alpha.example.ca -> 200 from 1.2.3.4"
         assert "path" not in result
         flat = json.dumps(result)
         assert "photos" not in flat and "X-Amz" not in flat and "?" not in flat
@@ -470,7 +506,7 @@ class TestParseCaddyJson:
             result = parse_caddy_json(self._access_line(uri))
             assert result is not None, uri
             assert result["bucket"] == "", uri
-            assert result["s3_op"] == "Unknown", uri
+            assert result["s3_op"] == "", uri
 
     def test_access_log_with_a_non_string_uri_names_no_bucket(self) -> None:
         # A malformed line can carry a number or a list where the uri should
