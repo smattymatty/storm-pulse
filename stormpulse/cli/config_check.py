@@ -36,6 +36,11 @@ def cmd_config_check(args: argparse.Namespace) -> None:
     import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
     from stormpulse.config import ConfigError, load_config
     from stormpulse.integrations import registered_integrations
+    from stormpulse.integrations.evaluation import (
+        IntegrationCallbackError,
+        integration_enabled,
+        parse_integration_config,
+    )
 
     path = Path(args.config)
     try:
@@ -62,11 +67,14 @@ def cmd_config_check(args: argparse.Namespace) -> None:
             continue
         origin = " (external adapter, sealed grant)" if integ.id in external_ids else ""
         try:
-            ic = integ.parse_config(raw)
-        except ConfigError as exc:
-            print(f"  [{integ.id}] disabled_error (config): {exc}{origin}")
+            ic = parse_integration_config(integ, raw)
+            enabled = integration_enabled(integ, ic)
+        except (ConfigError, IntegrationCallbackError) as exc:
+            print(
+                f"  [{integ.id}] disabled_error (config): {exc}{origin}. Other integrations can continue."
+            )
             continue
-        if not integ.enabled(ic):
+        if not enabled:
             print(f"  [{integ.id}] disabled_choice (enabled = false){origin}")
             continue
         print(

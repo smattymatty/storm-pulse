@@ -84,8 +84,12 @@ def _wrap_parse_config(sdk_parse: Any) -> Any:
             return sdk_parse(raw)
         except SdkConfigError as exc:
             raise ConfigError(str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - a parse failure soft-disables, never crashes
-            raise ConfigError(f"external adapter config parse failed: {exc}") from exc
+        except Exception as exc:
+            raise ConfigError(
+                "An external integration couldn't read its configuration "
+                f"({type(exc).__name__}). Run 'stormpulse integration doctor', "
+                "correct its configuration or update the integration, then restart Storm Pulse."
+            ) from None
 
     return parse
 

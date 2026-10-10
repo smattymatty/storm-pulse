@@ -40,6 +40,10 @@ a control plane that only speaks v1.
 
 ### Changed
 
+- **Integration failures come with a recovery step.** A failing configuration,
+  enablement or host check disables that integration while the agent and its
+  siblings continue. Config checks and doctor report the same safe diagnostics
+  and point to the next command to run.
 - **Caddy logs describe HTTP traffic.** Requests to normal websites no longer
   get guessed S3 operation names. URLs remain redacted, and the existing
   `bucket` field is retained for egress accounting.

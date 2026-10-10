@@ -71,6 +71,13 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
    disabled-by-error Integration must render alarming on the dashboard, visibly
    distinct from disabled-by-choice.
 
+   Ordinary exceptions in parse, enablement and host callbacks follow the same
+   boundary in boot, config checks and readiness. Unexpected diagnostics name
+   the failed stage and exception class with a repair step, never arbitrary
+   exception text. Deliberate ConfigError/SdkConfigError messages and returned
+   refusal reasons must be operator-safe. Process termination and interrupts
+   propagate; this is failure isolation, not in-process confinement.
+
 6. **The restart is the fail-fast.** Pulse config lives on the box and is edited in
    place, so the loud bounce is the compile step, not a pipeline. On restart the agent
    prints which Integrations went dark and why, to the terminal and the dashboard,

@@ -18,6 +18,13 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from stormpulse.config import ConfigError
+from stormpulse.integrations.evaluation import (
+    IntegrationCallbackError,
+    evaluate_callback,
+    integration_enabled,
+    integration_preconditions,
+    parse_integration_config,
+)
 from stormpulse.integrations.registry import Integration, registered_integrations
 from stormpulse.sdk import (
     CapabilityLiveness,
@@ -82,12 +89,16 @@ def resolve_readiness(
     if raw is None:
         return ReadinessReport(integ.id, ReadinessState.AVAILABLE)
     try:
-        parsed = integ.parse_config(raw)
-    except ConfigError as exc:
+        parsed = parse_integration_config(integ, raw)
+    except (ConfigError, IntegrationCallbackError) as exc:
         return ReadinessReport(
             integ.id, ReadinessState.AVAILABLE, reason=f"config error: {exc}"
         )
-    if not integ.enabled(parsed):
+    try:
+        enabled = integration_enabled(integ, parsed)
+    except (ConfigError, IntegrationCallbackError) as exc:
+        return ReadinessReport(integ.id, ReadinessState.CONFIGURED, reason=str(exc))
+    if not enabled:
         return ReadinessReport(
             integ.id, ReadinessState.CONFIGURED, reason="enabled = false"
         )
@@ -98,14 +109,39 @@ def resolve_readiness(
             capabilities=_capabilities_unknown(integ),
         )
     # Host-touching from here. Baseline liveness is the boot gate (single-sourced).
-    baseline_reason = (
-        integ.preconditions(parsed) if integ.preconditions is not None else None
-    )
-    caps = (
-        integ.readiness(parsed)
-        if integ.readiness is not None
-        else _capabilities_from_baseline(integ, baseline_reason)
-    )
+    try:
+        baseline_reason = integration_preconditions(integ, parsed)
+        if baseline_reason is not None:
+            return ReadinessReport(
+                integ.id,
+                ReadinessState.ENABLED,
+                capabilities=_capabilities_from_baseline(integ, baseline_reason),
+                reason=baseline_reason,
+            )
+        probe = integ.readiness
+        caps = (
+            evaluate_callback(integ.id, "readiness", lambda: probe(parsed))
+            if probe is not None
+            else _capabilities_from_baseline(integ, None)
+        )
+        if not isinstance(caps, tuple) or not all(
+            isinstance(c, CapabilityStatus)
+            and isinstance(c.token, str)
+            and isinstance(c.liveness, CapabilityLiveness)
+            and (c.reason is None or isinstance(c.reason, str))
+            and (c.repair is None or isinstance(c.repair, str))
+            for c in caps
+        ):
+            raise IntegrationCallbackError(
+                integ.id, "readiness", "expected capability reports"
+            )
+    except (ConfigError, IntegrationCallbackError) as exc:
+        return ReadinessReport(
+            integ.id,
+            ReadinessState.ENABLED,
+            capabilities=_capabilities_unknown(integ),
+            reason=str(exc),
+        )
     if baseline_reason is None:
         return ReadinessReport(integ.id, ReadinessState.READY, capabilities=caps)
     return ReadinessReport(
@@ -119,10 +155,26 @@ def resolve_all(
     """Readiness for every registered integration, keyed by id."""
     return {
         integ.id: resolve_readiness(
-            integ, dict(integrations_config.get(integ.id) or {}) or None, run_probe=run_probe
+            integ,
+            dict(integrations_config[integ.id])
+            if integ.id in integrations_config
+            else None,
+            run_probe=run_probe,
         )
         for integ in registered_integrations()
     }
+
+
+def readiness_failed(report: ReadinessReport) -> bool:
+    """Distinguish a failed check from absence or intentional disablement."""
+    return report.state is ReadinessState.ENABLED or (
+        report.reason is not None
+        and report.state < ReadinessState.READY
+        and not (
+            report.state is ReadinessState.CONFIGURED
+            and report.reason == "enabled = false"
+        )
+    )
 
 
 def resolve_dependency(

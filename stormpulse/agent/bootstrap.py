@@ -21,6 +21,13 @@ from stormpulse.integrations import (
     integration_command_specs,
     registered_integrations,
 )
+from stormpulse.integrations.evaluation import (
+    IntegrationCallbackError,
+    evaluate_callback,
+    integration_enabled,
+    integration_preconditions,
+    parse_integration_config,
+)
 from stormpulse.integrations.readiness import capability_provider_conflicts
 from stormpulse.logging import (
     DockerTailer,
@@ -59,26 +66,39 @@ def _resolve_integration(
     between one of those and an already-registered (built-in) command quarantines
     the whole external package - built-ins always win (CORE-007 D6)."""
     try:
-        parsed = integ.parse_config(raw)
-    except ConfigError as exc:
+        parsed = parse_integration_config(integ, raw)
+    except (ConfigError, IntegrationCallbackError) as exc:
         return IntegrationRuntime(
             integ.id, STATUS_DISABLED_ERROR, str(exc), None, integ
         )
-    if not integ.enabled(parsed):
-        return IntegrationRuntime(integ.id, STATUS_DISABLED_CHOICE, None, parsed, integ)
-    reason = integ.preconditions(parsed) if integ.preconditions is not None else None
+    try:
+        if not integration_enabled(integ, parsed):
+            return IntegrationRuntime(
+                integ.id, STATUS_DISABLED_CHOICE, None, parsed, integ
+            )
+        reason = integration_preconditions(integ, parsed)
+    except (ConfigError, IntegrationCallbackError) as exc:
+        return IntegrationRuntime(
+            integ.id, STATUS_DISABLED_ERROR, str(exc), parsed, integ
+        )
     if reason is not None:
         return IntegrationRuntime(
             integ.id, STATUS_DISABLED_ERROR, reason, parsed, integ
         )
     try:
-        integ_specs = integration_command_specs(integ, parsed)
-        digest, fenced = _command_receipt(integ, parsed)
-    except Exception as exc:  # noqa: BLE001 - any build failure is a soft-disable, never a crash
+        integ_specs = evaluate_callback(
+            integ.id,
+            "command registration",
+            lambda: integration_command_specs(integ, parsed),
+        )
+        digest, fenced = evaluate_callback(
+            integ.id, "command permissions", lambda: _command_receipt(integ, parsed)
+        )
+    except (ConfigError, IntegrationCallbackError) as exc:
         return IntegrationRuntime(
             integ.id,
             STATUS_DISABLED_ERROR,
-            f"command registration failed: {exc}",
+            str(exc),
             parsed,
             integ,
         )

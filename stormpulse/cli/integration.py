@@ -311,8 +311,7 @@ def _doctor(
     from the durable journal. Exit is the most severe of the two: 5 for a P1 package
     error, 4 for an enabled-but-not-ready integration, else 0."""
     import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
-    from stormpulse.integrations.readiness import resolve_all
-    from stormpulse.sdk import ReadinessState
+    from stormpulse.integrations.readiness import readiness_failed, resolve_all
     from stormpulse.wizard import read_pending, recover
 
     findings = doctor.doctor_packages(state_dir, args.integration_id)
@@ -325,9 +324,7 @@ def _doctor(
     _emit_doctor(args, findings, reports, pending, recovery)
 
     p1_exit = 5 if any(f.severity is Severity.ERROR for f in findings) else 0
-    readiness_exit = (
-        4 if any(r.state is ReadinessState.ENABLED for r in reports.values()) else 0
-    )
+    readiness_exit = 4 if any(readiness_failed(r) for r in reports.values()) else 0
     return max(p1_exit, readiness_exit)
 
 
