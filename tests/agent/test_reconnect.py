@@ -205,7 +205,10 @@ def recorded_tasks() -> Iterator[list[str]]:
     _RecordingTaskGroup.created = []
     with (
         patch("asyncio.TaskGroup", _RecordingTaskGroup),
-        patch("stormpulse.agent.reconnect.send_register", AsyncMock()),
+        patch(
+            "stormpulse.agent.reconnect.send_register",
+            AsyncMock(return_value=CONTRACT_DIGEST),
+        ),
     ):
         yield _RecordingTaskGroup.created
 
@@ -341,7 +344,10 @@ async def test_a_refused_handshake_logs_one_warning_and_backs_off(
 
     with (
         patch("stormpulse.agent.reconnect.connect", conn),
-        patch("stormpulse.agent.reconnect.send_register", AsyncMock()),
+        patch(
+            "stormpulse.agent.reconnect.send_register",
+            AsyncMock(return_value=CONTRACT_DIGEST),
+        ),
         patch("stormpulse.agent.reconnect._sleep_with_jitter", fake_sleep),
         caplog.at_level(logging.WARNING, logger="stormpulse.agent.reconnect"),
     ):

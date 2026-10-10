@@ -55,6 +55,7 @@ from stormpulse.protocol import (
     FailureReason,
     MessageType,
     ProtocolError,
+    ResultError,
     make_command_cancelled,
     make_command_result,
     make_error,
@@ -68,6 +69,56 @@ events.declare_event("auth", "signature_failure", {"status", "failure_reason", "
 events.declare_event("commands", "whitelist_rejection", {"status", "command", "error"})
 
 type Handler = Callable[[Agent, ClientConnection, Envelope], Awaitable[None]]
+
+
+async def refuse_incompatible_command(
+    agent: Agent,
+    ws: ClientConnection,
+    envelope: Envelope,
+    payload: CommandRequestPayload | CommandSequencePayload,
+) -> bool:
+    session = agent.session_compatibility
+    if session is not None and session.compatible:
+        return False
+    message = (
+        session.guidance
+        if session is not None
+        else (
+            "Registration hasn't finished, so commands are paused. "
+            "Wait for Storm Pulse to register with the control plane, then retry."
+        )
+    )
+    command = (
+        payload.command
+        if isinstance(payload, CommandRequestPayload)
+        else (payload.steps[0].command if payload.steps else "command.sequence")
+    )
+    spec = agent.registry.get(command)
+    result = CommandResultPayload(
+        request_id=envelope.id,
+        command=command,
+        group=spec.group if spec else "unknown",
+        success=False,
+        exit_code=-1,
+        stdout="",
+        stderr=message,
+        duration_ms=0,
+        failure_reason=FailureReason.FORBIDDEN,
+        error=ResultError(
+            "contract_mismatch" if session is not None else "registration_pending",
+            None,
+            None,
+            message,
+        ),
+        sequence_id=payload.sequence_id
+        if isinstance(payload, CommandSequencePayload)
+        else None,
+        step_index=0
+        if isinstance(payload, CommandSequencePayload) and payload.steps
+        else None,
+    )
+    await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+    return True
 
 
 async def receive_loop(agent: Agent, ws: ClientConnection) -> None:
@@ -118,6 +169,8 @@ async def handle_command_request(
     """Verify and execute a single command request. Three paths, routed on spec.mode: refresh, job (long-running), subprocess."""
     payload = _verify_typed_payload(agent, envelope, CommandRequestPayload)
     if payload is None:
+        return
+    if await refuse_incompatible_command(agent, ws, envelope, payload):
         return
     logger.info("Executing command %r (request %s)", payload.command, envelope.id)
     cmd_def = agent.registry.get(payload.command)
@@ -488,6 +541,8 @@ async def handle_command_sequence(
     """
     payload = _verify_typed_payload(agent, envelope, CommandSequencePayload)
     if payload is None:
+        return
+    if await refuse_incompatible_command(agent, ws, envelope, payload):
         return
     names = [step.command for step in payload.steps]
     logger.info("Executing sequence %s: %s", payload.sequence_id, names)

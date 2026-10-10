@@ -43,6 +43,14 @@ CONTRACT_DIGEST = "sha256:" + "0f" * 32
 WIRE_DIGEST = "sha256:" + "1f" * 32
 
 
+def matched_test_session(agent: Any) -> Any:
+    """Unit dispatch tests operate on a registered, compatible session."""
+    from stormpulse.agent.session import SessionCompatibility
+
+    agent.session_compatibility = SessionCompatibility(CONTRACT_DIGEST, CONTRACT_DIGEST)
+    return agent
+
+
 def register_fields(**overrides: Any) -> dict[str, Any]:
     """Every ``make_register`` keyword at its empty value: a quiet, sealed node.
     Override only what a test asserts on."""

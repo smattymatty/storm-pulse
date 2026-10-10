@@ -159,6 +159,8 @@ class Integration:
     # Set only by the external translator, where a sealed grant gates ``specs``.
     # In-tree commands have no gate: bootstrap digests ``specs`` itself.
     command_gate: CommandGate | None = None
+    # Release declarations share a public pin; locally loaded adapters do not.
+    in_release_catalog: bool = True
 
 
 # Kept byte-identical to the pre-single-source ``garage_refresh`` entry so the

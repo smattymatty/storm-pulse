@@ -13,7 +13,12 @@ import pytest
 from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore
 from stormpulse.signoff import SignoffState
-from tests.helpers import SECRET, build_config, build_garage_config
+from tests.helpers import (
+    SECRET,
+    build_config,
+    build_garage_config,
+    matched_test_session,
+)
 
 
 @pytest.fixture
@@ -30,13 +35,15 @@ def agent_with_garage(
         if not enabled:
             garage = replace(garage, enabled=False)
         cfg = build_config(tmp_path, garage=garage)
-        return Agent(
-            cfg,
-            SECRET,
-            nonce_store,
-            ssl_ctx,
-            shutdown,
-            signoff_state=SignoffState(cfg.storage.db_path.parent),
+        return matched_test_session(
+            Agent(
+                cfg,
+                SECRET,
+                nonce_store,
+                ssl_ctx,
+                shutdown,
+                signoff_state=SignoffState(cfg.storage.db_path.parent),
+            )
         )
 
     return _build

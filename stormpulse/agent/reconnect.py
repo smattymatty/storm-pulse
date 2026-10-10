@@ -16,6 +16,7 @@ from stormpulse import events
 from stormpulse.agent import dispatch, loops
 from stormpulse.agent.integrations_runtime import discard_pending_pushes
 from stormpulse.agent.register import await_register_ok, send_register
+from stormpulse.agent.session import SessionCompatibility
 from stormpulse.agent.signoff_nag import signoff_nag_loop
 from stormpulse.agent.signoff_push import signoff_state_push_loop
 from stormpulse.commands.jobs import JobManager
@@ -161,8 +162,14 @@ async def _run_session(
     url: str,
 ) -> None:
     """Run one connection's worth of work: register, await register.ok, then the task group."""
-    await send_register(agent, ws, url)
-    await await_register_ok(ws)
+    agent.session_compatibility = None
+    local_digest = await send_register(agent, ws, url)
+    registration = await await_register_ok(ws)
+    agent.session_compatibility = SessionCompatibility(
+        local_digest, registration.contract_digest
+    )
+    if not agent.session_compatibility.compatible:
+        logger.warning("%s", agent.session_compatibility.guidance)
 
     async def ws_send(env: Envelope) -> None:
         await ws.send(env.to_json())
@@ -198,6 +205,7 @@ async def _run_session(
         discard_pending_pushes(agent.integrations)
         await agent.job_manager.shutdown_all()
         agent.job_manager = None
+        agent.session_compatibility = None
 
 
 async def _shutdown_watcher(agent: Agent, ws: ClientConnection) -> None:

@@ -100,6 +100,7 @@ def _translate(sdk: SdkIntegration, grant: SealedGrantV1) -> Integration:
     )
     return Integration(
         id=sdk.id,
+        in_release_catalog=False,
         parse_config=_wrap_parse_config(sdk.parse_config),
         enabled=sdk.enabled,
         preconditions=sdk.preconditions,

@@ -17,6 +17,7 @@ from stormpulse.agent.identity import boot_id, started_at
 from stormpulse.agent.integrations_runtime import IntegrationRuntime
 from stormpulse.agent.log_batches import PendingBatches
 from stormpulse.agent.metadata import build_commands_metadata, strip_binary_path
+from stormpulse.agent.session import SessionCompatibility
 from stormpulse.agent.ssl_context import create_ssl_context
 from stormpulse.auth import NonceStore
 from stormpulse.commands.jobs import JobManager
@@ -77,6 +78,7 @@ class Agent:
         # One JobManager per active connection. Recreated on reconnect;
         # jobs do not survive across connections.
         self.job_manager: JobManager | None = None
+        self.session_compatibility: SessionCompatibility | None = None
 
     async def run(self) -> None:
         """Connect, run tasks, reconnect on failure until shutdown.

@@ -81,6 +81,10 @@ def all_command_specs() -> dict[str, CommandSpec]:
     """Built-ins plus every in-tree Integration's specs, argv included."""
     specs: dict[str, CommandSpec] = dict(COMMAND_REGISTRY)
     for integ in registered_integrations():
+        if not integ.in_release_catalog:
+            continue
+        if integ.specs is None and integ.collect_state is None:
+            continue
         if integ.declared_config is None:
             raise LookupError(
                 f"Integration {integ.id!r} declares no declared_config, so its "

@@ -17,7 +17,7 @@ from stormpulse.config import Config
 from stormpulse.garage import integration as garage_integration
 from stormpulse.garage.state_reader import GarageStateReader
 from stormpulse.signoff import SignoffState
-from tests.helpers import SECRET, build_config
+from tests.helpers import SECRET, build_config, matched_test_session
 
 
 @pytest.fixture(autouse=True)
@@ -139,6 +139,8 @@ def agent(
     shutdown: asyncio.Event,
     signoff_state: SignoffState,
 ) -> Agent:
-    return Agent(
-        config, SECRET, nonce_store, ssl_ctx, shutdown, signoff_state=signoff_state
+    return matched_test_session(
+        Agent(
+            config, SECRET, nonce_store, ssl_ctx, shutdown, signoff_state=signoff_state
+        )
     )

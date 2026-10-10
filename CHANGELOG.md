@@ -40,6 +40,10 @@ a control plane that only speaks v1.
 
 ### Changed
 
+- **Incompatible connections pause commands and explain how to recover.**
+  Matching catalog digests are required before requests or sequences run;
+  monitoring remains connected. Locally installed adapters no longer alter
+  the release catalog or prevent registration.
 - **Jobs stay owned until their follow-up work ends.** Shutdown now waits for
   result sending and state refresh, and reconnects cannot publish an old job's
   refresh through the new connection. Cancellation no longer contradicts an

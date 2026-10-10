@@ -22,7 +22,6 @@ from stormpulse.protocol import SPEAKS, CommandResultPayload, MessageType
 from stormpulse.signoff import SignoffState
 from tests.helpers import (
     AGENT_ID,
-    CONTRACT_DIGEST,
     FAKE_METRICS,
     PULSE_TOKEN,
     SECRET,
@@ -47,7 +46,7 @@ def _plain_connect(url: str, **kwargs):
 
 
 async def _wait_for_register(
-    ws: ServerConnection, *, timeout: float = 2.0
+    ws: ServerConnection, *, timeout: float = 2.0, pin: str | None = None
 ) -> dict[str, Any]:
     """Receive messages until a register envelope arrives, then answer it with
     a spoken ``register.ok``: the agent starts no loop before one (CORE-011 d2)."""
@@ -61,7 +60,13 @@ async def _wait_for_register(
         if data["type"] == "register":
             ok = envelope(
                 MessageType.REGISTER_OK,
-                {"protocol": SPEAKS[-1], "contract_digest": CONTRACT_DIGEST},
+                {
+                    "protocol": SPEAKS[-1],
+                    "contract_digest": pin
+                    or json.loads(
+                        (Path(__file__).parents[1] / "wire-contract.json").read_text()
+                    )["contract_digest"],
+                },
                 agent_id="cp",
             )
             await ws.send(ok.to_json())
@@ -779,3 +784,54 @@ async def test_graceful_stop_sends_command_cancelled_before_the_socket_closes(
         {"request_id": request.id, "command": "stub_job", "reason": "shutdown"}
     ]
     assert [f for f in frames if f["type"] == "command.result"] == []
+
+
+@pytest.mark.asyncio
+async def test_mismatched_contract_keeps_observation_but_refuses_requests_and_sequences(
+    tmp_path: Path, free_port: int
+) -> None:
+    config = build_config(tmp_path, free_port)
+    store = NonceStore(tmp_path / 'nonces.db')
+    shutdown = asyncio.Event()
+    seen = set()
+    refused = []
+
+    async def handler(ws: ServerConnection):
+        await _wait_for_register(ws, pin='sha256:' + 'ab' * 32)
+        await ws.send(sign_command_request())
+        await ws.send(sign_command_sequence(['git_pull'], stop_on_failure=False))
+        async with asyncio.timeout(3):
+            async for raw in ws:
+                frame = json.loads(raw)
+                seen.add(frame['type'])
+                if frame['type'] == 'heartbeat':
+                    await ws.send(envelope(MessageType.HEARTBEAT_ACK, {}).to_json())
+                if frame['type'] == 'command.result':
+                    refused.append(frame['payload'])
+                if len(refused) == 2 and {'heartbeat', 'metrics.push'} <= seen:
+                    shutdown.set()
+                    break
+
+    with (
+        patch('stormpulse.agent.reconnect.connect', side_effect=_plain_connect),
+        patch(
+            'stormpulse.agent.integrations_runtime.collect_metrics',
+            return_value=FAKE_METRICS,
+        ),
+        patch('stormpulse.agent.dispatch.execute_command') as execute,
+    ):
+        async with serve(handler, 'localhost', free_port):
+            agent = Agent(
+                config,
+                SECRET,
+                store,
+                MagicMock(spec=ssl.SSLContext),
+                shutdown,
+                signoff_state=SignoffState(config.storage.db_path.parent),
+            )
+            await asyncio.wait_for(agent.run(), timeout=5)
+    store.close()
+    execute.assert_not_called()
+    assert len(refused) == 2
+    assert all(p['error']['code'] == 'contract_mismatch' for p in refused)
+    assert agent.session_compatibility is None

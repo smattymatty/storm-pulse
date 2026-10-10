@@ -127,6 +127,14 @@ Required means present, never non-empty: `components: []`,
 connection; the node stays visible as "contract mismatch: agent X, control
 plane Y".
 
+The digest is the same release-owned declaration catalog on both ends, not
+node-local configuration or installed adapters. External adapters retain their
+separate grant/spec digests. Compatibility is immutable for a negotiated session;
+both authenticated command requests and sequences are fenced before side effects.
+Refusals resolve their request or sequence with a terminal result and a recovery
+step. The control-plane sender also checks its current session, including queued
+work; a producer-only guard is insufficient. Observer traffic remains available.
+
 ### 8. Node-local contracts stay off the wire
 
 The hint and touched files (gate to agent), certificate renewal (CORE-010,

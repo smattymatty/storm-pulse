@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 REGISTER_OK_TIMEOUT_SECONDS = 30
 
 
-async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
+async def send_register(agent: Agent, ws: ClientConnection, url: str) -> str:
     """Build and send the register envelope after a fresh connection."""
     logger.info("Connected to dashboard at %s", url)
 
@@ -58,6 +58,7 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
 
     # Re-stat seal at register time so post-seal connects advertise promptly (ADR CORE-004).
     since = agent.signoff_state.unsealed_since()
+    advertised_digest = contract_digest()
     register = make_register(
         agent.config.agent.id,
         __version__,
@@ -65,7 +66,7 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
         # Both digests computed here, from the classes in this interpreter, so
         # the value is true of the agent that sent it (CORE-008 decision 4).
         # Never read from the published artifact: that file describes a commit.
-        contract_digest=contract_digest(),
+        contract_digest=advertised_digest,
         wire_contract=wire_contract_digest(),
         commands=build_commands_metadata(agent.registry, agent.config.project),
         integrations=build_integrations_payload(agent.integrations),
@@ -94,12 +95,16 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> None:
             "connection",
             {"url": url, "version": __version__},
         )
+    return advertised_digest
 
 
 def _refused(what: str) -> ProtocolError:
     """A handshake refusal naming both sides (CORE-011 d2: no silent downgrade)."""
     return ProtocolError(
-        f"{what}; this agent speaks {list(SPEAKS)}", reason="unsupported_version"
+        "Registration couldn't finish. Check the control-plane logs and protocol support. "
+        "Upgrade the control plane before its agents, or restore the last compatible agent release. "
+        f"{what}; this agent speaks {list(SPEAKS)}",
+        reason="unsupported_version",
     )
 
 
@@ -124,7 +129,12 @@ async def await_register_ok(
     if frame.type is not MessageType.REGISTER_OK:
         detail = ""
         if frame.type is MessageType.ERROR:
-            detail = f" ({frame.payload.get('error')!r})"
+            error = frame.payload.get("error")
+            detail = (
+                f" ({error[:500]!r})"
+                if isinstance(error, str)
+                else " (unreadable error response)"
+            )
         raise _refused(f"first frame was {frame.type.value}{detail}, not register.ok")
     try:
         ok = RegisterOkPayload.from_dict(frame.payload)

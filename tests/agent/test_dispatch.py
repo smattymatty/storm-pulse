@@ -572,6 +572,9 @@ async def test_command_result_logged_to_pulse_logger(
         pulse_logger=pulse_logger,
     )
     ws = AsyncMock()
+    from tests.helpers import matched_test_session
+
+    matched_test_session(ag)
     await dispatch.dispatch_message(ag, ws, sign_command_request())
     pulse_logger.log_command_result.assert_called_once()
     kwargs = pulse_logger.log_command_result.call_args.kwargs
