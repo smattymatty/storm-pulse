@@ -41,11 +41,13 @@ from stormpulse.commands import (
     execute_command,
     get_command,
 )
+from stormpulse.commands.jobs import JobManagerClosing
 from stormpulse.commands.registry import non_secret_params, validate_params
 from stormpulse.config import CommandSpec
 from stormpulse.protocol import (
     MESSAGES,
     AckPayload,
+    CancelReason,
     CommandRequestPayload,
     CommandResultPayload,
     CommandSequencePayload,
@@ -53,6 +55,7 @@ from stormpulse.protocol import (
     FailureReason,
     MessageType,
     ProtocolError,
+    make_command_cancelled,
     make_command_result,
     make_error,
 )
@@ -322,6 +325,7 @@ def post_success_hook(
     """Build the after-success callback (targeted re-read, merge, push) for a mutating
     integration command, or ``None``. Owner resolves via group == id (CORE-005 d11/12)."""
     runtime = agent.integrations.get(cmd_def.group)
+    manager = agent.job_manager
     if runtime is None or runtime.status != STATUS_LIVE:
         return None
     read_affected = runtime.descriptor.read_affected
@@ -333,7 +337,7 @@ def post_success_hook(
         return None
 
     async def refresh_and_push() -> None:
-        if agent.job_manager is None:
+        if manager is None or manager.closing or agent.job_manager is not manager:
             return
         # The snapshot only plans WHICH items to re-read; the merge below reads
         # the CURRENT runtime.state, so a concurrent writer's change is never lost.
@@ -341,12 +345,18 @@ def post_success_hook(
         if state is None:
             return
         items = await asyncio.to_thread(read_affected, runtime.config, state, params)
+        if manager.closing or agent.job_manager is not manager:
+            return
         # Nothing read back (new-resource op, alias-only op, a delete's 404):
         # nothing to push; the periodic walk reflects it.
         if not items or not merge_items_into_runtime(runtime, items):
             return
         envelope = await build_metrics_envelope(agent)
-        if not await agent.job_manager.send_now(envelope):
+        if (
+            manager.closing
+            or agent.job_manager is not manager
+            or not await manager.send_now(envelope)
+        ):
             discard_push(agent.integrations, envelope.id)
             return
         logger.info("Sent post-mutation metrics push for %s", command)
@@ -363,6 +373,20 @@ async def dispatch_long_running(
     """Hand a long-running command off to the JobManager; emits synthetic failure on missing handler or no JobManager."""
     if agent.job_manager is None:
         logger.error("Cannot dispatch %r: no active JobManager", payload.command)
+        return
+    if agent.job_manager.closing:
+        logger.info(
+            "Command %r wasn't started because this connection is closing. Retry after the agent reconnects.",
+            payload.command,
+        )
+        await agent.job_manager.send_now(
+            make_command_cancelled(
+                agent.config.agent.id,
+                request_id=request_id,
+                command=payload.command,
+                reason=CancelReason.SHUTDOWN,
+            )
+        )
         return
 
     # Same regex-param-validation as the subprocess path; closes the dispatch asymmetry.
@@ -442,6 +466,11 @@ async def dispatch_long_running(
             handler,
             on_success=on_success,
             params=non_secret_params(cmd_def, validated_params),
+        )
+    except JobManagerClosing:
+        logger.info(
+            "Command %r wasn't started because this connection is closing. Retry after the agent reconnects.",
+            payload.command,
         )
     except ValueError:
         logger.warning("Duplicate dispatch for request %s", request_id)

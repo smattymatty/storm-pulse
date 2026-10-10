@@ -142,6 +142,13 @@ closed enum with `unknown_command` distinct from `forbidden`; a terminal
 `command.cancelled`; sequences as `steps[]` with `step_index` echoed on each
 result. Stderr-substring classification on the consumer is deleted.
 
+The job manager owns queued work, result sending and follow-up refresh until
+the task finishes. The result is attempted before refresh; after that point,
+shutdown cannot also announce cancellation. A cancelled send may already have
+written its frame, so delivery remains uncertain until the consumer confirms it.
+Shutdown closes admission and settles owned tasks once. Refreshes are bound to
+their originating session and cannot publish through a replacement connection.
+
 ### 10. Minimised at the source
 
 The agent emits the S3 operation, never the request path; the legacy

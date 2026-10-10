@@ -40,6 +40,10 @@ a control plane that only speaks v1.
 
 ### Changed
 
+- **Jobs stay owned until their follow-up work ends.** Shutdown now waits for
+  result sending and state refresh, and reconnects cannot publish an old job's
+  refresh through the new connection. Cancellation no longer contradicts an
+  already attempted result; queue counts include ongoing cleanup.
 - **Integration failures come with a recovery step.** A failing configuration,
   enablement or host check disables that integration while the agent and its
   siblings continue. Config checks and doctor report the same safe diagnostics

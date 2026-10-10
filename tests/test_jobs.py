@@ -155,7 +155,8 @@ async def test_handler_exception_becomes_failure_result() -> None:
     assert terminal.type == MessageType.COMMAND_RESULT
     assert terminal.payload["success"] is False
     assert terminal.payload["failure_reason"] == "os_error"
-    assert "boom" in terminal.payload["stderr"]
+    assert "RuntimeError" in terminal.payload["stderr"]
+    assert "integration doctor" in terminal.payload["stderr"]
     assert mgr.active_count() == 0
 
 
@@ -249,12 +250,11 @@ async def test_in_flight_lists_the_running_request_ids_only() -> None:
     await asyncio.wait_for(mgr._jobs["req-quick"], timeout=1.0)
     assert mgr.in_flight() == ["req-parked"]
 
-    # Cancelled before its first tick: the task is done but its own reap never
-    # ran, so the entry lingers in ``_jobs`` (same done-ness ``_quota_pending`` uses).
+    # A done callback also reaps jobs cancelled before their first instruction.
     mgr.start("req-never-ran", "cmd_quick", "test", quick)
     mgr._jobs["req-never-ran"].cancel()
     await asyncio.gather(mgr._jobs["req-never-ran"], return_exceptions=True)
-    assert "req-never-ran" in mgr._jobs
+    assert "req-never-ran" not in mgr._jobs
     assert mgr.in_flight() == ["req-parked"]
 
     barrier.set()
@@ -740,7 +740,7 @@ async def test_quota_admission_open_until_the_ceiling() -> None:
     assert mgr.should_shed_quota("rclone_migrate") is False  # non-quota unaffected
 
     await mgr.shutdown_all()
-    assert mgr.quota_admission_open() is True  # reopens after drain
+    assert mgr.quota_admission_open() is False  # an ended session stays closed
 
 
 @pytest.mark.asyncio

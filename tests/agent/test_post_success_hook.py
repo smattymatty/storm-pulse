@@ -49,9 +49,13 @@ def _garage_cmd(
     *, read_only: bool = False, self_reconciling: bool = False
 ) -> CommandSpec:
     return CommandSpec(
-        group="garage", command=["/garage"], timeout=60, mode="job",
+        group="garage",
+        command=["/garage"],
+        timeout=60,
+        mode="job",
         handler=lambda _p: None,
-        read_only=read_only, self_reconciling=self_reconciling,
+        read_only=read_only,
+        self_reconciling=self_reconciling,
     )
 
 
@@ -69,12 +73,18 @@ def test_post_success_hook_none_for_non_integration_group(agent: Agent) -> None:
 def test_post_success_hook_none_without_read_affected(agent: Agent) -> None:
     """An Integration that declares no read_affected (caddy) is never hooked."""
     agent.integrations["caddy"] = IntegrationRuntime(
-        id="caddy", status="live", disabled_reason=None,
-        config=None, descriptor=CADDY_INTEGRATION,
+        id="caddy",
+        status="live",
+        disabled_reason=None,
+        config=None,
+        descriptor=CADDY_INTEGRATION,
     )
     cmd_def = CommandSpec(
-        group="caddy", command=["/caddy"], timeout=60,
-        mode="job", handler=lambda _p: None,
+        group="caddy",
+        command=["/caddy"],
+        timeout=60,
+        mode="job",
+        handler=lambda _p: None,
     )
     assert post_success_hook(agent, cmd_def, "caddy_reload", {}) is None
 
@@ -94,9 +104,12 @@ def test_post_success_hook_none_for_self_reconciling(
     # the flag, never a hardcoded command name. (Which specs carry the flag is
     # tested in tests/garage against the real registry.)
     ag = agent_with_garage()
-    assert post_success_hook(
-        ag, _garage_cmd(self_reconciling=True), "garage_bucket_set_quota", {}
-    ) is None
+    assert (
+        post_success_hook(
+            ag, _garage_cmd(self_reconciling=True), "garage_bucket_set_quota", {}
+        )
+        is None
+    )
 
 
 def test_post_success_hook_none_for_read_only(
@@ -106,9 +119,12 @@ def test_post_success_hook_none_for_read_only(
     # walk_bucket_stats) mutate nothing; the hook must skip them or a polling
     # dashboard floods state pushes. A mutating garage long-runner still gets one.
     ag = agent_with_garage()
-    assert post_success_hook(
-        ag, _garage_cmd(read_only=True), "garage_get_bucket_owners", {}
-    ) is None
+    assert (
+        post_success_hook(
+            ag, _garage_cmd(read_only=True), "garage_get_bucket_owners", {}
+        )
+        is None
+    )
     assert post_success_hook(ag, _garage_cmd(), "garage_bucket_clear", {}) is not None
 
 
@@ -138,7 +154,9 @@ async def test_post_success_hook_refreshes_and_pushes(
 
     ag.job_manager = JobManager(ag.config.agent.id, fake_send)
 
-    hook = post_success_hook(ag, _garage_cmd(), "garage_bucket_clear", {"bucket_id": _ID_A})
+    hook = post_success_hook(
+        ag, _garage_cmd(), "garage_bucket_clear", {"bucket_id": _ID_A}
+    )
     assert hook is not None
     await hook()
 
@@ -170,7 +188,9 @@ async def test_post_success_hook_skips_push_when_nothing_affected(
 
     ag.job_manager = JobManager(ag.config.agent.id, fake_send)
 
-    hook = post_success_hook(ag, _garage_cmd(), "garage_bucket_create", {"bucket_name": "new"})
+    hook = post_success_hook(
+        ag, _garage_cmd(), "garage_bucket_create", {"bucket_name": "new"}
+    )
     assert hook is not None
     await hook()
 
@@ -199,7 +219,9 @@ async def test_post_success_hook_defers_without_baseline(
 
     ag.job_manager = JobManager(ag.config.agent.id, fake_send)
 
-    hook = post_success_hook(ag, _garage_cmd(), "garage_bucket_clear", {"bucket_id": _ID_A})
+    hook = post_success_hook(
+        ag, _garage_cmd(), "garage_bucket_clear", {"bucket_id": _ID_A}
+    )
     assert hook is not None
     await hook()
 
@@ -237,3 +259,44 @@ async def test_post_success_hook_caps_key_fanout(
     assert len(passed_ids) == MAX_TARGETED_BUCKET_READS
 
     await ag.job_manager.shutdown_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('switch_after', ['read', 'metrics'])
+async def test_old_refresh_cannot_publish_through_replacement_session(
+    agent_with_garage: Callable[..., Agent],
+    switch_after: str,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    ag = agent_with_garage()
+    set_garage_state(ag, _state_with(make_garage_bucket(_ID_A, size_bytes=0)))
+    old_send, new_send = AsyncMock(), AsyncMock()
+    old = JobManager(ag.config.agent.id, old_send)
+    new = JobManager(ag.config.agent.id, new_send)
+    ag.job_manager = old
+    hook = post_success_hook(
+        ag, _garage_cmd(), 'garage_bucket_clear', {'bucket_id': _ID_A}
+    )
+    assert hook is not None
+    calls = 0
+
+    async def thread_hop(_function, *_args):
+        nonlocal calls
+        calls += 1
+        if (calls == 1 and switch_after == 'read') or (
+            calls == 2 and switch_after == 'metrics'
+        ):
+            ag.job_manager = new
+        return (
+            [make_garage_bucket(_ID_A, size_bytes=42)] if calls == 1 else FAKE_METRICS
+        )
+
+    with patch('asyncio.to_thread', side_effect=thread_hop):
+        await hook()
+    new_send.assert_not_called()
+    old_send.assert_not_called()
+    assert ag.integrations['garage'].pending_pushes == {}
+    if switch_after == 'read':
+        state = get_garage_state(ag)
+        assert isinstance(state, GarageState) and state.buckets[0].size_bytes == 0

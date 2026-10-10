@@ -32,6 +32,10 @@ from stormpulse.protocol import (
 logger = logging.getLogger(__name__)
 
 
+class JobManagerClosing(Exception):
+    """The session is ending and cannot accept another job."""
+
+
 class ProgressCallback(Protocol):
     """(stage, current, total, message, *, transfer=None) -> awaitable.
 
@@ -89,9 +93,9 @@ class JobOutcome:
 
 JobHandler = Callable[[ProgressCallback], Awaitable[JobOutcome]]
 
-LongRunningFactory = Callable[
+LongRunningFactory = Callable[  # skylos: ignore - published Feature contract type
     [dict[str, Any]], "JobHandler | None"
-]  # skylos: ignore - published Feature contract type
+]
 """Given the validated runtime params, build the ``JobHandler`` for a
 long-running command. Returns ``None`` when the command is registered
 but cannot be served on this install (e.g. its feature config is
@@ -184,6 +188,13 @@ class JobManager:
         # is cumulative (never reset) so a shed wave stays visible after drain.
         self._quota_running = 0
         self._quota_rejected = 0
+        self._terminal_attempts: set[str] = set()
+        self._closing = False
+        self._shutdown_lock = asyncio.Lock()
+
+    @property
+    def closing(self) -> bool:
+        return self._closing
 
     def start(
         self,
@@ -207,6 +218,10 @@ class JobManager:
         running - duplicate dispatch is a caller bug, not something to
         silently swallow.
         """
+        if self._closing:
+            raise JobManagerClosing(
+                "This connection is closing. Retry after Storm Pulse reconnects."
+            )
         if request_id in self._jobs and not self._jobs[request_id].done():
             raise ValueError(f"Job already running: {request_id}")
         logger.info(
@@ -221,6 +236,24 @@ class JobManager:
         )
         self._jobs[request_id] = task
         self._job_command[request_id] = command
+        self._terminal_attempts.discard(request_id)
+        task.add_done_callback(
+            lambda completed: self._finish_job(request_id, completed)
+        )
+
+    def _finish_job(self, request_id: str, task: asyncio.Task[None]) -> None:
+        if self._jobs.get(request_id) is not task:
+            return
+        self._jobs.pop(request_id, None)
+        self._job_command.pop(request_id, None)
+        self._terminal_attempts.discard(request_id)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            logger.error(
+                "Job %s stopped before its result could be prepared (%s). "
+                "Check the integration and confirm the resource state before retrying.",
+                request_id,
+                type(error).__name__,
+            )
 
     def is_running(self, request_id: str) -> bool:
         """Return True if a task for ``request_id`` exists and isn't done."""
@@ -228,8 +261,12 @@ class JobManager:
         return task is not None and not task.done()
 
     def in_flight(self) -> list[str]:
-        """Request ids of jobs still running, ids only (CORE-011 d7), start order."""
-        return [rid for rid, task in self._jobs.items() if not task.done()]
+        """Commands without a terminal attempt; cleanup remains owned separately."""
+        return [
+            rid
+            for rid, task in self._jobs.items()
+            if not task.done() and rid not in self._terminal_attempts
+        ]
 
     async def send_now(self, envelope: Envelope) -> bool:
         """Push an envelope to the wire using this connection's send callback.
@@ -251,7 +288,7 @@ class JobManager:
             return False
 
     def active_count(self) -> int:
-        """Number of currently-running jobs. Used by tests and diagnostics."""
+        """Owned tasks not finished: queued work, execution and follow-up."""
         return sum(1 for t in self._jobs.values() if not t.done())
 
     def load(self) -> dict[str, int]:
@@ -294,7 +331,7 @@ class JobManager:
         Execution is already capped by the semaphore; this caps ACCEPTANCE,
         quota-only.
         """
-        return self._quota_pending() < self.MAX_CONCURRENT_JOBS
+        return not self._closing and self._quota_pending() < self.MAX_CONCURRENT_JOBS
 
     def should_shed_quota(self, command: str) -> bool:
         """True when ``command`` is a quota job and the ceiling is reached.
@@ -352,40 +389,32 @@ class JobManager:
         await self.send_now(make_command_result(self._agent_id, result))
 
     async def shutdown_all(self, reason: CancelReason | None = None) -> None:
-        """Cancel every in-flight job, wait for them to settle, then, given a
-        ``reason`` (the socket is still open), send each one ``command.cancelled``.
+        """Close admission and settle every task; only unresolved jobs get cancellation.
 
-        An in-flight job is one whose handler has not returned: its result
-        was never sent, so the cancelled frame is the last word for its id.
-        Without a reason (the socket is gone) nothing is sent.
+        A result send may already have written before yielding. Once attempted,
+        cancellation cannot claim the command failed; disconnect handles ambiguity.
         """
-        active = {
-            rid: (task, self._job_command.get(rid, ""))
-            for rid, task in self._jobs.items()
-            if not task.done()
-        }
-        if not active:
-            self._jobs.clear()
-            self._job_command.clear()
-            return
-        logger.info("Cancelling %d in-flight long-running job(s)", len(active))
-        for task, _ in active.values():
-            task.cancel()
-        # Wait for cancellations to settle. return_exceptions swallows the
-        # CancelledErrors so gather doesn't propagate them.
-        await asyncio.gather(
-            *(task for task, _ in active.values()), return_exceptions=True
-        )
-        self._jobs.clear()
-        self._job_command.clear()
-        if reason is None:
-            return
-        for rid, (_, command) in active.items():
-            await self.send_now(
-                make_command_cancelled(
-                    self._agent_id, request_id=rid, command=command, reason=reason
-                )
-            )
+        self._closing = True
+        async with self._shutdown_lock:
+            active = {rid: task for rid, task in self._jobs.items() if not task.done()}
+            cancelled = {
+                rid: self._job_command[rid]
+                for rid in active
+                if rid not in self._terminal_attempts
+            }
+            for task in active.values():
+                task.cancel()
+            await asyncio.gather(*active.values(), return_exceptions=True)
+            if reason is not None:
+                for rid, command in cancelled.items():
+                    await self.send_now(
+                        make_command_cancelled(
+                            self._agent_id,
+                            request_id=rid,
+                            command=command,
+                            reason=reason,
+                        )
+                    )
 
     # ------------------------------------------------------------------
     # Internals
@@ -463,36 +492,23 @@ class JobManager:
         except asyncio.CancelledError:
             # Agent disconnect or explicit shutdown. Do NOT emit a terminal
             # result - the dashboard infers failure from the disconnect.
-            self._jobs.pop(request_id, None)
-            self._job_command.pop(request_id, None)
             raise
         except Exception as exc:
-            # Use logger.error with exc_info=False (NOT logger.exception) so
-            # the traceback locals - which may include signed shell payloads
-            # or other handler-bound secrets - do not land in the journal.
-            # The handler's own logging is the right place for diagnostics
-            # that need stack context.
-            logger.error(
-                "Job %r (request_id=%s) crashed: %s",
-                command,
-                request_id,
-                exc,
+            message = (
+                f"Command '{command}' couldn't finish ({type(exc).__name__}). "
+                f"Run 'stormpulse integration doctor {group}' and confirm the "
+                "operation's state before retrying."
             )
-            logger.debug(
-                "Traceback for crashed job %s",
-                request_id,
-                exc_info=True,
-            )
+            logger.error("Job %s: %s", request_id, message)
             outcome = JobOutcome(
                 success=False,
                 exit_code=-1,
-                stderr=f"Internal error: {exc}",
+                stderr=message,
                 failure_reason=FailureReason.OS_ERROR,
             )
 
-        self._jobs.pop(request_id, None)
-        self._job_command.pop(request_id, None)
-
+        if self._closing:
+            return
         duration_ms = int((time.monotonic() - start) * 1000)
         logger.info(
             "Job %s (request_id=%s) finished success=%s duration_ms=%d concurrent=%d",
@@ -533,28 +549,33 @@ class JobManager:
             error=outcome.finer_error(),
         )
         envelope = make_command_result(self._agent_id, payload)
+        # The outcome is committed before send yields; peer receipt remains uncertain.
+        self._terminal_attempts.add(request_id)
         try:
             await self._send(envelope)
-        except Exception:
+        except Exception as exc:
             # ERROR not WARNING: silent loss of a signed command's terminal
             # result means the dashboard never learns the outcome. That's a
             # real failure, not a transient blip.
             logger.error(
-                "Failed to send terminal command.result for %s",
+                "Command %s finished, but its result couldn't reach the control plane (%s). "
+                "Check the connection and confirm the operation's state before retrying.",
                 request_id,
-                exc_info=True,
+                type(exc).__name__,
             )
 
         if outcome.success and on_success is not None:
             try:
                 await on_success()
-            except Exception:
+            except Exception as exc:
                 # ERROR not WARNING: on_success skipping means post-mutation
                 # cleanup (fresh metrics push, state refresh) never happens.
                 logger.error(
-                    "on_success callback failed for %s",
+                    "Command %s succeeded, but its state refresh failed (%s). "
+                    "Run 'stormpulse integration doctor %s' and confirm the resource state.",
                     request_id,
-                    exc_info=True,
+                    type(exc).__name__,
+                    group,
                 )
 
     def _make_progress_callback(
@@ -574,6 +595,8 @@ class JobManager:
             transfer: TransferStats | None = None,
             bytes_freed: int | None = None,
         ) -> None:
+            if self._closing:
+                return
             # The one place TransferStats is flattened onto the wire. Jobs hand
             # up a cohesive value; the payload keeps the flat optional fields
             # the wire contract declares. TransferStats' field names ARE the
