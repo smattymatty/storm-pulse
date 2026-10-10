@@ -251,11 +251,14 @@ them. Its `messages` section declares every message the agent sends or
 receives, each field with its JSON type, nullability and whether it is
 required, units carried in the field name (`_bytes`, `_seconds`, `_percent`).
 Two digests ride in the file during the protocol overlap: `digest` covers
-`integrations` alone and is what a v1 agent advertises on register, while
-`contract_digest` covers `integrations`, `messages` and `commands` and is the
-v2 value. A `vectors` section, outside both digests, holds a fixed
-`command.request` and `command.sequence`, the test key they are signed with
-(the byte ramp `00..1f`, never a real key) and the expected `hmac`. Each
+`integrations` alone and is what the control plane's reconcile gate reads
+today; the agent still sends it on register, and it leaves the payload when
+that gate reads `contract_digest` (ruled 2026-10-10; the control plane's own
+ADR sets the date). `contract_digest` covers `integrations`, `messages` and
+`commands` and is the v2 value. A `vectors` section, outside both digests,
+holds a fixed `command.request` and `command.sequence`, the test key they are
+signed with (the byte ramp `00..1f`, never a real key) and the expected
+`hmac`. Each
 `commands.<name>` entry types its params and declares its `result` shape
 (`{root, classes}` through the same walker, null where the command returns
 none). The `events.batch` entry carries `sources`, `{source: {kind: [fields]}}` straight

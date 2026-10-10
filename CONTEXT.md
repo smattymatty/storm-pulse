@@ -149,6 +149,21 @@ callback and evicts the code only on agent restart (CORE-007 D3).
 across failed attempts so a retry sends the same public key (CORE-010 decision 2).
 _Avoid_: stale key, leftover (it is live state, not junk to delete)
 
+**Release catalog**:
+What a release pins publicly: every in-tree command and Integration under
+`contract_digest`. A locally loaded adapter is outside it, so a grant never
+moves the digest.
+
+**Session compatibility**:
+One connection's verdict: the agent's `contract_digest` against the one in
+`register.ok`. A mismatch pauses commands with recovery guidance; metrics,
+logs and events still flow. Not a grant, not node config.
+
+**Hint file**:
+A JSON file at `[garage] hint_file`, written by another process on the box,
+naming bucket ids to re-read before the five-minute walk. Trusted only past
+seven checks; a refused file costs a re-read, never steers one.
+
 ## Privacy by design
 
 Pulse is built so the agent has almost nothing to hold and therefore
