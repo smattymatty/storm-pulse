@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-10
+
 Protocol v2 strengthens Storm Pulse's messaging contract: signed commands,
 structured results, and explicit version negotiation. Integrations use that
 contract to report their own state and run their own commands.
@@ -85,6 +87,11 @@ a control plane that only speaks v1.
 - The two-second new-bucket detector and `detector_interval_seconds` setting.
   New buckets are discovered on the next full read, or the next minute's
   membership check when hints are enabled.
+
+### Fixed
+
+- `garage_get_key_buckets` reads Garage 2.4 and 2.3 alike. Garage 2.4 lists a
+  detached bucket with every permission false; that is no grant, so it is skipped.
 
 ### Security
 
