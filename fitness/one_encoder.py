@@ -1,4 +1,4 @@
-"""Function 15: one compact JSON encoder.
+"""Function 15: one compact JSON encoder (CORE-011 d4).
 
 A compact ``json.dumps(..., sort_keys=True, separators=(",", ":"))`` is a
 spelling of canonical bytes, and two of them disagree on flags the day one is

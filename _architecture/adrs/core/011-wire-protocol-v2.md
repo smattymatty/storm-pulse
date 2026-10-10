@@ -146,7 +146,11 @@ protocol messages. Nothing already decided off the wire moves onto it.
 Typed JSON params; a per-command `result` shape declared in the artifact,
 so an extra can never overwrite a standard field; a structured
 `error {code, http_status, upstream_code, message}`; `failure_reason` a
-closed enum with `unknown_command` distinct from `forbidden`; a terminal
+closed enum with `unknown_command` distinct from `forbidden`
+(`unknown_command`: the name is not in the whitelist this node advertised at
+`register`, which is where a sealed or operator-disabled command already fell
+out under CORE-004 d6, so the alarm fires; `forbidden`: the whitelist knows
+the name and refuses it in this form; ruled 2026-10-10); a terminal
 `command.cancelled`; sequences as `steps[]` with `step_index` echoed on each
 result. Stderr-substring classification on the consumer is deleted.
 
@@ -212,7 +216,11 @@ state it can trust. What bound: no request path, no peer name, no secret
 and no personal information rides any v2 message; undeclared event fields
 are refused at the source; the gate retention bound holds because events
 are acked, never parked. Who sees it: the node's operator and the control
-plane. The IP on log lines is reviewed separately before the first build.
+plane. ~~The IP on log lines is reviewed separately before the first build.~~
+Reviewed 2026-10-10 (`/law25-pipeda-review`): `peer_ip` keeps its stated
+purpose and 90-day bound (privacy policy s. 3 and s. 7, `prune_logs`); the
+duplicate copy in the Caddy row's prose `message` is dropped at the source;
+the consumer reads `peer_ip` on Caddy rows (its own ADR, in its own repo).
 
 ## Never again
 

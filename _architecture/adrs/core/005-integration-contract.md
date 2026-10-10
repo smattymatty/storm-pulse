@@ -44,8 +44,9 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
 
 2. **Minimal required core, everything else opt-in.** A legal Integration declares
    only an id, a config section, and an `enabled` predicate. Preconditions, commands,
-   long-running factories, discovery, periodic state, post-mutation refresh,
-   and CLI are opt-in capabilities declared only when present. caddy (no
+   long-running factories, discovery, periodic state, ~~detection~~ (removed
+   2026-10-08, sealed at the commit that lands this line; newcomers are a reader
+   sub-cadence, d9), post-mutation refresh, and CLI are opt-in capabilities declared only when present. caddy (no
    discovery, no loop) and a future read-only monitor (no commands) are both legal
    with no empty stubs.
 
@@ -108,7 +109,7 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
    are one such sub-cadence, not a contract slot: the reader finds them itself (Garage:
    a full walk every push, or with an optional hint file, its ids each push, a
    `ListBuckets` membership diff once a minute and a full walk every five;
-   ~~plus a full walk once a minute~~ amended 2026-10-08),
+   ~~plus a full walk once a minute~~ amended 2026-10-08, sealed at the commit that lands this line),
    and every targeted read lands in its cache. The same
    cadence-aware reader serves the periodic loop and on-demand refresh alike; the
    command result, not the state manifest, is the synchronous answer to "did this
@@ -133,9 +134,9 @@ third integration (Nextcloud, Forgejo) would multiply every leak.
     plane reads as deletions. A full re-collect per mutation amplifies a burst into N
     full sweeps; bounded job concurrency backstops the burst regardless of per-job
     cost. State types opt in structurally: `StateBlob` requires only `to_dict()`; an
-    Integration declaring `read_affected` must carry `MergeableState`
+    Integration declaring ~~`detect` or~~ `read_affected` must carry `MergeableState`
     (`with_items()`, the upsert merge), checked loudly at the merge site. Every push
-    (periodic, post-mutation, refresh) is built by the one envelope builder
+    (periodic, post-mutation, ~~detect~~, refresh) is built by the one envelope builder
     and carries the job-load snapshot, so the envelope cannot drift between triggers.
 
 12. **A command's `group` is its owning Integration's id.** Enforced at bootstrap: a

@@ -43,6 +43,8 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 | 12 | CI runs what `make check` runs | Every check defined once, in the Makefile | `fitness/` runner |
 | 13 | Every shell hatch ships sealed | CORE-004 (a shell argv is excluded while sealed) | `fitness/` runner |
 | 14 | No publisher signing key in the agent | CORE-007 (signing lives in `authoring/`, outside the agent wheel) | `fitness/` runner |
+| 15 | One compact JSON encoder | CORE-011 d4 (one canonical form, never two) | `fitness/` runner |
+| 16 | Every emitted event is declared | CORE-011 d6 (undeclared fields refused at the agent) | `fitness/` runner |
 
 **Function 1 - Layer topology.** `import-linter` contracts in `.importlinter` express CORE-000's four-layer model as layered contracts: Foundation below Framework below Features below Entry, with Features forbidden from importing sibling Features. Same tool the sibling django repo uses; shared tooling across the two Storm codebases is deliberate.
 
@@ -64,12 +66,16 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 
 **Function 14 - No publisher signing key in the agent.** Package signing lives in the repo-root `authoring/` package, outside the agent wheel (CORE-007). The check walks `stormpulse/` and fails on any import of `authoring` or any use of an Ed25519 private key. The agent's own mTLS key is its transport credential, not a signing key, and is outside it. Added 2026-10-05: the guarantee lived as a test in `tests/authoring/` that grepped for one function name, so no local check ran it, and agent cert renewal (CORE-010) tripped it in CI by loading the agent's own key.
 
+**Function 15 - One compact JSON encoder.** CORE-011 d4 rejects two canonical forms. The check fails on any compact `json.dumps(sort_keys=True)` spelling outside `stormpulse.sdk.declaration.canonical_json`; sites not yet migrated are `fitness/baseline.txt` lines, which only shrink. Added 2026-10-08 with protocol v2, sealed at the commit that lands this line.
+
+**Function 16 - Every emitted event is declared.** CORE-011 d6: an undeclared event field is refused at the source. The check walks `emit(` and `record_call(` sites and fails on a (source, kind) or literal field with no `declare_event(`. Added 2026-10-08 with protocol v2, sealed at the commit that lands this line.
+
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**
 
 - Function 1 runs as `lint-imports`.
-- Functions 2 through 14 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
+- Functions 2 through 16 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
 - The `fitness/` runner runs every check and reports every violation before exiting non-zero, never fail-fast. Stopping at the first violation would hide the rest; the cost of decoupling from pytest is hand-rolled reporting, and the reporting has to be honest.
 - `make fitness` runs the whole suite: `lint-imports && python -m fitness`.
 
