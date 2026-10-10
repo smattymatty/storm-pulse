@@ -28,6 +28,7 @@ class FailureReason(StrEnum):
     TIMEOUT = "timeout"
     OS_ERROR = "os_error"
     AGENT_OVERLOADED = "agent_overloaded"
+    SESSION_CLOSING = "session_closing"  # no live job session to start it in
     CANCELLED = "cancelled"
     INTEGRATION_FAILED = (
         "integration_failed"  # an adapter's own word, kept in error.code

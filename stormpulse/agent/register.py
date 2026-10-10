@@ -80,12 +80,9 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> str:
             Component("stormpulse", __version__, ""),
             *integration_components(agent.integrations),
         ],
-        # [] by construction today: the session's JobManager is built after this
-        # frame and torn down with the socket (reconnect.py). The field is the
-        # honest statement of that; ids ride here the day jobs outlive a reconnect.
-        in_flight=(
-            agent.job_manager.in_flight() if agent.job_manager is not None else []
-        ),
+        # [] by construction: the session's JobManager is built after this frame
+        # and dies with the socket (reconnect.py). Ids ride here once jobs outlive one.
+        in_flight=[],
     )
     await ws.send(register.to_json())
     logger.info("Sent register (v%s)", __version__)

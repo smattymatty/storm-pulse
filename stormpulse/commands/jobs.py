@@ -18,15 +18,14 @@ from typing import Any, Protocol
 from stormpulse import events
 from stormpulse.protocol import (
     CancelReason,
+    CommandCancelledPayload,
     CommandProgressPayload,
     CommandResultPayload,
     Envelope,
     FailureReason,
     ResultError,
     TransferStats,
-    make_command_cancelled,
-    make_command_progress,
-    make_command_result,
+    make,
 )
 
 logger = logging.getLogger(__name__)
@@ -260,14 +259,6 @@ class JobManager:
         task = self._jobs.get(request_id)
         return task is not None and not task.done()
 
-    def in_flight(self) -> list[str]:
-        """Commands without a terminal attempt; cleanup remains owned separately."""
-        return [
-            rid
-            for rid, task in self._jobs.items()
-            if not task.done() and rid not in self._terminal_attempts
-        ]
-
     async def send_now(self, envelope: Envelope) -> bool:
         """Push an envelope to the wire using this connection's send callback.
 
@@ -375,18 +366,14 @@ class JobManager:
             quota_rejected=self._quota_rejected,
             params=_param_context(params) or None,
         )
-        result = CommandResultPayload(
-            request_id=request_id,
-            command=command,
-            group=group,
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr="Agent quota admission ceiling reached; retry next tick.",
-            duration_ms=0,
-            failure_reason=FailureReason.AGENT_OVERLOADED,
+        result = CommandResultPayload.failed(
+            request_id,
+            command,
+            group,
+            FailureReason.AGENT_OVERLOADED,
+            "Agent quota admission ceiling reached; retry next tick.",
         )
-        await self.send_now(make_command_result(self._agent_id, result))
+        await self.send_now(make(self._agent_id, result))
 
     async def shutdown_all(self, reason: CancelReason | None = None) -> None:
         """Close admission and settle every task; only unresolved jobs get cancellation.
@@ -407,14 +394,10 @@ class JobManager:
             await asyncio.gather(*active.values(), return_exceptions=True)
             if reason is not None:
                 for rid, command in cancelled.items():
-                    await self.send_now(
-                        make_command_cancelled(
-                            self._agent_id,
-                            request_id=rid,
-                            command=command,
-                            reason=reason,
-                        )
+                    cancelled_payload = CommandCancelledPayload(
+                        request_id=rid, command=command, reason=reason
                     )
+                    await self.send_now(make(self._agent_id, cancelled_payload))
 
     # ------------------------------------------------------------------
     # Internals
@@ -548,7 +531,7 @@ class JobManager:
             result=outcome.extras or None,
             error=outcome.finer_error(),
         )
-        envelope = make_command_result(self._agent_id, payload)
+        envelope = make(self._agent_id, payload)
         # The outcome is committed before send yields; peer receipt remains uncertain.
         self._terminal_attempts.add(request_id)
         try:
@@ -615,7 +598,7 @@ class JobManager:
                 bytes_freed=bytes_freed,
                 **(asdict(transfer) if transfer else {}),
             )
-            envelope = make_command_progress(self._agent_id, payload)
+            envelope = make(self._agent_id, payload)
             try:
                 await self._send(envelope)
             except Exception:

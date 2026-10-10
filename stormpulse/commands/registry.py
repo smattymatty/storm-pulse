@@ -343,29 +343,23 @@ def execute_command(
         )
     except FileNotFoundError:
         duration_ms = int((time.monotonic() - start) * 1000)
-        return CommandResultPayload(
-            request_id=request_id,
-            command=command_name,
-            group=cmd_def.group,
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=f"Binary not found: {resolved[0]}",
-            duration_ms=duration_ms,
+        return CommandResultPayload.failed(
+            request_id,
+            command_name,
+            cmd_def.group,
+            FailureReason.NOT_FOUND,
+            f"Binary not found: {resolved[0]}",
             sequence_id=sequence_id,
-            failure_reason=FailureReason.NOT_FOUND,
+            duration_ms=duration_ms,
         )
     except OSError as exc:
         duration_ms = int((time.monotonic() - start) * 1000)
-        return CommandResultPayload(
-            request_id=request_id,
-            command=command_name,
-            group=cmd_def.group,
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=str(exc),
-            duration_ms=duration_ms,
+        return CommandResultPayload.failed(
+            request_id,
+            command_name,
+            cmd_def.group,
+            FailureReason.OS_ERROR,
+            str(exc),
             sequence_id=sequence_id,
-            failure_reason=FailureReason.OS_ERROR,
+            duration_ms=duration_ms,
         )

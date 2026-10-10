@@ -53,12 +53,12 @@ def test_late_ack_does_not_clear_a_later_snapshot() -> None:
     merge_items_into_runtime(rt, [Item("B", 1)])
     track_push(runtimes, "second")
     assert acknowledge_push(runtimes, "first")
-    assert rt.changed_ids == ["B"]
+    assert list(rt.changed_revisions) == ["B"]
     assert build_integrations_payload(runtimes)["monitor"]["state"] == {
         "items": {"A": 1, "B": 1}
     }
     assert acknowledge_push(runtimes, "second")
-    assert rt.changed_ids == []
+    assert list(rt.changed_revisions) == []
 
 
 def test_same_resource_read_after_snapshot_stays_dirty() -> None:
@@ -72,7 +72,7 @@ def test_same_resource_read_after_snapshot_stays_dirty() -> None:
         else:
             replace_runtime_state(rt, MonitorState((Item("A", 2),), ("A",)))
         acknowledge_push(runtimes, "first")
-        assert rt.changed_ids == ["A"]
+        assert list(rt.changed_revisions) == ["A"]
         assert rt.state is not None
         assert rt.state.to_dict() == {"items": {"A": 2}}
 
@@ -88,7 +88,7 @@ def test_unknown_duplicate_and_out_of_order_acks_do_not_clear_new_reads() -> Non
     merge_items_into_runtime(rt, [Item("A", 2)])
     assert not acknowledge_push(runtimes, "second")
     acknowledge_push(runtimes, "first")
-    assert rt.changed_ids == ["A"]
+    assert list(rt.changed_revisions) == ["A"]
 
 
 def test_failed_send_and_reconnect_keep_unacknowledged_reads() -> None:
@@ -102,9 +102,9 @@ def test_failed_send_and_reconnect_keep_unacknowledged_reads() -> None:
     discard_pending_pushes(runtimes)
     track_push(runtimes, "new-session")
     assert not acknowledge_push(runtimes, "old-session")
-    assert rt.changed_ids == ["A"]
+    assert list(rt.changed_revisions) == ["A"]
     assert acknowledge_push(runtimes, "new-session")
-    assert rt.changed_ids == []
+    assert list(rt.changed_revisions) == []
 
 
 def test_unacknowledged_push_tracking_is_bounded_without_losing_dirty_ids() -> None:
@@ -115,6 +115,26 @@ def test_unacknowledged_push_tracking_is_bounded_without_losing_dirty_ids() -> N
         track_push(runtimes, str(index))
     assert len(rt.pending_pushes) == MAX_PENDING_METRICS_PUSHES
     assert not acknowledge_push(runtimes, "0")
-    assert rt.changed_ids == ["A"]
+    assert list(rt.changed_revisions) == ["A"]
     assert acknowledge_push(runtimes, "999")
-    assert rt.changed_ids == []
+    assert list(rt.changed_revisions) == []
+
+
+def test_the_wire_owes_ids_in_first_seen_order_until_the_ack_that_carried_them() -> (
+    None
+):
+    """``changed_ids`` on the wire is the revision keys as the runtime holds them:
+    a re-read keeps its first position, the newest read comes last, and an ack
+    drops only the ids its push carried. Sorting would lie about the order."""
+    rt = runtime()
+    runtimes = {rt.id: rt}
+    replace_runtime_state(rt, MonitorState((Item("Z", 1), Item("A", 1)), ("Z", "A")))
+    track_push(runtimes, "first")
+    merge_items_into_runtime(rt, [Item("M", 1), Item("Z", 2)])
+    assert build_integrations_payload(runtimes)["monitor"]["changed_ids"] == [
+        "Z",
+        "A",
+        "M",
+    ]
+    acknowledge_push(runtimes, "first")
+    assert build_integrations_payload(runtimes)["monitor"]["changed_ids"] == ["Z", "M"]

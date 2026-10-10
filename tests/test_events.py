@@ -14,7 +14,7 @@ from stormpulse.events import EventBuffer
 def _own_kind() -> Any:
     """A kind of this file's own, so no test leans on which agent module
     another test imported; the registry is restored after, since the
-    artifact publishes it (``tests/test_wire_contract.py``)."""
+    artifact publishes it (``tests/wire_contract/``)."""
     before = dict(events._REGISTRY)
     events.declare_event("probe", "ping", {"n", "note"})
     yield
@@ -119,6 +119,16 @@ class TestRegistry:
         synthesized, bare = _drain()
         assert synthesized["undeclared"] == 2  # the empty field was elided, not counted
         assert set(bare) == {"ts", "source", "kind", "seq"}
+
+    def test_a_declaration_binds_to_its_source_not_to_the_kind(self) -> None:
+        """Another module reusing a declared kind name declares nothing: its
+        fields are undeclared for its own source, dropped and counted, so one
+        declaration cannot be borrowed to carry an identifier."""
+        events.emit("ping", source="someone_else", n=1)
+        synthesized, bare = _drain()
+        assert synthesized["undeclared"] == 1
+        assert "n" not in bare
+        assert (bare["source"], bare["kind"]) == ("someone_else", "ping")
 
     def test_command_ref_rides_without_a_declaration(self) -> None:
         events.emit("ping", source="probe", command_ref="pc-1")

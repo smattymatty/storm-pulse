@@ -284,8 +284,6 @@ def _parse_access_log(obj: dict[str, Any], *, truncated: bool) -> dict[str, Any]
 
     # A generic HTTP log has no routing context to identify an S3 operation.
     message = " ".join(p for p in (method, host) if p) + f" -> {status}"
-    if peer_ip:
-        message += f" from {peer_ip}"
     if ua_brief:
         message += f" ({ua_brief})"
 

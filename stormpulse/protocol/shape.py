@@ -2,13 +2,14 @@
 
 ``dataclass_wire_shape`` is names and nesting; ``dataclass_wire_types`` adds
 JSON types, nullability and optionality. ``agent/wire_contract.py`` renders
-both into the artifact; ``from_dict`` reads ``wire_type_name``.
+both into the artifact.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from dataclasses import MISSING, Field, fields, is_dataclass
+from enum import StrEnum
 from types import UnionType
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
@@ -18,7 +19,7 @@ def _wire_fields(cls: type) -> tuple[Field[Any], ...]:
     return tuple(f for f in fields(cls) if f.metadata.get("wire", True))
 
 
-def _nested_dataclass(annotation: Any) -> type | None:
+def nested_dataclass(annotation: Any) -> type | None:
     """The dataclass a field's annotation ultimately contains, or None.
 
     Unwraps one level of container or union at a time (``list[X]``,
@@ -31,7 +32,7 @@ def _nested_dataclass(annotation: Any) -> type | None:
     for arg in get_args(annotation):
         if arg is type(None):
             continue
-        found = _nested_dataclass(arg)
+        found = nested_dataclass(arg)
         if found is not None:
             return found
     return None
@@ -54,7 +55,7 @@ def _shape_fields(cls: type, hints: dict[str, Any]) -> dict[str, str | None]:
     """One class's ``{field: nested class name or None}``."""
     shape: dict[str, str | None] = {}
     for f in _wire_fields(cls):
-        nested = _nested_dataclass(hints[f.name])
+        nested = nested_dataclass(hints[f.name])
         shape[f.name] = nested.__name__ if nested is not None else None
     return shape
 
@@ -78,7 +79,7 @@ def _reachable_dataclasses(
         hints = get_type_hints(cls)
         yield cls, hints
         for f in _wire_fields(cls):
-            nested = _nested_dataclass(hints[f.name])
+            nested = nested_dataclass(hints[f.name])
             if nested is not None:
                 pending.append(nested)
 
@@ -124,15 +125,24 @@ def _wire_type(annotation: Any) -> tuple[str | list[str], bool]:
     return (names[0] if len(names) == 1 else names), nullable
 
 
+def _enum_members(annotation: Any) -> list[str] | None:
+    """The closed vocabulary a StrEnum field (or ``Enum | None``) may carry, declaration order."""
+    arms = [a for a in get_args(annotation) if a is not type(None)] or [annotation]
+    enum = arms[0] if len(arms) == 1 else None
+    if isinstance(enum, type) and issubclass(enum, StrEnum):
+        return [member.value for member in enum]
+    return None
+
+
 def dataclass_wire_types(
     root: type, *, formatted: Mapping[str, str] | None = None
 ) -> dict[str, dict[str, dict[str, Any]]]:
     """Field types, nullability and optionality of *root* and every dataclass it reaches.
 
-    ``{class name: {field name: {"type", "nullable", "required"}}}``: ``type``
-    is the JSON type (or class name, or sorted list for a union), ``nullable``
-    is ``X | None``, ``required`` is "no default"; ``formatted`` overrides the type
-    a serializer rewrites (``Envelope.ts``). Same order as ``dataclass_wire_shape``.
+    ``{class name: {field name: {"type", "nullable", "required"}}}`` in
+    ``dataclass_wire_shape`` order. ``type``: JSON type, class name or sorted union
+    list; ``nullable``: ``X | None``; ``required``: no default; a StrEnum field adds
+    ``enum`` (CORE-011 d3); ``formatted`` is a serializer's rewrite (``Envelope.ts``).
     """
     return {
         cls.__name__: _typed_fields(cls, hints, formatted or {})
@@ -156,4 +166,7 @@ def _typed_fields(
             "nullable": nullable,
             "required": f.default is MISSING and f.default_factory is MISSING,
         }
+        members = None if f.name in formatted else _enum_members(hints[f.name])
+        if members is not None:
+            typed[f.name]["enum"] = members
     return typed

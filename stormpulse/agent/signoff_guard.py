@@ -50,20 +50,14 @@ def sealed_refusal_result(
     cmd_def: CommandSpec | None,
 ) -> CommandResultPayload:
     """Build the structured failure the agent emits when refusing a sealed verify or apply block."""
-    return CommandResultPayload(
-        request_id=request_id,
-        command=command,
-        group=cmd_def.group if cmd_def else "signoff",
-        success=False,
-        exit_code=-1,
-        stdout="",
-        stderr=(
-            "Sign-off is sealed on this agent. "
-            "Unseal on the host (`stormpulse signoff unseal`) "
-            "to re-enable verify-block and apply-block dispatch."
-        ),
-        duration_ms=0,
-        failure_reason=FailureReason.SIGNOFF_SEALED,
+    return CommandResultPayload.failed(
+        request_id,
+        command,
+        cmd_def.group if cmd_def else "signoff",
+        FailureReason.SIGNOFF_SEALED,
+        "Sign-off is sealed on this agent. "
+        "Unseal on the host (`stormpulse signoff unseal`) "
+        "to re-enable verify-block and apply-block dispatch.",
     )
 
 
@@ -78,20 +72,14 @@ def restart_pending_result(
     boot-built registry). ``failure_reason=FailureReason.RESTART_REQUIRED`` keeps it out of
     the whitelist-violation security signal.
     """
-    return CommandResultPayload(
-        request_id=request_id,
-        command=command,
-        group="signoff",
-        success=False,
-        exit_code=-1,
-        stdout="",
-        stderr=(
-            "Sign-off was unsealed after this agent started, so verify-block "
-            "and apply-block dispatch are not loaded yet: the command whitelist "
-            "is built once when the agent boots. Restart the agent to load this "
-            "command (rootless: systemctl --user restart stormpulse.service). "
-            "This is a pending restart, not a whitelist violation."
-        ),
-        duration_ms=0,
-        failure_reason=FailureReason.RESTART_REQUIRED,
+    return CommandResultPayload.failed(
+        request_id,
+        command,
+        "signoff",
+        FailureReason.RESTART_REQUIRED,
+        "Sign-off was unsealed after this agent started, so verify-block "
+        "and apply-block dispatch are not loaded yet: the command whitelist "
+        "is built once when the agent boots. Restart the agent to load this "
+        "command (rootless: systemctl --user restart stormpulse.service). "
+        "This is a pending restart, not a whitelist violation.",
     )

@@ -463,7 +463,7 @@ class TestParseCaddyJson:
         assert result is not None
         assert result["s3_op"] == ""
         assert result["bucket"] == "media"
-        assert result["message"] == "GET alpha.example.ca -> 200 from 1.2.3.4"
+        assert result["message"] == "GET alpha.example.ca -> 200"
         assert "path" not in result
         flat = json.dumps(result)
         assert "photos" not in flat and "X-Amz" not in flat and "?" not in flat

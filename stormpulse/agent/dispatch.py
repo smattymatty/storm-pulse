@@ -47,7 +47,6 @@ from stormpulse.config import CommandSpec
 from stormpulse.protocol import (
     MESSAGES,
     AckPayload,
-    CancelReason,
     CommandRequestPayload,
     CommandResultPayload,
     CommandSequencePayload,
@@ -56,8 +55,7 @@ from stormpulse.protocol import (
     MessageType,
     ProtocolError,
     ResultError,
-    make_command_cancelled,
-    make_command_result,
+    make,
     make_error,
 )
 
@@ -117,7 +115,7 @@ async def refuse_incompatible_command(
         if isinstance(payload, CommandSequencePayload) and payload.steps
         else None,
     )
-    await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+    await ws.send(make(agent.config.agent.id, result).to_json())
     return True
 
 
@@ -186,7 +184,7 @@ async def handle_command_request(
         await handle_refresh(agent, ws, payload.command, envelope.id, cmd_def.group)
         return
     if cmd_def is not None and cmd_def.mode == "job":
-        await dispatch_long_running(agent, envelope.id, payload, cmd_def)
+        await dispatch_long_running(agent, ws, envelope.id, payload, cmd_def)
         return
 
     result = await _run_subprocess_command(agent, payload, envelope.id)
@@ -243,7 +241,7 @@ async def _refuse_if_sealed(
     if not is_blocked_by_seal(agent.signoff_state, [payload.command]):
         return False
     sealed = sealed_refusal_result(envelope.id, payload.command, cmd_def)
-    await ws.send(make_command_result(agent.config.agent.id, sealed).to_json())
+    await ws.send(make(agent.config.agent.id, sealed).to_json())
     logger.warning(
         "Refused %s (request %s): signoff is sealed",
         payload.command,
@@ -270,7 +268,7 @@ async def _deflect_if_restart_pending(
     if restart_cmd is None:
         return False
     result = restart_pending_result(envelope.id, restart_cmd)
-    await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+    await ws.send(make(agent.config.agent.id, result).to_json())
     logger.warning(
         "Deflected %s (request %s): unsealed after boot, registry not rebuilt "
         "(restart required)",
@@ -318,20 +316,14 @@ async def _run_subprocess_command(
                 error=str(exc),
             )
         cmd_def = agent.registry.get(payload.command)
-        return CommandResultPayload(
-            request_id=request_id,
-            command=payload.command,
-            group=cmd_def.group if cmd_def else "unknown",
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=str(exc),
-            duration_ms=0,
-            failure_reason=(
-                exc.reason
-                if isinstance(exc, CommandError)
-                else FailureReason.VALIDATION_FAILED
-            ),
+        return CommandResultPayload.failed(
+            request_id,
+            payload.command,
+            cmd_def.group if cmd_def else "unknown",
+            exc.reason
+            if isinstance(exc, CommandError)
+            else FailureReason.VALIDATION_FAILED,
+            str(exc),
         )
 
 
@@ -341,7 +333,7 @@ async def _send_result(
     result: CommandResultPayload,
 ) -> None:
     """Send a ``command.result`` envelope and log the outcome."""
-    response = make_command_result(agent.config.agent.id, result)
+    response = make(agent.config.agent.id, result)
     await ws.send(response.to_json())
     logger.info(
         "Sent result for %r: success=%s, %dms",
@@ -389,6 +381,7 @@ def post_success_hook(
         # no single success is the "did it land" moment a push would serve.
         return None
 
+    # Each await can resume under a replaced or closing session, so every hop re-fences.
     async def refresh_and_push() -> None:
         if manager is None or manager.closing or agent.job_manager is not manager:
             return
@@ -417,29 +410,33 @@ def post_success_hook(
     return refresh_and_push
 
 
+#: Stderr of a job refused because no live session can start it.
+_SESSION_CLOSING = (
+    "The command wasn't started because this connection is closing. "
+    "Retry after the agent reconnects."
+)
+
+
 async def dispatch_long_running(
     agent: Agent,
+    ws: ClientConnection,
     request_id: str,
     payload: CommandRequestPayload,
     cmd_def: CommandSpec,
 ) -> None:
-    """Hand a long-running command off to the JobManager; emits synthetic failure on missing handler or no JobManager."""
+    """Hand a long-running command off to the JobManager. Every refusal here is a
+    terminal result (CORE-011 d7); a duplicate id is an ``error``, its first
+    request still live, so no result may resolve it."""
     if agent.job_manager is None:
         logger.error("Cannot dispatch %r: no active JobManager", payload.command)
-        return
-    if agent.job_manager.closing:
-        logger.info(
-            "Command %r wasn't started because this connection is closing. Retry after the agent reconnects.",
+        failure = CommandResultPayload.failed(
+            request_id,
             payload.command,
+            cmd_def.group,
+            FailureReason.SESSION_CLOSING,
+            _SESSION_CLOSING,
         )
-        await agent.job_manager.send_now(
-            make_command_cancelled(
-                agent.config.agent.id,
-                request_id=request_id,
-                command=payload.command,
-                reason=CancelReason.SHUTDOWN,
-            )
-        )
+        await ws.send(make(agent.config.agent.id, failure).to_json())
         return
 
     # Same regex-param-validation as the subprocess path; closes the dispatch asymmetry.
@@ -447,20 +444,14 @@ async def dispatch_long_running(
         validated_params = validate_params(cmd_def, payload.params or {})
     except ParamValidationError as exc:
         logger.warning("Param validation failed for %s: %s", request_id, exc)
-        failure = CommandResultPayload(
-            request_id=request_id,
-            command=payload.command,
-            group=cmd_def.group,
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=str(exc),
-            duration_ms=0,
-            failure_reason=FailureReason.VALIDATION_FAILED,
+        failure = CommandResultPayload.failed(
+            request_id,
+            payload.command,
+            cmd_def.group,
+            FailureReason.VALIDATION_FAILED,
+            str(exc),
         )
-        await agent.job_manager.send_now(
-            make_command_result(agent.config.agent.id, failure)
-        )
+        await agent.job_manager.send_now(make(agent.config.agent.id, failure))
         return
 
     # The handler rides on the spec (single source); the thunk fires here with
@@ -473,20 +464,14 @@ async def dispatch_long_running(
             "Command %r is marked long_running but no handler is registered",
             payload.command,
         )
-        failure = CommandResultPayload(
-            request_id=request_id,
-            command=payload.command,
-            group=cmd_def.group,
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=f"No long-running handler for {payload.command!r}",
-            duration_ms=0,
-            failure_reason=FailureReason.OS_ERROR,
+        failure = CommandResultPayload.failed(
+            request_id,
+            payload.command,
+            cmd_def.group,
+            FailureReason.OS_ERROR,
+            f"No long-running handler for {payload.command!r}",
         )
-        await agent.job_manager.send_now(
-            make_command_result(agent.config.agent.id, failure)
-        )
+        await agent.job_manager.send_now(make(agent.config.agent.id, failure))
         return
 
     # Quota admission ceiling. A metrics-tick storm re-dispatches the same set_quota
@@ -521,12 +506,27 @@ async def dispatch_long_running(
             params=non_secret_params(cmd_def, validated_params),
         )
     except JobManagerClosing:
+        # `start` is the one admission gate; a closed manager still sends.
         logger.info(
-            "Command %r wasn't started because this connection is closing. Retry after the agent reconnects.",
+            "Refused %r (request %s): %s",
             payload.command,
+            request_id,
+            FailureReason.SESSION_CLOSING,
         )
+        failure = CommandResultPayload.failed(
+            request_id,
+            payload.command,
+            cmd_def.group,
+            FailureReason.SESSION_CLOSING,
+            _SESSION_CLOSING,
+        )
+        await agent.job_manager.send_now(make(agent.config.agent.id, failure))
     except ValueError:
-        logger.warning("Duplicate dispatch for request %s", request_id)
+        raise ProtocolError(
+            f"Duplicate request {request_id}",
+            reason="duplicate_request",
+            msg_type=MessageType.COMMAND_REQUEST.value,
+        ) from None
 
 
 async def handle_command_sequence(
@@ -549,7 +549,7 @@ async def handle_command_sequence(
 
     def step_result(result: CommandResultPayload, index: int) -> str:
         stamped = replace(result, sequence_id=payload.sequence_id, step_index=index)
-        return make_command_result(agent.config.agent.id, stamped).to_json()
+        return make(agent.config.agent.id, stamped).to_json()
 
     # Deflect a now-unsealed hatch command missing from the boot-built
     # registry before whitelist validation, which would otherwise reject it
@@ -576,16 +576,8 @@ async def handle_command_sequence(
             )
             # Authenticated request, so the refusal goes on the wire (one failure
             # result terminates the sequence dashboard-side), never silence.
-            failure = CommandResultPayload(
-                request_id=str(uuid.uuid4()),
-                command=name,
-                group="unknown",
-                success=False,
-                exit_code=-1,
-                stdout="",
-                stderr=str(exc),
-                duration_ms=0,
-                failure_reason=exc.reason,
+            failure = CommandResultPayload.failed(
+                str(uuid.uuid4()), name, "unknown", exc.reason, str(exc)
             )
             await ws.send(step_result(failure, index))
             return
@@ -620,16 +612,12 @@ async def handle_command_sequence(
             )
         except ParamValidationError as exc:
             logger.warning("Sequence %s step %d: %s", payload.sequence_id, index, exc)
-            result = CommandResultPayload(
-                request_id=request_id,
-                command=step.command,
-                group=agent.registry[step.command].group,
-                success=False,
-                exit_code=-1,
-                stdout="",
-                stderr=str(exc),
-                duration_ms=0,
-                failure_reason=FailureReason.VALIDATION_FAILED,
+            result = CommandResultPayload.failed(
+                request_id,
+                step.command,
+                agent.registry[step.command].group,
+                FailureReason.VALIDATION_FAILED,
+                str(exc),
             )
         await ws.send(step_result(result, index))
         logger.info(

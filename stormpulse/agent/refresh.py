@@ -15,7 +15,7 @@ from stormpulse.agent.integrations_runtime import (
     discard_push,
     replace_runtime_state,
 )
-from stormpulse.protocol import CommandResultPayload, FailureReason, make_command_result
+from stormpulse.protocol import CommandResultPayload, FailureReason, make
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
@@ -37,16 +37,12 @@ async def collect_refresh_result(
         or runtime.status != "live"
         or runtime.descriptor.collect_state is None
     ):
-        return CommandResultPayload(
-            request_id=request_id,
-            command=command,
-            group=integ_id,
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=f"Integration {integ_id!r} not enabled",
-            duration_ms=0,
-            failure_reason=FailureReason.NOT_CONFIGURED,
+        return CommandResultPayload.failed(
+            request_id,
+            command,
+            integ_id,
+            FailureReason.NOT_CONFIGURED,
+            f"Integration {integ_id!r} not enabled",
         )
     start = time.monotonic()
     # An explicit refresh must not serve cached sub-state (garage's
@@ -58,16 +54,13 @@ async def collect_refresh_result(
     state = await asyncio.to_thread(collector, runtime.config)
     duration_ms = int((time.monotonic() - start) * 1000)
     if state is None:
-        return CommandResultPayload(
-            request_id=request_id,
-            command=command,
-            group=integ_id,
-            success=False,
-            exit_code=-1,
-            stdout="",
-            stderr=f"Failed to collect {integ_id} state",
+        return CommandResultPayload.failed(
+            request_id,
+            command,
+            integ_id,
+            FailureReason.COLLECTION_FAILED,
+            f"Failed to collect {integ_id} state",
             duration_ms=duration_ms,
-            failure_reason=FailureReason.COLLECTION_FAILED,
         )
     replace_runtime_state(runtime, state)
     # Optional per-state summary (default when a state type doesn't define one).
@@ -95,7 +88,7 @@ async def handle_refresh(
 ) -> None:
     """Inline refresh ceremony: collect, send result, pulse-log, push metrics on success."""
     result = await collect_refresh_result(agent, command, request_id, integ_id)
-    await ws.send(make_command_result(agent.config.agent.id, result).to_json())
+    await ws.send(make(agent.config.agent.id, result).to_json())
     logger.info(
         "Sent result for %r: success=%s, %dms",
         command,

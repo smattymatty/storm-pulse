@@ -487,7 +487,7 @@ def test_state_collector_without_declared_config_is_a_contract_violation(
 
 def test_envelope_carries_the_push_envelope_as_the_runtime_holds_it() -> None:
     """CORE-011 d5: how complete and fresh the snapshot is rides every entry,
-    exactly as the runtime holds it (``asdict`` copies the list)."""
+    exactly as the runtime holds it (the owed ids are the revision keys)."""
     rt = IntegrationRuntime(
         "x",
         "live",
@@ -497,7 +497,7 @@ def test_envelope_carries_the_push_envelope_as_the_runtime_holds_it() -> None:
         generation=7,
         complete=False,
         last_full_read_at="2026-10-09T00:00:00Z",
-        changed_ids=["b1"],
+        changed_revisions={"b1": 1},
     )
     out = build_integrations_payload({"x": rt})
     assert out["x"]["generation"] == 7

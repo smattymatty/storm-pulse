@@ -9,7 +9,7 @@ from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
 from stormpulse.agent.loops import sleep_or_shutdown
-from stormpulse.protocol import make_signoff_state
+from stormpulse.protocol import SignoffStatePayload, make
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
@@ -34,11 +34,11 @@ async def signoff_state_push_loop(
         if current_sealed == last_sealed:
             continue
         since = state.unsealed_since()
-        envelope = make_signoff_state(
-            agent_id,
-            sealed=current_sealed,
+        transition = SignoffStatePayload(
+            signoff_sealed=current_sealed,
             unsealed_since=since.isoformat() if since else None,
         )
+        envelope = make(agent_id, transition)
         try:
             await ws.send(envelope.to_json())
         except ConnectionClosed:

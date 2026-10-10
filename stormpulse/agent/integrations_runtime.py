@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from stormpulse.integrations import FreshState, Integration, MergeableState, StateBlob
@@ -53,9 +53,8 @@ class IntegrationRuntime:
     generation: int = 0
     complete: bool = True
     last_full_read_at: str = ""
-    # Ids re-read since the last ack, in first-seen order; a lost push repeats them.
-    changed_ids: list[str] = field(default_factory=list)
-    # Read revisions are private bookkeeping, separate from wire push generation.
+    # Private read revisions, separate from wire push generation. Keys are the
+    # ids owed since the last ack, in first-seen order; a lost push repeats them.
     change_revision: int = 0
     changed_revisions: dict[str, int] = field(default_factory=dict)
     pending_pushes: dict[str, int] = field(default_factory=dict)
@@ -85,7 +84,7 @@ def build_integrations_payload(
                 generation=runtime.generation,
                 complete=runtime.complete,
                 last_full_read_at=runtime.last_full_read_at,
-                changed_ids=runtime.changed_ids,
+                changed_ids=list(runtime.changed_revisions),
             )
         )
     return out
@@ -108,8 +107,6 @@ def _note_changed(runtime: IntegrationRuntime, ids: Any) -> None:
     for item_id in ids:
         if item_id:
             runtime.change_revision += 1
-            if item_id not in runtime.changed_revisions:
-                runtime.changed_ids.append(item_id)
             runtime.changed_revisions[item_id] = runtime.change_revision
 
 
@@ -152,9 +149,6 @@ def acknowledge_push(runtimes: dict[str, IntegrationRuntime], push_id: str) -> b
             for item_id, revision in runtime.changed_revisions.items()
             if revision > watermark
         }
-        runtime.changed_ids = [
-            i for i in runtime.changed_ids if i in runtime.changed_revisions
-        ]
     return matched
 
 
@@ -212,13 +206,15 @@ async def build_metrics_envelope(agent: Agent) -> Envelope:
     The single builder for every push trigger, so the envelope shape cannot drift."""
     metrics = await asyncio.to_thread(collect_metrics, agent.config)
     advance_generation(agent.integrations)
-    integrations = build_integrations_payload(agent.integrations) or None
-    job_load = agent.job_manager.load() if agent.job_manager else None
-    envelope = make_metrics_push(
-        agent.config.agent.id,
+    # Reports ride as their ``asdict`` already, the same loose row ``make_register`` takes.
+    integrations: dict[str, Any] | None = (
+        build_integrations_payload(agent.integrations) or None
+    )
+    metrics = replace(
         metrics,
         integrations=integrations,
-        job_load=job_load,
+        jobs=agent.job_manager.load() if agent.job_manager else None,
     )
+    envelope = make_metrics_push(agent.config.agent.id, metrics)
     track_push(agent.integrations, envelope.id)
     return envelope

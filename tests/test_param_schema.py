@@ -1,5 +1,5 @@
 """The param-schema walkers: what a declaration may say, and what a decoded blob
-may break. ``validate_params`` wires them in; tests/test_commands.py pins that seam."""
+may break. ``validate_params`` wires them in; tests/commands/test_params.py pins that seam."""
 
 from __future__ import annotations
 

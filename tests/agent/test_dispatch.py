@@ -15,13 +15,24 @@ import pytest
 from stormpulse import events
 from stormpulse.agent import Agent, acks, dispatch
 from stormpulse.agent.integrations_runtime import (
+    discard_pending_pushes,
     merge_items_into_runtime,
     replace_runtime_state,
+    track_push,
 )
 from stormpulse.auth import NonceStore
 from stormpulse.commands import ParamValidationError
+from stormpulse.commands.jobs import JobManager, JobOutcome
 from stormpulse.config import CommandSpec, Config
-from stormpulse.protocol import SPEAKS, MessageType, make_heartbeat
+from stormpulse.integrations import Freshness
+from stormpulse.protocol import (
+    SPEAKS,
+    CancelReason,
+    HeartbeatPayload,
+    MessageType,
+    ProtocolError,
+    make,
+)
 from stormpulse.signoff import SignoffState
 from tests.helpers import (
     AGENT_ID,
@@ -33,6 +44,7 @@ from tests.helpers import (
     make_successful_result,
     sign_command_request,
     sign_command_sequence,
+    signed,
     signed_command_sequence,
 )
 
@@ -130,7 +142,7 @@ async def test_a_whitelist_rejection_is_one_alarming_event(agent: Agent) -> None
 async def test_dispatch_unexpected_type(agent: Agent) -> None:
     """A known-but-outbound type sent to the agent gets one ``unknown_type`` error naming it."""
     ws = AsyncMock()
-    heartbeat = make_heartbeat(AGENT_ID)
+    heartbeat = make(AGENT_ID, HeartbeatPayload())
     await dispatch.dispatch_message(agent, ws, heartbeat.to_json())
     reply = _only_error_reply(ws)
     assert reply["payload"] == {"error": "unknown_type", "type": "heartbeat"}
@@ -606,9 +618,6 @@ async def test_metrics_ack_releases_only_the_identified_push(
 ) -> None:
     ag = agent_with_garage()
     rt = ag.integrations["garage"]
-    from stormpulse.agent.integrations_runtime import track_push
-    from stormpulse.integrations import Freshness
-
     replace_runtime_state(
         rt, replace(make_fake_garage_state(), read=Freshness(changed_ids=("a" * 64,)))
     )
@@ -618,7 +627,94 @@ async def test_metrics_ack_releases_only_the_identified_push(
     await dispatch.dispatch_message(
         ag, ws, envelope(MessageType.METRICS_ACK, {"push_id": "push-1"}).to_json()
     )
-    assert rt.changed_ids == ["b" * 64]
+    assert list(rt.changed_revisions) == ["b" * 64]
+    ws.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_metrics_ack_for_an_unknown_duplicate_or_retired_push_releases_nothing(
+    agent_with_garage: Callable[..., Agent], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Three acks no push is waiting for: a push_id never sent, one acked already,
+    one retired when its session ended. Each is a debug line, never an ``error``
+    frame (an answered ack would ping-pong), and the dirty ids stay dirty."""
+    ag = agent_with_garage()
+    rt = ag.integrations["garage"]
+    replace_runtime_state(
+        rt, replace(make_fake_garage_state(), read=Freshness(changed_ids=("a" * 64,)))
+    )
+    ws = AsyncMock()
+
+    async def ack(push_id: str) -> None:
+        env = envelope(MessageType.METRICS_ACK, {"push_id": push_id})
+        await dispatch.dispatch_message(ag, ws, env.to_json())
+
+    track_push(ag.integrations, "push-1")
+    with caplog.at_level(logging.DEBUG, logger="stormpulse.agent.acks"):
+        await ack("never-sent")
+        await ack("push-1")
+        merge_items_into_runtime(rt, [make_garage_bucket("b" * 64)])
+        await ack("push-1")  # duplicate: the newer read is not its to release
+        track_push(ag.integrations, "push-2")
+        discard_pending_pushes(ag.integrations)  # the session ended
+        await ack("push-2")  # retired with it
+    assert list(rt.changed_revisions) == ["b" * 64]
+    ws.send.assert_not_called()
+    unknown = [r for r in caplog.records if "unknown push_id" in r.getMessage()]
+    assert [r.levelno for r in unknown] == [logging.DEBUG] * 3
+
+
+@pytest.mark.asyncio
+async def test_metrics_ack_with_an_empty_push_id_is_a_warning_and_releases_nothing(
+    agent_with_garage: Callable[..., Agent], caplog: pytest.LogCaptureFixture
+) -> None:
+    ag = agent_with_garage()
+    rt = ag.integrations["garage"]
+    replace_runtime_state(
+        rt, replace(make_fake_garage_state(), read=Freshness(changed_ids=("a" * 64,)))
+    )
+    track_push(ag.integrations, "push-1")
+    ws = AsyncMock()
+    with caplog.at_level(logging.DEBUG, logger="stormpulse.agent.acks"):
+        await dispatch.dispatch_message(
+            ag, ws, envelope(MessageType.METRICS_ACK, {"push_id": ""}).to_json()
+        )
+    assert list(rt.changed_revisions) == ["a" * 64]
+    ws.send.assert_not_called()
+    said = [r for r in caplog.records if "push_id" in r.getMessage()]
+    assert [r.levelno for r in said] == [logging.WARNING]
+
+
+# ---------------------------------------------------------------------------
+# events.batch.ack
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_events_batch_ack_releases_only_the_named_batch(
+    agent: Agent, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An acked batch is gone for good: a reconnect re-ships nothing of it. An
+    ack naming a batch never sent is a debug line and leaves the in-flight one
+    for the reconnect to requeue. Neither is answered."""
+    buf = events.buffer()
+    buf.append({"kind": "a"})
+    buf.drain("b1")
+    ws = AsyncMock()
+
+    async def ack(batch_id: str) -> None:
+        env = envelope(MessageType.EVENTS_BATCH_ACK, {"batch_id": batch_id})
+        await dispatch.dispatch_message(agent, ws, env.to_json())
+
+    with caplog.at_level(logging.DEBUG, logger="stormpulse.agent.acks"):
+        await ack("never-sent")
+    said = [r for r in caplog.records if "never-sent" in r.getMessage()]
+    assert [r.levelno for r in said] == [logging.DEBUG]
+    assert buf.requeue_unacked() == 1
+    buf.drain("b2")
+    await ack("b2")
+    assert buf.requeue_unacked() == 0
+    assert buf.drain("b3") == []
     ws.send.assert_not_called()
 
 
@@ -794,3 +890,119 @@ async def test_sequence_refusals_name_the_step_they_answer_for(
     sealed = await refusal(["git_pull", "run_verify_block"])
     assert (sealed["failure_reason"], sealed["step_index"]) == ("signoff_sealed", 1)
     mock_exec.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# No job request resolves silently (CORE-011 d7, never-again)
+# ---------------------------------------------------------------------------
+
+
+def _job_spec(unblock: asyncio.Event) -> CommandSpec:
+    """A job whose handler parks on *unblock*, so the test decides when it ends."""
+
+    async def run(progress: Any) -> JobOutcome:
+        await unblock.wait()
+        return JobOutcome(success=True)
+
+    return CommandSpec(
+        group="g", command=["some_job"], timeout=5, mode="job", handler=lambda p: run
+    )
+
+
+def _job_request(request_id: str) -> str:
+    """A signed ``some_job`` frame with a chosen id, so a reply's echo can be checked."""
+    body = {"command": "some_job", "params": {}, "nonce": f"n-{request_id}"}
+    return signed(envelope(MessageType.COMMAND_REQUEST, body, id=request_id)).to_json()
+
+
+@pytest.mark.asyncio
+async def test_job_before_any_session_is_a_terminal_session_closing_result(
+    agent: Agent,
+) -> None:
+    """No JobManager yet: the request is answered over the socket, never dropped."""
+    agent.registry["some_job"] = _job_spec(asyncio.Event())
+    assert agent.job_manager is None
+    ws = AsyncMock()
+    await dispatch.dispatch_message(agent, ws, _job_request("before-session"))
+    ws.send.assert_called_once()
+    sent = json.loads(ws.send.call_args.args[0])
+    assert sent["type"] == "command.result"
+    assert sent["payload"]["success"] is False
+    assert sent["payload"]["failure_reason"] == "session_closing"
+    assert sent["payload"]["stderr"].endswith("Retry after the agent reconnects.")
+    # The echo is what resolves the request on the far end; a blank one is silence.
+    echo = {k: sent["payload"][k] for k in ("request_id", "command", "group")}
+    assert echo == {"request_id": "before-session", "command": "some_job", "group": "g"}
+
+
+@pytest.mark.asyncio
+async def test_job_refused_by_a_closing_manager_is_a_terminal_result(
+    agent: Agent,
+) -> None:
+    """``start`` is the one admission gate: a manager that closed admission
+    answers with a ``session_closing`` result through its own send (d7)."""
+    agent.registry["some_job"] = _job_spec(asyncio.Event())
+    sent: list[Any] = []
+
+    async def send(env: Any) -> None:
+        sent.append(env)
+
+    manager = JobManager(AGENT_ID, send)
+    await manager.shutdown_all(CancelReason.SHUTDOWN)
+    assert manager.closing and sent == []
+    agent.job_manager = manager
+    ws = AsyncMock()
+    await dispatch.dispatch_message(agent, ws, _job_request("while-closing"))
+    ws.send.assert_not_called()
+    assert [env.type for env in sent] == [MessageType.COMMAND_RESULT]
+    assert sent[0].payload["success"] is False
+    assert sent[0].payload["failure_reason"] == "session_closing"
+    assert sent[0].payload["stderr"].endswith("Retry after the agent reconnects.")
+    echo = {k: sent[0].payload[k] for k in ("request_id", "command", "group")}
+    assert echo == {"request_id": "while-closing", "command": "some_job", "group": "g"}
+    assert not manager.is_running("while-closing")
+
+
+@pytest.mark.asyncio
+async def test_duplicate_request_is_an_error_and_the_first_job_keeps_running(
+    agent: Agent,
+) -> None:
+    """A second frame with a live request id gets an ``error`` naming the reason
+    and type only (CORE-011 d2); the first job runs on and resolves once."""
+    unblock = asyncio.Event()
+    agent.registry["some_job"] = _job_spec(unblock)
+    sent: list[Any] = []
+
+    async def send(env: Any) -> None:
+        sent.append(env)
+
+    manager = JobManager(AGENT_ID, send)
+    agent.job_manager = manager
+    ws = AsyncMock()
+    frames = [
+        signed(
+            envelope(
+                MessageType.COMMAND_REQUEST,
+                {"command": "some_job", "params": {}, "nonce": f"n{i}"},
+                id="same-id",
+            )
+        ).to_json()
+        for i in range(2)
+    ]
+    for frame in frames:
+        await dispatch.dispatch_message(agent, ws, frame)
+    reply = _only_error_reply(ws)
+    assert reply["payload"] == {"error": "duplicate_request", "type": "command.request"}
+    assert reply["payload"]["error"] in ProtocolError.REASONS
+    assert manager.is_running("same-id")
+    assert sent == []
+
+    unblock.set()
+    for _ in range(100):
+        if not manager.is_running("same-id"):
+            break
+        await asyncio.sleep(0)
+    results = [e for e in sent if e.type is MessageType.COMMAND_RESULT]
+    assert [(e.payload["request_id"], e.payload["success"]) for e in results] == [
+        ("same-id", True)
+    ]

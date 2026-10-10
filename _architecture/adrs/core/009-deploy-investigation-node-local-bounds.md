@@ -425,8 +425,9 @@ with an enforcing bound, not an absence.
   structural rather than a knob's default: the probe reports a file's
   *existence, size and mtime* and never opens it, so file contents cannot enter a
   case file even if a configured root pointed at something sensitive. Retention
-  is the events plane's 14-day prune, inherited unmodified (DEVELOPER-016), not
-  a new window.
+  is the events plane's existing 14-day prune, which the control plane runs over
+  every event row it holds; investigation rows inherit it unmodified, not a new
+  window.
 - **Who sees it.** The operator, via the CLI on the node and the dashboard. The
   audit firm, via the case files and the manifest it reads. No customer surface,
   no automated decision.

@@ -13,12 +13,12 @@ adr:
 # ADR: Wire protocol v2
 
 **Tier: timeless.** The shape of the agent-to-control-plane protocol from
-version 2 on. Verify against `stormpulse/protocol.py`, `stormpulse/auth.py`,
+version 2 on. Verify against `stormpulse/protocol/`, `stormpulse/auth.py`,
 `stormpulse/agent/wire_contract.py` and `wire-contract.json`.
 
 **Status: ACCEPTED 2026-10-08 (maintainer seal) at the commit that lands
 this line; proposed at `c4da57b`.** Twelve decisions grilled and
-maintainer-ruled 2026-10-08; nothing built. Supersedes the versioning rules of the v1 Protocol
+maintainer-ruled 2026-10-08; ~~nothing built~~ built through briefs A to C, 2026-10-10, sealed at the commit that lands this line. Supersedes the versioning rules of the v1 Protocol
 Specification wiki page, which is archived as `Protocol-Specification-v1`
 with a dated deprecation banner. The control-plane half (the dual-speak
 window, its tripwire, the fallback branches deleted) is its own ADR in the

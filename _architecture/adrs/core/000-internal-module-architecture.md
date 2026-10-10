@@ -45,7 +45,7 @@ not import sibling Features.
 
 | Layer | Members | May import |
 |-------|---------|------------|
-| **Foundation** | `protocol.py`, `config/`, `events.py`, `sdk/` | nothing intra-package |
+| **Foundation** | `protocol/`, `config/`, `events.py`, `sdk/` | nothing intra-package |
 | **Framework** | `commands/`, `init/`, `auth.py`, `integrations/`, `wizard/` | Foundation |
 | **Features: Core** | `logging/`, `signoff/`, `metrics.py`, `enroll.py`, `status.py`, `system_inventory.py` | Foundation, Framework; not sibling Features |
 | **Features: Integrations** | `garage/`, `caddy/`, `rclone/` | Foundation, Framework; not sibling Features |
@@ -57,7 +57,7 @@ through the contract registry, and adding one adds a package, not kernel code.
 The two rows share one import rule, so `.importlinter` holds them as one layer.
 
 - **Foundation** is the wire format, the config and the integration-contract
-  substrate. `protocol.py` carries the message envelope and payload contracts.
+  substrate. `protocol/` carries the message envelope and payload contracts.
   `config/` carries the TOML-backed dataclasses and, in `config/param_schema.py`,
   the JSON shape a command param declares. `events.py` carries the wide-event
   buffer every layer emits into. `sdk/` carries the versioned integration-wizard

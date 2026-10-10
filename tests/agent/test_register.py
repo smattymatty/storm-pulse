@@ -349,25 +349,6 @@ async def test_two_registers_in_one_process_carry_the_same_boot_identity(
     assert second["agent_started_at"] == first["agent_started_at"]
 
 
-@pytest.mark.asyncio
-async def test_send_register_declares_the_job_managers_in_flight_ids(
-    agent: Agent,
-) -> None:
-    """``in_flight`` is read from the session's JobManager when one exists
-    (ids only, CORE-011 d7) and is ``[]`` without one; the real session order
-    is pinned in ``tests/agent/test_reconnect.py``."""
-    ws = AsyncMock()
-    with patch("stormpulse.agent.register.collect_system_inventory", return_value={}):
-        await send_register(agent, ws, "wss://example.com/ws/")
-        agent.job_manager = MagicMock(in_flight=lambda: ["req-7", "req-9"])
-        await send_register(agent, ws, "wss://example.com/ws/")
-    without, with_manager = (
-        json.loads(call.args[0])["payload"] for call in ws.send.call_args_list
-    )
-    assert without["in_flight"] == []
-    assert with_manager["in_flight"] == ["req-7", "req-9"]
-
-
 def _ws_answering(*frames: str) -> AsyncMock:
     ws = AsyncMock()
     ws.recv = AsyncMock(side_effect=list(frames))
@@ -465,6 +446,38 @@ async def test_refusal_of_an_error_frame_quotes_its_reason() -> None:
     )
     with pytest.raises(ProtocolError, match=r"first frame was error \('bad_token'\)"):
         await await_register_ok(ws)
+
+
+@pytest.mark.asyncio
+async def test_refusal_of_an_error_frame_with_unreadable_error_text() -> None:
+    """A control plane that puts a structure where ``error`` text belongs gets the
+    same refusal, naming the frame unreadable; never a crash in the handshake."""
+    ws = _ws_answering(
+        envelope(
+            MessageType.ERROR, {"error": {"code": 7}, "type": "register"}, agent_id="cp"
+        ).to_json()
+    )
+    with pytest.raises(
+        ProtocolError, match=r"error \(unreadable error response\)"
+    ) as info:
+        await await_register_ok(ws)
+    assert info.value.reason == "unsupported_version"
+
+
+@pytest.mark.asyncio
+async def test_refusal_quotes_at_most_500_chars_of_the_error() -> None:
+    """The refusal reaches the journal; a runaway error text is cut, not relayed whole."""
+    ws = _ws_answering(
+        envelope(
+            MessageType.ERROR,
+            {"error": "x" * 10_000, "type": "register"},
+            agent_id="cp",
+        ).to_json()
+    )
+    with pytest.raises(ProtocolError) as info:
+        await await_register_ok(ws)
+    assert "x" * 500 in str(info.value)
+    assert "x" * 501 not in str(info.value)
 
 
 @pytest.mark.asyncio

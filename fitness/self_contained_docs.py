@@ -3,7 +3,8 @@
 A contributor reads this repository without Storm's others beside it. A line
 that points at one of them instead of describing the behaviour leaves a hole
 in the text. The far end of the agent's wire is "the control plane" (see
-CONTEXT.md); this walks every tracked text file for lines that point elsewhere.
+CONTEXT.md); this walks every tracked text file for lines that point elsewhere,
+a private ADR id (`DEVELOPER-nnn`) among them (CORE-001 function 11).
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SUFFIXES = {".py", ".md", ".yml", ".yaml", ".toml"}
-SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".skylos", "dist"}
+SKIP_DIRS = {".git", ".venv", "node_modules", "__pycache__", ".skylos", "dist", "_temp"}
 # History stays as written; the glossary line that tells people what to avoid,
 # this rule's own pattern and its test fixtures all have to spell the words.
 SKIP_FILES = {
@@ -25,7 +26,7 @@ ALLOW_LINE = "_Avoid_"
 
 PRIVATE = re.compile(
     r"\bthe website\b|\bwebsite's\b|\bwebsite (repo|tree|dashboard)\b"
-    r"|Projects/StormDevelopments/|storm-workstation-kit",
+    r"|Projects/StormDevelopments/|storm-workstation-kit|DEVELOPER-\d{3}",
     re.IGNORECASE,
 )
 

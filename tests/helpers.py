@@ -80,6 +80,23 @@ def register_payload(**overrides: Any) -> dict[str, Any]:
     } | overrides
 
 
+class FakeWire:
+    """Captures envelopes the manager would put on the wire.
+
+    Tests assert against ``sent``. Set ``raise_on_send`` to simulate a
+    closed connection.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[Envelope] = []
+        self.raise_on_send: Exception | None = None
+
+    async def send(self, envelope: Envelope) -> None:
+        if self.raise_on_send is not None:
+            raise self.raise_on_send
+        self.sent.append(envelope)
+
+
 FAKE_METRICS = MetricsPayload(
     cpu_percent=10.0,
     memory_percent=50.0,

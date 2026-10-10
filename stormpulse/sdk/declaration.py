@@ -53,7 +53,7 @@ class SdkParamDef:
     ``command_specs_digest``."""
 
     placeholder: str
-    default: str | None
+    default: Any
     pattern: str | None = None
     description: str = ""
     max_bytes: int | None = None
@@ -234,8 +234,9 @@ class SdkIntegration:
     # overridable by the node's own [investigate.deploy.<subject>] table.
     deploy_subjects: Callable[[Any], tuple[SdkDeploySubject, ...]] | None = None
     # Optional components this Integration declares on every register (CORE-011
-    # d7), from its parsed config alone: read-only, no I/O, outside the digest.
-    components: Callable[[Any], tuple[SdkComponent, ...]] | None = None
+    # d7), from its parsed config and latest state blob: read-only, no I/O,
+    # outside the digest.
+    components: Callable[[Any, object], tuple[SdkComponent, ...]] | None = None
 
 
 def canonical_digest(payload: Any) -> str:

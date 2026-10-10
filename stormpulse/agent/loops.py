@@ -19,7 +19,12 @@ from stormpulse.agent.integrations_runtime import (
     replace_runtime_state,
 )
 from stormpulse.integrations import LogEnricher
-from stormpulse.protocol import make_events_batch, make_heartbeat, make_log_batch
+from stormpulse.protocol import (
+    EventsBatchPayload,
+    HeartbeatPayload,
+    LogBatchPayload,
+    make,
+)
 
 if TYPE_CHECKING:
     from stormpulse.agent import Agent
@@ -44,7 +49,7 @@ async def heartbeat_loop(agent: Agent, ws: ClientConnection) -> None:
     interval = agent.config.dashboard.heartbeat_interval_seconds
     agent_id = agent.config.agent.id
     while not agent.shutdown.is_set():
-        heartbeat = make_heartbeat(agent_id)
+        heartbeat = make(agent_id, HeartbeatPayload())
         await ws.send(heartbeat.to_json())
         logger.debug("Sent heartbeat %s", heartbeat.id)
         if await sleep_or_shutdown(agent.shutdown, interval):
@@ -120,8 +125,7 @@ async def log_loop(
             batch = await asyncio.to_thread(shipper.collect_batch, resolver)
             if batch is not None:
                 batch_id = str(uuid.uuid4())
-                envelope = make_log_batch(
-                    agent_id,
+                log_batch = LogBatchPayload(
                     group=group_name,
                     parser=shipper.parser_name,
                     batch_id=batch_id,
@@ -130,6 +134,7 @@ async def log_loop(
                     from_position=batch.from_position,
                     to_position=batch.to_position,
                 )
+                envelope = make(agent_id, log_batch)
                 agent.pending_batches.add(batch_id, group_name, batch.to_position)
                 await ws.send(envelope.to_json())
                 # INFO + duration_ms while shipping is being proven out; drop to
@@ -170,7 +175,8 @@ async def events_loop(agent: Agent, ws: ClientConnection) -> None:
             batch_id = str(uuid.uuid4())
             batch = buf.drain(batch_id)
             if batch:
-                envelope = make_events_batch(agent_id, batch_id=batch_id, events=batch)
+                events_batch = EventsBatchPayload(batch_id=batch_id, events=batch)
+                envelope = make(agent_id, events_batch)
                 await ws.send(envelope.to_json())
                 logger.debug("Shipped events.batch %s events=%d", batch_id, len(batch))
         except ConnectionClosed:

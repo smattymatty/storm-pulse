@@ -172,7 +172,7 @@ def test_replace_runtime_state_folds_freshness_and_accumulates_changed_ids() -> 
     assert (rt.complete, rt.last_full_read_at) == (False, "t0")
     replace_runtime_state(rt, _fresh(_MERGE_ID_B, _MERGE_ID_A, at="t1"))
     # Until an ack, every id read since the last one is owed, each once.
-    assert rt.changed_ids == [_MERGE_ID_A, _MERGE_ID_B]
+    assert list(rt.changed_revisions) == [_MERGE_ID_A, _MERGE_ID_B]
     assert (rt.complete, rt.last_full_read_at) == (True, "t1")
 
 
@@ -183,7 +183,7 @@ def test_replace_runtime_state_with_a_blob_that_says_nothing_reads_as_complete()
     rt.complete = False
     replace_runtime_state(rt, _UnmergeableState())
     assert rt.state is not None
-    assert (rt.complete, rt.changed_ids) == (False, [])
+    assert (rt.complete, list(rt.changed_revisions)) == (False, [])
 
 
 def test_merge_into_runtime_owes_the_merged_ids() -> None:
@@ -191,7 +191,7 @@ def test_merge_into_runtime_owes_the_merged_ids() -> None:
     merge_items_into_runtime(
         rt, [make_garage_bucket(_MERGE_ID_A), make_garage_bucket("")]
     )
-    assert rt.changed_ids == [_MERGE_ID_A]
+    assert list(rt.changed_revisions) == [_MERGE_ID_A]
 
 
 @pytest.mark.asyncio
@@ -218,7 +218,7 @@ async def test_push_advances_generation_and_the_ack_releases_only_what_it_carrie
     # Read between the push and its ack: owed to the next one, not released.
     merge_items_into_runtime(rt, [make_garage_bucket("c" * 64)])
     acknowledge_push(ag.integrations, second_envelope.id)
-    assert rt.changed_ids == ["c" * 64]
+    assert list(rt.changed_revisions) == ["c" * 64]
     assert (await build_metrics_envelope(ag)).payload["integrations"]["garage"][
         "generation"
     ] == 3
@@ -228,4 +228,4 @@ def test_an_ack_with_no_push_behind_it_releases_nothing() -> None:
     rt = _runtime(None)
     replace_runtime_state(rt, _fresh(_MERGE_ID_A))
     acknowledge_push({"garage": rt}, "unknown")
-    assert rt.changed_ids == [_MERGE_ID_A]
+    assert list(rt.changed_revisions) == [_MERGE_ID_A]

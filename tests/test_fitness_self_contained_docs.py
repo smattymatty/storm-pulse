@@ -25,12 +25,14 @@ def test_a_reference_to_another_repository_is_named_by_line(
         encoding="utf-8",
     )
     (tmp_path / "mod.py").write_text(
-        "# see ~/Projects/StormDevelopments/website\n", encoding="utf-8"
+        "# see ~/Projects/StormDevelopments/website\n# per DEVELOPER-022 d2\n",
+        encoding="utf-8",
     )
     monkeypatch.setattr(fn11, "ROOT", tmp_path)
     violations = fn11.check_self_contained_docs()
     assert violations == [
         "mod.py:1 points at another repository; describe it, the far end is 'the control plane'",
+        "mod.py:2 points at another repository; describe it, the far end is 'the control plane'",
         "notes.md:2 points at another repository; describe it, the far end is 'the control plane'",
     ]
 

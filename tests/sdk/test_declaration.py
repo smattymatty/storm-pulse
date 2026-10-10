@@ -4,10 +4,12 @@ its stability and its sensitivity both matter)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from typing import get_type_hints
 
 import pytest
 
+from stormpulse.config.commands import CommandSpec, ParamDef
 from stormpulse.sdk import (
     SdkCommandSpec,
     SdkComponent,
@@ -232,17 +234,18 @@ def test_integration_core_is_declarable() -> None:
     assert integ.components is None  # opt-in, like every other capability
 
 
-def test_components_hook_is_declarable_from_config_alone() -> None:
-    """SDK_API 2: an adapter names what it fronts, versioned, without any state
-    (CORE-011 d7). ``digest`` is explicit, ``""`` where the component has none."""
+def test_components_hook_takes_config_and_state() -> None:
+    """SDK_API 2: an adapter names what it fronts, versioned, from its config and
+    the latest state blob (CORE-011 d7). ``digest`` is explicit, ``""`` where the
+    component has none."""
     integ = SdkIntegration(
         id="buckets_gate",
         parse_config=lambda section: section,
         enabled=lambda cfg: True,
-        components=lambda cfg: (SdkComponent("buckets-gate", cfg["v"], ""),),
+        components=lambda cfg, state: (SdkComponent("buckets-gate", cfg["v"], ""),),
     )
     assert integ.components is not None
-    assert integ.components({"v": "0.4.1"}) == (
+    assert integ.components({"v": "0.4.1"}, None) == (
         SdkComponent(name="buckets-gate", version="0.4.1", digest=""),
     )
 
@@ -263,3 +266,22 @@ def test_canonical_digest_refuses_nan_and_escapes_non_ascii() -> None:
     assert canonical_json({"b": 1, "a": "é"}) == '{"a":"\\u00e9","b":1}'
     with pytest.raises(ValueError):
         canonical_digest({"x": float("nan")})
+
+
+def test_sdk_param_def_mirrors_param_def_field_for_field() -> None:
+    # The docstring promises parity; this holds it. A field added, renamed,
+    # reordered or retyped on one side fails here until the other follows.
+    def shape(cls: type) -> list[tuple[str, object]]:
+        hints = get_type_hints(cls)
+        return [(f.name, hints[f.name]) for f in fields(cls)]
+
+    assert shape(SdkParamDef) == shape(ParamDef)
+
+
+def test_sdk_command_spec_mirrors_command_spec_field_for_field() -> None:
+    # Names, order and defaults; ``handler`` and ``params`` carry the SDK's own
+    # types by design. A field added to one spec fails here until the other follows.
+    def shape(cls: type) -> list[tuple[str, object]]:
+        return [(f.name, f.default) for f in fields(cls)]
+
+    assert shape(SdkCommandSpec) == shape(CommandSpec)
