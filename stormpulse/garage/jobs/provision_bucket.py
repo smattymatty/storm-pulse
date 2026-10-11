@@ -22,6 +22,7 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.jobs import RollbackStatus
 from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ async def run_provision_customer_bucket(
                 "[garage] admin_url and admin_token_file."
             ),
             started_at=started_at,
-            rollback_status="not_required",
+            rollback_status=RollbackStatus.NOT_REQUIRED,
             extras_extra={},
         )
 
@@ -136,7 +137,7 @@ async def run_provision_customer_bucket(
             bucket_uuid=None,
             stderr=err,
             started_at=started_at,
-            rollback_status="not_required",
+            rollback_status=RollbackStatus.NOT_REQUIRED,
             extras_extra={},
         )
     admin_key_id = info.get("accessKeyId") or ""
@@ -148,7 +149,7 @@ async def run_provision_customer_bucket(
             bucket_uuid=None,
             stderr="CreateKey response missing accessKeyId",
             started_at=started_at,
-            rollback_status="partial",
+            rollback_status=RollbackStatus.PARTIAL,
             extras_extra={
                 "manual_cleanup_required": [
                     {"type": "key_unknown_id", "name": key_name_admin},
@@ -209,7 +210,7 @@ async def run_provision_customer_bucket(
             "admin": _key_payload(admin),
             "step_completed": "bucket_create",
             "step_failed": None,
-            "rollback_status": "not_required",
+            "rollback_status": RollbackStatus.NOT_REQUIRED.value,
             "manual_cleanup_required": [],
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
@@ -235,9 +236,9 @@ async def _rollback_orphan_key(
         access_key_id=admin_key_id,
     )
     if ok:
-        return {"rollback_status": "complete", "extras_extra": {}}
+        return {"rollback_status": RollbackStatus.COMPLETE, "extras_extra": {}}
     return {
-        "rollback_status": "partial",
+        "rollback_status": RollbackStatus.PARTIAL,
         "extras_extra": {
             "manual_cleanup_required": [{"type": "key", "id": admin_key_id}]
         },
@@ -252,7 +253,7 @@ def _failure(
     bucket_uuid: str | None,
     stderr: str,
     started_at: float,
-    rollback_status: str,
+    rollback_status: RollbackStatus,
     extras_extra: dict[str, Any],
 ) -> JobOutcome:
     """Build a failure JobOutcome with the contracted extras shape."""
@@ -260,7 +261,7 @@ def _failure(
         "bucket_uuid": bucket_uuid,
         "step_completed": step_completed,
         "step_failed": step_failed,
-        "rollback_status": rollback_status,
+        "rollback_status": rollback_status.value,
         "manual_cleanup_required": [],
         "garage_stderr": stderr,
         "duration_seconds": _elapsed(started_at),
@@ -268,7 +269,7 @@ def _failure(
     extras.update(extras_extra)
     final_reason = (
         FailureReason.ROLLBACK_FAILED
-        if rollback_status == "partial"
+        if rollback_status == RollbackStatus.PARTIAL
         else failure_reason
     )
     return JobOutcome(

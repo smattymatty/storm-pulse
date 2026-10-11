@@ -129,20 +129,28 @@ def _check_manifest(parsed: Any) -> tuple[dict[str, str] | None, str | None]:
             f"tenants manifest must be a JSON object, got {type(parsed).__name__}"
         )
     for key, frag in parsed.items():
-        if not isinstance(key, str) or not isinstance(frag, str):
-            return None, "tenants manifest keys and values must be strings"
-        if not _TENANT_KEY_RE.fullmatch(key):
-            return None, (
-                f"tenant key {key!r} is not a safe filename component "
-                "(allowed: letters, digits, '_', '-'; 1-64 chars)"
-            )
-        frag_bytes = len(frag.encode("utf-8"))
-        if frag_bytes > PER_TENANT_MAX_BYTES:
-            return None, (
-                f"tenant {key!r} fragment is {frag_bytes} bytes, exceeds "
-                f"per-bucket cap {PER_TENANT_MAX_BYTES}"
-            )
+        problem = _tenant_entry_problem(key, frag)
+        if problem is not None:
+            return None, problem
     return parsed, None
+
+
+def _tenant_entry_problem(key: object, frag: object) -> str | None:
+    """One manifest entry: strings only, a safe filename key, a capped fragment."""
+    if not isinstance(key, str) or not isinstance(frag, str):
+        return "tenants manifest keys and values must be strings"
+    if not _TENANT_KEY_RE.fullmatch(key):
+        return (
+            f"tenant key {key!r} is not a safe filename component "
+            "(allowed: letters, digits, '_', '-'; 1-64 chars)"
+        )
+    frag_bytes = len(frag.encode("utf-8"))
+    if frag_bytes > PER_TENANT_MAX_BYTES:
+        return (
+            f"tenant {key!r} fragment is {frag_bytes} bytes, exceeds "
+            f"per-bucket cap {PER_TENANT_MAX_BYTES}"
+        )
+    return None
 
 
 def _plan_reconcile(

@@ -25,7 +25,7 @@ from tests.helpers import (
 @pytest.mark.parametrize('sequence', [False, True])
 @pytest.mark.parametrize('state', ['mismatch', 'pending'])
 async def test_incompatible_commands_resolve_without_side_effects(
-    agent: Agent, sequence: bool, state: str
+    agent: Agent, *, sequence: bool, state: str
 ):
     agent.session_compatibility = (
         SessionCompatibility(CONTRACT_DIGEST, 'sha256:' + 'ab' * 32)
@@ -62,6 +62,23 @@ async def test_incompatible_commands_resolve_without_side_effects(
 
 
 @pytest.mark.asyncio
+async def test_an_empty_sequence_is_refused_as_the_sequence_itself(agent: Agent):
+    """With no step to name, the refusal names ``command.sequence`` and carries
+    the sequence id with no step index: there is no step 0 to point at."""
+    agent.session_compatibility = None
+    request = signed_command_sequence(steps=[])
+    ws = AsyncMock()
+    with patch.object(dispatch, 'execute_command') as execute:
+        await dispatch.dispatch_message(agent, ws, request.to_json())
+    execute.assert_not_called()
+    result = json.loads(ws.send.call_args.args[0])['payload']
+    assert result['error']['code'] == 'registration_pending'
+    assert result['command'] == 'command.sequence'
+    assert result['sequence_id'] == request.payload['sequence_id']
+    assert result['step_index'] is None
+
+
+@pytest.mark.asyncio
 async def test_fenced_session_keeps_acknowledgements_and_rejects_forgery(agent: Agent):
     agent.session_compatibility = SessionCompatibility(
         CONTRACT_DIGEST, 'sha256:' + 'ab' * 32
@@ -82,7 +99,7 @@ async def test_fenced_session_keeps_acknowledgements_and_rejects_forgery(agent: 
 
 
 @pytest.mark.parametrize('with_commands', [False, True])
-def test_loaded_adapter_does_not_change_release_catalog(with_commands: bool):
+def test_loaded_adapter_does_not_change_release_catalog(*, with_commands: bool):
     before = contract_digest()
     specs = (
         MagicMock(side_effect=AssertionError('release catalog must not call adapter'))

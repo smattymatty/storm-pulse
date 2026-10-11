@@ -1,3 +1,4 @@
+# skylos: ignore[SKY-Q502] one test module per source module; the envelope has this many seams
 """Tests for ``stormpulse.protocol.envelope``: parsing a frame, refusing a bad
 one, serializing, and the outbound factories (``make`` plus the three that keep
 logic).
@@ -194,6 +195,18 @@ def test_non_string_agent_id_raises(heartbeat_dict: dict[str, Any]) -> None:
     heartbeat_dict["agent_id"] = 42
     with pytest.raises(ProtocolError, match="non-empty string"):
         Envelope.from_json(json.dumps(heartbeat_dict))
+
+
+@pytest.mark.parametrize("key", ["id", "agent_id"])
+@pytest.mark.parametrize("value", ["", 42])
+def test_envelope_id_refusal_names_the_field(
+    heartbeat_dict: dict[str, Any], key: str, value: object
+) -> None:
+    """``id`` and ``agent_id`` share one check; the refusal says which one failed."""
+    heartbeat_dict[key] = value
+    with pytest.raises(ProtocolError) as exc_info:
+        Envelope.from_json(json.dumps(heartbeat_dict))
+    assert str(exc_info.value) == f"{key} must be a non-empty string"
 
 
 def test_non_dict_payload_raises(heartbeat_dict: dict[str, Any]) -> None:

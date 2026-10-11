@@ -179,6 +179,11 @@ def validate_params(
 def _param_problem(pdef: ParamDef, value: Any) -> str | None:
     """Why ``value`` fails ``pdef``, or None. A secret's value never rides the
     message: it lands in logs and stderr. Shape detail carries paths and rules."""
+    return _shape_problem(pdef, value) or _size_problem(pdef, value)
+
+
+def _shape_problem(pdef: ParamDef, value: Any) -> str | None:
+    """Type, then pattern: the checks that read the value as a string."""
     if pdef.schema is None and not isinstance(value, str):
         return f"is {type(value).__name__}, expected {pdef.wire_type}"
     # Regex validation: short identifiers, bucket names, key IDs.
@@ -187,6 +192,11 @@ def _param_problem(pdef: ParamDef, value: Any) -> str | None:
             f"({len(value)} chars, withheld: secret)" if pdef.secret else repr(value)
         )
         return f"value {shown} does not match pattern {pdef.pattern!r}"
+    return None
+
+
+def _size_problem(pdef: ParamDef, value: Any) -> str | None:
+    """Byte cap, then schema: the checks that read the value as it rides the wire."""
     # Byte cap: a string as its UTF-8 bytes (what rides the wire; an ASCII escape
     # would inflate it), any other JSON value as its canonical encoding.
     if pdef.max_bytes is not None:

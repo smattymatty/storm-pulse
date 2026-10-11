@@ -80,7 +80,7 @@ class TestEmit:
         assert "command_ref" not in batch[2]
 
 
-class TestRegistry:
+class TestRegistry:  # skylos: ignore[SKY-Q702] a test class groups cases by subject, not by shared state
     def test_two_emits_carry_consecutive_seq(self) -> None:
         events.emit("ping", source="probe", n=1)
         events.emit("ping", source="probe", n=2)
@@ -187,7 +187,7 @@ class TestRegistry:
         assert set(synthesized) - events.ENVELOPE_FIELDS == declared
 
 
-class TestEventBuffer:
+class TestEventBuffer:  # skylos: ignore[SKY-Q702] a test class groups cases by subject, not by shared state
     def test_ack_releases_batch(self) -> None:
         buf = EventBuffer()
         buf.append({"kind": "a"})

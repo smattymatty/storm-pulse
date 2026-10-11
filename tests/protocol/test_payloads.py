@@ -1,3 +1,4 @@
+# skylos: ignore[SKY-Q502] one test module per source module; the payload catalogue has this many seams
 """Tests for ``stormpulse.protocol.payloads``: the catalogue, each payload from
 its dict, and the rules ``command.progress`` and ``command.result`` carry
 (CORE-011 d3, d9).

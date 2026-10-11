@@ -26,7 +26,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from stormpulse.commands.jobs import JobOutcome, ProgressCallback
+from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.config import CommandSpec, ConfigError, ParamDef
 from stormpulse.integrations import (
     Integration,
@@ -206,7 +206,7 @@ def _translate_handler(sdk_handler: SdkCommandHandler) -> Any:
     """Wrap the SDK command handler (a factory returning an async job body over
     the SDK progress/outcome types) into the internal ``CommandHandler`` shape."""
 
-    def factory(params: dict[str, Any]) -> Any:
+    def factory(params: dict[str, Any]) -> JobHandler | None:
         sdk_job = sdk_handler(params)
         if sdk_job is None:
             return None

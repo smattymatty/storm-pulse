@@ -314,7 +314,7 @@ async def test_send_register_advertises_speaks_and_both_digests(agent: Agent) ->
 
 
 @pytest.mark.asyncio
-async def test_two_registers_in_one_process_carry_the_same_boot_identity(
+async def test_two_registers_in_one_process_carry_the_same_boot_identity(  # skylos: ignore[SKY-C303] pytest injects each fixture by name; a bundle would hide which ones the test needs
     config: Config,
     nonce_store: NonceStore,
     ssl_ctx: MagicMock,

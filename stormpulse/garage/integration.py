@@ -71,7 +71,7 @@ def _log_enricher(state: object) -> BucketIdResolver:
     )
 
 
-def _components(config: GarageConfig, state: object) -> tuple[SdkComponent, ...]:
+def _components(_config: GarageConfig, state: object) -> tuple[SdkComponent, ...]:
     """The daemon's version from the last state read; nothing before the first."""
     if not isinstance(state, GarageState):
         return ()

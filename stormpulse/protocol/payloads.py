@@ -1,3 +1,4 @@
+# skylos: ignore[SKY-Q502] every wire shape and the one catalogue that joins them live in one module (CORE-011 d3); a split would put the table and its rows in different files
 """Payloads: every message's dataclass, its type and the catalogue that joins them.
 
 ``MESSAGES`` is the one table a generator, a dispatcher or a test iterates

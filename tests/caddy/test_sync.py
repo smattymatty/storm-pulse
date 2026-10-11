@@ -568,7 +568,7 @@ class TestCaddySyncHandler:
 # ---------------------------------------------------------------------------
 
 
-class TestCheckManifest:
+class TestCheckManifest:  # skylos: ignore[SKY-Q702] a test class groups cases by subject, not by shared state
     def test_valid_manifest(self) -> None:
         manifest, err = _check_manifest({"abcdef0123456789": "example.com { }\n"})
         assert err is None

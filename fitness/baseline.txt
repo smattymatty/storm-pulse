@@ -18,7 +18,6 @@ stormpulse/garage/bucket_resolver.py:80 points at another repository; describe i
 stormpulse/garage/commands/jobs.py:158 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/commands/jobs.py:726 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/jobs/attach_account_key.py:9 points at another repository; describe it, the far end is 'the control plane'
-stormpulse/garage/jobs/provision_account_key.py:68 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/jobs/set_account_key_capability.py:3 points at another repository; describe it, the far end is 'the control plane'
 stormpulse/garage/jobs/set_quota.py:3 points at another repository; describe it, the far end is 'the control plane'
 tests/caddy/test_cert_status.py:93 points at another repository; describe it, the far end is 'the control plane'

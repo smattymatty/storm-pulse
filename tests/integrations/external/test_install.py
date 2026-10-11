@@ -282,6 +282,48 @@ def test_receipt_wrong_parent_dir_is_f11(tmp_path: Path) -> None:
     assert excinfo.value.code is FailureCode.F11
 
 
+@pytest.mark.parametrize(
+    ("overrides", "problem"),
+    [
+        ({"schema_version": 2}, "has an unsupported schema"),
+        ({"integration_id": 5}, "field 'integration_id' is invalid"),
+        ({"integration_id": "Obs"}, "has a malformed integration id"),
+        ({"version": "1.0"}, "has a malformed version"),
+        ({"sdk_api": True}, "field 'sdk_api' is invalid"),
+        ({"package_digest": "sha256:nothex"}, "field 'package_digest' is not a digest"),
+        ({"publisher_fingerprint": None}, "field 'publisher_fingerprint' is invalid"),
+        (
+            {"installed_relpath": "packages/x"},
+            "installed_relpath does not match its digest",
+        ),
+        ({"requested_capabilities": "all"}, "has malformed capabilities"),
+        ({"requested_capabilities": [1]}, "has a non-string capability"),
+        ({"requested_capabilities": ["root"]}, "has an unknown capability"),
+        ({"installed_at": 0}, "field 'installed_at' is invalid"),
+        ({"command_specs_digest": 3}, "field 'command_specs_digest' is invalid"),
+        (
+            {"command_specs_digest": "md5:x"},
+            "field 'command_specs_digest' is not a digest",
+        ),
+    ],
+)
+def test_receipt_refusal_names_the_receipt_and_what_is_wrong(
+    overrides: dict[str, object], problem: str
+) -> None:
+    """Every F11 from a receipt reads ``receipt <name> <problem>``, a field
+    refusal naming its key, so the operator can find the line in the file."""
+    with pytest.raises(PackageError) as excinfo:
+        ledger.from_dict(_valid_receipt(**overrides), "r.json")
+    assert excinfo.value.code is FailureCode.F11
+    assert excinfo.value.message == f"receipt r.json {problem}"
+
+
+def test_receipt_that_is_not_an_object_is_refused_by_name() -> None:
+    with pytest.raises(PackageError) as excinfo:
+        ledger.from_dict(["not", "a", "receipt"], "r.json")
+    assert excinfo.value.message == "receipt r.json is not an object"
+
+
 def test_list_receipts_skips_corrupt(tmp_path: Path) -> None:
     private, fingerprint = _keypair()
     state = _state(tmp_path)

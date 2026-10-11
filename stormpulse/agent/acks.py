@@ -17,12 +17,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BATCH_ID = "batch_id"
+
 
 async def handle_events_batch_ack(
     _agent: Agent, _ws: ClientConnection, envelope: Envelope
 ) -> None:
     """Release an acknowledged events batch from the in-process buffer."""
-    batch_id = envelope.payload.get("batch_id")
+    batch_id = envelope.payload.get(_BATCH_ID)
     if not isinstance(batch_id, str):
         logger.warning("events.batch.ack missing batch_id")
         return
@@ -34,7 +36,7 @@ async def handle_events_batch_nack(
     _agent: Agent, _ws: ClientConnection, envelope: Envelope
 ) -> None:
     """Drop a refused events batch and say so once, with the control plane's reason (CORE-011 d6)."""
-    batch_id = envelope.payload.get("batch_id")
+    batch_id = envelope.payload.get(_BATCH_ID)
     if not isinstance(batch_id, str):
         logger.warning("events.batch.nack missing batch_id")
         return
@@ -57,7 +59,7 @@ async def handle_log_batch_ack(
     agent: Agent, _ws: ClientConnection, envelope: Envelope
 ) -> None:
     """Advance the stored log position for an acknowledged batch."""
-    batch_id = envelope.payload.get("batch_id")
+    batch_id = envelope.payload.get(_BATCH_ID)
     if not isinstance(batch_id, str):
         logger.warning("log.batch.ack missing batch_id")
         return

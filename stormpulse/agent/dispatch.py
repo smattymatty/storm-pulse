@@ -66,7 +66,21 @@ logger = logging.getLogger(__name__)
 events.declare_event("auth", "signature_failure", {"status", "failure_reason", "error"})
 events.declare_event("commands", "whitelist_rejection", {"status", "command", "error"})
 
+# The group a result reports when the registry holds no spec for the name.
+_UNKNOWN_GROUP = "unknown"
+
 type Handler = Callable[[Agent, ClientConnection, Envelope], Awaitable[None]]
+
+
+def _sequence_position(
+    payload: CommandRequestPayload | CommandSequencePayload,
+) -> tuple[str, str | None, int | None]:
+    """The refused command's name and, for a sequence, its id and first step index."""
+    if isinstance(payload, CommandRequestPayload):
+        return payload.command, None, None
+    if payload.steps:
+        return payload.steps[0].command, payload.sequence_id, 0
+    return "command.sequence", payload.sequence_id, None
 
 
 async def refuse_incompatible_command(
@@ -86,16 +100,12 @@ async def refuse_incompatible_command(
             "Wait for Storm Pulse to register with the control plane, then retry."
         )
     )
-    command = (
-        payload.command
-        if isinstance(payload, CommandRequestPayload)
-        else (payload.steps[0].command if payload.steps else "command.sequence")
-    )
+    command, sequence_id, step_index = _sequence_position(payload)
     spec = agent.registry.get(command)
     result = CommandResultPayload(
         request_id=envelope.id,
         command=command,
-        group=spec.group if spec else "unknown",
+        group=spec.group if spec else _UNKNOWN_GROUP,
         success=False,
         exit_code=-1,
         stdout="",
@@ -108,12 +118,8 @@ async def refuse_incompatible_command(
             None,
             message,
         ),
-        sequence_id=payload.sequence_id
-        if isinstance(payload, CommandSequencePayload)
-        else None,
-        step_index=0
-        if isinstance(payload, CommandSequencePayload) and payload.steps
-        else None,
+        sequence_id=sequence_id,
+        step_index=step_index,
     )
     await ws.send(make(agent.config.agent.id, result).to_json())
     return True
@@ -319,7 +325,7 @@ async def _run_subprocess_command(
         return CommandResultPayload.failed(
             request_id,
             payload.command,
-            cmd_def.group if cmd_def else "unknown",
+            cmd_def.group if cmd_def else _UNKNOWN_GROUP,
             exc.reason
             if isinstance(exc, CommandError)
             else FailureReason.VALIDATION_FAILED,
@@ -577,7 +583,7 @@ async def handle_command_sequence(
             # Authenticated request, so the refusal goes on the wire (one failure
             # result terminates the sequence dashboard-side), never silence.
             failure = CommandResultPayload.failed(
-                str(uuid.uuid4()), name, "unknown", exc.reason, str(exc)
+                str(uuid.uuid4()), name, _UNKNOWN_GROUP, exc.reason, str(exc)
             )
             await ws.send(step_result(failure, index))
             return

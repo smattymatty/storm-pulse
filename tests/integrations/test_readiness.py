@@ -3,6 +3,11 @@ resolution, host-capability honesty, and provider disjointness (P2, CORE-007).""
 
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Any
+
+import pytest
+
 from stormpulse.config import ConfigError
 from stormpulse.integrations.readiness import (
     capability_provider_conflicts,
@@ -14,6 +19,7 @@ from stormpulse.integrations.registry import Integration
 from stormpulse.sdk import (
     Capability,
     CapabilityLiveness,
+    CapabilityStatus,
     DependencyRequirement,
     ReadinessReport,
     ReadinessState,
@@ -91,10 +97,33 @@ def test_ready_when_preconditions_pass() -> None:
 
 
 def test_enabled_not_ready_when_precondition_fails() -> None:
-    r = resolve_readiness(_make(precondition_reason="garage unreachable"), {}, run_probe=True)
+    r = resolve_readiness(
+        _make(precondition_reason="garage unreachable"), {}, run_probe=True
+    )
     assert r.state is ReadinessState.ENABLED
     assert r.reason == "garage unreachable"
     assert r.capabilities[0].liveness is CapabilityLiveness.UNMET
+
+
+@pytest.mark.parametrize(
+    "returned",
+    [
+        [CapabilityStatus("demo.thing.v1", CapabilityLiveness.LIVE)],
+        ("demo.thing.v1",),
+        (CapabilityStatus("demo.thing.v1", "live"),),  # type: ignore[arg-type]
+    ],
+    ids=["list-not-tuple", "bare-token", "liveness-not-enum"],
+)
+def test_probe_that_returns_no_capability_reports_is_a_failed_check(
+    returned: Any,
+) -> None:
+    """A probe's word is checked before it is believed: anything but a tuple of
+    well-formed reports is the readiness check failing, every capability unknown."""
+    integ = replace(_make(), readiness=lambda cfg: returned)
+    r = resolve_readiness(integ, {}, run_probe=True)
+    assert r.state is ReadinessState.ENABLED
+    assert r.reason is not None and "(expected capability reports)" in r.reason
+    assert [c.liveness for c in r.capabilities] == [CapabilityLiveness.UNKNOWN]
 
 
 def test_readiness_baseline_agrees_with_preconditions() -> None:
@@ -116,7 +145,9 @@ def test_dependency_capability_unmet_while_integration_ready() -> None:
         ReadinessState.READY,
         capabilities=(
             CapabilityStatus(
-                "garage.admin.v1", CapabilityLiveness.UNMET, reason="admin token cannot list buckets"
+                "garage.admin.v1",
+                CapabilityLiveness.UNMET,
+                reason="admin token cannot list buckets",
             ),
         ),
     )
@@ -155,7 +186,8 @@ def test_host_capability_not_offered_reports_honestly() -> None:
     for token in ("pulse.integration.commands.v1", "pulse.integration.state.v1"):
         status = resolve_host_capability(token)
         assert status.liveness is CapabilityLiveness.UNMET
-        assert status.reason is not None and "not offered by this Pulse version" in status.reason
+        assert status.reason is not None
+        assert "not offered by this Pulse version" in status.reason
 
 
 def test_duplicate_capability_provider_is_a_conflict() -> None:

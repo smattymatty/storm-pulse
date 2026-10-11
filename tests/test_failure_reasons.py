@@ -61,7 +61,8 @@ def test_every_member_the_tree_sends_is_declared() -> None:
     missing from the first cut and only the type found them."""
     named: set[str] = set()
     for module in sorted(_PACKAGE.rglob("*.py")):
-        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):  # skylos: ignore[SKY-P403] bounded by the package
             if (
                 isinstance(node, ast.Attribute)
                 and isinstance(node.value, ast.Name)

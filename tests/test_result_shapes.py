@@ -8,6 +8,7 @@ import ast
 import inspect
 from dataclasses import fields
 from pathlib import Path
+from typing import TypeGuard
 
 import pytest
 
@@ -41,6 +42,28 @@ def _dict_keys(node: ast.expr | None) -> set[str]:
     )
 
 
+def _assigned_extras_keys(node: ast.Assign | ast.AnnAssign) -> set[str]:
+    """Keys from ``extras = {...}`` and ``extras["k"] = ...``, over every target."""
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    keys: set[str] = set()
+    for target in targets:
+        if isinstance(target, ast.Name) and target.id == "extras":
+            keys |= _dict_keys(node.value)
+        elif isinstance(target, ast.Subscript) and _is_extras(target.value):
+            keys |= _key(target.slice)
+    return keys
+
+
+def _is_extras_setdefault(node: ast.AST) -> TypeGuard[ast.Call]:
+    """``extras.setdefault(...)`` on the dict or an attribute named ``extras``."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "setdefault"
+        and _is_extras(node.func.value)
+    )
+
+
 def extras_keys(module: Path) -> set[str]:
     """The top-level keys a module writes into an extras dict, by every form the
     tree uses: ``extras={...}`` and ``extras_extra={...}`` keywords, an ``extras =
@@ -50,18 +73,8 @@ def extras_keys(module: Path) -> set[str]:
         if isinstance(node, ast.keyword) and node.arg in ("extras", "extras_extra"):
             keys |= _dict_keys(node.value)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            for target in targets:
-                if isinstance(target, ast.Name) and target.id == "extras":
-                    keys |= _dict_keys(node.value)
-                elif isinstance(target, ast.Subscript) and _is_extras(target.value):
-                    keys |= _key(target.slice)
-        elif (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute)
-            and node.func.attr == "setdefault"
-            and _is_extras(node.func.value)
-        ):
+            keys |= _assigned_extras_keys(node)
+        elif _is_extras_setdefault(node):
             keys |= _key(node.args[0])
     return keys
 

@@ -9,7 +9,7 @@ import dataclasses
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from stormpulse.config.param_schema import (
     ParamSchema,
@@ -44,46 +44,53 @@ class ParamDef:
 
     def __post_init__(self) -> None:
         if self.pattern is None and self.max_bytes is None:
-            raise ValueError(
-                f"ParamDef {self.placeholder!r}: must set pattern or max_bytes "
-                f"(unvalidated params are a footgun)"
+            self._fail(
+                "must set pattern or max_bytes (unvalidated params are a footgun)"
             )
         if self.schema is not None:
             if self.pattern is not None or self.max_bytes is None:
-                raise ValueError(
-                    f"ParamDef {self.placeholder!r}: schema needs max_bytes and "
-                    f"excludes pattern (the blob is capped, then decoded, then shaped)"
+                self._fail(
+                    "schema needs max_bytes and "
+                    "excludes pattern (the blob is capped, then decoded, then shaped)"
                 )
             err = schema_declaration_error(self.schema)
             if err is not None:
-                raise ValueError(f"ParamDef {self.placeholder!r}: {err}")
+                self._fail(err)
         # A new sink for command data must never meet an untagged credential:
         # a credential-shaped name without secret=True fails at construction.
         if not self.secret and re.search(
             r"secret|password|token|passphrase", self.placeholder, re.IGNORECASE
         ):
-            raise ValueError(
-                f"ParamDef {self.placeholder!r}: credential-shaped name requires "
-                f"secret=True (redacts it from event and log context)"
+            self._fail(
+                "credential-shaped name requires "
+                "secret=True (redacts it from event and log context)"
             )
-        # A default rides the wire as a value of the declared type; a str where
-        # an object is declared would fail every dispatch that omits the param.
-        if self.default is not None:
-            problem = (
-                schema_violation(self.default, self.schema)
-                if self.schema is not None
-                else None
-                if isinstance(self.default, str)
-                else f"$: expected string, got {type(self.default).__name__}"
-            )
-            if problem is not None:
-                raise ValueError(f"ParamDef {self.placeholder!r}: default {problem}")
+        problem = self._default_problem()
+        if problem is not None:
+            self._fail(f"default {problem}")
+
+    def _default_problem(self) -> str | None:
+        """A default rides the wire as a value of the declared type; a str where
+        an object is declared would fail every dispatch that omits the param."""
+        if self.default is None:
+            return None
+        return (
+            schema_violation(self.default, self.schema)
+            if self.schema is not None
+            else None
+            if isinstance(self.default, str)
+            else f"$: expected string, got {type(self.default).__name__}"
+        )
+
+    def _fail(self, problem: str) -> NoReturn:
+        raise ValueError(f"ParamDef {self.placeholder!r}: {problem}")
 
 
 # Execution-mode discriminator the dispatcher routes on. Subprocess vs job vs
 # agent-internal refresh used to be smeared across a magic command name, a bool
 # and "fell through to subprocess"; now it is one field, validated at construction.
 CommandMode = Literal["subprocess", "job", "refresh"]
+_SUBPROCESS: CommandMode = "subprocess"
 
 # A "job" command's lazy handler thunk: validated runtime params -> JobHandler,
 # or None when unservable on this host. Typed loosely: the concrete types live in
@@ -105,7 +112,7 @@ class CommandSpec:
     group: str
     command: list[str]
     timeout: int
-    mode: CommandMode = "subprocess"
+    mode: CommandMode = _SUBPROCESS
     requires_confirmation: bool = False
     description: str = ""
     sensitive_output: bool = False
@@ -125,30 +132,33 @@ class CommandSpec:
     def __post_init__(self) -> None:
         if self.mode == "job":
             if self.handler is None:
-                raise ValueError(
-                    f"CommandSpec {self.command!r}: mode 'job' requires a handler "
+                self._fail(
+                    "mode 'job' requires a handler "
                     "(a job with no handler is the half-registration footgun this "
                     "guard exists to make impossible)"
                 )
         elif self.handler is not None:
-            raise ValueError(
-                f"CommandSpec {self.command!r}: mode {self.mode!r} must not carry a "
+            self._fail(
+                f"mode {self.mode!r} must not carry a "
                 "handler (only 'job' commands have one)"
             )
         if self.result is not None and not (
             self.mode == "job" and dataclasses.is_dataclass(self.result)
         ):
-            raise ValueError(
-                f"CommandSpec {self.command!r}: result must be a dataclass on a "
+            self._fail(
+                "result must be a dataclass on a "
                 f"'job' command, got {self.result!r} on mode {self.mode!r}"
             )
-        if self.mode == "subprocess" and (
+        if self.mode == _SUBPROCESS and (
             not self.command or not self.command[0].startswith("/")
         ):
-            raise ValueError(
-                f"CommandSpec {self.command!r}: mode 'subprocess' requires an "
+            self._fail(
+                "mode 'subprocess' requires an "
                 "absolute binary path as command[0] (the Layer-4 whitelist invariant)"
             )
+
+    def _fail(self, problem: str) -> NoReturn:
+        raise ValueError(f"CommandSpec {self.command!r}: {problem}")
 
     @property
     def long_running(self) -> bool:

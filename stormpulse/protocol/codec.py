@@ -6,6 +6,7 @@ Nothing here knows a payload class by name; ``payloads`` declares them and
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING, Field, fields, is_dataclass
 from functools import cache
 from types import UnionType
@@ -101,6 +102,49 @@ def _payload_hints(cls: type) -> dict[str, Any]:
     return get_type_hints(cls)
 
 
+def _decode_union(owner: type, name: str, args: tuple[Any, ...], value: Any) -> Any:
+    """The first arm that decodes wins; ``None`` passes when the union allows it."""
+    if value is None and type(None) in args:
+        return value
+    arms = [a for a in args if a is not type(None)]
+    for arm in arms[:-1]:
+        try:
+            return _decode(owner, name, arm, value)
+        except ProtocolError:
+            continue
+    return _decode(owner, name, arms[-1], value)
+
+
+def _decode_list(owner: type, name: str, args: tuple[Any, ...], value: Any) -> Any:
+    if not isinstance(value, list):
+        raise ProtocolError(
+            f"{owner.__name__}.{name}: expected list, got {type(value).__name__}"
+        )
+    return [_decode(owner, name, args[0], item) for item in value]
+
+
+def _decode_dict(owner: type, name: str, args: tuple[Any, ...], value: Any) -> Any:
+    if not isinstance(value, dict):
+        raise ProtocolError(
+            f"{owner.__name__}.{name}: expected dict, got {type(value).__name__}"
+        )
+    return {
+        _decode(owner, name, args[0], k): _decode(owner, name, args[1], v)
+        for k, v in value.items()
+    }
+
+
+_Decoder = Callable[[type, str, tuple[Any, ...], Any], Any]
+# Generic origins and the helper that decodes each; ``X | Y`` and ``Optional``
+# both land on the union arm.
+_DECODERS: dict[Any, _Decoder] = {
+    UnionType: _decode_union,
+    Union: _decode_union,
+    list: _decode_list,
+    dict: _decode_dict,
+}
+
+
 def _decode(owner: type, name: str, annotation: Any, value: Any) -> Any:
     """One wire value against one annotation, dispatched once: a union takes
     the first arm that decodes, a container maps its items, a dataclass is
@@ -108,31 +152,8 @@ def _decode(owner: type, name: str, annotation: Any, value: Any) -> Any:
     if annotation is Any:
         return value
     origin, args = get_origin(annotation), get_args(annotation)
-    if origin in (UnionType, Union):
-        if value is None and type(None) in args:
-            return None
-        arms = [a for a in args if a is not type(None)]
-        for arm in arms[:-1]:
-            try:
-                return _decode(owner, name, arm, value)
-            except ProtocolError:
-                pass
-        return _decode(owner, name, arms[-1], value)
-    if origin is list:
-        if not isinstance(value, list):
-            raise ProtocolError(
-                f"{owner.__name__}.{name}: expected list, got {type(value).__name__}"
-            )
-        return [_decode(owner, name, args[0], item) for item in value]
-    if origin is dict:
-        if not isinstance(value, dict):
-            raise ProtocolError(
-                f"{owner.__name__}.{name}: expected dict, got {type(value).__name__}"
-            )
-        return {
-            _decode(owner, name, args[0], k): _decode(owner, name, args[1], v)
-            for k, v in value.items()
-        }
+    if origin in _DECODERS:
+        return _DECODERS[origin](owner, name, args, value)
     if is_dataclass(annotation) and isinstance(annotation, type):
         return _payload_from_dict(annotation, value)
     if _is_scalar(annotation, value):

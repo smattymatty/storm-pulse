@@ -37,10 +37,7 @@ logger = logging.getLogger(__name__)
 REGISTER_OK_TIMEOUT_SECONDS = 30
 
 
-async def send_register(agent: Agent, ws: ClientConnection, url: str) -> str:
-    """Build and send the register envelope after a fresh connection."""
-    logger.info("Connected to dashboard at %s", url)
-
+async def _discover_initial_state(agent: Agent) -> None:
     # CORE-005: discover initial state for each live Integration that declares a
     # discover capability and has no state yet (garage discovers here).
     for runtime in agent.integrations.values():
@@ -54,6 +51,13 @@ async def send_register(agent: Agent, ws: ClientConnection, url: str) -> str:
             )
             if discovered is not None:
                 replace_runtime_state(runtime, discovered)
+
+
+async def send_register(agent: Agent, ws: ClientConnection, url: str) -> str:
+    """Build and send the register envelope after a fresh connection."""
+    logger.info("Connected to dashboard at %s", url)
+
+    await _discover_initial_state(agent)
     system_inventory = await asyncio.to_thread(collect_system_inventory)
 
     # Re-stat seal at register time so post-seal connects advertise promptly (ADR CORE-004).

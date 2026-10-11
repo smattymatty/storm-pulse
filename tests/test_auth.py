@@ -1,3 +1,4 @@
+# skylos: ignore[SKY-Q502] one test module per source module; the HMAC envelope boundary (CORE-011 d4) has this many seams
 """Tests for stormpulse.auth."""
 
 from __future__ import annotations

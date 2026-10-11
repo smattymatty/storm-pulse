@@ -17,7 +17,7 @@ from websockets.asyncio.server import ServerConnection, serve
 from stormpulse.agent import Agent
 from stormpulse.auth import NonceStore, generate_nonce
 from stormpulse.commands.jobs import JobOutcome, ProgressCallback
-from stormpulse.config import CommandSpec
+from stormpulse.config import CommandSpec, Config
 from stormpulse.protocol import SPEAKS, CommandResultPayload, MessageType
 from stormpulse.signoff import SignoffState
 from tests.helpers import (
@@ -137,6 +137,37 @@ def _exec_side_effect_factory(
     return side_effect
 
 
+def _make_agent(config: Config, store: NonceStore, shutdown: asyncio.Event) -> Agent:
+    """The agent under test: the shared secret, a mocked TLS context, a fresh
+    signoff state beside its database."""
+    return Agent(
+        config,
+        SECRET,
+        store,
+        MagicMock(spec=ssl.SSLContext),
+        shutdown,
+        signoff_state=SignoffState(config.storage.db_path.parent),
+    )
+
+
+def _stub_job_spec(started: asyncio.Event) -> CommandSpec:
+    """A job that reports it is running, sets ``started`` and parks for a minute."""
+
+    async def stub_job(progress: ProgressCallback) -> JobOutcome:
+        await progress("starting", 0, None, "")
+        started.set()
+        await asyncio.sleep(60)
+        return JobOutcome(success=True)
+
+    return CommandSpec(
+        group="test",
+        command=["stub_job"],
+        timeout=5,
+        mode="job",
+        handler=lambda params: stub_job,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -177,14 +208,7 @@ async def test_full_lifecycle(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -234,14 +258,7 @@ async def test_bad_hmac_rejected(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -293,14 +310,7 @@ async def test_nonce_replay_rejected(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -344,14 +354,7 @@ async def test_stale_timestamp_rejected(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -399,14 +402,7 @@ async def test_sequence_stop_on_failure(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -455,14 +451,7 @@ async def test_sequence_all_succeed(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -514,14 +503,7 @@ async def test_sequence_unknown_command(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -579,14 +561,7 @@ async def test_heartbeat_and_metrics_flow(tmp_path: Path, free_port: int) -> Non
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(server_done.wait(), timeout=5.0)
@@ -647,14 +622,7 @@ async def test_reconnect_after_disconnect(tmp_path: Path, free_port: int) -> Non
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             await asyncio.wait_for(second_register_received.wait(), timeout=5.0)
@@ -694,14 +662,7 @@ async def test_shutdown_during_backoff(tmp_path: Path, free_port: int) -> None:
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             agent_task = asyncio.create_task(agent.run())
 
             # Wait for first connection-then-disconnect cycle
@@ -733,12 +694,6 @@ async def test_graceful_stop_sends_command_cancelled_before_the_socket_closes(
     frames: list[dict[str, Any]] = []
     request = signed_command_request("stub_job")
 
-    async def stub_job(progress: ProgressCallback) -> JobOutcome:
-        await progress("starting", 0, None, "")
-        started.set()
-        await asyncio.sleep(60)
-        return JobOutcome(success=True)
-
     async def handler(ws: ServerConnection) -> None:
         await _wait_for_register(ws)
         await ws.send(request.to_json())
@@ -758,21 +713,8 @@ async def test_graceful_stop_sends_command_cancelled_before_the_socket_closes(
         ),
     ):
         async with serve(handler, "localhost", free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
-            agent.registry["stub_job"] = CommandSpec(
-                group="test",
-                command=["stub_job"],
-                timeout=5,
-                mode="job",
-                handler=lambda params: stub_job,
-            )
+            agent = _make_agent(config, store, shutdown)
+            agent.registry["stub_job"] = _stub_job_spec(started)
             agent_task = asyncio.create_task(agent.run())
             await asyncio.wait_for(closed.wait(), timeout=5.0)
             await asyncio.wait_for(agent_task, timeout=5.0)
@@ -821,14 +763,7 @@ async def test_mismatched_contract_keeps_observation_but_refuses_requests_and_se
         patch('stormpulse.agent.dispatch.execute_command') as execute,
     ):
         async with serve(handler, 'localhost', free_port):
-            agent = Agent(
-                config,
-                SECRET,
-                store,
-                MagicMock(spec=ssl.SSLContext),
-                shutdown,
-                signoff_state=SignoffState(config.storage.db_path.parent),
-            )
+            agent = _make_agent(config, store, shutdown)
             await asyncio.wait_for(agent.run(), timeout=5)
     store.close()
     execute.assert_not_called()

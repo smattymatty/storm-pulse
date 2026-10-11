@@ -1,3 +1,4 @@
+# skylos: ignore[SKY-Q502] one test module per source module; the job lifecycle has this many seams
 """JobManager from start to the last frame: progress, the terminal result, a
 cancellation, the hooks around success, and a graceful stop (CORE-011 d9).
 """
@@ -8,7 +9,12 @@ import asyncio
 
 import pytest
 
-from stormpulse.commands.jobs import JobManager, JobOutcome, ProgressCallback
+from stormpulse.commands.jobs import (
+    JobHandler,
+    JobManager,
+    JobOutcome,
+    ProgressCallback,
+)
 from stormpulse.protocol import (
     Envelope,
     FailureReason,
@@ -431,6 +437,25 @@ async def test_on_success_callback_failure_does_not_crash_job(wire: FakeWire) ->
 # -- a graceful stop: command.cancelled per in-flight job (CORE-011 d9) ------
 
 
+def _blocks_until_cancelled(started: asyncio.Event, order: list[str]) -> JobHandler:
+    """A job that parks on a long sleep and records its cancel in ``order``."""
+
+    async def blocks(progress: ProgressCallback) -> JobOutcome:
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            order.append("cancelled")
+            raise
+        return JobOutcome(success=True)
+
+    return blocks
+
+
+async def _quick(progress: ProgressCallback) -> JobOutcome:
+    return JobOutcome(success=True)
+
+
 @pytest.mark.asyncio
 async def test_a_graceful_stop_sends_one_command_cancelled_per_in_flight_job(
     wire: FakeWire,
@@ -450,20 +475,9 @@ async def test_a_graceful_stop_sends_one_command_cancelled_per_in_flight_job(
     mgr = JobManager("agent-1", send)
     mgr._sem = asyncio.Semaphore(1)
     started = asyncio.Event()
+    blocks = _blocks_until_cancelled(started, order)
 
-    async def blocks(progress: ProgressCallback) -> JobOutcome:
-        started.set()
-        try:
-            await asyncio.sleep(60)
-        except asyncio.CancelledError:
-            order.append("cancelled")
-            raise
-        return JobOutcome(success=True)
-
-    async def quick(progress: ProgressCallback) -> JobOutcome:
-        return JobOutcome(success=True)
-
-    mgr.start("req-done", "cmd_quick", "test", quick)
+    mgr.start("req-done", "cmd_quick", "test", _quick)
     await asyncio.wait_for(mgr._jobs["req-done"], timeout=1.0)
     mgr.start("req-run", "garage_bucket_clear", "garage", blocks)
     await started.wait()

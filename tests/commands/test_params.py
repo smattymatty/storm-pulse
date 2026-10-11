@@ -1,3 +1,4 @@
+# skylos: ignore[SKY-Q502] one test module per source module; the param rules have this many seams
 """Command params: ``validate_params`` over patterns, byte caps and schemas,
 ``ParamDef``'s own construction rules, and the secrets kept off event context.
 """
@@ -106,6 +107,17 @@ def test_validate_params_pattern_param_refuses_a_non_string(value: Any) -> None:
         with pytest.raises(ParamValidationError, match="expected string") as excinfo:
             validate_params(cmd, {name: value})
         assert f"Param {name!r} is {type(value).__name__}" in str(excinfo.value)
+
+
+def test_validate_params_judges_the_pattern_before_the_byte_cap() -> None:
+    """A value that fails both is refused for its shape, not its size: the
+    pattern names what the value should look like, the cap only how long."""
+    cmd = _cmd_with_params(
+        tag=ParamDef(placeholder="tag", default=None, pattern="[a-z]+", max_bytes=4),
+    )
+    with pytest.raises(ParamValidationError, match="does not match pattern") as excinfo:
+        validate_params(cmd, {"tag": "ABCDEFGH"})
+    assert "exceeds max_bytes" not in str(excinfo.value)
 
 
 def test_validate_params_secret_non_string_rides_no_value() -> None:

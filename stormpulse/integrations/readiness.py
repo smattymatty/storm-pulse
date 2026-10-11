@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from stormpulse.config import ConfigError
 from stormpulse.integrations.evaluation import (
@@ -81,6 +82,34 @@ def _capabilities_from_baseline(
     )
 
 
+def _probe_capabilities(
+    integ: Integration, parsed: Any
+) -> tuple[CapabilityStatus, ...]:
+    """The declared ``readiness`` probe, or the baseline when none is declared;
+    a report that is not a tuple of well-formed ``CapabilityStatus`` is refused."""
+    probe = integ.readiness
+    caps = (
+        evaluate_callback(integ.id, "readiness", lambda: probe(parsed))
+        if probe is not None
+        else _capabilities_from_baseline(integ, None)
+    )
+    if not isinstance(caps, tuple) or not all(_is_capability_report(c) for c in caps):
+        raise IntegrationCallbackError(
+            integ.id, "readiness", "expected capability reports"
+        )
+    return caps
+
+
+def _is_capability_report(c: object) -> bool:
+    return (
+        isinstance(c, CapabilityStatus)
+        and isinstance(c.token, str)
+        and isinstance(c.liveness, CapabilityLiveness)
+        and (c.reason is None or isinstance(c.reason, str))
+        and (c.repair is None or isinstance(c.repair, str))
+    )
+
+
 def resolve_readiness(
     integ: Integration, raw: dict[str, object] | None, *, run_probe: bool
 ) -> ReadinessReport:
@@ -118,23 +147,7 @@ def resolve_readiness(
                 capabilities=_capabilities_from_baseline(integ, baseline_reason),
                 reason=baseline_reason,
             )
-        probe = integ.readiness
-        caps = (
-            evaluate_callback(integ.id, "readiness", lambda: probe(parsed))
-            if probe is not None
-            else _capabilities_from_baseline(integ, None)
-        )
-        if not isinstance(caps, tuple) or not all(
-            isinstance(c, CapabilityStatus)
-            and isinstance(c.token, str)
-            and isinstance(c.liveness, CapabilityLiveness)
-            and (c.reason is None or isinstance(c.reason, str))
-            and (c.repair is None or isinstance(c.repair, str))
-            for c in caps
-        ):
-            raise IntegrationCallbackError(
-                integ.id, "readiness", "expected capability reports"
-            )
+        caps = _probe_capabilities(integ, parsed)
     except (ConfigError, IntegrationCallbackError) as exc:
         return ReadinessReport(
             integ.id,

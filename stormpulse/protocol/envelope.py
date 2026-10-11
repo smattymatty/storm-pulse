@@ -48,6 +48,26 @@ _ENVELOPE_FIELDS = {"v", "type", "id", "ts", "agent_id", "payload"}
 _TYPE_QUOTE_MAX = 64
 
 
+def _message_type(raw_type: Any) -> MessageType:
+    """The catalogue's type for a frame's ``type``; the refusal quotes a bounded slice."""
+    try:
+        return MessageType(raw_type)
+    except ValueError:
+        raise ProtocolError(
+            f"Unknown message type: {raw_type!r}",
+            reason="unknown_type",
+            msg_type=raw_type[:_TYPE_QUOTE_MAX] if isinstance(raw_type, str) else None,
+        )
+
+
+def _required_str(data: dict[str, Any], key: str) -> str:
+    """An envelope field that must be a non-empty string, named in the refusal."""
+    value = data[key]
+    if not isinstance(value, str) or not value:
+        raise ProtocolError(f"{key} must be a non-empty string")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class Envelope:
     """The universal message envelope.
@@ -98,28 +118,10 @@ class Envelope:
             raise ProtocolError(f"Missing envelope fields: {missing}")
 
         v = check_version(data["v"])
-
-        raw_type = data["type"]
-        try:
-            msg_type = MessageType(raw_type)
-        except ValueError:
-            raise ProtocolError(
-                f"Unknown message type: {raw_type!r}",
-                reason="unknown_type",
-                msg_type=raw_type[:_TYPE_QUOTE_MAX]
-                if isinstance(raw_type, str)
-                else None,
-            )
-
+        msg_type = _message_type(data["type"])
         ts = _parse_timestamp(data["ts"])
-
-        message_id = data["id"]
-        if not isinstance(message_id, str) or not message_id:
-            raise ProtocolError("id must be a non-empty string")
-
-        agent_id = data["agent_id"]
-        if not isinstance(agent_id, str) or not agent_id:
-            raise ProtocolError("agent_id must be a non-empty string")
+        message_id = _required_str(data, "id")
+        agent_id = _required_str(data, "agent_id")
 
         payload = data["payload"]
         if not isinstance(payload, dict):
@@ -199,7 +201,7 @@ def make_error(agent_id: str, reason: str, msg_type: str | None) -> Envelope:
     return make(agent_id, ErrorPayload(error=reason, type=msg_type))
 
 
-def make_register(
+def make_register(  # skylos: ignore[SKY-C303] fifteen fields, each named at the call (CORE-011 d7); the one door that forces speaks
     agent_id: str,
     version: str,
     pulse_token: str,

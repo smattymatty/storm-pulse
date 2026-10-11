@@ -237,12 +237,8 @@ async def test_events_loop_ships_the_drained_batch_and_keeps_it_in_flight(
     assert buf.ack(frame["payload"]["batch_id"]) is True
 
 
-@pytest.mark.asyncio
-async def test_log_loop_ships_the_collected_batch_as_the_group_declares_it(
-    agent: Agent, shutdown: asyncio.Event, tmp_path: Path
-) -> None:
-    """A ``log.batch`` names the group and its parser, carries the parsed lines
-    and the positions, and is pending until the ack with its id arrives."""
+def _pulse_log_group(tmp_path: Path) -> tuple[Path, LogGroupConfig]:
+    """One stormpulse-format line on disk and the file group that tails it."""
     log = tmp_path / "pulse.log"
     log.write_text(
         json.dumps(
@@ -265,6 +261,16 @@ async def test_log_loop_ships_the_collected_batch_as_the_group_declares_it(
         ship_interval_seconds=10.0,
         max_lines_per_batch=50,
     )
+    return log, group
+
+
+@pytest.mark.asyncio
+async def test_log_loop_ships_the_collected_batch_as_the_group_declares_it(
+    agent: Agent, shutdown: asyncio.Event, tmp_path: Path
+) -> None:
+    """A ``log.batch`` names the group and its parser, carries the parsed lines
+    and the positions, and is pending until the ack with its id arrives."""
+    log, group = _pulse_log_group(tmp_path)
     store = LogPositionStore(tmp_path / "pos.db")
     agent.shippers["pulse"] = LogShipper(group, LogTailer(group, store))
     ws = AsyncMock()

@@ -22,8 +22,8 @@ def heartbeat_dict() -> dict[str, Any]:
         "v": SPEAKS[-1],
         "type": "heartbeat",
         "id": "550e8400-e29b-41d4-a716-446655440000",
-        "ts": "2026-02-21T12:00:00Z",
-        "agent_id": "vps-toronto-01",
+        "ts": "2026-02-21T12:00:00Z",  # skylos: ignore[SKY-L027] a fixture value repeated so each frame reads whole
+        "agent_id": "vps-toronto-01",  # skylos: ignore[SKY-L027] a fixture value repeated so each frame reads whole
         "payload": {},
     }
 
@@ -63,7 +63,7 @@ def command_request_dict() -> dict[str, Any]:
         "ts": "2026-02-21T12:00:00Z",
         "agent_id": "vps-toronto-01",
         "payload": {
-            "command": "git_pull",
+            "command": "git_pull",  # skylos: ignore[SKY-L027] a fixture value repeated so each frame reads whole
             "params": {},
             "hmac": "abc123",
             "nonce": "nonce-1",
@@ -125,26 +125,28 @@ def register_dict() -> dict[str, Any]:
     }
 
 
+_CONTAINERS: dict[Any, Callable[[tuple[Any, ...]], Any]] = {
+    list: lambda args: [_populated(args[0])],
+    dict: lambda args: {"k": _populated(args[1])},
+}
+_LEAVES: dict[Any, Any] = {bool: False, int: 7, float: 1.5, str: "s", Any: {"any": 1}}
+
+
 def _populated(annotation: Any) -> Any:
     """A fully populated value for a wire annotation: every optional present,
     a union taking its first non-null arm, every nested dataclass built."""
     origin, args = get_origin(annotation), get_args(annotation)
     if origin in (UnionType, Union):
         return _populated(next(a for a in args if a is not type(None)))
-    if origin is list:
-        return [_populated(args[0])]
-    if origin is dict:
-        return {"k": _populated(args[1])}
+    if origin in _CONTAINERS:
+        return _CONTAINERS[origin](args)
     if is_dataclass(annotation) and isinstance(annotation, type):
         hints = get_type_hints(annotation)
         return annotation(
             **{f.name: _populated(hints[f.name]) for f in fields(annotation)}
         )
-    if annotation is Any:
-        return {"any": 1}
-    if issubclass(annotation, StrEnum):
-        return next(iter(annotation))
-    return {bool: False, int: 7, float: 1.5, str: "s"}[annotation]
+    is_enum = annotation is not Any and issubclass(annotation, StrEnum)
+    return next(iter(annotation)) if is_enum else _LEAVES[annotation]
 
 
 @pytest.fixture

@@ -213,7 +213,7 @@ def test_events_batch_entry_lists_every_source_and_kind_the_agent_declares() -> 
         "ws",
     }
     for kinds in sources.values():
-        for fields_ in kinds.values():
+        for fields_ in kinds.values():  # skylos: ignore[SKY-P403] a walk over the declared catalogue, bounded by its size
             assert fields_ == sorted(fields_)
             assert not set(fields_) & ENVELOPE_FIELDS
     assert [name for name, entry in messages.items() if "sources" in entry] == [

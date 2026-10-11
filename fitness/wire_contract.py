@@ -218,23 +218,30 @@ def _diff_sources(at: str, declared: Any, live: dict[str, Any]) -> list[str]:
     for source in sorted(set(declared) | set(live)):
         listed = declared.get(source) if isinstance(declared.get(source), dict) else {}
         emitted = live.get(source) or {}
-        for kind in sorted(set(listed) | set(emitted)):
-            if kind not in emitted:
-                violations.append(
-                    f"{at}.{source}: listed kind {kind!r} is no longer declared; "
-                    f"{_REGENERATE}"
+        violations.extend(_diff_source_kinds(at, source, listed, emitted))
+    return violations
+
+
+def _diff_source_kinds(at: str, source: str, listed: Any, emitted: Any) -> list[str]:
+    """One source's kinds: listed but gone, declared but unlisted, or fields drifting."""
+    violations: list[str] = []
+    for kind in sorted(set(listed) | set(emitted)):
+        if kind not in emitted:
+            violations.append(
+                f"{at}.{source}: listed kind {kind!r} is no longer declared; "
+                f"{_REGENERATE}"
+            )
+        elif kind not in listed:
+            violations.append(
+                f"{at}.{source}: kind {kind!r} is declared but not listed; "
+                f"{_REGENERATE}"
+            )
+        elif listed[kind] != emitted[kind]:
+            violations.append(
+                _drift_line(
+                    f"{at}.{source}.{kind}", "fields", listed[kind], emitted[kind]
                 )
-            elif kind not in listed:
-                violations.append(
-                    f"{at}.{source}: kind {kind!r} is declared but not listed; "
-                    f"{_REGENERATE}"
-                )
-            elif listed[kind] != emitted[kind]:
-                violations.append(
-                    _drift_line(
-                        f"{at}.{source}.{kind}", "fields", listed[kind], emitted[kind]
-                    )
-                )
+            )
     return violations
 
 
@@ -329,7 +336,7 @@ def _unit_violations(messages: dict[str, Any]) -> list[str]:
         f"({', '.join('_' + u for u in sorted(_UNIT_WORDS))}) and is not a count; "
         f"rename it"
         for cls, field in _numeric_fields(messages)
-        if not (_carries_unit(field) or _is_count(field) or field in _VERSION_NAMES)
+        if not (_names_its_measure(field) or field in _VERSION_NAMES)
     ]
 
 
@@ -355,12 +362,11 @@ def _is_numeric(wire_type: Any) -> bool:
     return any(t in ("integer", "number") for t in types)
 
 
-def _carries_unit(field: str) -> bool:
-    return bool(set(field.split("_")) & _UNIT_WORDS)
-
-
-def _is_count(field: str) -> bool:
-    return any(field == c or field.endswith(f"_{c}") for c in _COUNT_NAMES)
+def _names_its_measure(field: str) -> bool:
+    """A unit word anywhere in the name, or a count name, bare or as a suffix."""
+    return bool(set(field.split("_")) & _UNIT_WORDS) or any(
+        field == c or field.endswith(f"_{c}") for c in _COUNT_NAMES
+    )
 
 
 def _diff_v1_digest(on_disk: dict[str, Any], live: dict[str, Any]) -> list[str]:

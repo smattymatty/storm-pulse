@@ -116,13 +116,10 @@ def test_types_distinguish_nullable_from_required() -> None:
     }
 
 
-def test_register_declares_fifteen_required_fields_and_its_two_nested_classes() -> None:
+def test_register_declares_fifteen_required_fields() -> None:
     """CORE-011 d7: the node's whole self-declaration, every field required,
-    ``unsealed_since`` the only nullable one, ``components`` typed by ``Component``
-    and each ``integrations`` value by ``IntegrationReport`` (d3: no key the
-    control plane reads by name is left undeclared)."""
-    entry = wire_contract_messages()["register"]
-    declared = entry["classes"]["RegisterPayload"]
+    ``unsealed_since`` the only nullable one, ``components`` an array."""
+    declared = wire_contract_messages()["register"]["classes"]["RegisterPayload"]
     assert len(declared) == 15
     assert [name for name, f in declared.items() if not f["required"]] == []
     assert [name for name, f in declared.items() if f["nullable"]] == ["unsealed_since"]
@@ -132,6 +129,13 @@ def test_register_declares_fifteen_required_fields_and_its_two_nested_classes() 
         "nullable": False,
         "required": True,
     }
+
+
+def test_register_declares_its_two_nested_classes() -> None:
+    """CORE-011 d7: ``components`` typed by ``Component`` and each ``integrations``
+    value by ``IntegrationReport`` (d3: no key the control plane reads by name is
+    left undeclared); the report is one declaration under two carriers."""
+    entry = wire_contract_messages()["register"]
     assert set(entry["classes"]) == {
         "RegisterPayload",
         "Component",

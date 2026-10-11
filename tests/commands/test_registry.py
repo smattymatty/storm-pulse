@@ -1,3 +1,4 @@
+# skylos: ignore[SKY-Q502] one test module per source module; the registry has this many seams
 """The command registry: its built-ins, lookup, ``build_registry`` and the two
 sealed shell hatches it declares.
 """

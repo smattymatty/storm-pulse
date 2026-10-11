@@ -26,6 +26,7 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.jobs import RollbackStatus
 from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
@@ -64,11 +65,9 @@ def make_provision_account_key_handler(
         )
         return None
 
-    # the account-key tier governs create capability. An Admin key
-    # is minted with create enabled (the website sends 'true'); a Read-Write /
-    # Read-Only key with 'false'. FAIL CLOSED: an absent or unrecognized signal
-    # yields a powerless key, never a root one, so deploy skew can never silently
-    # grant create on a read tier.
+    # The tier governs create: an Admin key is minted with create enabled (the
+    # control plane sends 'true'), Read-Write and Read-Only with 'false'. FAIL
+    # CLOSED: an absent or unrecognized signal yields a powerless key, never root.
     allow_create_bucket = _coerce_bool(params.get("allow_create_bucket"))
 
     async def handler(progress: ProgressCallback) -> JobOutcome:
@@ -169,7 +168,7 @@ async def run_provision_account_key(
             "can_create_bucket": allow_create_bucket,
             "step_completed": "account_key_create",
             "step_failed": None,
-            "rollback_status": "not_required",
+            "rollback_status": RollbackStatus.NOT_REQUIRED.value,
             "manual_cleanup_required": [],
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
@@ -190,7 +189,7 @@ def _failure(
         "can_create_bucket": True,
         "step_completed": None,
         "step_failed": "account_key_create",
-        "rollback_status": "not_required",
+        "rollback_status": RollbackStatus.NOT_REQUIRED.value,
         "manual_cleanup_required": [],
         "garage_stderr": stderr,
         "duration_seconds": _elapsed(started_at),

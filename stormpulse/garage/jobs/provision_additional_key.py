@@ -21,6 +21,7 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.jobs import RollbackStatus
 from stormpulse.garage.tiers import TIER_PERMS
 from stormpulse.protocol import FailureReason
 
@@ -131,7 +132,7 @@ async def run_provision_additional_key(
             state=state,
             stderr=f"key_tier must be one of {tuple(TIER_PERMS)}, got {key_tier!r}",
             started_at=started_at,
-            rollback_status="not_required",
+            rollback_status=RollbackStatus.NOT_REQUIRED,
             extras_extra={},
         )
 
@@ -147,7 +148,7 @@ async def run_provision_additional_key(
                 "[garage] admin_url and admin_token_file."
             ),
             started_at=started_at,
-            rollback_status="not_required",
+            rollback_status=RollbackStatus.NOT_REQUIRED,
             extras_extra={},
         )
 
@@ -169,7 +170,7 @@ async def run_provision_additional_key(
             state=state,
             stderr=err,
             started_at=started_at,
-            rollback_status="not_required",
+            rollback_status=RollbackStatus.NOT_REQUIRED,
             extras_extra={},
         )
     new_key_id = info.get("accessKeyId") or ""
@@ -183,7 +184,7 @@ async def run_provision_additional_key(
             state=state,
             stderr="CreateKey response missing accessKeyId",
             started_at=started_at,
-            rollback_status="partial",
+            rollback_status=RollbackStatus.PARTIAL,
             extras_extra={
                 "manual_cleanup_required": [
                     {"type": "key_unknown_id", "name": new_key_name},
@@ -255,7 +256,7 @@ async def run_provision_additional_key(
             "key_tier": key_tier,
             "step_completed": state.step_completed,
             "step_failed": None,
-            "rollback_status": "not_required",
+            "rollback_status": RollbackStatus.NOT_REQUIRED.value,
             "manual_cleanup_required": [],
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
@@ -265,7 +266,7 @@ async def run_provision_additional_key(
 
 @dataclass(frozen=True)
 class _RollbackResult:
-    status: str  # "complete" | "partial"
+    status: RollbackStatus
     manual_cleanup: list[dict[str, Any]]
 
 
@@ -304,7 +305,7 @@ async def _rollback(
             manual.extend(
                 _remaining_after_perm_halt(state, read=read, write=write, owner=owner)
             )
-            return _RollbackResult(status="partial", manual_cleanup=manual)
+            return _RollbackResult(status=RollbackStatus.PARTIAL, manual_cleanup=manual)
 
     # 2. Delete new key
     if state.new_key_id is not None:
@@ -316,9 +317,9 @@ async def _rollback(
         )
         if not ok:
             manual.append({"type": "key", "id": state.new_key_id})
-            return _RollbackResult(status="partial", manual_cleanup=manual)
+            return _RollbackResult(status=RollbackStatus.PARTIAL, manual_cleanup=manual)
 
-    return _RollbackResult(status="complete", manual_cleanup=[])
+    return _RollbackResult(status=RollbackStatus.COMPLETE, manual_cleanup=[])
 
 
 def _remaining_after_perm_halt(
@@ -349,7 +350,7 @@ def _failure(
     state: _AdditionalKeyState,
     stderr: str,
     started_at: float,
-    rollback_status: str,
+    rollback_status: RollbackStatus,
     extras_extra: dict[str, Any],
 ) -> JobOutcome:
     extras: dict[str, Any] = {
@@ -357,7 +358,7 @@ def _failure(
         "key_tier": state.key_tier,
         "step_completed": state.step_completed,
         "step_failed": step_failed,
-        "rollback_status": rollback_status,
+        "rollback_status": rollback_status.value,
         "manual_cleanup_required": [],
         "garage_stderr": stderr,
         "duration_seconds": _elapsed(started_at),
@@ -365,7 +366,7 @@ def _failure(
     extras.update(extras_extra)
     final_reason = (
         FailureReason.ROLLBACK_FAILED
-        if rollback_status == "partial"
+        if rollback_status == RollbackStatus.PARTIAL
         else failure_reason
     )
     return JobOutcome(

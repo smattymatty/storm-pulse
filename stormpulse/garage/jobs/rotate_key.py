@@ -23,6 +23,7 @@ from typing import Any
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.jobs import RollbackStatus
 from stormpulse.garage.tiers import TIER_PERMS
 from stormpulse.protocol import FailureReason
 
@@ -112,7 +113,7 @@ class _RotateState:
 
 @dataclass(frozen=True)
 class _RollbackResult:
-    status: str  # "complete" | "partial"
+    status: RollbackStatus
     manual_cleanup: list[dict[str, str]]
 
 
@@ -151,7 +152,7 @@ async def run_rotate_customer_key(
                 "[garage] admin_url and admin_token_file."
             ),
             started_at=started_at,
-            rollback_status="not_required",
+            rollback_status=RollbackStatus.NOT_REQUIRED,
             extras_extra={},
         )
 
@@ -170,7 +171,7 @@ async def run_rotate_customer_key(
             state=state,
             stderr=err,
             started_at=started_at,
-            rollback_status="not_required",
+            rollback_status=RollbackStatus.NOT_REQUIRED,
             extras_extra={},
         )
     new_key_id = info.get("accessKeyId") or ""
@@ -183,7 +184,7 @@ async def run_rotate_customer_key(
             state=state,
             stderr="CreateKey response missing accessKeyId",
             started_at=started_at,
-            rollback_status="partial",
+            rollback_status=RollbackStatus.PARTIAL,
             extras_extra={
                 "manual_cleanup_required": [
                     {"type": "key_unknown_id", "name": new_key_name},
@@ -278,7 +279,7 @@ async def run_rotate_customer_key(
             "new_key_name": state.new_key_name,
             "step_completed": state.step_completed,
             "step_failed": None,
-            "rollback_status": "not_required",
+            "rollback_status": RollbackStatus.NOT_REQUIRED.value,
             "manual_cleanup_required": [],
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
@@ -325,7 +326,7 @@ async def _rollback(
                     }
                 )
             manual.append({"type": "key", "id": state.new_key_id})
-            return _RollbackResult(status="partial", manual_cleanup=manual)
+            return _RollbackResult(status=RollbackStatus.PARTIAL, manual_cleanup=manual)
 
     # 2. Revoke permissions on the new key if granted
     if state.new_key_permissions_granted and state.new_key_id is not None:
@@ -348,7 +349,7 @@ async def _rollback(
                 }
             )
             manual.append({"type": "key", "id": state.new_key_id})
-            return _RollbackResult(status="partial", manual_cleanup=manual)
+            return _RollbackResult(status=RollbackStatus.PARTIAL, manual_cleanup=manual)
 
     # 3. Delete new key
     if state.new_key_id is not None:
@@ -360,9 +361,9 @@ async def _rollback(
         )
         if not ok:
             manual.append({"type": "key", "id": state.new_key_id})
-            return _RollbackResult(status="partial", manual_cleanup=manual)
+            return _RollbackResult(status=RollbackStatus.PARTIAL, manual_cleanup=manual)
 
-    return _RollbackResult(status="complete", manual_cleanup=[])
+    return _RollbackResult(status=RollbackStatus.COMPLETE, manual_cleanup=[])
 
 
 def _failure(
@@ -372,14 +373,14 @@ def _failure(
     state: _RotateState,
     stderr: str,
     started_at: float,
-    rollback_status: str,
+    rollback_status: RollbackStatus,
     extras_extra: dict[str, Any],
 ) -> JobOutcome:
     extras: dict[str, Any] = {
         "new_key_id": state.new_key_id,
         "step_completed": state.step_completed,
         "step_failed": step_failed,
-        "rollback_status": rollback_status,
+        "rollback_status": rollback_status.value,
         "manual_cleanup_required": [],
         "garage_stderr": stderr,
         "duration_seconds": _elapsed(started_at),
@@ -387,7 +388,7 @@ def _failure(
     extras.update(extras_extra)
     final_reason = (
         FailureReason.ROLLBACK_FAILED
-        if rollback_status == "partial"
+        if rollback_status == RollbackStatus.PARTIAL
         else failure_reason
     )
     return JobOutcome(

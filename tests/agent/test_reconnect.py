@@ -173,7 +173,7 @@ async def test_backoff_resets_after_stable_session(
 # ---------------------------------------------------------------------------
 
 
-class _RecordingTaskGroup:
+class _RecordingTaskGroup:  # skylos: ignore[SKY-Q702] a fake TaskGroup mirrors the real one's three methods; cohesion is the interface's, not ours
     """Stands in for ``asyncio.TaskGroup``: records what would run, runs nothing."""
 
     created: list[str] = []

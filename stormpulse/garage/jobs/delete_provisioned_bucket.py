@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.garage import admin_api
 from stormpulse.garage.config import GarageConfig
+from stormpulse.garage.jobs import RollbackStatus
 from stormpulse.protocol import FailureReason
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ async def run_delete_provisioned_bucket(
             "bucket_id": bucket_id[:16],
             "step_completed": "bucket_delete",
             "step_failed": None,
-            "rollback_status": "not_required",
+            "rollback_status": RollbackStatus.NOT_REQUIRED.value,
             "manual_cleanup_required": [],
             "garage_stderr": "",
             "duration_seconds": _elapsed(started_at),
@@ -171,7 +172,7 @@ def _already_gone(bucket_id: str, started_at: float) -> JobOutcome:
             "bucket_id": bucket_id[:16],
             "step_completed": "bucket_info",
             "step_failed": None,
-            "rollback_status": "not_required",
+            "rollback_status": RollbackStatus.NOT_REQUIRED.value,
             "manual_cleanup_required": [],
             "already_absent": True,
             "garage_stderr": "",
@@ -199,7 +200,7 @@ def _failure(
             "bucket_id": bucket_id[:16],
             "step_completed": step_completed,
             "step_failed": step_failed,
-            "rollback_status": "not_required",
+            "rollback_status": RollbackStatus.NOT_REQUIRED.value,
             "manual_cleanup_required": [],
             "garage_stderr": stderr,
             "duration_seconds": _elapsed(started_at),

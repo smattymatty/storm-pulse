@@ -26,7 +26,7 @@ import json
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, is_dataclass
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NoReturn, Protocol
 
 from stormpulse.sdk.readiness import Capability, CapabilityStatus
 from stormpulse.sdk.wizard import IntegrationWizard
@@ -146,27 +146,25 @@ class SdkCommandSpec:
     def __post_init__(self) -> None:
         if self.mode == "job":
             if self.handler is None:
-                raise ValueError(
-                    f"SdkCommandSpec {self.command!r}: mode 'job' requires a handler"
-                )
+                self._fail("mode 'job' requires a handler")
         elif self.handler is not None:
-            raise ValueError(
-                f"SdkCommandSpec {self.command!r}: mode {self.mode!r} must not carry a handler"
-            )
+            self._fail(f"mode {self.mode!r} must not carry a handler")
         if self.result is not None and not (
             self.mode == "job" and is_dataclass(self.result)
         ):
-            raise ValueError(
-                f"SdkCommandSpec {self.command!r}: result must be a dataclass on a "
+            self._fail(
+                "result must be a dataclass on a "
                 f"'job' command, got {self.result!r} on mode {self.mode!r}"
             )
         if self.mode == "subprocess" and (
             not self.command or not self.command[0].startswith("/")
         ):
-            raise ValueError(
-                f"SdkCommandSpec {self.command!r}: mode 'subprocess' requires an "
-                "absolute binary path as command[0]"
+            self._fail(
+                "mode 'subprocess' requires an absolute binary path as command[0]"
             )
+
+    def _fail(self, problem: str) -> NoReturn:
+        raise ValueError(f"SdkCommandSpec {self.command!r}: {problem}")
 
 
 @dataclass(frozen=True, slots=True)
