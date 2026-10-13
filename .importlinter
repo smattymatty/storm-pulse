@@ -13,8 +13,8 @@
 ;   Framework  (commands, init, auth,        - shared infrastructure; "|" -
 ;               integrations, wizard)          these modules do not import
 ;                                             each other.
-;   Foundation (protocol, config,           - wire-format + config contracts;
-;               events, sdk)                   "|" - independent.
+;   Foundation (protocol, config, events,   - wire-format + config contracts;
+;               sdk, bounded_read)             "|" - independent.
 ;
 ; Tests are outside the stormpulse package, so no ignore_imports needed.
 
@@ -28,4 +28,4 @@ layers =
     stormpulse.__main__ : stormpulse.cli : stormpulse.agent
     stormpulse.status | stormpulse.enroll | stormpulse.metrics | stormpulse.logging | stormpulse.caddy | stormpulse.garage | stormpulse.rclone | stormpulse.signoff | stormpulse.system_inventory
     stormpulse.auth | stormpulse.init | stormpulse.commands | stormpulse.integrations | stormpulse.wizard
-    stormpulse.config | stormpulse.protocol | stormpulse.events | stormpulse.sdk
+    stormpulse.config | stormpulse.protocol | stormpulse.events | stormpulse.sdk | stormpulse.bounded_read

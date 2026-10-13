@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from stormpulse.config import CommandSpec
+from stormpulse.events import EventSource
 from stormpulse.sdk import Capability, CapabilityStatus
 from stormpulse.sdk.investigate import CaseFile, Window
 
@@ -161,6 +162,9 @@ class Integration:
     command_gate: CommandGate | None = None
     # Release declarations share a public pin; locally loaded adapters do not.
     in_release_catalog: bool = True
+    # Optional event source fed from a spool (CORE-011 d6), set only by the
+    # external translator; the agent reads it while this Integration is live.
+    event_source: EventSource | None = None
 
 
 # Kept byte-identical to the pre-single-source ``garage_refresh`` entry so the

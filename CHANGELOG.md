@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Integrations feed their own events.** An integration declares an event
+  source and a spool directory; its emitter, in any language, writes JSON-lines
+  segments that the agent ships on `events.batch` and deletes after the ack.
+  `wire-contract.json` (schema 5) publishes the segment format under
+  `integration_events`. SDK API 3.
+
+### Changed
+
+- **An undeclared event field refuses the whole event.** It was stripped and the
+  event forwarded; now the event is dropped and counted in
+  `dropped_events.undeclared`, which counts events, not fields.
+
 ## [0.7.0] - 2026-10-10
 
 Protocol v2 strengthens Storm Pulse's messaging contract: signed commands,

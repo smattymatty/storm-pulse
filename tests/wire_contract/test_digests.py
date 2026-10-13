@@ -251,8 +251,9 @@ def test_artifact_top_level_keys_are_stable() -> None:
         "commands",
         "contract_digest",
         "vectors",
+        "integration_events",
     }
-    assert SCHEMA == 4
+    assert SCHEMA == 5
 
 
 # -- the v2 contract digest (CORE-011 decision 3) and what sits outside it ---

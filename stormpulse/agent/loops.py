@@ -1,4 +1,4 @@
-"""Periodic per-connection task bodies (heartbeat, metrics, integration state, log shipping) plus shared ``sleep_or_shutdown``."""
+"""Periodic per-connection task bodies (heartbeat, metrics, integration state, log shipping, event spools) plus shared ``sleep_or_shutdown``."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from websockets.asyncio.client import ClientConnection
 from websockets.exceptions import ConnectionClosed
 
 from stormpulse import events
+from stormpulse.agent.event_spool import SpoolFeeder
 from stormpulse.agent.integrations_runtime import (
     build_metrics_envelope,
     discard_push,
@@ -183,5 +184,20 @@ async def events_loop(agent: Agent, ws: ClientConnection) -> None:
             raise
         except Exception:
             logger.warning("Events loop error", exc_info=True)
+        if await sleep_or_shutdown(agent.shutdown, interval):
+            return
+
+
+async def event_spool_loop(agent: Agent, feeder: SpoolFeeder) -> None:
+    """Feed one Integration's spool into the event buffer on the events cadence:
+    the events loop ships what this reads, so a faster read only waits."""
+    interval = agent.config.metrics.push_interval_seconds
+    while not agent.shutdown.is_set():
+        try:
+            await asyncio.to_thread(feeder.tick)
+        except Exception:
+            logger.warning(
+                "Event spool error for %s", feeder.source.name, exc_info=True
+            )
         if await sleep_or_shutdown(agent.shutdown, interval):
             return

@@ -1,22 +1,21 @@
-"""Wide-event emission: one record per unit of agent work, buffered in-process
-and shipped as ``events.batch``, released on the dashboard's ack. A full buffer
-drops oldest and the next drain says so with ``dropped_events``.
-Foundation-tier: every layer imports it downward; plain dicts, no protocol types.
-Ids, never identities: bucket/key/command ids, no user ids, no IPs. One aggregate:
-an open ``walk`` folds routine calls into one ``walk_summary``; every failure
-keeps its own event. Rate and percentiles stay read-time, control-plane side.
-"""
+"""Wide events, buffered in-process, shipped as ``events.batch``, released on ack;
+overflow drops oldest and says so in ``dropped_events``. An undeclared field
+refuses the whole event. Foundation-tier: plain dicts, no protocol types. The
+agent's own sources carry ids, never identities (no user ids, no IPs); an
+integration's source carries what its declaration names. ``walk`` folds routine
+calls into one ``walk_summary``; failures keep their own event."""
 
 from __future__ import annotations
 
 import threading
 import time
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from contextlib import ContextDecorator
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 MAX_BUFFERED_EVENTS = 4096
@@ -35,23 +34,65 @@ _WALK_FIELDS = frozenset(
 _DROPPED_FIELDS = frozenset({"dropped", "undeclared"})
 _NACKED_FIELDS = frozenset({"batch_id", "dropped", "reason"})
 
-# (source, kind) -> the fields emit keeps. Declared at import by the
+# (source, kind) -> the fields an event may carry. Declared at import by the
 # module that emits, per item by walk(); the artifact publishes it.
 _REGISTRY: dict[tuple[str, str], frozenset[str]] = {}
+# The same, for sources an integration declared on this host. Kept apart so the
+# artifact publishes them outside the contract digest (per host, never pinned).
+_INTEGRATION_REGISTRY: dict[tuple[str, str], frozenset[str]] = {}
+# Resolved spool directory -> the integration source that feeds from it.
+_SPOOL_DIRS: dict[Path, str] = {}
+
+
+@dataclass(frozen=True, slots=True)
+class EventSource:
+    """One integration's declared source: its kinds and their fields, and the
+    spool directory its emitter writes segments into (``agent.event_spool``)."""
+
+    name: str
+    kinds: Mapping[str, frozenset[str]]
+    spool_dir: Path
 
 
 def declare_event(source: str, kind: str, fields: Iterable[str]) -> None:
     """Declare the shape of one (source, kind); a second call adds fields.
-    ``emit`` keeps those fields and counts the rest as ``undeclared`` beside
-    ``dropped``; the buffer stamps ``seq``, monotone per process (CORE-011 d6)."""
+    An event carrying any other field is refused whole and counted as
+    ``undeclared`` beside ``dropped``; the buffer stamps ``seq`` (CORE-011 d6)."""
     key = (source, kind)
     _REGISTRY[key] = _REGISTRY.get(key, frozenset()) | frozenset(fields)
 
 
+def declare_integration_source(source: EventSource) -> None:
+    """Admit an integration's declared source; a name or spool directory any
+    source already holds is refused, so none borrows another's shape or files."""
+    taken = {name for name, _kind in _REGISTRY} | {
+        name for name, _kind in _INTEGRATION_REGISTRY
+    }
+    if source.name in taken:
+        raise ValueError(f"event source {source.name!r} is already declared")
+    if source.spool_dir in _SPOOL_DIRS:
+        holder = _SPOOL_DIRS[source.spool_dir]
+        raise ValueError(f"spool {source.spool_dir} is already fed by {holder!r}")
+    _SPOOL_DIRS[source.spool_dir] = source.name
+    for kind, fields in source.kinds.items():
+        _INTEGRATION_REGISTRY[(source.name, kind)] = frozenset(fields)
+
+
 def declared_events() -> dict[str, dict[str, list[str]]]:
     """The registry as ``{source: {kind: [fields]}}``, sorted, for the artifact."""
+    return _as_artifact(_REGISTRY)
+
+
+def declared_integration_events() -> dict[str, dict[str, list[str]]]:
+    """This host's integration sources, shaped like ``declared_events``."""
+    return _as_artifact(_INTEGRATION_REGISTRY)
+
+
+def _as_artifact(
+    registry: Mapping[tuple[str, str], frozenset[str]],
+) -> dict[str, dict[str, list[str]]]:
     out: dict[str, dict[str, list[str]]] = {}
-    for (source, kind), fields in sorted(_REGISTRY.items()):
+    for (source, kind), fields in sorted(registry.items()):
         out.setdefault(source, {})[kind] = sorted(fields)
     return out
 
@@ -217,15 +258,40 @@ class EventBuffer:
         event["seq"] = self._seq
         return event
 
-    def append(self, event: dict[str, Any], *, undeclared: int = 0) -> None:
-        """Buffer one event, counting the fields emit refused for it."""
+    def append(self, event: dict[str, Any]) -> None:
+        """Buffer one event, dropping the oldest when full."""
+        self.extend([event])
+
+    def extend(self, batch: list[dict[str, Any]], *, refused: int = 0) -> range:
+        """Buffer *batch* in order under one lock, counting *refused* events as
+        ``undeclared``; returns the seqs stamped, contiguous by construction."""
         with self._lock:
-            self._stamp(event)
-            self._undeclared += undeclared
-            if len(self._buf) >= self._max:
-                self._buf.popleft()
-                self._dropped += 1
-            self._buf.append(event)
+            first = self._seq + 1
+            self._undeclared += refused
+            for event in batch:
+                self._stamp(event)
+                if len(self._buf) >= self._max:
+                    self._buf.popleft()
+                    self._dropped += 1
+                self._buf.append(event)
+            return range(first, self._seq + 1)
+
+    def refuse(self) -> None:
+        """Count one event refused for an undeclared shape (CORE-011 d6)."""
+        with self._lock:
+            self._undeclared += 1
+
+    def room(self) -> int:
+        """Events the buffer takes before it starts dropping the oldest."""
+        with self._lock:
+            return self._max - len(self._buf)
+
+    def holds_any(self, seqs: range) -> bool:
+        """Whether any event in *seqs* is still buffered or in flight, i.e.
+        not yet acked, nacked or dropped."""
+        with self._lock:
+            held = (e for batch in self._in_flight.values() for e in batch)
+            return any(e.get("seq") in seqs for e in (*self._buf, *held))
 
     def drain(
         self, batch_id: str, max_events: int = MAX_BATCH_EVENTS
@@ -235,7 +301,7 @@ class EventBuffer:
                 self._buf.appendleft(
                     self._stamp(
                         {
-                            "ts": _now_iso(),
+                            "ts": now_iso(),
                             "source": _SOURCE,
                             "kind": "dropped_events",
                             "dropped": self._dropped,
@@ -301,41 +367,48 @@ declare_event(_SOURCE, "dropped_events", _DROPPED_FIELDS)
 declare_event(_SOURCE, "events_nacked", _NACKED_FIELDS)
 
 
-def _now_iso() -> str:
+def now_iso() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def emit(kind: str, *, source: str, **fields: Any) -> None:
     """Record one wide event. Cheap, non-blocking, never touches the network.
 
-    ``None`` and empty-string fields are elided so events stay sparse; a
-    field the (source, kind) never declared is dropped and counted, so a
-    forbidden identifier cannot reach the wire; ``error`` and ``reason`` text
-    is capped at ``_MAX_ERROR_CHARS`` so a runaway stderr cannot bloat the wire.
-    """
-    event: dict[str, Any] = {
-        "ts": _now_iso(),
-        "source": source,
-        "kind": kind,
-    }
+    ``None`` and empty-string fields are elided; an event carrying a field its
+    (source, kind) never declared is refused whole and counted, so a forbidden
+    identifier cannot reach the wire; ``error`` and ``reason`` text is capped at
+    ``_MAX_ERROR_CHARS`` so stderr cannot bloat it."""
+    event: dict[str, Any] = {"ts": now_iso(), "source": source, "kind": kind}
     trigger = trigger_var.get()
     if trigger:
         event["trigger"] = trigger
     command_ref = fields.pop("command_ref", "") or command_ref_var.get()
     if command_ref:
         event["command_ref"] = command_ref
-    declared = _REGISTRY.get((source, kind), frozenset())
-    undeclared = 0
-    for key, value in fields.items():
+    if admit(event, fields):
+        _BUFFER.append(event)
+    else:
+        _BUFFER.refuse()
+
+
+def admit(event: dict[str, Any], fields: Mapping[str, Any]) -> bool:
+    """Copy *fields* into *event* if its (source, kind) declares every one;
+    ``False``, leaving the event to be refused, if any is undeclared."""
+    key = (event["source"], event["kind"])
+    declared = _REGISTRY.get(key)
+    if declared is None:
+        declared = _INTEGRATION_REGISTRY.get(key)
+    if declared is None:
+        return False
+    kept: dict[str, Any] = {}
+    for name, value in fields.items():
         if value is None or value == "":
             continue
-        if key not in declared:
-            undeclared += 1
-            continue
-        if key in _CAPPED_FIELDS:
-            value = str(value)[:_MAX_ERROR_CHARS]
-        event[key] = value
-    _BUFFER.append(event, undeclared=undeclared)
+        if name not in declared:
+            return False
+        kept[name] = str(value)[:_MAX_ERROR_CHARS] if name in _CAPPED_FIELDS else value
+    event.update(kept)
+    return True
 
 
 def buffer() -> EventBuffer:

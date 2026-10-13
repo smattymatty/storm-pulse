@@ -229,6 +229,20 @@ async def test_session_starts_the_loops_after_a_spoken_register_ok(
 
 
 @pytest.mark.asyncio
+async def test_session_starts_one_spool_loop_per_declared_source(
+    agent: Agent, recorded_tasks: list[str]
+) -> None:
+    from stormpulse.agent.reconnect import _run_session
+
+    agent.event_spools = {"a": MagicMock(), "b": MagicMock()}
+    ws = _ws_answering(
+        _register_ok({"protocol": SPEAKS[-1], "contract_digest": CONTRACT_DIGEST})
+    )
+    await _run_session(agent, ws, "wss://cp/ws/")
+    assert recorded_tasks.count("event_spool_loop") == 2
+
+
+@pytest.mark.asyncio
 async def test_session_sends_register_before_it_waits_for_the_answer(
     agent: Agent, recorded_tasks: list[str]
 ) -> None:

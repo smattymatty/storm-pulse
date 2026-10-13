@@ -29,9 +29,10 @@ from stormpulse.sdk import (
 from stormpulse.sdk.plan import MutationKind
 
 
-def test_sdk_api_is_two() -> None:
-    # 2 added the components hook (CORE-011 d7); a plan built against 1 still applies.
-    assert SDK_API == 2
+def test_sdk_api_is_three() -> None:
+    # 2 added the components hook (CORE-011 d7), 3 the event source (d6);
+    # a plan built against 1 still applies.
+    assert SDK_API == 3
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,7 @@ import ssl
 from stormpulse.agent import reconnect
 from stormpulse.agent.bootstrap import build_agent_dependencies
 from stormpulse.agent.cert_renew import cert_renew_loop
+from stormpulse.agent.event_spool import SpoolFeeder, spool_feeders
 from stormpulse.agent.identity import boot_id, started_at
 from stormpulse.agent.integrations_runtime import IntegrationRuntime
 from stormpulse.agent.log_batches import PendingBatches
@@ -74,6 +75,8 @@ class Agent:
         # CORE-005: one runtime per configured Integration, keyed by id. The
         # generic heir of the old garage_live/garage_state pair.
         self.integrations: dict[str, IntegrationRuntime] = deps.integrations
+        # Kept across sessions so a reconnect never re-reads a buffered segment.
+        self.event_spools: dict[str, SpoolFeeder] = spool_feeders(self.integrations)
         self.pending_batches = PendingBatches()
         # One JobManager per active connection. Recreated on reconnect;
         # jobs do not survive across connections.

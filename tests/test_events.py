@@ -102,33 +102,37 @@ class TestRegistry:  # skylos: ignore[SKY-Q702] a test class groups cases by sub
         buf.append({"kind": "b"})
         assert [e["seq"] for e in buf.drain("b2")] == [1, 2]
 
-    def test_an_undeclared_field_is_dropped_and_counted_on_the_next_drain(
+    def test_an_undeclared_field_refuses_the_whole_event_and_counts_it(
         self,
     ) -> None:
+        """CORE-011 d6: refused at the agent, never stripped and forwarded."""
         events.emit("ping", source="probe", n=1, user_ip="10.0.0.1")
-        first = _drain()
-        assert [e["kind"] for e in first] == ["dropped_events", "ping"]
-        assert "user_ip" not in first[1]
-        assert first[0]["undeclared"] == 1
-        assert first[0]["dropped"] == 0
+        (synthesized,) = _drain()
+        assert synthesized["kind"] == "dropped_events"
+        assert synthesized["undeclared"] == 1
+        assert synthesized["dropped"] == 0
         events.emit("ping", source="probe", n=2)
         assert [e["kind"] for e in _drain()] == ["ping"]  # the count was reset
 
-    def test_an_undeclared_kind_ships_bare_and_counts_every_field(self) -> None:
-        events.emit("nobody_declared_me", source="probe", a=1, b=2, c="")
-        synthesized, bare = _drain()
-        assert synthesized["undeclared"] == 2  # the empty field was elided, not counted
-        assert set(bare) == {"ts", "source", "kind", "seq"}
+    def test_an_empty_undeclared_field_is_elided_not_refused(self) -> None:
+        """Elision runs before the shape check, so an optional field left
+        ``None`` never costs a declared event now that refusal is whole."""
+        events.emit("ping", source="probe", n=1, user_ip=None, note="")
+        (shipped,) = _drain()
+        assert (shipped["kind"], shipped["n"]) == ("ping", 1)
+
+    def test_an_undeclared_kind_is_refused_even_without_fields(self) -> None:
+        events.emit("nobody_declared_me", source="probe", c="")
+        (synthesized,) = _drain()
+        assert synthesized["undeclared"] == 1
 
     def test_a_declaration_binds_to_its_source_not_to_the_kind(self) -> None:
         """Another module reusing a declared kind name declares nothing: its
-        fields are undeclared for its own source, dropped and counted, so one
-        declaration cannot be borrowed to carry an identifier."""
+        event is refused and counted, so one declaration cannot be borrowed
+        to carry an identifier."""
         events.emit("ping", source="someone_else", n=1)
-        synthesized, bare = _drain()
+        (synthesized,) = _drain()
         assert synthesized["undeclared"] == 1
-        assert "n" not in bare
-        assert (bare["source"], bare["kind"]) == ("someone_else", "ping")
 
     def test_command_ref_rides_without_a_declaration(self) -> None:
         events.emit("ping", source="probe", command_ref="pc-1")

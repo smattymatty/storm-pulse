@@ -58,10 +58,27 @@ acknowledgements cannot clear changes. Snapshot transmission continues without
 waiting for an ack, and outstanding receipts are bounded.
 
 Events are typed and sequenced. Every (source, kind) the agent emits is
-declared once with the fields it may carry; `emit` keeps those and drops the
-rest, and the buffer stamps `seq`, monotone per process. The next
-`events.batch` carries one `dropped_events` naming what was lost (`dropped`,
-buffer overflow; `undeclared`, fields refused). A batch the control plane
+declared once with the fields it may carry; an event carrying any other field
+is refused whole, never stripped, and the buffer stamps `seq`, monotone per
+process. The next `events.batch` carries one `dropped_events` naming what was
+lost (`dropped`, buffer overflow; `undeclared`, events refused).
+
+An integration can feed its own source. Its `SdkIntegration.event_source`
+declares the source name, each kind's fields and an absolute spool directory.
+The emitter, in any language, writes JSON-lines segments there (a
+`{"schema": 1}` header, then one event per line) to a dot-named temp file and
+renames it. The agent reads a segment only while its buffer has room, ships
+the events on `events.batch` like any source, and deletes the segment once
+every event it carried is acked, nacked or dropped. A restart re-reads what
+was not deleted, so carry your own record id as a declared field to dedupe.
+The spool must be a real directory owned by root or the agent, closed to
+others and writable by the agent (inside the unit's `ReadWritePaths`, such as
+`/opt/stormpulse/data`), fed by one source; otherwise the source is refused at
+boot. A record is at most 1 KiB. The emitter bounds its own spool (64 MiB,
+seven days, oldest first), since the agent reads only while the integration is
+live.
+
+A batch the control plane
 refuses comes back as `events.batch.nack` with a reason: the agent drops it
 (a malformed batch would be malformed again) and emits one `events_nacked`
 with the batch id, the count and the reason, capped at 500 characters.
@@ -265,7 +282,9 @@ none). The `events.batch` entry carries `sources`, `{source: {kind: [fields]}}` 
 from the event registry, so the control plane vendors what each source may
 send; Function 16 of `make check` fails on an `emit(` whose kind or field
 nobody declared, and the contract check fails when the file and the registry
-disagree.
+disagree. `integration_events`, outside both digests, publishes the spool
+segment format and this host's integration sources; the checked-in file lists
+none, since integrations are loaded per host.
 
 ## License
 

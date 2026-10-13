@@ -6,18 +6,17 @@ so a bad file can cost a re-read but never steer one.
 
 from __future__ import annotations
 
-import errno
 import json
 import os
 import re
-import stat
 import time
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TypeGuard
 
+from stormpulse.bounded_read import RefusedFile, read_bounded
+
 MAX_HINT_BYTES = 64 * 1024
-_READ_CAP = MAX_HINT_BYTES + 1
 MAX_HINT_AGE_SECONDS = 60.0
 MAX_HINT_SKEW_SECONDS = 5.0
 HINT_VERSION = 1
@@ -67,40 +66,14 @@ def read_hint(
     return _parse(raw, time.time() if now is None else now)
 
 
-def _open(path: str) -> int | HintRead:
-    try:
-        return os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
-    except OSError as exc:
-        if exc.errno == errno.ELOOP:
-            return _refuse(Refusal.SYMLINK, "hint file is a symlink")
-        return _refuse(Refusal.UNREADABLE, exc.strerror or str(exc))
-
-
 def _read_bounded(path: str, uid: int) -> bytes | HintRead:
     """The file's bytes past the first four checks, or the refusal."""
-    fd = _open(path)
-    if isinstance(fd, HintRead):
-        return fd
     try:
-        return _read_fd(fd, uid)
+        return read_bounded(path, MAX_HINT_BYTES, lambda st: st.st_uid == uid)
+    except RefusedFile as exc:
+        return _refuse(Refusal(exc.refusal), f"hint file {exc.detail}")
     except OSError as exc:
         return _refuse(Refusal.UNREADABLE, exc.strerror or str(exc))
-    finally:
-        os.close(fd)
-
-
-def _read_fd(fd: int, uid: int) -> bytes | HintRead:
-    st = os.fstat(fd)
-    if not stat.S_ISREG(st.st_mode):
-        return _refuse(Refusal.NOT_REGULAR, "hint file is not a regular file")
-    if st.st_uid != uid:
-        return _refuse(Refusal.FOREIGN_OWNER, f"hint file owned by uid {st.st_uid}")
-    # Read one byte past the cap: race-free, unlike trusting st_size.
-    with os.fdopen(fd, "rb", closefd=False) as fh:
-        raw = fh.read(_READ_CAP)  # skylos: ignore[SKY-P401] bounded by _READ_CAP
-    if len(raw) > MAX_HINT_BYTES:
-        return _refuse(Refusal.TOO_LARGE, f"hint file exceeds {MAX_HINT_BYTES} bytes")
-    return raw
 
 
 def _is_number(value: object) -> TypeGuard[int | float]:

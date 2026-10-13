@@ -28,6 +28,7 @@ from typing import Any
 
 from stormpulse.commands.jobs import JobHandler, JobOutcome, ProgressCallback
 from stormpulse.config import CommandSpec, ConfigError, ParamDef
+from stormpulse.events import EventSource
 from stormpulse.integrations import (
     Integration,
     register_integration,
@@ -40,6 +41,7 @@ from stormpulse.sdk import (
     SdkCommandHandler,
     SdkCommandSpec,
     SdkConfigError,
+    SdkEventSource,
     SdkIntegration,
     SdkParamDef,
     command_specs_digest,
@@ -117,6 +119,19 @@ def _translate(sdk: SdkIntegration, grant: SealedGrantV1) -> Integration:
             if sdk.components is not None
             else None
         ),
+        event_source=_event_source(sdk.event_source),
+    )
+
+
+def _event_source(sdk_source: SdkEventSource | None) -> EventSource | None:
+    """The declared source as data, under the adapter's activation grant; the
+    agent declares it only when it builds the live feeder (``event_spool``)."""
+    if sdk_source is None:
+        return None
+    return EventSource(
+        name=sdk_source.source,
+        kinds={kind: frozenset(f) for kind, f in sdk_source.kinds.items()},
+        spool_dir=Path(sdk_source.spool_dir),
     )
 
 

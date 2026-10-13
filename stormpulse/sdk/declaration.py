@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field, is_dataclass
@@ -206,6 +207,49 @@ class SdkComponent:
     digest: str
 
 
+_EVENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+# Stamped by the agent on every event; a declaration may not claim one.
+_EVENT_ENVELOPE = frozenset({"ts", "source", "kind", "seq", "trigger", "command_ref"})
+
+
+@dataclass(frozen=True, slots=True)
+class SdkEventSource:
+    """An event source an Integration feeds onto ``events.batch`` (CORE-011 d6).
+
+    ``kinds`` maps each kind to the only fields its events may carry; any other
+    field refuses the event at the agent. ``spool_dir``, absolute and normalised,
+    is where the emitter writes segments (``integration_events.segment``). Data
+    only, outside ``command_specs_digest``; the activation grant admits it."""
+
+    source: str
+    kinds: Mapping[str, tuple[str, ...]]
+    spool_dir: str
+
+    def __post_init__(self) -> None:
+        names = [self.source, *self.kinds]
+        names += [f for fields in self.kinds.values() for f in fields]
+        bad = [n for n in names if not _EVENT_NAME_RE.match(n)]
+        if bad:
+            self._fail(f"names must match {_EVENT_NAME_RE.pattern}: {bad}")
+        if not self.kinds:
+            self._fail("declares no kinds")
+        claimed = {
+            f for fields in self.kinds.values() for f in fields
+        } & _EVENT_ENVELOPE
+        if claimed:
+            self._fail(f"envelope fields are stamped by the agent: {sorted(claimed)}")
+        if not self.spool_dir.startswith("/"):
+            self._fail("spool_dir must be an absolute path")
+        parts = self.spool_dir.split("/")
+        if posixpath.normpath(self.spool_dir) != self.spool_dir or ".." in parts:
+            self._fail("spool_dir must be normalised, with no '..'")
+        if self.spool_dir == "/":
+            self._fail("spool_dir may not be the root directory")
+
+    def _fail(self, problem: str) -> NoReturn:
+        raise ValueError(f"SdkEventSource {self.source!r}: {problem}")
+
+
 @dataclass(frozen=True, slots=True)
 class SdkIntegration:
     """A declared external integration (CORE-007). Required core is ``id``,
@@ -235,6 +279,9 @@ class SdkIntegration:
     # d7), from its parsed config and latest state blob: read-only, no I/O,
     # outside the digest.
     components: Callable[[Any, object], tuple[SdkComponent, ...]] | None = None
+    # Optional event source (CORE-011 d6): static, so the artifact can publish
+    # it without a config; outside the digest; fed through its spool directory.
+    event_source: SdkEventSource | None = None
 
 
 def canonical_digest(payload: Any) -> str:

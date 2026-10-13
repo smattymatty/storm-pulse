@@ -13,10 +13,11 @@ import json
 from typing import Any
 
 import stormpulse.agent.integrations_manifest  # noqa: F401  (registers in-tree Integrations)
+from stormpulse.agent.event_spool import SEGMENT_FORMAT
 from stormpulse.auth import sign_envelope
 from stormpulse.commands.registry import COMMAND_REGISTRY
 from stormpulse.config import CommandSpec, ParamDef
-from stormpulse.events import declared_events
+from stormpulse.events import declared_events, declared_integration_events
 from stormpulse.garage.wire_shape import garage_wire_shape
 from stormpulse.integrations import integration_command_specs, registered_integrations
 from stormpulse.protocol import (
@@ -28,10 +29,10 @@ from stormpulse.protocol import (
 )
 from stormpulse.sdk.declaration import canonical_digest
 
-# Version of the ARTIFACT's envelope, not of the shape it carries: bumped only
-# when a top-level key changes (consumer-breaking), which the digest is not for.
-# 2: ``commands`` joined. 3: ``messages`` and ``contract_digest``. 4: ``vectors``.
-SCHEMA = 4
+# Version of the ARTIFACT's envelope, not its shape: bumped only when a top-level
+# key changes (consumer-breaking). 2: ``commands``. 3: ``messages`` and
+# ``contract_digest``. 4: ``vectors``. 5: ``integration_events``.
+SCHEMA = 5
 
 # Which top-level key the v1 digest covers, carried IN the artifact so a consumer
 # holding only the file can reproduce it. Deployed v1 agents compare this digest
@@ -166,6 +167,16 @@ def wire_contract_event_sources() -> dict[str, Any]:
     return declared_events()
 
 
+def wire_contract_integration_events() -> dict[str, Any]:
+    """The spool segment format an emitter writes, and this host's integration
+    sources shaped like ``messages.events.batch.sources``. Per host, so outside
+    both digests: the published file carries the format and no source."""
+    return {
+        "segment": copy.deepcopy(SEGMENT_FORMAT),
+        "sources": declared_integration_events(),
+    }
+
+
 # Golden MAC vectors (CORE-011 d4): two fixed command envelopes signed with a
 # published test key, so the control plane proves it signs the same bytes. Key is
 # the byte ramp 00..1f, nothing on any node; outside both digests (shape, not example).
@@ -260,6 +271,7 @@ def build_wire_contract() -> dict[str, Any]:
         "messages": wire_contract_messages(),
         "commands": wire_contract_commands(),
         "vectors": wire_contract_vectors(),
+        "integration_events": wire_contract_integration_events(),
     }
     contract["contract_digest"] = contract_digest(contract)
     return contract

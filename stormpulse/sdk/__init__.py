@@ -20,6 +20,7 @@ from stormpulse.sdk.declaration import (
     SdkComponent,
     SdkConfigError,
     SdkDeploySubject,
+    SdkEventSource,
     SdkIntegration,
     SdkJobHandler,
     SdkJobOutcome,
@@ -63,7 +64,8 @@ from stormpulse.sdk.readiness import (
 from stormpulse.sdk.wizard import IntegrationWizard
 
 # 2: ``SdkIntegration.components`` and ``SdkComponent`` (CORE-011 d7), additive.
-SDK_API: int = 2
+# 3: ``SdkIntegration.event_source`` and ``SdkEventSource`` (CORE-011 d6), additive.
+SDK_API: int = 3
 
 __all__ = [
     "SDK_API",
@@ -74,6 +76,7 @@ __all__ = [
     "SdkComponent",
     "SdkDeploySubject",
     "SdkConfigError",
+    "SdkEventSource",
     "SdkIntegration",
     "SdkJobHandler",
     "SdkJobOutcome",

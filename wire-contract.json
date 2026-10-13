@@ -2072,6 +2072,34 @@
   "contract_digest": "sha256:e7a84b451bf4fab852e1c4a33ecff02308d3aec85a5d25e990e7aae2085fe8b0",
   "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
+  "integration_events": {
+    "segment": {
+      "delete": "after every event it carried is acked, nacked or dropped",
+      "directory": "a real directory, owned by root or the agent, closed to others (no o+rwx), readable and writable by the agent (under a unit's ReadWritePaths), fed by one source; otherwise the source is refused at boot. A segment is owned by the agent, root or the directory's owner, or carries the directory's group (a setgid directory gives it)",
+      "emitter_bound": {
+        "max_age_seconds": 604800,
+        "max_spool_bytes": 67108864,
+        "rule": "the emitter deletes its oldest segments past either bound; the agent reads only while its integration is live and acks arrive, so this is the spool's only bound when they do not"
+      },
+      "encoding": "utf-8 JSON lines",
+      "header": {
+        "schema": 1
+      },
+      "max_bytes": 1048576,
+      "max_events": 500,
+      "max_record_bytes": 1024,
+      "name_pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.jsonl$",
+      "record": {
+        "fields": "the kind's declared fields at top level, scalar values only",
+        "kind": "string, a kind the source declares",
+        "ts": "string, optional, RFC 3339 UTC with Z; the agent stamps it when absent"
+      },
+      "refusals": "an unknown schema is refused whole, each of its events counted; an oversize, foreign-owned or irregular segment is refused whole and counted once; an event over max_record_bytes, with an undeclared kind or field, an envelope field or a non-scalar or non-finite value is refused; counts land in dropped_events.undeclared",
+      "schema": 1,
+      "write": "write a dot-named temp file in the spool directory, fsync, rename"
+    },
+    "sources": {}
+  },
   "integrations": {
     "garage": {
       "classes": {
@@ -3103,7 +3131,7 @@
       "root": "AckPayload"
     }
   },
-  "schema": 4,
+  "schema": 5,
   "vectors": {
     "command.request": {
       "envelope": {

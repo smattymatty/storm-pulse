@@ -188,6 +188,8 @@ async def _run_session(
             tg.create_task(loops.heartbeat_loop(agent, ws))
             tg.create_task(loops.metrics_loop(agent, ws))
             tg.create_task(loops.events_loop(agent, ws))
+            for feeder in agent.event_spools.values():
+                tg.create_task(loops.event_spool_loop(agent, feeder))
             tg.create_task(dispatch.receive_loop(agent, ws))
             # Per live Integration: a periodic state loop if it collects state.
             # caddy does not, so no loop spins up for it (CORE-005).
