@@ -106,18 +106,22 @@ def _settled_source(
 ) -> tuple[events.EventSource, os.stat_result]:
     """The source with its spool resolved once, past the directory checks."""
     if os.path.islink(declared.spool_dir):
-        raise SpoolRefused(f"spool {declared.spool_dir} is a symlink")
+        raise _refused(declared.spool_dir, "is a symlink")
     spool = Path(os.path.realpath(declared.spool_dir))
     st = os.lstat(spool)
     if not stat.S_ISDIR(st.st_mode):
-        raise SpoolRefused(f"spool {spool} is not a directory")
+        raise _refused(spool, "is not a directory")
     if st.st_mode & stat.S_IRWXO:
-        raise SpoolRefused(f"spool {spool} is open to others ({st.st_mode & 0o777:o})")
+        raise _refused(spool, f"is open to others ({st.st_mode & 0o777:o})")
     if st.st_uid not in (0, os.geteuid()):
-        raise SpoolRefused(f"spool {spool} is owned by uid {st.st_uid}")
+        raise _refused(spool, f"is owned by uid {st.st_uid}")
     if not os.access(spool, os.R_OK | os.W_OK | os.X_OK):
-        raise SpoolRefused(f"spool {spool} is not writable by the agent")
+        raise _refused(spool, "is not writable by the agent")
     return dataclasses.replace(declared, spool_dir=spool), st
+
+
+def _refused(spool: object, problem: str) -> SpoolRefused:
+    return SpoolRefused(f"spool {spool} {problem}")
 
 
 class SpoolFeeder:
@@ -177,17 +181,14 @@ class SpoolFeeder:
         except OSError as exc:
             logger.warning("event segment %s unreadable: %s", path.name, exc)
             return None
+        return self._parse(path.name, raw)
+
+    def _parse(self, name: str, raw: bytes) -> tuple[list[dict[str, Any]], int]:
         lines = [line for line in raw.split(b"\n") if line.strip()]
         records = lines[1:]
-        if not lines or _header(lines[0]) != SEGMENT_SCHEMA:
-            logger.warning("event segment %s refused: unknown schema", path.name)
-            return [], len(records)
-        if len(records) > MAX_SEGMENT_EVENTS:
-            logger.warning(
-                "event segment %s refused: over %d events",
-                path.name,
-                MAX_SEGMENT_EVENTS,
-            )
+        problem = _segment_problem(lines)
+        if problem is not None:
+            logger.warning("event segment %s refused: %s", name, problem)
             return [], len(records)
         admitted = [e for e in (self._event(r) for r in records) if e is not None]
         return admitted, len(records) - len(admitted)
@@ -197,13 +198,8 @@ class SpoolFeeder:
         return st.st_uid in trusted or st.st_gid == self._dir_gid
 
     def _event(self, line: bytes) -> dict[str, Any] | None:
-        if len(line) > MAX_RECORD_BYTES:
-            return None
-        try:
-            record = json.loads(line)
-        except ValueError:
-            return None
-        if not isinstance(record, dict):
+        record = _record(line)
+        if record is None:
             return None
         kind, ts = record.pop("kind", None), record.pop("ts", None)
         if not isinstance(kind, str) or not _valid_ts(ts):
@@ -247,9 +243,30 @@ def _scalar(value: object) -> bool:
     return isinstance(value, _SCALARS)
 
 
-def _header(line: bytes) -> object:
+def _record(line: bytes) -> dict[str, Any] | None:
+    if len(line) > MAX_RECORD_BYTES:
+        return None
+    try:
+        record = json.loads(line)
+    except ValueError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def _segment_problem(lines: list[bytes]) -> str | None:
+    """Why a segment is refused whole, or ``None`` to read its records."""
+    if not lines or not _header_ok(lines[0]):
+        return "unknown schema"
+    if len(lines) - 1 > MAX_SEGMENT_EVENTS:
+        return f"over {MAX_SEGMENT_EVENTS} events"
+    return None
+
+
+def _header_ok(line: bytes) -> bool:
+    """Schema 1 only as a JSON integer: ``true`` and ``1.0`` equal 1 in Python."""
     try:
         header = json.loads(line)
     except ValueError:
-        return None
-    return header.get("schema") if isinstance(header, dict) else None
+        return False
+    schema = header.get("schema") if isinstance(header, dict) else None
+    return type(schema) is int and schema == SEGMENT_SCHEMA

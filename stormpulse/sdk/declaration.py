@@ -226,25 +226,31 @@ class SdkEventSource:
     spool_dir: str
 
     def __post_init__(self) -> None:
-        names = [self.source, *self.kinds]
-        names += [f for fields in self.kinds.values() for f in fields]
+        problem = self._names_problem() or self._spool_problem()
+        if problem is not None:
+            self._fail(problem)
+
+    def _names_problem(self) -> str | None:
+        fields = [f for fields in self.kinds.values() for f in fields]
+        names = [self.source, *self.kinds, *fields]
         bad = [n for n in names if not _EVENT_NAME_RE.match(n)]
-        if bad:
-            self._fail(f"names must match {_EVENT_NAME_RE.pattern}: {bad}")
-        if not self.kinds:
-            self._fail("declares no kinds")
-        claimed = {
-            f for fields in self.kinds.values() for f in fields
-        } & _EVENT_ENVELOPE
-        if claimed:
-            self._fail(f"envelope fields are stamped by the agent: {sorted(claimed)}")
-        if not self.spool_dir.startswith("/"):
-            self._fail("spool_dir must be an absolute path")
-        parts = self.spool_dir.split("/")
-        if posixpath.normpath(self.spool_dir) != self.spool_dir or ".." in parts:
-            self._fail("spool_dir must be normalised, with no '..'")
-        if self.spool_dir == "/":
-            self._fail("spool_dir may not be the root directory")
+        claimed = sorted(set(fields) & _EVENT_ENVELOPE)
+        checks = (
+            (bad, f"names must match {_EVENT_NAME_RE.pattern}: {bad}"),
+            (not self.kinds, "declares no kinds"),
+            (claimed, f"envelope fields are stamped by the agent: {claimed}"),
+        )
+        return next((problem for hit, problem in checks if hit), None)
+
+    def _spool_problem(self) -> str | None:
+        path = self.spool_dir
+        unnormal = posixpath.normpath(path) != path or ".." in path.split("/")
+        checks = (
+            (not path.startswith("/"), "spool_dir must be an absolute path"),
+            (unnormal, "spool_dir must be normalised, with no '..'"),
+            (path == "/", "spool_dir may not be the root directory"),
+        )
+        return next((problem for hit, problem in checks if hit), None)
 
     def _fail(self, problem: str) -> NoReturn:
         raise ValueError(f"SdkEventSource {self.source!r}: {problem}")
