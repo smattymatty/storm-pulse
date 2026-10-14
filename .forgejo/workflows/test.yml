@@ -51,6 +51,9 @@ jobs:
         run: pip install --cache-dir /pip-cache "$(grep -o 'skylos==[0-9.]*' pyproject.toml)"
 
       - name: Quality scan, changed lines (skylos)
+        # The runner's dead-code grep overran skylos's 30 s default (9126bfa, twice); a time budget, not a rule.
+        env:
+          SKYLOS_GREP_BUDGET: "120"
         run: make VENV= BASE="$BASE" quality
 
   # Security + secrets + AI-defect + dependency gate (Skylos), its own signal. The
