@@ -38,12 +38,16 @@ def _build_pipx_argv(
 ) -> list[str]:
     """Compose the pipx invocation for the chosen source.
 
-    - ``git``: ``pipx install --force git+<URL>@<branch>``. Branch
-      defaults to ``main`` when ``branch`` is ``None``.
+    - ``git``: ``pipx install --force git+<URL>@<ref>``. The ref is the
+      release tag ``v<version>`` when a version is given, else ``branch``,
+      else ``main``. ``0.6.0`` and ``v0.6.0`` name the same tag.
     - ``pip``: ``pipx install --force <package>[==<version>]``.
     """
     if source == "git":
-        ref = branch or "main"
+        if version:
+            ref = "v" + version.removeprefix("v")
+        else:
+            ref = branch or "main"
         target = f"{GIT_URL}@{ref}"
     elif source == "pip":
         target = PACKAGE_NAME
@@ -59,8 +63,8 @@ def cmd_update(args: argparse.Namespace) -> None:
     if args.branch is not None and args.source != "git":
         logger.error("--branch is only valid with --source git")
         sys.exit(2)
-    if args.version is not None and args.source != "pip":
-        logger.error("--version is only valid with --source pip")
+    if args.branch is not None and args.version is not None:
+        logger.error("--branch and --version cannot be used together")
         sys.exit(2)
 
     if shutil.which("pipx") is None:

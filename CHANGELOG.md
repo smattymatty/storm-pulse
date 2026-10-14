@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   event forwarded; now the event is dropped and counted in
   `dropped_events.undeclared`, which counts events, not fields.
 
+### Fixed
+
+- `stormpulse update --version 0.6.0` installs release tag `v0.6.0` from git; it
+  exited 2 unless `--source pip`. This is the per-node rollback. `--branch` with
+  `--version` is refused.
+
 ## [0.7.0] - 2026-10-10
 
 Protocol v2 strengthens Storm Pulse's messaging contract: signed commands,

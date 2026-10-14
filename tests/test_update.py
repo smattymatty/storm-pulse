@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from stormpulse.cli import main
 from stormpulse.cli.update import GIT_URL, PACKAGE_NAME, _build_pipx_argv, cmd_update
 
 
@@ -35,6 +37,14 @@ class TestBuildPipxArgv:
         argv = _build_pipx_argv("git", "develop", None)
         assert argv == ["pipx", "install", "--force", f"{GIT_URL}@develop"]
 
+    def test_git_with_version_installs_release_tag(self) -> None:
+        argv = _build_pipx_argv("git", None, "0.6.0")
+        assert argv == ["pipx", "install", "--force", f"{GIT_URL}@v0.6.0"]
+
+    def test_git_with_v_prefixed_version_is_not_doubled(self) -> None:
+        argv = _build_pipx_argv("git", None, "v0.6.0")
+        assert argv == ["pipx", "install", "--force", f"{GIT_URL}@v0.6.0"]
+
     def test_pip_latest(self) -> None:
         argv = _build_pipx_argv("pip", None, None)
         assert argv == ["pipx", "install", "--force", PACKAGE_NAME]
@@ -57,13 +67,60 @@ class TestCmdUpdateFlagRejection:
         assert exc.value.code == 2
         assert "--branch is only valid with --source git" in caplog.text
 
-    def test_version_with_git_source_rejects(
+    def test_branch_with_version_rejects(  # skylos: ignore[SKY-A101] git-source --version now installs a tag; this refusal replaces it
         self, caplog: pytest.LogCaptureFixture
     ) -> None:
         with pytest.raises(SystemExit) as exc:
-            cmd_update(_ns(source="git", version="0.1.9"))
+            cmd_update(_ns(branch="main", version="0.6.0"))
         assert exc.value.code == 2
-        assert "--version is only valid with --source pip" in caplog.text
+        assert "--branch and --version cannot be used together" in caplog.text
+
+
+class TestCmdUpdateVersionRollback:
+    """``--version X`` on the default git source installs release tag ``vX``."""
+
+    @pytest.mark.parametrize("version", ["0.6.0", "v0.6.0"])
+    def test_version_with_git_source_installs_tag(self, version: str) -> None:
+        calls: list[list[str]] = []
+
+        def fake_run(argv: list[str], **kwargs: object) -> MagicMock:
+            calls.append(list(argv))
+            return MagicMock(returncode=0)
+
+        with patch("stormpulse.cli.update.shutil.which", return_value="/usr/bin/pipx"):
+            with patch("stormpulse.cli.update.subprocess.run", side_effect=fake_run):
+                cmd_update(_ns(version=version, restart=False))
+
+        assert calls == [["pipx", "install", "--force", f"{GIT_URL}@v0.6.0"]]
+
+    def test_branch_with_version_refuses_before_pipx_runs(self) -> None:
+        # pipx patched present: a dropped refusal must not reach an install.
+        with patch("stormpulse.cli.update.shutil.which", return_value="/usr/bin/pipx"):
+            with patch("stormpulse.cli.update.subprocess.run") as run:
+                with pytest.raises(SystemExit) as exc:
+                    cmd_update(_ns(branch="main", version="0.6.0", restart=False))
+        assert exc.value.code == 2
+        run.assert_not_called()
+
+    def test_cli_line_from_the_adr_installs_release_tag(self) -> None:
+        # The documented command line, parsed by the real argparser.
+        calls: list[list[str]] = []
+
+        def fake_run(argv: list[str], **kwargs: object) -> MagicMock:
+            calls.append(list(argv))
+            return MagicMock(returncode=0)
+
+        argv = ["stormpulse", "update", "--version", "0.6.0", "--no-restart"]
+        with patch.object(sys, "argv", argv):
+            with patch(
+                "stormpulse.cli.update.shutil.which", return_value="/usr/bin/pipx"
+            ):
+                with patch(
+                    "stormpulse.cli.update.subprocess.run", side_effect=fake_run
+                ):
+                    main()
+
+        assert calls == [["pipx", "install", "--force", f"{GIT_URL}@v0.6.0"]]
 
 
 class TestCmdUpdatePipxMissing:

@@ -128,17 +128,17 @@ def main() -> None:
         "--source",
         choices=["git", "pip"],
         default="git",
-        help="install source: git (default, tracks latest fixes) or pip (pypi)",
+        help="install source: git (default) or pip (pypi)",
     )
     update_parser.add_argument(
         "--branch",
         default=None,
-        help="git branch to install (only with --source git; default: main)",
+        help="git branch or ref to install (only with --source git; default: main)",
     )
     update_parser.add_argument(
         "--version",
         default=None,
-        help="pypi version to install (only with --source pip; default: latest)",
+        help="release to install, e.g. 0.6.0 (git: tag v0.6.0; pip: ==0.6.0)",
     )
     restart_group = update_parser.add_mutually_exclusive_group()
     restart_group.add_argument(
