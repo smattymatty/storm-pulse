@@ -142,4 +142,7 @@ jobs:
         run: pip install --cache-dir /pip-cache "$(grep -o 'skylos==[0-9.]*' pyproject.toml)"
 
       - name: Dead-code scan (skylos)
+        # Same overrun as the quality scan's grep (c595fb7 covered only that step).
+        env:
+          SKYLOS_GREP_BUDGET: "120"
         run: make VENV= deadcode
