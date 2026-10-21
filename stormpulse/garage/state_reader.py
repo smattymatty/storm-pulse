@@ -209,14 +209,20 @@ class GarageStateReader:
 
     def read_buckets(self, config: GarageConfig, ids: list[str]) -> list[GarageBucket]:
         """Targeted read of *ids*, absorbed into the cache by id (a no-op before
-        the first sweep); known ids keep their place, new ids append."""
-        buckets = state.read_buckets_by_id(config, ids)
+        the first sweep); known ids keep their place, new ids append. An id Garage
+        answers 404 for leaves now, not at the next diff: its usage is gone."""
+        gone: list[str] = []
+        buckets = state.read_buckets_by_id(config, ids, gone)
         with self._lock:
             upserts = [(b.id, b) for b in buckets if b.id]
             if self._buckets is not None:
                 self._buckets.update(upserts)
+                dropped = [i for i in gone if self._buckets.pop(i, None) is not None]
+                events.record_dropped(len(dropped))
             if self._absorbed is not None:
                 self._absorbed.update(upserts)
+                for i in gone:
+                    self._absorbed.pop(i, None)
         return buckets
 
     def _take_hint(self, config: GarageConfig) -> None:

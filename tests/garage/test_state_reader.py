@@ -370,6 +370,30 @@ def test_read_affected_feeds_the_shared_reader() -> None:
     assert hex_id(5) in {b.id for b in state.buckets}
 
 
+def test_targeted_read_of_a_deleted_bucket_drops_it_now() -> None:
+    # A delete over S3: Garage's definite 404 takes the bucket's usage out of the
+    # next push, not the next membership diff a minute later.
+    reader = GarageStateReader(clock=Clock())
+    with patched() as m:
+        reader.collect(reader_config())
+        m["get_info"].side_effect = lambda **kw: (None, "HTTP 404: NoSuchBucket")
+        assert reader.read_buckets(reader_config(), [FULL_ID]) == []
+        state = reader.collect(reader_config())  # non-sweep: served from the cache
+    assert state is not None
+    assert state.buckets == []
+
+
+def test_targeted_read_that_times_out_keeps_the_bucket() -> None:
+    reader = GarageStateReader(clock=Clock())
+    with patched() as m:
+        reader.collect(reader_config())
+        m["get_info"].side_effect = lambda **kw: (None, "timed out")
+        reader.read_buckets(reader_config(), [FULL_ID])
+        state = reader.collect(reader_config())
+    assert state is not None
+    assert [b.id for b in state.buckets] == [FULL_ID]
+
+
 def test_targeted_read_before_any_sweep_is_dropped() -> None:
     reader = GarageStateReader(clock=Clock())
     with patched() as m:

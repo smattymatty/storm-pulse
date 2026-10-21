@@ -251,12 +251,11 @@ def _bucket_from_admin_info(info: dict[str, Any]) -> GarageBucket:
 
 @_garage_walk
 def read_buckets_by_id(
-    config: GarageConfig, bucket_ids: Iterable[str]
+    config: GarageConfig, bucket_ids: Iterable[str], gone: list[str] | None = None
 ) -> list[GarageBucket]:
     """Targeted ``GetBucketInfo`` per id, each stamped ``read_at`` as it returns; a
-    failed read (incl. a delete's 404) is skipped and logged, never fabricated.
-    Callers merge upsert-only, so a removal rides the membership diff or the full
-    walk, never a partial-manifest deletion."""
+    failed read is skipped and logged, never fabricated. A definite 404 goes into
+    *gone* when given; a timeout or 5xx never does, so the cache keeps that bucket."""
     admin_url, admin_token = config.admin_url, config.admin_token
     if not (admin_url and admin_token):
         return []
@@ -268,6 +267,9 @@ def read_buckets_by_id(
             bucket_ref=bucket_id,
         )
         if info is None:
+            if gone is not None and err.startswith("HTTP 404"):
+                gone.append(bucket_id)
+                continue
             logger.warning(
                 "GetBucketInfo failed for %s; skipping this bucket: %s",
                 bucket_id,
