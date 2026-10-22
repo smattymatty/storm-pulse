@@ -45,11 +45,20 @@ def _isolate() -> object:
         del sys.modules[name]
 
 
-def _adapter_source(integration_id: str, *, raise_on_import: bool = False) -> str:
+def _adapter_source(
+    integration_id: str, *, raise_on_import: bool = False, unmet: str | None = None
+) -> str:
     if raise_on_import:
         return "raise RuntimeError('boom at import')\n"
+    readiness = (
+        f"    readiness=lambda cfg: (CapabilityStatus('{integration_id}.live.v1', "
+        f"CapabilityLiveness.UNMET, reason='{unmet}'),),\n"
+        if unmet is not None
+        else ""
+    )
     return (
         "from stormpulse.sdk import SdkIntegration, SdkCommandSpec, SdkParamDef, SdkJobOutcome, SdkComponent\n"
+        "from stormpulse.sdk import CapabilityLiveness, CapabilityStatus\n"
         "\n"
         "async def _do(progress):\n"
         "    await progress('starting', 0, 1, 'go')\n"
@@ -67,6 +76,7 @@ def _adapter_source(integration_id: str, *, raise_on_import: bool = False) -> st
         "    enabled=lambda cfg: True,\n"
         "    specs=_specs,\n"
         f"    components=lambda cfg: (SdkComponent('{integration_id}-daemon', '1.0.0', ''),),\n"
+        f"{readiness}"
         ")\n"
     )
 
@@ -99,12 +109,13 @@ def _install_and_seal(
     command_specs_digest_value: str | None = None,
     raise_on_import: bool = False,
     sdk_api: int | None = None,
+    unmet: str | None = None,
 ) -> str:
     pkg = tmp_path / f"src-{integration_id}"
     (pkg / integration_id).mkdir(parents=True)
     (pkg / integration_id / "__init__.py").write_bytes(b"")
     (pkg / integration_id / "integration.py").write_text(
-        _adapter_source(integration_id, raise_on_import=raise_on_import)
+        _adapter_source(integration_id, raise_on_import=raise_on_import, unmet=unmet)
     )
 
     caps = ", ".join(f'"{c}"' for c in capabilities)
@@ -181,6 +192,32 @@ def test_loads_translates_and_registers_with_commands(tmp_path: Path) -> None:
     # The SDK hook takes config alone; the host calls it with (config, state).
     assert integ.components is not None
     assert integ.components({}, None) == (SdkComponent("advalid-daemon", "1.0.0", ""),)
+
+
+def test_doctor_sees_a_sealed_adapter_and_fails_on_its_unmet_capability(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 2026-10-22: doctor never loaded sealed adapters, so a broken one read as exit 0
+    import argparse
+
+    from stormpulse.cli import integration as cli_integ
+
+    private, fp = keypair()
+    state = state_dir(tmp_path)
+    approve(state, tmp_path, private)
+    _install_and_seal(
+        tmp_path, state, private, fp, integration_id="addoc", unmet="no guard"
+    )
+
+    args = argparse.Namespace(
+        integration_command="doctor", integration_id="addoc", recover=False, json=True
+    )
+    code = cli_integ.run(
+        args, state_dir=state, agent_id=_AGENT, integrations_config={"addoc": {}}
+    )
+    readiness = json.loads(capsys.readouterr().out)["result"]["readiness"]
+    assert readiness["addoc"]["capabilities"][0]["reason"] == "no guard"
+    assert code == 4
 
 
 def test_adapter_honest_about_sdk_two_installs_seals_and_loads(tmp_path: Path) -> None:

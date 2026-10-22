@@ -309,12 +309,17 @@ def _doctor(
     """Diagnose installed P1 package integrity AND report the P2 readiness graph,
     plus any interrupted wizard apply. With --recover, restore the pre-apply state
     from the durable journal. Exit is the most severe of the two: 5 for a P1 package
-    error, 4 for an enabled-but-not-ready integration, else 0."""
+    error, 4 for an enabled integration that is not ready or reports a capability
+    that is not live, else 0. Sealed external adapters load exactly as boot loads them."""
     import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
+    from stormpulse.agent.external_adapters import load_and_register_external
     from stormpulse.integrations.readiness import readiness_failed, resolve_all
+    from stormpulse.sdk import CapabilityLiveness
     from stormpulse.wizard import read_pending, recover
 
+    # Scan before importing: an import as root can write __pycache__ into the tree.
     findings = doctor.doctor_packages(state_dir, args.integration_id)
+    load_and_register_external(state_dir)
     reports = resolve_all(integrations_config, run_probe=True)
     if args.integration_id is not None:
         reports = {k: v for k, v in reports.items() if k == args.integration_id}
@@ -324,7 +329,15 @@ def _doctor(
     _emit_doctor(args, findings, reports, pending, recovery)
 
     p1_exit = 5 if any(f.severity is Severity.ERROR for f in findings) else 0
-    readiness_exit = 4 if any(readiness_failed(r) for r in reports.values()) else 0
+    # A READY integration may still report an unmet capability (I8/C4); doctor fails on it.
+    unmet = any(
+        c.liveness is CapabilityLiveness.UNMET
+        for r in reports.values()
+        for c in r.capabilities
+    )
+    readiness_exit = (
+        4 if unmet or any(readiness_failed(r) for r in reports.values()) else 0
+    )
     return max(p1_exit, readiness_exit)
 
 
