@@ -57,6 +57,7 @@ def test_types_report_json_types_and_walk_nested_classes() -> None:
     # Every real mount, optional so an older agent's payload still decodes.
     assert metrics["disks"] == {"type": "array", "nullable": True, "required": False}
     assert classes["DiskInfo"]["total_bytes"]["type"] == "integer"
+    assert classes["DiskInfo"]["device"]["required"] is True
 
 
 def test_types_emit_a_union_as_a_sorted_list() -> None:

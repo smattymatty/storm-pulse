@@ -57,8 +57,13 @@ class ContainerInfo(WirePayload):
 
 @dataclass(frozen=True, slots=True)
 class DiskInfo(WirePayload):
-    """One real mounted filesystem: where it is, what it is, its bytes."""
+    """One real mounted filesystem: where it is, what it is, its bytes.
 
+    ZFS datasets of one pool share its free space, so each reports the pool's
+    free bytes in ``total_bytes``; ``device`` (``pool/dataset``) is how to group them.
+    """
+
+    device: str
     mount: str
     fstype: str
     used_bytes: int

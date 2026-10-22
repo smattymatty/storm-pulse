@@ -370,22 +370,23 @@ def test_disks_keep_a_zfs_pool_and_drop_the_noise(mock_psutil: MagicMock) -> Non
     mock_psutil.disk_usage.side_effect = usage
     disks = _collect_disks()
     mock_psutil.disk_partitions.assert_called_once_with(all=True)
-    assert [(d.mount, d.fstype, d.used_bytes, d.total_bytes) for d in disks] == [
-        ("/", "ext4", 4, 58),
-        ("/home/storm/garage/var/data", "zfs", 1, 184),
+    assert [
+        (d.device, d.mount, d.fstype, d.used_bytes, d.total_bytes) for d in disks
+    ] == [
+        ("/dev/md0", "/", "ext4", 4, 58),
+        ("tank/garage-data", "/home/storm/garage/var/data", "zfs", 1, 184),
     ]
 
 
 @patch("stormpulse.metrics._collect_disks")
-@patch("stormpulse.metrics._collect_containers", return_value=[])
-@patch("stormpulse.metrics.os.getloadavg", return_value=(0.75, 0.50, 0.25))
-@patch("stormpulse.metrics.time.time", return_value=1740186400.0)
+@patch("stormpulse.metrics._collect_containers", new=MagicMock(return_value=[]))
+@patch(
+    "stormpulse.metrics.os.getloadavg", new=MagicMock(return_value=(0.75, 0.50, 0.25))
+)
+@patch("stormpulse.metrics.time.time", new=MagicMock(return_value=1740186400.0))
 @patch("stormpulse.metrics.psutil")
 def test_collect_metrics_carries_the_disks_and_keeps_root_in_disk_fields(
     mock_psutil: MagicMock,
-    mock_time: MagicMock,
-    mock_loadavg: MagicMock,
-    mock_containers: MagicMock,
     mock_disks: MagicMock,
     config: Config,
 ) -> None:
@@ -395,7 +396,11 @@ def test_collect_metrics_carries_the_disks_and_keeps_root_in_disk_fields(
     mock_psutil.disk_usage.return_value = vals["disk_usage"]
     mock_psutil.boot_time.return_value = vals["boot_time"]
     pool = DiskInfo(
-        mount="/home/storm/garage/var/data", fstype="zfs", used_bytes=1, total_bytes=2
+        device="tank/garage-data",
+        mount="/home/storm/garage/var/data",
+        fstype="zfs",
+        used_bytes=1,
+        total_bytes=2,
     )
     mock_disks.return_value = [pool]
 

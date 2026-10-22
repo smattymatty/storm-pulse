@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   segments that the agent ships on `events.batch` and deletes after the ack.
   `wire-contract.json` (schema 5) publishes the segment format under
   `integration_events`. SDK API 3.
+- **Metrics report every real mount.** `disks` lists each mounted ext4, xfs,
+  btrfs, zfs or f2fs filesystem once per device, `/boot*` skipped, with its
+  `device`, `mount`, `fstype`, `used_bytes` and `total_bytes`. ZFS datasets of
+  one pool each count the pool's free bytes in `total_bytes`; group them by the
+  pool in `device` before summing. The `disk_*` fields still describe `/`.
 
 ### Changed
 

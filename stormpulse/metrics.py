@@ -121,6 +121,7 @@ def _collect_disks() -> list[DiskInfo]:
         seen.add(part.device)
         disks.append(
             DiskInfo(
+                device=part.device,
                 mount=part.mountpoint,
                 fstype=part.fstype,
                 used_bytes=usage.used,

@@ -2069,7 +2069,7 @@
       "result": null
     }
   },
-  "contract_digest": "sha256:09474bef1b932ea899e951533282bf6663dd23c0f85fdac1941c7b2905279b5c",
+  "contract_digest": "sha256:3cfabb3c8e9227214355c9362a1629da585ea2a9377d4799a139f2748d9b446d",
   "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
   "integration_events": {
@@ -2823,6 +2823,11 @@
           }
         },
         "DiskInfo": {
+          "device": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
           "fstype": {
             "nullable": false,
             "required": true,
