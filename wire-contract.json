@@ -2069,7 +2069,7 @@
       "result": null
     }
   },
-  "contract_digest": "sha256:e7a84b451bf4fab852e1c4a33ecff02308d3aec85a5d25e990e7aae2085fe8b0",
+  "contract_digest": "sha256:09474bef1b932ea899e951533282bf6663dd23c0f85fdac1941c7b2905279b5c",
   "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
   "integration_events": {
@@ -2822,6 +2822,28 @@
             "type": "string"
           }
         },
+        "DiskInfo": {
+          "fstype": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "mount": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "total_bytes": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          },
+          "used_bytes": {
+            "nullable": false,
+            "required": true,
+            "type": "integer"
+          }
+        },
         "IntegrationReport": {
           "changed_ids": {
             "nullable": false,
@@ -2894,6 +2916,11 @@
             "nullable": false,
             "required": true,
             "type": "number"
+          },
+          "disks": {
+            "nullable": true,
+            "required": false,
+            "type": "array"
           },
           "integrations": {
             "nullable": true,

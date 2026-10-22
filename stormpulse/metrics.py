@@ -12,7 +12,7 @@ from pathlib import Path
 import psutil
 
 from stormpulse.config import Config
-from stormpulse.protocol import ContainerInfo, MetricsPayload
+from stormpulse.protocol import ContainerInfo, DiskInfo, MetricsPayload
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,38 @@ def _collect_containers(compose_file: Path) -> list[ContainerInfo]:
     return _parse_container_objects(objects)
 
 
+# Real filesystems only. psutil's default list drops "nodev" types, and ZFS
+# registers as nodev (montreal-1, 2026-10-21), so every mount is read and filtered here.
+DISK_FSTYPES = frozenset({"ext2", "ext3", "ext4", "xfs", "btrfs", "zfs", "f2fs"})
+
+
+def _collect_disks() -> list[DiskInfo]:
+    """Every real mounted filesystem once per device, ``/boot*`` and unreadable mounts skipped."""
+    disks: list[DiskInfo] = []
+    seen: set[str] = set()
+    for part in psutil.disk_partitions(all=True):
+        if (
+            part.fstype not in DISK_FSTYPES
+            or part.device in seen
+            or part.mountpoint.startswith("/boot")
+        ):
+            continue
+        try:
+            usage = psutil.disk_usage(part.mountpoint)
+        except OSError:
+            continue
+        seen.add(part.device)
+        disks.append(
+            DiskInfo(
+                mount=part.mountpoint,
+                fstype=part.fstype,
+                used_bytes=usage.used,
+                total_bytes=usage.total,
+            )
+        )
+    return disks
+
+
 def collect_metrics(config: Config) -> MetricsPayload:
     """Collect current system metrics.
 
@@ -126,6 +158,7 @@ def collect_metrics(config: Config) -> MetricsPayload:
         load_avg_5m=load5,
         uptime_seconds=uptime,
         containers=containers,
+        disks=_collect_disks(),
     )
 
 

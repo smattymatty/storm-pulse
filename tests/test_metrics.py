@@ -20,7 +20,13 @@ from stormpulse.config import (
     StorageConfig,
     TlsConfig,
 )
-from stormpulse.metrics import _collect_containers, collect_metrics, prime_cpu_percent
+from stormpulse.metrics import (
+    _collect_containers,
+    _collect_disks,
+    collect_metrics,
+    prime_cpu_percent,
+)
+from stormpulse.protocol import DiskInfo
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -325,3 +331,75 @@ def test_collect_containers_lowercase_keys(mock_run: MagicMock) -> None:
 def test_prime_cpu_percent(mock_cpu: MagicMock) -> None:
     prime_cpu_percent()
     mock_cpu.assert_called_once_with(interval=None)
+
+
+# ---------------------------------------------------------------------------
+# Disks: every real mount, the storage pool included
+# ---------------------------------------------------------------------------
+
+
+def _part(device: str, mountpoint: str, fstype: str) -> MagicMock:
+    return MagicMock(device=device, mountpoint=mountpoint, fstype=fstype)
+
+
+@patch("stormpulse.metrics.psutil")
+def test_disks_keep_a_zfs_pool_and_drop_the_noise(mock_psutil: MagicMock) -> None:
+    # montreal-1's shape: ZFS is "nodev", so psutil's default list would hide the pool.
+    mock_psutil.disk_partitions.return_value = [
+        _part("/dev/md0", "/", "ext4"),
+        _part("/dev/sda1", "/boot/efi", "vfat"),
+        _part("/dev/md1", "/boot", "ext4"),
+        _part("tmpfs", "/run", "tmpfs"),
+        _part("overlay", "/var/lib/docker/overlay2/x/merged", "overlay"),
+        _part("tank/garage-data", "/home/storm/garage/var/data", "zfs"),
+        _part("/dev/md0", "/snap/bind", "ext4"),
+        _part("meta/gone", "/home/storm/garage/var/meta", "zfs"),
+    ]
+    sizes = {
+        "/": (4, 58),
+        "/snap/bind": (4, 58),
+        "/home/storm/garage/var/data": (1, 184),
+    }
+
+    def usage(mount: str) -> MagicMock:
+        if mount not in sizes:
+            raise PermissionError(mount)
+        used, total = sizes[mount]
+        return MagicMock(used=used, total=total)
+
+    mock_psutil.disk_usage.side_effect = usage
+    disks = _collect_disks()
+    mock_psutil.disk_partitions.assert_called_once_with(all=True)
+    assert [(d.mount, d.fstype, d.used_bytes, d.total_bytes) for d in disks] == [
+        ("/", "ext4", 4, 58),
+        ("/home/storm/garage/var/data", "zfs", 1, 184),
+    ]
+
+
+@patch("stormpulse.metrics._collect_disks")
+@patch("stormpulse.metrics._collect_containers", return_value=[])
+@patch("stormpulse.metrics.os.getloadavg", return_value=(0.75, 0.50, 0.25))
+@patch("stormpulse.metrics.time.time", return_value=1740186400.0)
+@patch("stormpulse.metrics.psutil")
+def test_collect_metrics_carries_the_disks_and_keeps_root_in_disk_fields(
+    mock_psutil: MagicMock,
+    mock_time: MagicMock,
+    mock_loadavg: MagicMock,
+    mock_containers: MagicMock,
+    mock_disks: MagicMock,
+    config: Config,
+) -> None:
+    vals = _mock_psutil()
+    mock_psutil.cpu_percent.return_value = vals["cpu_percent"]
+    mock_psutil.virtual_memory.return_value = vals["virtual_memory"]
+    mock_psutil.disk_usage.return_value = vals["disk_usage"]
+    mock_psutil.boot_time.return_value = vals["boot_time"]
+    pool = DiskInfo(
+        mount="/home/storm/garage/var/data", fstype="zfs", used_bytes=1, total_bytes=2
+    )
+    mock_disks.return_value = [pool]
+
+    metrics = collect_metrics(config)
+    assert metrics.disks == [pool]
+    mock_psutil.disk_usage.assert_called_once_with("/")
+    assert metrics.disk_percent == 45.0

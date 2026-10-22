@@ -34,6 +34,7 @@ from stormpulse.protocol.payloads import (
 from stormpulse.protocol.payloads import Component as Component
 from stormpulse.protocol.payloads import ContainerInfo as ContainerInfo
 from stormpulse.protocol.payloads import Direction as Direction
+from stormpulse.protocol.payloads import DiskInfo as DiskInfo
 from stormpulse.protocol.payloads import ErrorPayload as ErrorPayload
 from stormpulse.protocol.payloads import EventsBatchAckPayload as EventsBatchAckPayload
 from stormpulse.protocol.payloads import (

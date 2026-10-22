@@ -34,7 +34,12 @@ from stormpulse.protocol.reasons import CancelReason, FailureReason
 
 def test_types_report_json_types_and_walk_nested_classes() -> None:
     classes = dataclass_wire_types(MetricsPayload)
-    assert set(classes) == {"MetricsPayload", "ContainerInfo", "IntegrationReport"}
+    assert set(classes) == {
+        "MetricsPayload",
+        "ContainerInfo",
+        "IntegrationReport",
+        "DiskInfo",
+    }
     metrics = classes["MetricsPayload"]
     numbers = [name for name, f in metrics.items() if f["type"] == "number"]
     assert len(numbers) == 10
@@ -49,6 +54,9 @@ def test_types_report_json_types_and_walk_nested_classes() -> None:
         "required": False,
     }
     assert classes["ContainerInfo"]["name"]["type"] == "string"
+    # Every real mount, optional so an older agent's payload still decodes.
+    assert metrics["disks"] == {"type": "array", "nullable": True, "required": False}
+    assert classes["DiskInfo"]["total_bytes"]["type"] == "integer"
 
 
 def test_types_emit_a_union_as_a_sorted_list() -> None:

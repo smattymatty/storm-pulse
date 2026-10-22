@@ -56,6 +56,16 @@ class ContainerInfo(WirePayload):
 
 
 @dataclass(frozen=True, slots=True)
+class DiskInfo(WirePayload):
+    """One real mounted filesystem: where it is, what it is, its bytes."""
+
+    mount: str
+    fstype: str
+    used_bytes: int
+    total_bytes: int
+
+
+@dataclass(frozen=True, slots=True)
 class IntegrationReport(WirePayload):
     """One ``integrations.<id>`` entry (CORE-005): wire status and why it is
     disabled, the state blob (its shape declared under ``integrations`` in the
@@ -96,6 +106,9 @@ class MetricsPayload(WirePayload):
     # The job-queue snapshot (pending + running counts); a real field so the wire
     # contract declares it (CORE-011 d3). Absent on the wire when None, never null.
     jobs: dict[str, int] | None = None
+    # Every real mount: ``disk_*`` above stay ``/``, which on a node with a separate
+    # data pool is the boot volume, not the storage. Absent on the wire when None.
+    disks: list[DiskInfo] | None = None
 
 
 @dataclass(frozen=True, slots=True)
