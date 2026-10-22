@@ -31,3 +31,10 @@ stormpulse/wizard/receipt.py:56 spells its own compact JSON; use canonical_json
 # Each leaves when the field is renamed with its unit, a wire change the far end moves with.
 messages: numeric field MetricsPayload.load_avg_1m carries no unit in its name (_bytes, _gb, _mb, _ms, _percent, _seconds) and is not a count; rename it
 messages: numeric field MetricsPayload.load_avg_5m carries no unit in its name (_bytes, _gb, _mb, _ms, _percent, _seconds) and is not a count; rename it
+# Function 17 opening baseline (2026-10-21): test files that fake the host's
+# identity, by count. A file leaves when its tests run as the real user. Only shrinks.
+tests/rclone/test_init.py: 1 fake(s) of the host's identity; run as the real user
+tests/test_enroll.py: 3 fake(s) of the host's identity; run as the real user
+tests/test_init.py: 11 fake(s) of the host's identity; run as the real user
+tests/test_migrate.py: 5 fake(s) of the host's identity; run as the real user
+tests/test_mode.py: 10 fake(s) of the host's identity; run as the real user

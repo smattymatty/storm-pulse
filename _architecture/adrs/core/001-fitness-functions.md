@@ -70,6 +70,8 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 
 **Function 16 - Every emitted event is declared.** CORE-011 d6: an undeclared event field is refused at the source. The check walks `emit(` and `record_call(` sites and fails on a (source, kind) or literal field with no `declare_event(`. Added 2026-10-08 with protocol v2, sealed at the commit that lands this line.
 
+**Function 17 - Tests run as the real user.** A test that patches `os.geteuid`, `os.access`, `os.stat` or `pwd`/`grp` proves the branch it picked, not the host it runs on. The check walks `tests/` and reports each file with its count of such fakes; fault injection (`os.replace`, `os.fsync`) and metric sources are outside it. Added 2026-10-21, after CI as root failed two spool tests that passed for the wrong reason; 30 fakes in 5 files open the baseline by count and leave as each file runs as the real user. Sealed at the commit that lands this line.
+
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**

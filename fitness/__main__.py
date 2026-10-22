@@ -1,9 +1,9 @@
-"""Fitness suite harness: Functions 2 through 16, every check, every violation.
+"""Fitness suite harness: Functions 2 through 17, every check, every violation.
 
 CORE-001 defines 1-4 (1 is ``lint-imports``), CORE-005 adds 5-6, CORE-007 7-8,
 CORE-008 9; 10-11 guard what readers are told; 12 holds CI to `make check`;
-13-14 hold the seal and the signing key; 15 one JSON encoder; 16 every event
-declared. Never fail-fast; ``fitness/baseline.txt`` suppresses by exact match.
+13-14 the seal and the signing key; 15 one JSON encoder; 16 every event declared;
+17 no faked host identity. Never fail-fast; ``baseline.txt`` suppresses by match.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from fitness.event_registry import check_event_registry
 from fitness.external_loader_p1 import check_external_loader_no_execution
 from fitness.integration_contract import check_integration_contract
 from fitness.merge_fence import check_merge_fence
+from fitness.no_fake_os import check_no_fake_os
 from fitness.no_listener import check_no_listener
 from fitness.no_shell import check_no_shell
 from fitness.no_signing_key import check_no_signing_key
@@ -72,6 +73,7 @@ def main() -> int:
         ("Function 14 - no publisher signing key in the agent", check_no_signing_key),
         ("Function 15 - one canonical JSON encoder", check_one_encoder),
         ("Function 16 - every emitted event is declared", check_event_registry),
+        ("Function 17 - tests run as the real user", check_no_fake_os),
     ]:
         violations = check()
         seen.update(violations)
