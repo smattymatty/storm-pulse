@@ -20,7 +20,7 @@ jobs:
   quality:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
       volumes:
         - pip-cache:/pip-cache
 
@@ -64,7 +64,7 @@ jobs:
   security:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
       volumes:
         - pip-cache:/pip-cache
 
@@ -84,7 +84,7 @@ jobs:
   test:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
       volumes:
         - pip-cache:/pip-cache
 
@@ -109,7 +109,7 @@ jobs:
   fitness:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
       volumes:
         - pip-cache:/pip-cache
 
@@ -130,7 +130,7 @@ jobs:
   deadcode:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
       volumes:
         - pip-cache:/pip-cache
 

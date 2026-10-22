@@ -17,7 +17,7 @@ jobs:
     container:
       # Both repos share the dependency-cadence tool through this image.
       # Registry authentication is configured on the runner.
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-2
+      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
       volumes:
         - pip-cache:/pip-cache
     env:
