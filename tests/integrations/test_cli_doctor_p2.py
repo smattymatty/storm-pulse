@@ -22,8 +22,12 @@ def _args(**kw: object) -> argparse.Namespace:
     return ns
 
 
-def test_doctor_reports_readiness(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    code = cli_integ.run(_args(), state_dir=tmp_path, agent_id="a", integrations_config={})
+def test_doctor_reports_readiness(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code = cli_integ.run(
+        _args(), state_dir=tmp_path, agent_id="a", integrations_config={}
+    )
     payload = json.loads(capsys.readouterr().out)
     assert payload["operation"] == "doctor"
     # doctor now carries both P1 findings and the P2 readiness graph
@@ -33,7 +37,25 @@ def test_doctor_reports_readiness(tmp_path: Path, capsys: pytest.CaptureFixture[
     assert code == 0
 
 
-def test_doctor_recovers_interrupted_apply(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_doctor_on_an_id_it_cannot_see_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # alpha 2026-10-23: `doctor buckets_gate` on an agent without it printed nothing, exit 0
+    code = cli_integ.run(
+        _args(integration_id="nope"),
+        state_dir=tmp_path,
+        agent_id="a",
+        integrations_config={},
+    )
+    report = json.loads(capsys.readouterr().out)["result"]["readiness"]["nope"]
+    assert report["state"] == "available"
+    assert "not registered" in report["reason"]
+    assert code == 4
+
+
+def test_doctor_recovers_interrupted_apply(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     cfg = tmp_path / "f.toml"
     cfg.write_text("orig\n", encoding="utf-8")
     original = cfg.read_bytes()

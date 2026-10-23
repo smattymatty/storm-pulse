@@ -314,7 +314,7 @@ def _doctor(
     import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
     from stormpulse.agent.external_adapters import load_and_register_external
     from stormpulse.integrations.readiness import readiness_failed, resolve_all
-    from stormpulse.sdk import CapabilityLiveness
+    from stormpulse.sdk import CapabilityLiveness, ReadinessReport, ReadinessState
     from stormpulse.wizard import read_pending, recover
 
     # Scan before importing: an import as root can write __pycache__ into the tree.
@@ -323,6 +323,15 @@ def _doctor(
     reports = resolve_all(integrations_config, run_probe=True)
     if args.integration_id is not None:
         reports = {k: v for k, v in reports.items() if k == args.integration_id}
+        # A named id doctor cannot see is a failure, never an empty pass (alpha, 2026-10-23).
+        reports.setdefault(
+            args.integration_id,
+            ReadinessReport(
+                args.integration_id,
+                ReadinessState.AVAILABLE,
+                reason="not registered on this agent: no built-in and no sealed adapter loaded",
+            ),
+        )
     pending = read_pending(state_dir)
     recovery = recover(state_dir) if getattr(args, "recover", False) else None
 
