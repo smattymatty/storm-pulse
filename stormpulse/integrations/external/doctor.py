@@ -42,58 +42,9 @@ def doctor_packages(
         findings: list[Finding] = []
         referenced: set[str] = set()
         packages_root = layout.packages_dir(state_dir)
-
-        for entry in sorted(layout.receipts_dir(state_dir).iterdir()):
-            if not entry.is_dir():
-                findings.append(_stray(entry.name, "unexpected file under receipts/"))
-                continue
-            if integration_id is not None and entry.name != integration_id:
-                continue
-            for path in sorted(entry.iterdir()):
-                if path.is_file() and path.suffix == ".json":
-                    before = len(findings)
-                    _check_receipt(state_dir, packages_root, path, referenced, findings)
-                    _demote_if_superseded(
-                        state_dir, entry.name, path.stem, findings, before
-                    )
-                else:
-                    findings.append(
-                        _stray(
-                            f"{entry.name}/{path.name}",
-                            "unexpected entry in a receipt folder",
-                        )
-                    )
-
+        _check_receipts(state_dir, packages_root, integration_id, referenced, findings)
         if integration_id is None:
-            for entry in sorted(packages_root.iterdir()):
-                if not entry.is_dir():
-                    findings.append(
-                        _stray(entry.name, "unexpected file under packages/")
-                    )
-                    continue
-                if entry.name not in referenced:
-                    package_digest = (
-                        "sha256:" + entry.name if _HEX_RE.match(entry.name) else None
-                    )
-                    findings.append(
-                        Finding(
-                            code="orphan_package",
-                            severity=Severity.WARNING,
-                            package_digest=package_digest,
-                            path=entry.name,
-                            message="package tree has no receipt",
-                        )
-                    )
-            for leftover in sorted(layout.tmp_dir(state_dir).iterdir()):
-                findings.append(
-                    Finding(
-                        code="orphan_temp",
-                        severity=Severity.WARNING,
-                        path=leftover.name,
-                        message="leftover staging from an interrupted install",
-                    )
-                )
-
+            _check_orphans(state_dir, packages_root, referenced, findings)
         findings.sort(
             key=lambda f: (
                 f.integration_id or "",
@@ -103,6 +54,63 @@ def doctor_packages(
             )
         )
         return findings
+
+
+def _check_receipts(
+    state_dir: Path,
+    packages_root: Path,
+    integration_id: str | None,
+    referenced: set[str],
+    findings: list[Finding],
+) -> None:
+    root = layout.receipts_dir(state_dir)
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            findings.append(_stray(entry.name, "unexpected file under receipts/"))
+    # receipts/<id>/<entry>: one pass over every receipt folder's entries.
+    for path in sorted(root.glob("*/*")):
+        owner = path.parent.name
+        if integration_id is not None and owner != integration_id:
+            continue
+        if not (path.is_file() and path.suffix == ".json"):
+            findings.append(
+                _stray(f"{owner}/{path.name}", "unexpected entry in a receipt folder")
+            )
+            continue
+        before = len(findings)
+        _check_receipt(state_dir, packages_root, path, referenced, findings)
+        _demote_if_superseded(state_dir, owner, path.stem, findings, before)
+
+
+def _check_orphans(
+    state_dir: Path, packages_root: Path, referenced: set[str], findings: list[Finding]
+) -> None:
+    for entry in sorted(packages_root.iterdir()):
+        if not entry.is_dir():
+            findings.append(_stray(entry.name, "unexpected file under packages/"))
+            continue
+        if entry.name not in referenced:
+            package_digest = (
+                "sha256:" + entry.name if _HEX_RE.match(entry.name) else None
+            )
+            findings.append(
+                Finding(
+                    code="orphan_package",
+                    severity=Severity.WARNING,
+                    package_digest=package_digest,
+                    path=entry.name,
+                    message="package tree has no receipt",
+                )
+            )
+    for leftover in sorted(layout.tmp_dir(state_dir).iterdir()):
+        findings.append(
+            Finding(
+                code="orphan_temp",
+                severity=Severity.WARNING,
+                path=leftover.name,
+                message="leftover staging from an interrupted install",
+            )
+        )
 
 
 def _demote_if_superseded(
