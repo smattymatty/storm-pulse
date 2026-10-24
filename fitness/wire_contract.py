@@ -322,6 +322,7 @@ _COUNT_NAMES = (
     "current",
     "total",
     "calls",
+    "attempts",
     "dropped",
     "from_position",
     "to_position",

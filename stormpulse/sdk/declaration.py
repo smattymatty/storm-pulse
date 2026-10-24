@@ -35,6 +35,8 @@ from stormpulse.sdk.wizard import IntegrationWizard
 SdkCommandMode = Literal["subprocess", "job", "refresh"]
 
 _CREDENTIAL_NAME_RE = re.compile(r"secret|password|token|passphrase", re.IGNORECASE)
+# The agent's cap on a job's retry window (CORE-012 d3); mirrors config.commands.
+_RETRY_WINDOW_MAX_S = 600
 
 
 class SdkConfigError(Exception):
@@ -82,11 +84,11 @@ class SdkParamDef:
 
 @dataclass(frozen=True, slots=True)
 class SdkJobOutcome:
-    """Result body a job handler returns. Mirror of ``commands.jobs.JobOutcome``;
-    the loader translates it to the internal type. ``failure_reason`` is a
-    string here (the SDK imports nothing from the host, CORE-000): a name the
-    host's ``FailureReason`` knows passes through, any other word rides as
-    ``integration_failed`` with the word kept in ``error.code``."""
+    """A job handler's result; mirror of ``commands.jobs.JobOutcome``. ``failure_reason``
+    is a string (the SDK imports nothing from the host, CORE-000): a known
+    ``FailureReason`` name passes through, any other word rides as
+    ``integration_failed`` with the word in ``error.code``. ``retry_after_s`` asks
+    to run again after that many seconds, ``stderr`` naming why (CORE-012 d1)."""
 
     success: bool
     exit_code: int = 0
@@ -94,6 +96,18 @@ class SdkJobOutcome:
     stderr: str = ""
     failure_reason: str | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+    retry_after_s: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.retry_after_s is None:
+            return
+        if self.success:
+            raise ValueError("SdkJobOutcome: a success cannot ask to run again")
+        if type(self.retry_after_s) is not int or self.retry_after_s < 1:
+            raise ValueError(
+                f"SdkJobOutcome: retry_after_s must be a whole number of seconds >= 1, "
+                f"got {self.retry_after_s!r}"
+            )
 
 
 class SdkProgress(Protocol):
@@ -124,12 +138,12 @@ SdkCommandHandler = Callable[[dict[str, Any]], "SdkJobHandler | None"]
 
 @dataclass(frozen=True, slots=True)
 class SdkCommandSpec:
-    """A single command an adapter contributes. Full-parity mirror of
-    ``config.CommandSpec``. ``mode`` discriminates: ``subprocess`` runs an
-    absolute-path argv (``command[0]`` must be absolute); ``job`` carries a
-    ``handler`` and may declare ``result``, the dataclass its ``extras`` fill
-    (CORE-011 d9; declared in the wire contract, outside the digest). Illegal
-    combinations are rejected at construction, exactly as the internal spec does."""
+    """A command an adapter contributes; full-parity mirror of ``config.CommandSpec``.
+    ``subprocess`` runs an absolute-path argv; ``job`` carries a ``handler`` and
+    may declare ``result``, the dataclass its ``extras`` fill (CORE-011 d9, outside
+    the digest), and ``retry_window_s``, spanning all attempts while ``timeout``
+    stays per attempt (CORE-012 d3). Illegal combinations fail at construction,
+    exactly as the internal spec does."""
 
     group: str
     command: list[str]
@@ -143,6 +157,7 @@ class SdkCommandSpec:
     handler: SdkCommandHandler | None = None
     params: dict[str, SdkParamDef] = field(default_factory=dict)
     result: type | None = None
+    retry_window_s: int | None = None
 
     def __post_init__(self) -> None:
         if self.mode == "job":
@@ -150,6 +165,15 @@ class SdkCommandSpec:
                 self._fail("mode 'job' requires a handler")
         elif self.handler is not None:
             self._fail(f"mode {self.mode!r} must not carry a handler")
+        if self.retry_window_s is not None and not (
+            self.mode == "job"
+            and type(self.retry_window_s) is int
+            and 1 <= self.retry_window_s <= _RETRY_WINDOW_MAX_S
+        ):
+            self._fail(
+                f"retry_window_s must be 1..{_RETRY_WINDOW_MAX_S} seconds on a "
+                f"'job' command, got {self.retry_window_s!r} on mode {self.mode!r}"
+            )
         if self.result is not None and not (
             self.mode == "job" and is_dataclass(self.result)
         ):
@@ -325,14 +349,17 @@ def canonical_json(payload: Any) -> str:
 def command_specs_digest(specs: Mapping[str, SdkCommandSpec]) -> str:
     """Canonical ``sha256:`` digest of the declarative command surface.
 
-    Covers every field a control-plane allow rule binds to (name, group, argv,
-    timeout, mode, flags, param validators), so any semantic change invalidates
-    the grant. Excludes descriptions (cosmetic) and the handler (its code is
-    pinned by the package digest). Deterministic: names and params are sorted
-    and the JSON is key-sorted and separator-canonical, so the release author
-    and the host produce identical bytes."""
+    Covers every field an allow rule binds to (name, group, argv, timeout, mode,
+    flags, param validators, a retry window only when set, so older specs hash
+    unchanged); excludes descriptions and the handler (pinned by the package
+    digest). Sorted, key-sorted, separator-canonical JSON: author and host agree."""
     canon = [
         {
+            **(
+                {"retry_window_s": spec.retry_window_s}
+                if spec.retry_window_s is not None
+                else {}
+            ),
             "name": name,
             "group": spec.group,
             "command": list(spec.command),

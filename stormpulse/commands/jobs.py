@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
@@ -38,15 +39,10 @@ class JobManagerClosing(Exception):
 class ProgressCallback(Protocol):
     """(stage, current, total, message, *, transfer=None) -> awaitable.
 
-    Stage is one of ``"starting"``, ``"running"``, ``"finalizing"``. The first
-    call from a handler must use ``"starting"`` with ``current=0``.
-
-    ``transfer`` is keyword-only and defaults to None, so every existing
-    handler keeps calling this with four positional arguments and is
-    unaffected. Only a job that actually moves bytes passes it. This is a
-    Protocol rather than the ``Callable`` alias it used to be for exactly
-    that reason: ``Callable[...]`` cannot express a keyword-only parameter.
-    """
+    Stage is ``"starting"``, ``"running"`` or ``"finalizing"``; each attempt opens
+    with ``"starting"`` and ``current=0`` (CORE-012). ``transfer`` is keyword-only,
+    passed only by a job moving bytes; a Protocol because ``Callable`` cannot
+    express a keyword-only parameter."""
 
     async def __call__(
         self,
@@ -62,12 +58,11 @@ class ProgressCallback(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class JobOutcome:
-    """Result body returned by a long-running handler; the manager wraps it in a
-    ``CommandResultPayload`` with the wire identity and ``duration_ms``.
-    ``extras`` ride under ``result``, never the top level; ``CommandSpec.result``
-    declares their shape. ``error_code`` (an adapter's own word) and
-    ``upstream_code`` (an exit or Garage code) are the finer error a handler
-    parsed; without them the reason and stderr become the ``ResultError``."""
+    """A handler's result body; the manager adds wire identity and ``duration_ms``.
+    ``extras`` ride under ``result``, shaped by ``CommandSpec.result``. ``error_code``
+    (an adapter's word) and ``upstream_code`` (exit or Garage code) are the finer
+    error; absent, reason and stderr become the ``ResultError``. ``retry_after_s``
+    asks to run again within the command's window (CORE-012); never on success."""
 
     success: bool
     exit_code: int = 0
@@ -77,6 +72,18 @@ class JobOutcome:
     extras: dict[str, Any] = field(default_factory=dict)
     error_code: str | None = None
     upstream_code: str | None = None
+    retry_after_s: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.retry_after_s is None:
+            return
+        if self.success:
+            raise ValueError("JobOutcome: a success cannot ask to run again")
+        if type(self.retry_after_s) is not int or self.retry_after_s < 1:
+            raise ValueError(
+                f"JobOutcome: retry_after_s must be a whole number of seconds >= 1, "
+                f"got {self.retry_after_s!r}"
+            )
 
     def finer_error(self) -> ResultError | None:
         """The ``ResultError`` a handler parsed, or None for the derived default."""
@@ -125,6 +132,8 @@ _JOB_RESULT_FIELDS = frozenset(
         "quota_running",
         "quota_rejected",
         "params",
+        "attempts",
+        "retries_exhausted",
     }
 )
 _JOB_RESULT = "job_result"
@@ -148,6 +157,50 @@ def _param_context(params: dict[str, Any] | None) -> dict[str, Any]:
         if key not in _JOB_RESULT_FIELDS | events.ENVELOPE_FIELDS
         and len(str(value)) <= _PARAM_CONTEXT_MAX_CHARS
     }
+
+
+@dataclass(frozen=True, slots=True)
+class _Job:
+    """One accepted job: its wire identity and what runs it, built once in start()."""
+
+    request_id: str
+    command: str
+    group: str
+    handler: JobHandler
+    on_success: Callable[[], Awaitable[None]] | None
+    params: dict[str, Any] | None
+    retry_window_s: int | None
+
+
+class _RetryWindow:
+    """The span a job's attempts may cover (CORE-012 d3). It opens at the first
+    permit, so time queued for one spends none of it; with no declared window it
+    grants nothing. ``open`` is idempotent, called by every attempt."""
+
+    def __init__(self, window_s: int | None) -> None:
+        self._window_s = window_s
+        self._deadline: float | None = None
+
+    def open(self) -> None:
+        if self._deadline is None and self._window_s is not None:
+            self._deadline = time.monotonic() + self._window_s
+
+    def grants(self, delay_s: int) -> bool:
+        """Whether a park of ``delay_s`` still ends inside the window."""
+        if self._deadline is None:
+            return False
+        return delay_s <= self._deadline - time.monotonic()
+
+
+@dataclass(frozen=True, slots=True)
+class _Tally:
+    """What a job's attempts add up to at its terminal result. ``retries_exhausted``
+    is set when the last attempt still asked to run again and was not given one."""
+
+    attempts: int
+    work_ms: int
+    concurrent: int
+    retries_exhausted: bool
 
 
 class JobManager:
@@ -203,20 +256,14 @@ class JobManager:
         handler: JobHandler,
         on_success: Callable[[], Awaitable[None]] | None = None,
         params: dict[str, Any] | None = None,
+        retry_window_s: int | None = None,
     ) -> None:
         """Spawn a background task for ``handler``.
 
-        ``on_success``, if provided, is awaited after the terminal
-        ``command.result`` is emitted, but only when the job completed
-        with ``outcome.success == True``. Used by the agent to fire
-        post-mutation hooks - e.g. refreshing Garage state and pushing
-        fresh metrics so a stale state push doesn't overwrite the
-        just-completed mutation.
-
-        Raises ValueError if a job with this ``request_id`` is already
-        running - duplicate dispatch is a caller bug, not something to
-        silently swallow.
-        """
+        ``on_success`` is awaited after a successful terminal ``command.result``,
+        so a post-mutation refresh cannot be overwritten by a stale state push.
+        Raises ValueError if ``request_id`` is already running: duplicate
+        dispatch is a caller bug, never swallowed."""
         if self._closing:
             raise JobManagerClosing(
                 "This connection is closing. Retry after Storm Pulse reconnects."
@@ -229,10 +276,10 @@ class JobManager:
             request_id,
             group,
         )
-        task = asyncio.create_task(
-            self._run(request_id, command, group, handler, on_success, params),
-            name=f"job:{command}:{request_id}",
+        job = _Job(
+            request_id, command, group, handler, on_success, params, retry_window_s
         )
+        task = asyncio.create_task(self._run(job), name=f"job:{command}:{request_id}")
         self._jobs[request_id] = task
         self._job_command[request_id] = command
         self._terminal_attempts.discard(request_id)
@@ -403,108 +450,114 @@ class JobManager:
     # Internals
     # ------------------------------------------------------------------
 
-    async def _run(
-        self,
-        request_id: str,
-        command: str,
-        group: str,
-        handler: JobHandler,
-        on_success: Callable[[], Awaitable[None]] | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> None:
-        """Acquire one execution permit, then drive the job to its terminal result.
+    async def _run(self, job: _Job) -> None:
+        """Drive the job through its attempts to one terminal result.
 
-        The cap is HERE, around execution, never on the acceptance path (start()
-        keeps a bare create_task): a burst queues for a permit instead of either
-        hammering Garage's serialized admin API or blocking the message loop that
-        sends keepalives. The permit covers the WHOLE lifecycle - the handler AND
-        the on_success hook - because both hit the admin API (the hook fires the
-        targeted re-read). ``async with`` releases the permit on every exit -
-        normal, crash, or cancellation - so the pool can never leak to a deadlock.
-        """
+        Each attempt holds a permit; the terminal one keeps it through the result
+        and on_success hook, both admin-API calls. An attempt the window grants
+        (CORE-012) parks WITHOUT its permit, so deferred jobs cannot starve the
+        cap. ``duration_ms`` sums the attempts' work, never parked time."""
         # Attribute every admin call made by this job's handler AND its
-        # on_success hook (both run in this task's context) to the job,
-        # and to THIS command, so one command's story is queryable.
+        # on_success hook (both run in this task's context) to this command.
         events.trigger_var.set("job")
-        events.command_ref_var.set(request_id)
+        events.command_ref_var.set(job.request_id)
+        progress = self._make_progress_callback(job)
+        window = _RetryWindow(job.retry_window_s)
+        attempts = 0
+        work_ms = 0
+        while True:
+            attempts += 1
+            async with self._permit(job.command):
+                window.open()
+                start = time.monotonic()
+                # Jobs spawned right now (running + queued for a permit), so a
+                # high count signals queue pressure, not that this many ran.
+                concurrent = len(self._jobs)
+                outcome = await self._attempt(job, progress)
+                if self._closing:
+                    return
+                work_ms += int((time.monotonic() - start) * 1000)
+                delay = outcome.retry_after_s
+                if delay is None or not window.grants(delay):
+                    exhausted = delay is not None
+                    tally = _Tally(attempts, work_ms, concurrent, exhausted)
+                    await self._finish(job, outcome, tally)
+                    return
+                await progress(
+                    "running",
+                    0,
+                    None,
+                    f"Attempt {attempts} will run again in {delay}s: {outcome.stderr}",
+                )
+            await asyncio.sleep(delay)
+
+    @asynccontextmanager
+    async def _permit(self, command: str) -> AsyncIterator[None]:
+        """One execution permit, with the running counters it implies.
+
+        The counters rise only AFTER the semaphore is acquired, so a job
+        cancelled while queued or parked never touches them; the finally runs on
+        normal exit, crash and cancel alike, so neither can leak.
+        """
+        is_quota = command == self.QUOTA_COMMAND
         async with self._sem:
             self._running += 1
-            # Mirror the general permit accounting for quota jobs only. Both
-            # increments happen AFTER the semaphore is acquired, so a quota job
-            # cancelled while parked never touches these counters; the finally
-            # runs on normal exit, crash, and cancel-while-running alike, so
-            # neither counter can leak (same guarantee as ``_running``).
-            is_quota = command == self.QUOTA_COMMAND
             if is_quota:
                 self._quota_running += 1
             try:
-                await self._execute(
-                    request_id, command, group, handler, on_success, params
-                )
+                yield
             finally:
                 self._running -= 1
                 if is_quota:
                     self._quota_running -= 1
 
-    async def _execute(
-        self,
-        request_id: str,
-        command: str,
-        group: str,
-        handler: JobHandler,
-        on_success: Callable[[], Awaitable[None]] | None = None,
-        params: dict[str, Any] | None = None,
-    ) -> None:
-        """Drive one job from handler through terminal result and on_success hook.
+    async def _attempt(self, job: _Job, progress: ProgressCallback) -> JobOutcome:
+        """Run the handler once; an exception becomes an ``os_error`` outcome.
 
-        Runs holding an execution permit (acquired in ``_run``). Timing and the
-        concurrency diagnostic are captured here, after the permit, so
-        ``duration_ms`` measures actual work, not time spent queued for a permit.
+        ``CancelledError`` (disconnect or shutdown) propagates and no terminal
+        result follows: the dashboard infers the failure from the disconnect.
         """
-        start = time.monotonic()
-        # Jobs spawned right now (running + queued for a permit). At most
-        # MAX_CONCURRENT_JOBS run concurrently; the rest wait. So per-job
-        # durations reflect contention only among the running set, and a high
-        # count here signals queue pressure (jobs waiting on a permit), not that
-        # this many ran at once.
-        concurrent = len(self._jobs)
-        progress = self._make_progress_callback(request_id, command, group)
-        outcome: JobOutcome
         try:
-            outcome = await handler(progress)
+            return await job.handler(progress)
         except asyncio.CancelledError:
-            # Agent disconnect or explicit shutdown. Do NOT emit a terminal
-            # result - the dashboard infers failure from the disconnect.
             raise
         except Exception as exc:
             message = (
-                f"Command '{command}' couldn't finish ({type(exc).__name__}). "
-                f"Run 'stormpulse integration doctor {group}' and confirm the "
+                f"Command '{job.command}' couldn't finish ({type(exc).__name__}). "
+                f"Run 'stormpulse integration doctor {job.group}' and confirm the "
                 "operation's state before retrying."
             )
-            logger.error("Job %s: %s", request_id, message)
-            outcome = JobOutcome(
+            logger.error("Job %s: %s", job.request_id, message)
+            return JobOutcome(
                 success=False,
                 exit_code=-1,
                 stderr=message,
                 failure_reason=FailureReason.OS_ERROR,
             )
 
-        if self._closing:
-            return
-        duration_ms = int((time.monotonic() - start) * 1000)
+    async def _finish(self, job: _Job, outcome: JobOutcome, tally: _Tally) -> None:
+        """Send the one terminal result, its event, then the on_success hook."""
+        self._record(job, outcome, tally)
+        await self._send_result(job, outcome, tally)
+        if outcome.success:
+            await self._after_success(job)
+
+    def _record(self, job: _Job, outcome: JobOutcome, tally: _Tally) -> None:
+        """Log the outcome and emit its durable ``job_result`` event."""
+        request_id, command, params = job.request_id, job.command, job.params
         logger.info(
-            "Job %s (request_id=%s) finished success=%s duration_ms=%d concurrent=%d",
+            "Job %s (request_id=%s) finished success=%s attempts=%d duration_ms=%d "
+            "concurrent=%d",
             command,
             request_id,
             outcome.success,
-            duration_ms,
-            concurrent,
+            tally.attempts,
+            tally.work_ms,
+            tally.concurrent,
         )
-        # The durable record of this job's outcome. The command.result
-        # below reaches the dashboard once and evaporates with the relay;
-        # this event is what an investigator queries a week later
-        # (the evaporated-os_error lesson, 2026-07-03).
+        # The durable record: command.result reaches the dashboard once and
+        # evaporates with the relay; this event is what an investigator
+        # queries a week later (the evaporated-os_error lesson, 2026-07-03).
         events.emit(
             _JOB_RESULT,
             source="jobs",
@@ -513,23 +566,31 @@ class JobManager:
             status="success" if outcome.success else "failed",
             failure_reason=outcome.failure_reason,
             error=outcome.stderr if not outcome.success else "",
-            duration_ms=duration_ms,
-            concurrent=concurrent,
+            duration_ms=tally.work_ms,
+            concurrent=tally.concurrent,
             bucket_id=(params or {}).get("bucket_id", ""),
             params=_param_context(params) or None,
+            attempts=tally.attempts,
+            retries_exhausted=tally.retries_exhausted or None,
         )
+
+    async def _send_result(self, job: _Job, outcome: JobOutcome, tally: _Tally) -> None:
+        """Send the one ``command.result``; a lost send is logged, never raised."""
+        request_id = job.request_id
         payload = CommandResultPayload(
             request_id=request_id,
-            command=command,
-            group=group,
+            command=job.command,
+            group=job.group,
             success=outcome.success,
             exit_code=outcome.exit_code,
             stdout=outcome.stdout,
             stderr=outcome.stderr,
-            duration_ms=duration_ms,
+            duration_ms=tally.work_ms,
             failure_reason=outcome.failure_reason,
             result=outcome.extras or None,
             error=outcome.finer_error(),
+            attempts=tally.attempts,
+            retries_exhausted=tally.retries_exhausted,
         )
         envelope = make(self._agent_id, payload)
         # The outcome is committed before send yields; peer receipt remains uncertain.
@@ -547,27 +608,26 @@ class JobManager:
                 type(exc).__name__,
             )
 
-        if outcome.success and on_success is not None:
-            try:
-                await on_success()
-            except Exception as exc:
-                # ERROR not WARNING: on_success skipping means post-mutation
-                # cleanup (fresh metrics push, state refresh) never happens.
-                logger.error(
-                    "Command %s succeeded, but its state refresh failed (%s). "
-                    "Run 'stormpulse integration doctor %s' and confirm the resource state.",
-                    request_id,
-                    type(exc).__name__,
-                    group,
-                )
+    async def _after_success(self, job: _Job) -> None:
+        """Run the on_success hook, if any; a failure is logged, never raised."""
+        if job.on_success is None:
+            return
+        try:
+            await job.on_success()
+        except Exception as exc:
+            # ERROR not WARNING: on_success skipping means post-mutation
+            # cleanup (fresh metrics push, state refresh) never happens.
+            logger.error(
+                "Command %s succeeded, but its state refresh failed (%s). "
+                "Run 'stormpulse integration doctor %s' and confirm the resource state.",
+                job.request_id,
+                type(exc).__name__,
+                job.group,
+            )
 
-    def _make_progress_callback(
-        self,
-        request_id: str,
-        command: str,
-        group: str,
-    ) -> ProgressCallback:
+    def _make_progress_callback(self, job: _Job) -> ProgressCallback:
         """Build the per-job progress callback bound to wire identity."""
+        request_id, command, group = job.request_id, job.command, job.group
 
         async def progress(
             stage: str,

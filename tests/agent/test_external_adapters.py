@@ -115,3 +115,26 @@ async def test_an_adapter_word_on_a_success_is_no_error_and_the_result_still_shi
     assert result.payload["success"] is True
     assert result.payload["error"] is None
     assert result.payload["result"] == {"n": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_retry_ask_and_its_window_survive_the_translation() -> None:
+    """CORE-012: the SDK seam lists fields by hand, so a field it forgets is
+    dropped silently and a job that asked to run again would read as failed."""
+
+    async def job(_progress: SdkProgress) -> SdkJobOutcome:
+        return SdkJobOutcome(success=False, stderr="not ready", retry_after_s=7)
+
+    spec = SdkCommandSpec(
+        group="g",
+        command=["j"],
+        timeout=5,
+        mode="job",
+        handler=lambda _p: job,
+        retry_window_s=90,
+    )
+    internal = _translate_command_spec(spec)
+    assert internal.retry_window_s == 90
+    assert internal.handler is not None
+    handler = internal.handler({})
+    assert (await handler(_progress)).retry_after_s == 7

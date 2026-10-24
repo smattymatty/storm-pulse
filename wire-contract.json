@@ -2069,7 +2069,7 @@
       "result": null
     }
   },
-  "contract_digest": "sha256:3cfabb3c8e9227214355c9362a1629da585ea2a9377d4799a139f2748d9b446d",
+  "contract_digest": "sha256:2e2937b5a8cea6eafe4e434b047d7a5cc9aa1ba56baa61b9877afd342e67a53b",
   "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
   "integration_events": {
@@ -2286,6 +2286,11 @@
     "command.result": {
       "classes": {
         "CommandResultPayload": {
+          "attempts": {
+            "nullable": false,
+            "required": false,
+            "type": "integer"
+          },
           "command": {
             "nullable": false,
             "required": true,
@@ -2399,6 +2404,11 @@
             "nullable": true,
             "required": false,
             "type": "object"
+          },
+          "retries_exhausted": {
+            "nullable": false,
+            "required": false,
+            "type": "boolean"
           },
           "sequence_id": {
             "nullable": true,
@@ -2655,6 +2665,7 @@
         },
         "jobs": {
           "job_result": [
+            "attempts",
             "bucket_id",
             "command",
             "concurrent",
@@ -2665,6 +2676,7 @@
             "quota_pending",
             "quota_rejected",
             "quota_running",
+            "retries_exhausted",
             "status"
           ]
         },

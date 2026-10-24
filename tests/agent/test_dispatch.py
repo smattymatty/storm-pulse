@@ -1006,3 +1006,18 @@ async def test_duplicate_request_is_an_error_and_the_first_job_keeps_running(
     assert [(e.payload["request_id"], e.payload["success"]) for e in results] == [
         ("same-id", True)
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_job_s_retry_window_reaches_the_manager(agent: Agent) -> None:
+    """CORE-012 d3: the window is declared on the spec and spent by the manager;
+    dispatch is the hop between them, so dropping it here disables every retry."""
+    unblock = asyncio.Event()
+    agent.registry["some_job"] = replace(_job_spec(unblock), retry_window_s=45)
+    manager = JobManager(AGENT_ID, AsyncMock())
+    agent.job_manager = manager
+    with patch.object(manager, "start", wraps=manager.start) as start:
+        await dispatch.dispatch_message(agent, AsyncMock(), _job_request("windowed"))
+    assert start.call_args.kwargs["retry_window_s"] == 45
+    unblock.set()
+    await asyncio.gather(*manager._jobs.values(), return_exceptions=True)

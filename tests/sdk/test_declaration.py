@@ -285,3 +285,51 @@ def test_sdk_command_spec_mirrors_command_spec_field_for_field() -> None:
         return [(f.name, f.default) for f in fields(cls)]
 
     assert shape(SdkCommandSpec) == shape(CommandSpec)
+
+
+# ---------------------------------------------------------------------------
+# A job may ask to run again (CORE-012): the outcome's ask and the spec's window
+# ---------------------------------------------------------------------------
+
+
+def _windowed(window: int | None, *, mode: str = "job") -> SdkCommandSpec:
+    return SdkCommandSpec(
+        group="demo",
+        command=["j"] if mode == "job" else ["/bin/true"],
+        timeout=5,
+        mode=mode,  # type: ignore[arg-type]
+        handler=(lambda _p: _noop) if mode == "job" else None,
+        retry_window_s=window,
+    )
+
+
+def test_a_retry_window_is_one_to_six_hundred_seconds_on_a_job_only() -> None:
+    assert _windowed(None).retry_window_s is None
+    assert _windowed(1).retry_window_s == 1
+    assert _windowed(600).retry_window_s == 600
+    for bad in (0, 601, -5, True, 1.5):
+        with pytest.raises(ValueError, match="retry_window_s must be 1..600"):
+            _windowed(bad)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="retry_window_s must be 1..600"):
+        _windowed(30, mode="subprocess")
+
+
+def test_a_retry_window_enters_the_digest_only_when_set() -> None:
+    """An unset window leaves every released digest byte-identical (the
+    frozen-bytes test above holds that); a set one is a grant-moving change."""
+    unset = command_specs_digest({"j": _windowed(None)})
+    assert unset != command_specs_digest({"j": _windowed(30)})
+    assert command_specs_digest({"j": _windowed(30)}) != command_specs_digest(
+        {"j": _windowed(31)}
+    )
+
+
+def test_an_outcome_asks_to_run_again_only_on_a_failure() -> None:
+    asked = SdkJobOutcome(success=False, stderr="not ready", retry_after_s=5)
+    assert asked.retry_after_s == 5
+    assert SdkJobOutcome(success=False).retry_after_s is None
+    with pytest.raises(ValueError, match="a success cannot ask to run again"):
+        SdkJobOutcome(success=True, retry_after_s=5)
+    for bad in (0, -1, True, 2.5):
+        with pytest.raises(ValueError, match="retry_after_s must be"):
+            SdkJobOutcome(success=False, retry_after_s=bad)  # type: ignore[arg-type]

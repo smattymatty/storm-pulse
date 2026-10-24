@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `device`, `mount`, `fstype`, `used_bytes` and `total_bytes`. ZFS datasets of
   one pool each count the pool's free bytes in `total_bytes`; group them by the
   pool in `device` before summing. The `disk_*` fields still describe `/`.
+- **A job may ask to run again.** A job command declares `retry_window_s`
+  (1 to 600 seconds). A failed outcome carrying `retry_after_s` is parked
+  without its permit and re-run with the same params and `command_ref`. The
+  control plane still gets one `command.result`, now with `attempts` and
+  `retries_exhausted`. `contract_digest` moves; a command with no window keeps
+  its `command_specs_digest` (ADR CORE-012).
 
 ### Changed
 

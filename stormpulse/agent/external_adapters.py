@@ -202,6 +202,7 @@ def _translate_command_spec(spec: SdkCommandSpec) -> CommandSpec:
         handler=_translate_handler(spec.handler) if spec.handler is not None else None,
         params={name: _translate_param(p) for name, p in spec.params.items()},
         result=spec.result,
+        retry_window_s=spec.retry_window_s,
     )
 
 
@@ -237,6 +238,7 @@ def _translate_handler(sdk_handler: SdkCommandHandler) -> Any:
                 failure_reason=reason,
                 extras=dict(outcome.extras),
                 error_code=own_word,
+                retry_after_s=outcome.retry_after_s,
             )
 
         return run

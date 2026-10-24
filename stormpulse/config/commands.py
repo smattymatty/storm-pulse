@@ -91,6 +91,8 @@ class ParamDef:
 # and "fell through to subprocess"; now it is one field, validated at construction.
 CommandMode = Literal["subprocess", "job", "refresh"]
 _SUBPROCESS: CommandMode = "subprocess"
+# The agent's cap on a job's retry window (CORE-012 d3).
+RETRY_WINDOW_MAX_S = 600
 
 # A "job" command's lazy handler thunk: validated runtime params -> JobHandler,
 # or None when unservable on this host. Typed loosely: the concrete types live in
@@ -100,14 +102,12 @@ CommandHandler = Callable[[dict[str, Any]], Any]
 
 @dataclass(frozen=True, slots=True)
 class CommandSpec:
-    """A single whitelisted command: its schema and, for a job, its handler.
-    ``mode`` is the execution discriminator: ``subprocess`` runs ``command`` as
-    argv with ``shell=False`` (absolute binary first, no handler); ``job`` hands
-    a long-running command to the JobManager through the lazy ``handler`` thunk,
-    ``command`` being the sentinel ``[name]``; ``refresh`` is the agent-owned
-    collect-and-push for any Integration declaring ``collect_state``. Illegal
-    mixes fail at construction.
-    """
+    """A whitelisted command: its schema and, for a job, its handler. ``mode``:
+    ``subprocess`` runs absolute argv with ``shell=False``; ``job`` hands the lazy
+    ``handler`` thunk to the JobManager (``command`` is ``[name]``); ``refresh`` is
+    the agent's collect-and-push for ``collect_state``. A job may declare
+    ``retry_window_s``, spanning all attempts while ``timeout`` stays per attempt
+    (CORE-012 d3). Illegal mixes fail at construction."""
 
     group: str
     command: list[str]
@@ -128,6 +128,7 @@ class CommandSpec:
     # The dataclass naming what rides under ``command.result.result`` (CORE-011
     # d9): declared in the artifact, so a consumer reads keys it was told about.
     result: type | None = None
+    retry_window_s: int | None = None
 
     def __post_init__(self) -> None:
         if self.mode == "job":
@@ -141,6 +142,15 @@ class CommandSpec:
             self._fail(
                 f"mode {self.mode!r} must not carry a "
                 "handler (only 'job' commands have one)"
+            )
+        if self.retry_window_s is not None and not (
+            self.mode == "job"
+            and type(self.retry_window_s) is int
+            and 1 <= self.retry_window_s <= RETRY_WINDOW_MAX_S
+        ):
+            self._fail(
+                f"retry_window_s must be 1..{RETRY_WINDOW_MAX_S} seconds on a "
+                f"'job' command, got {self.retry_window_s!r} on mode {self.mode!r}"
             )
         if self.result is not None and not (
             self.mode == "job" and dataclasses.is_dataclass(self.result)

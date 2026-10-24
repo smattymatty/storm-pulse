@@ -297,6 +297,18 @@ def test_step_index_rides_a_result_and_is_null_outside_a_sequence(
     assert (sent["sequence_id"], sent["step_index"]) == ("s", 1)
 
 
+def test_a_result_that_ran_once_still_sends_attempts_and_retries_exhausted(
+    command_result_dict: dict[str, Any],
+) -> None:
+    """CORE-012: every result says how many runs stand behind it, so a reader
+    never guesses at an absent key. A result that never asked to run again
+    sends one attempt and no exhausted retries."""
+    single = CommandResultPayload.from_dict(command_result_dict["payload"])
+    sent = Envelope.from_json(make("a1", single).to_json()).payload
+    assert sent["attempts"] == 1
+    assert sent["retries_exhausted"] is False
+
+
 def _result(**overrides: Any) -> CommandResultPayload:
     base: dict[str, Any] = dict(
         request_id="r1",

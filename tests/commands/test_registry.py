@@ -86,6 +86,29 @@ def test_command_spec_result_is_a_dataclass_on_a_job_only() -> None:
         )
 
 
+def test_a_retry_window_is_one_to_six_hundred_seconds_on_a_job_only() -> None:
+    """CORE-012 d3: the agent caps the window an integration declares; absent
+    means a job never runs again."""
+
+    def job(window: object) -> CommandSpec:
+        return CommandSpec(
+            group="g",
+            command=["j"],
+            timeout=5,
+            mode="job",
+            handler=lambda p: None,
+            retry_window_s=window,  # type: ignore[arg-type]
+        )
+
+    assert job(None).retry_window_s is None
+    assert (job(1).retry_window_s, job(600).retry_window_s) == (1, 600)
+    for bad in (0, 601, -1, True, 2.5):
+        with pytest.raises(ValueError, match="retry_window_s must be 1..600"):
+            job(bad)
+    with pytest.raises(ValueError, match="retry_window_s must be 1..600"):
+        CommandSpec(group="g", command=["/bin/true"], timeout=5, retry_window_s=30)
+
+
 # -- lookup ------------------------------------------------------------------
 
 

@@ -196,6 +196,10 @@ class CommandResultPayload(WirePayload):
     error: ResultError | None = None
     # The step's position in its sequence, 0-based; null outside one.
     step_index: int | None = None
+    # Handler runs behind this result, and whether the last still asked to run
+    # again when its window closed (CORE-012). Always sent.
+    attempts: int = 1
+    retries_exhausted: bool = False
 
     def __post_init__(self) -> None:
         # The one rule for producers, ``from_dict`` and tests alike: a member's
@@ -271,10 +275,9 @@ class TransferStats:
 class CommandProgressPayload(WirePayload):
     """Payload for command.progress (agent -> dashboard).
 
-    Long-running commands emit one or more between command.request and the
-    terminal command.result; the first has stage="starting". The transfer
-    fields are optional and flat on the wire (the agent carries them as a
-    ``TransferStats``), absent on every non-transfer command.
+    Sent between command.request and the terminal command.result; each attempt
+    opens with stage="starting" (CORE-012). The transfer fields are optional and
+    flat on the wire (``TransferStats`` agent-side), absent on non-transfers.
     """
 
     request_id: str

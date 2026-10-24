@@ -510,6 +510,7 @@ async def dispatch_long_running(
             handler,
             on_success=on_success,
             params=non_secret_params(cmd_def, validated_params),
+            retry_window_s=cmd_def.retry_window_s,
         )
     except JobManagerClosing:
         # `start` is the one admission gate; a closed manager still sends.
