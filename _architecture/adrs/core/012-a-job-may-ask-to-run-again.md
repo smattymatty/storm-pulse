@@ -2,7 +2,7 @@
 adr:
   id: "CORE-012"
   title: "A job may ask to run again later"
-  status: "Proposed"
+  status: "Accepted"
   date: "2026-10-24"
   authors:
     - "Mathew Storm (maintainer, decisions)"
@@ -12,8 +12,8 @@ adr:
 
 # ADR: A job may ask to run again later
 
-**Tier: timeless.** Grilled 2026-10-24, maintainer-ruled. Nothing built. Verify
-against `stormpulse/sdk/declaration.py` and the job runner.
+**Tier: timeless.** Grilled 2026-10-24, maintainer-ruled. Accepted and built in
+`601c1c7`. Verify against `stormpulse/sdk/declaration.py` and the job runner.
 
 ## Context
 
