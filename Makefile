@@ -12,13 +12,16 @@ SCA_DIR ?= /tmp/stormpulse-sca
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
-.PHONY: check test mypy fitness deadcode security quality pre-release-check clean \
+.PHONY: check gates test mypy fitness deadcode security quality pre-release-check clean \
         wire-contract log-line-contract garage-up garage-down test-wire test-garage-wire \
         test-ci
 
 # Umbrella: every check in one command. No Docker, no network (except
 # `security`, whose AI-defect checks may consult the PyPI registry).
 check: quality comments-diff security test mypy fitness deadcode
+
+# What CI runs, under the name the build workflow asks for.
+gates: check
 
 # Check unused functions, imports, variables, classes, and files (SKY-U001..U005).
 # Exclude parameters: callbacks must preserve interface signatures.
