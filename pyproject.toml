@@ -29,10 +29,10 @@ dev = [
     "ruff>=0.8.0",
     "pre-commit>=4.0",
     "skylos==4.35.0",
-    # Floors past their advisories (SCA, 2026-10-21): dev-only, pulled in by
-    # requests/httpx and pre-commit, never shipped to a node.
+    # Floors past their advisories (SCA, 2026-10-21; virtualenv again 2026-10-24):
+    # dev-only, pulled in by requests/httpx and pre-commit, never shipped to a node.
     "certifi>=2026.10.19",
-    "virtualenv>=21.14.12",
+    "virtualenv>=21.14.13",
 ]
 
 [project.scripts]
