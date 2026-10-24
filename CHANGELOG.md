@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-24
+
+Integrations get their own event spool, a job can ask to run again, and
+metrics report every real mount.
+
+**Refresh the control plane's vendored `wire-contract.json` before your
+agents.** Its `contract_digest` changes; a control plane that checks the digest
+sees an unknown one from every upgraded agent until it does. `SDK_API` is now
+3 (it was 2): an integration that uses the event spool or declares
+`retry_window_s` should declare `sdk_api = 3`, so an older agent refuses it by
+version instead of failing to load it.
+
 ### Added
 
 - **Integrations feed their own events.** An integration declares an event
@@ -32,11 +44,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   event forwarded; now the event is dropped and counted in
   `dropped_events.undeclared`, which counts events, not fields.
 
+- **`integration doctor` fails where it used to pass.** It loads sealed external
+  adapters exactly as boot does, and exits 4 when a ready integration reports a
+  capability that is not live, or when asked about an id the agent has not
+  registered (that printed nothing and exited 0). An error in a package the
+  active pointer has moved past is now a warning: nothing loads it, but a
+  rollback to it would fail.
+
 ### Fixed
 
 - `stormpulse update --version 0.6.0` installs release tag `v0.6.0` from git; it
   exited 2 unless `--source pip`. This is the per-node rollback. `--branch` with
   `--version` is refused.
+- A bucket Garage answers a definite 404 for leaves the cache at once, so its
+  usage stops being reported; it used to wait for the next full diff.
+
+### Security
+
+- Development dependency floors past their advisories (`certifi`,
+  `virtualenv` GHSA-cx6f-vjhg-g3cc, and the development lock past `urllib3`).
+  Nothing shipped to a node changes.
 
 ## [0.7.0] - 2026-10-10
 
@@ -564,7 +591,11 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* - current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.2...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.8.0...HEAD
+[0.8.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.7.0...v0.8.0
+[0.7.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.6.0...v0.7.0
+[0.6.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.5.1...v0.6.0
+[0.5.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.1...v0.5.1
 [0.4.2]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.1...v0.4.2
 [0.4.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.4.0...v0.4.1
 [0.4.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.3.2...v0.4.0
