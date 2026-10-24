@@ -12,7 +12,7 @@ SCA_DIR ?= /tmp/stormpulse-sca
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
-.PHONY: check gates test mypy fitness deadcode security quality pre-release-check clean \
+.PHONY: check gates test mypy fitness deadcode security quality pre-release-check release-smoke clean \
         wire-contract log-line-contract garage-up garage-down test-wire test-garage-wire \
         test-ci
 
@@ -103,8 +103,20 @@ log-line-contract:
 pre-release-check:
 	$(PYTHON) scripts/pre_release_check.py
 
+# CORE-002 step 4's smoke test, as a target: the committed tree's wheel installs in
+# a fresh venv and reports [project].version. Built outside the checkout, so no build/.
+release-smoke:
+	@set -e; T=$$(mktemp -d); trap 'rm -rf "$$T"' EXIT; mkdir "$$T/src"; \
+	git archive HEAD | tar -x -C "$$T/src"; \
+	uv build --wheel --out-dir "$$T/dist" "$$T/src" >/dev/null; \
+	python3 -m venv "$$T/venv"; "$$T/venv/bin/pip" install -q --disable-pip-version-check "$$T"/dist/*.whl; \
+	want="storm-pulse-agent v$$($(PYTHON) -c 'import tomllib; print(tomllib.load(open("'"$$T"'/src/pyproject.toml", "rb"))["project"]["version"])')"; \
+	got="$$("$$T/venv/bin/stormpulse" --version)"; \
+	[ "$$got" = "$$want" ] || { echo "release-smoke: the wheel says '$$got', pyproject says '$$want'"; exit 1; }; \
+	echo "release-smoke: ok, the wheel installs and reports $$want"
+
 clean:
-	rm -rf .mypy_cache .pytest_cache .import_linter_cache dist/
+	rm -rf .mypy_cache .pytest_cache .import_linter_cache dist/ build/
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +
 
 # Comment inventory is advisory; staged/committed gates reject changed oversized blocks.
