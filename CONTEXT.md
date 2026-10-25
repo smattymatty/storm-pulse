@@ -164,6 +164,17 @@ A JSON file at `[garage] hint_file`, written by another process on the box,
 naming bucket ids to re-read before the five-minute walk. Trusted only past
 seven checks; a refused file costs a re-read, never steers one.
 
+**Checkpoint**:
+A log group's stored position: the end of what the control plane has ACKed
+with nothing unconfirmed before it. Shipping resumes from it; it never moves
+past a line that was read but not ACKed.
+_Avoid_: cursor (journald's own token), offset (files only)
+
+**Rewind**:
+A streaming Docker source restarting its follow from the checkpoint because a
+batch it read was lost unACKed. Lines after the checkpoint ship again: at
+least once, never skipped.
+
 ## Privacy by design
 
 Pulse is built so the agent has almost nothing to hold and therefore
