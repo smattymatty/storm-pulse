@@ -193,12 +193,14 @@ class SpoolFeeder:
     ) -> tuple[Identity | None, list[dict[str, Any]], int] | None:
         """The file read, its admitted events and the count it refused; ``None``
         leaves it for the next tick (unreadable now, perhaps not later)."""
+        before = _identity(path)
         try:
             raw, st = read_bounded(path, MAX_SEGMENT_BYTES, self._owner_ok)
         except RefusedFile as exc:
             logger.warning("event segment %s refused: %s", path.name, exc.detail)
-            # A symlink is never opened: its lstat is all there is.
-            st_id = _stat_id(exc.st) if exc.st else _identity(path)
+            # A symlink is never opened, so it is known by the lstat taken first:
+            # a later lstat would name a file renamed in since, and delete it.
+            st_id = _stat_id(exc.st) if exc.st else before
             return st_id, [], 1
         except OSError as exc:
             logger.warning("event segment %s unreadable: %s", path.name, exc)

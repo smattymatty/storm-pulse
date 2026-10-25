@@ -11,7 +11,9 @@ from typing import Any
 
 from stormpulse import events
 from stormpulse.agent.external_adapters import _event_source
+from stormpulse.protocol import Envelope, MessageType
 from stormpulse.sdk import SdkEventSource
+from tests.helpers import envelope
 
 SOURCE = "probe_gate"
 NOBODY = 65534
@@ -46,3 +48,12 @@ def segment(spool: Path, name: str, *records: dict[str, Any], schema: int = 1) -
 
 def seen(record_id: str, **extra: Any) -> dict[str, Any]:
     return {"kind": "request_seen", "record_id": record_id, "status": 200, **extra}
+
+
+def record_ids(batch: list[dict[str, Any]]) -> list[str]:
+    return [e["record_id"] for e in batch if e["kind"] == "request_seen"]
+
+
+def nack(batch_id: str) -> Envelope:
+    payload = {"batch_id": batch_id, "reason": "shape refused"}
+    return envelope(MessageType.EVENTS_BATCH_NACK, payload)
