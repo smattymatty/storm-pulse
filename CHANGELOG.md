@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-25
+
+Stability fixes for log shipping, the integration event spool, job retries and
+reconnect. Nothing on the wire changes: `wire-contract.json`, its digests and
+`SDK_API` 3 are as in 0.8.0, so the control plane needs no refresh.
+
+### Fixed
+
+- **A log filter that excludes a whole read no longer stalls the file.** The
+  excluded lines are consumed, so matching lines after them ship; they used to
+  wait forever behind the first all-excluded batch.
+- **A late log ACK moves only the checkpoint it was read for.** Each batch
+  carries the file generation and range it came from, so an ACK for a file that
+  has since been rotated or truncated no longer stores its offset against the
+  new file and skips its lines. An ACK for another group, a duplicate, or one
+  that arrives out of order is refused and moves nothing. Docker timestamps no
+  longer rewind on a late ACK.
+- **Settling an integration's spool segment deletes only the file that was
+  read.** A segment written again at the same name, or renamed over a refused
+  symlink, is kept and shipped; it used to be deleted unread.
+- **A job retry never starts after its `retry_window_s` has closed.** A retry
+  that overslept its park or waited for a permit past the window now ends with
+  the last real outcome and `retries_exhausted`. `attempts` counts handler runs.
+- **Reconnect resends unacknowledged event batches oldest first.** They came
+  back in reverse batch order; overflow now drops the oldest of the rebuilt
+  stream and counts it in `dropped_events`.
+
+Still open, for 0.8.2: the streaming Docker tailer can skip lines when ACKs
+arrive out of order, and a `copytruncate` that regrows past the ACKed offset is
+not detected.
+
 ## [0.8.0] - 2026-10-24
 
 Integrations get their own event spool, a job can ask to run again, and
