@@ -32,6 +32,8 @@ _JOURNALCTL_BINARY = "journalctl"
 _JOURNALCTL_TIMEOUT_SECONDS = 15
 # Bytes of a file's head that name its generation alongside the inode.
 _HEAD_BYTES = 4096
+# Docker --timestamps to the microsecond; --since parses no finer.
+_DOCKER_TS_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
 def _is_own(receipt: Receipt, group: LogGroupConfig, source: str) -> bool:
@@ -166,12 +168,12 @@ def _advance_nanos(ts: str) -> str:
     if parsed is None:
         return ts
     advanced = parsed + timedelta(microseconds=1)
-    return advanced.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return advanced.strftime(_DOCKER_TS_FORMAT)
 
 
 def _parse_docker_ts(ts: str) -> datetime | None:
     """A Docker ``...Z`` timestamp as a UTC instant, truncated to microseconds."""
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+    for fmt in (_DOCKER_TS_FORMAT, "%Y-%m-%dT%H:%M:%SZ"):
         try:
             return datetime.strptime(ts, fmt).replace(tzinfo=UTC)
         except ValueError:
@@ -181,7 +183,7 @@ def _parse_docker_ts(ts: str) -> datetime | None:
         base, frac = ts[:-1].rsplit(".", 1)
         try:
             return datetime.strptime(
-                f"{base}.{frac[:6].ljust(6, '0')}Z", "%Y-%m-%dT%H:%M:%S.%fZ"
+                f"{base}.{frac[:6].ljust(6, '0')}Z", _DOCKER_TS_FORMAT
             ).replace(tzinfo=UTC)
         except ValueError:
             return None
@@ -213,7 +215,7 @@ def _docker_from_ts(group: LogGroupConfig, store: LogPositionStore) -> str:
     stored = store.get_docker_ts(group.name)
     if stored is not None:
         return stored
-    seed = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    seed = datetime.now(UTC).strftime(_DOCKER_TS_FORMAT)
     store.set_docker_ts(group.name, group.container_name, seed)
     return seed
 
@@ -527,9 +529,7 @@ class StreamingDockerTailer:
     def _spawn(self) -> bool:
         """Spawn ``docker logs --follow --timestamps --since <last_ts>``."""
         stored = self._store.get_docker_ts(self._group.name)
-        from_ts = stored or datetime.now(UTC).strftime(
-            "%Y-%m-%dT%H:%M:%S.%fZ",
-        )
+        from_ts = stored or datetime.now(UTC).strftime(_DOCKER_TS_FORMAT)
         cmd = [
             self._group.docker_binary,
             "logs",
