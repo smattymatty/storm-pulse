@@ -229,6 +229,82 @@ class TestEventBuffer:  # skylos: ignore[SKY-Q702] a test class groups cases by 
         batch = buf.drain("b2")
         assert [e["kind"] for e in batch] == ["a", "b", "c"]
 
+    def test_unacked_batches_requeue_oldest_first_ahead_of_unsent(self) -> None:
+        # Sizes 1, 2, 3 tell batch order from in-batch order (STAB-05).
+        buf = EventBuffer()
+        for i in range(1, 7):
+            buf.append({"kind": str(i)})
+        for batch_id, size in (("b1", 1), ("b2", 2), ("b3", 3)):
+            buf.drain(batch_id, max_events=size)
+        buf.append({"kind": "7"})
+        assert buf.requeue_unacked() == 6
+        kinds = [e["kind"] for e in buf.drain("b4")]
+        assert kinds == ["1", "2", "3", "4", "5", "6", "7"]
+
+    def test_acked_middle_batch_leaves_its_neighbours_in_order(self) -> None:
+        buf = EventBuffer()
+        for i in range(1, 7):
+            buf.append({"kind": str(i)})
+        for batch_id, size in (("b1", 1), ("b2", 2), ("b3", 3)):
+            buf.drain(batch_id, max_events=size)
+        buf.append({"kind": "7"})
+        assert buf.ack("b2") is True
+        assert buf.requeue_unacked() == 4
+        kinds = [e["kind"] for e in buf.drain("b4")]
+        assert kinds == ["1", "4", "5", "6", "7"]
+
+    def test_requeue_overflow_drops_oldest_of_the_rebuilt_stream(self) -> None:
+        # Requeued 1-4 plus unsent 5-6 overflow a cap of 4: 1 and 2 go.
+        buf = EventBuffer(max_events=4)
+        for i in range(1, 5):
+            buf.append({"kind": str(i)})
+        buf.drain("b1", max_events=2)
+        buf.drain("b2", max_events=2)
+        buf.append({"kind": "5"})
+        buf.append({"kind": "6"})
+        assert buf.requeue_unacked() == 4  # requeued, drops not netted out
+        batch = buf.drain("b3")
+        assert batch[0]["kind"] == "dropped_events"
+        assert batch[0]["dropped"] == 2
+        assert [e["kind"] for e in batch[1:]] == ["3", "4", "5", "6"]
+        assert [e["seq"] for e in batch[1:]] == [3, 4, 5, 6]
+
+    def test_repeated_reconnects_never_duplicate(self) -> None:
+        buf = EventBuffer()
+        for i in range(1, 4):
+            buf.append({"kind": str(i)})
+        buf.drain("b1", max_events=2)
+        assert buf.requeue_unacked() == 2
+        assert buf.requeue_unacked() == 0
+        buf.drain("b2", max_events=2)
+        assert buf.requeue_unacked() == 2
+        kinds = [e["kind"] for e in buf.drain("b3")]
+        assert kinds == ["1", "2", "3"]
+
+    def test_repeated_reconnects_keep_original_seqs(self) -> None:
+        buf = EventBuffer()
+        for i in range(1, 4):
+            buf.append({"kind": str(i)})
+        stamped = [e["seq"] for e in buf.drain("b1")]
+        for attempt in ("b2", "b3"):
+            buf.requeue_unacked()
+            assert [e["seq"] for e in buf.drain(attempt)] == stamped
+        buf.append({"kind": "4"})
+        assert buf.drain("b4")[0]["seq"] == stamped[-1] + 1
+
+    def test_requeue_after_in_flight_eviction_keeps_send_order(self) -> None:
+        # Real ids are uuid4: order must come from send order, never the id
+        # ("b10" sorts before "b2"). Eviction's loss and requeue's add up.
+        buf = EventBuffer(max_events=events.MAX_IN_FLIGHT_BATCHES - 1)
+        for i in range(events.MAX_IN_FLIGHT_BATCHES + 1):
+            buf.append({"kind": f"e{i}"})
+            buf.drain(f"b{i}")
+        assert buf.requeue_unacked() == events.MAX_IN_FLIGHT_BATCHES
+        batch = buf.drain("final", max_events=100)
+        assert (batch[0]["kind"], batch[0]["dropped"]) == ("dropped_events", 2)
+        survivors = range(2, events.MAX_IN_FLIGHT_BATCHES + 1)
+        assert [e["kind"] for e in batch[1:]] == [f"e{i}" for i in survivors]
+
     def test_overflow_drops_oldest_and_is_never_silent(self) -> None:
         buf = EventBuffer(max_events=2)
         buf.append({"kind": "a"})

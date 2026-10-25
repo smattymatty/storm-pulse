@@ -347,7 +347,7 @@ class EventBuffer:
         """
         with self._lock:
             requeued = 0
-            for batch in self._in_flight.values():
+            for batch in reversed(self._in_flight.values()):
                 for event in reversed(batch):
                     self._buf.appendleft(event)
                     requeued += 1
