@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -320,6 +322,7 @@ async def test_time_queued_for_a_permit_spends_none_of_the_window(
     assert calls == 2, "the queued time was charged to the window"
     assert result.payload["attempts"] == 2
     assert result.payload["retries_exhausted"] is False
+    assert result.payload["duration_ms"] == 0, "queued time counted as work"
 
 
 @pytest.mark.asyncio
@@ -345,3 +348,277 @@ async def test_each_park_line_names_its_own_attempt(wire: FakeWire) -> None:
     assert len(parks) == 2
     assert re.search(r"\b1\b", parks[0]) and not re.search(r"\b2\b", parks[0])
     assert re.search(r"\b2\b", parks[1]) and not re.search(r"\b1\b", parks[1])
+
+
+def _sleep_on(before: Callable[[float], Awaitable[None]]) -> Any:
+    """Stand in for ``jobs.asyncio`` so a park is instant: ``before`` moves the
+    clock (and may wait on the test) in place of the real ``asyncio.sleep``."""
+
+    class _Asyncio:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(asyncio, name)
+
+        async def sleep(self, delay: float) -> None:
+            await before(delay)
+
+    return _Asyncio()
+
+
+@pytest.mark.asyncio
+async def test_a_permit_freed_past_the_window_admits_no_attempt(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """d3 at admission: the 1 s park ends inside the 2 s window, but another job
+    holds the only permit until +6 s; the waiting attempt never runs."""
+    clock = [0.0]
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    parked, held = asyncio.Event(), asyncio.Event()
+
+    async def park(delay: float) -> None:
+        clock[0] += delay
+        parked.set()
+        await held.wait()
+
+    monkeypatch.setattr(jobs, "asyncio", _sleep_on(park))
+    mgr = JobManager("agent-1", wire.send)
+    mgr._sem = asyncio.Semaphore(1)
+    calls = 0
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        nonlocal calls
+        calls += 1
+        return _asks() if calls == 1 else JobOutcome(success=True)
+
+    async def blocker(progress: ProgressCallback) -> JobOutcome:
+        held.set()
+        await asyncio.sleep(0)
+        clock[0] += 5
+        return JobOutcome(success=True)
+
+    mgr.start("req-1", "wait_for_dep", "demo", handler, retry_window_s=2)
+    await parked.wait()
+    mgr.start("req-block", "blocker", "demo", blocker)
+    await _settle(mgr)
+
+    result = next(r for r in _results(wire) if r.payload["request_id"] == "req-1")
+    assert calls == 1, "an attempt started after the window closed"
+    assert result.payload["success"] is False
+    assert result.payload["attempts"] == 1
+    assert result.payload["retries_exhausted"] is True
+    assert result.payload["stderr"] == "dependency still loading"
+
+
+@pytest.mark.asyncio
+async def test_an_overslept_park_admits_no_attempt(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """d3 at admission: after 1 s of work a 4 s park fits the 5 s window, but the
+    loop wakes at +6 s; the second attempt, which would succeed, never runs."""
+    clock = [0.0]
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def oversleep(delay: float) -> None:
+        clock[0] += delay + 1
+
+    monkeypatch.setattr(jobs, "asyncio", _sleep_on(oversleep))
+    mgr = JobManager("agent-1", wire.send)
+    calls = 0
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        nonlocal calls
+        calls += 1
+        clock[0] += 1
+        return _asks(after=4) if calls == 1 else JobOutcome(success=True)
+
+    mgr.start("req-1", "wait_for_dep", "demo", handler, retry_window_s=5)
+    await _settle(mgr)
+
+    assert calls == 1, "an attempt started after the window closed"
+    (result,) = _results(wire)
+    payload = result.payload
+    assert payload["success"] is False
+    assert payload["attempts"] == 1
+    assert payload["retries_exhausted"] is True
+    assert payload["stderr"] == "dependency still loading"
+    assert payload["duration_ms"] == 1000, "the overslept park counted as work"
+    assert payload["error"]["code"] == "not_ready"
+
+
+@pytest.mark.asyncio
+async def test_a_park_ending_on_the_deadline_is_admitted(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """d3: admission is inclusive like ``grants``; a second attempt that
+    starts exactly at the deadline runs, and the 4 s park is not work."""
+    clock = [0.0]
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def exact(delay: float) -> None:
+        clock[0] += delay
+
+    monkeypatch.setattr(jobs, "asyncio", _sleep_on(exact))
+    mgr = JobManager("agent-1", wire.send)
+    calls = 0
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        nonlocal calls
+        calls += 1
+        clock[0] += 1
+        return _asks(after=4) if calls == 1 else JobOutcome(success=True)
+
+    mgr.start("req-1", "wait_for_dep", "demo", handler, retry_window_s=5)
+    await _settle(mgr)
+
+    (result,) = _results(wire)
+    assert calls == 2
+    assert result.payload["success"] is True
+    assert result.payload["attempts"] == 2
+    assert result.payload["duration_ms"] == 2000
+
+
+@pytest.mark.asyncio
+async def test_a_stop_while_queued_past_the_window_cancels_without_a_result(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """d3 + shutdown: a job whose window closed while it queued waits for a
+    permit to finish, so a stop in that wait cancels it and sends no result."""
+    clock = [0.0]
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    parked, held = asyncio.Event(), asyncio.Event()
+
+    async def park(delay: float) -> None:
+        clock[0] += delay
+        parked.set()
+        await held.wait()
+
+    monkeypatch.setattr(jobs, "asyncio", _sleep_on(park))
+    mgr = JobManager("agent-1", wire.send)
+    mgr._sem = asyncio.Semaphore(1)
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        return _asks()
+
+    async def blocker(progress: ProgressCallback) -> JobOutcome:
+        clock[0] += 5
+        held.set()
+        await asyncio.Event().wait()
+        return JobOutcome(success=True)
+
+    mgr.start("req-1", "wait_for_dep", "demo", handler, retry_window_s=2)
+    await parked.wait()
+    mgr.start("req-block", "blocker", "demo", blocker)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert _results(wire) == [], "finished past the window without a permit"
+    await mgr.shutdown_all(CancelReason.SHUTDOWN)
+
+    assert _results(wire) == []
+    cancelled = [e for e in wire.sent if e.type is MessageType.COMMAND_CANCELLED]
+    assert sorted(e.payload["request_id"] for e in cancelled) == ["req-1", "req-block"]
+    assert mgr.load()["running"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_after_two_asks_reports_the_latest_one(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """d3 at admission: the refused result carries the LAST real outcome, not the
+    first; the second park oversleeps the 3 s window."""
+    clock = [0.0]
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    parks = 0
+
+    async def park(delay: float) -> None:
+        nonlocal parks
+        parks += 1
+        clock[0] += delay if parks == 1 else delay + 5
+
+    monkeypatch.setattr(jobs, "asyncio", _sleep_on(park))
+    mgr = JobManager("agent-1", wire.send)
+    calls = 0
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        nonlocal calls
+        calls += 1
+        return _asks("first ask") if calls == 1 else _asks("second ask")
+
+    mgr.start("req-1", "wait_for_dep", "demo", handler, retry_window_s=3)
+    await _settle(mgr)
+
+    (result,) = _results(wire)
+    assert calls == 2
+    assert result.payload["attempts"] == 2
+    assert result.payload["retries_exhausted"] is True
+    assert result.payload["stderr"] == "second ask", "refusal reported a stale ask"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_records_the_last_attempts_concurrency(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refused job_result's ``concurrent`` is the last attempt's, not the
+    queue at refusal: a job spawned during the park does not inflate it."""
+    clock = [0.0]
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    release = asyncio.Event()
+    mgr = JobManager("agent-1", wire.send)
+
+    async def side(progress: ProgressCallback) -> JobOutcome:
+        await release.wait()
+        return JobOutcome(success=True)
+
+    async def oversleep(delay: float) -> None:
+        mgr.start("req-side", "side", "demo", side)
+        clock[0] += delay + 5
+
+    monkeypatch.setattr(jobs, "asyncio", _sleep_on(oversleep))
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        return _asks()
+
+    mgr.start("req-1", "wait_for_dep", "demo", handler, retry_window_s=2)
+    events.buffer().drain("flush-before")
+    await mgr._jobs["req-1"]
+    release.set()
+    await _settle(mgr)
+
+    (ev,) = [
+        e
+        for e in events.buffer().drain("capture")
+        if e.get("kind") == "job_result" and e.get("command_ref") == "req-1"
+    ]
+    assert ev["retries_exhausted"] is True
+    assert ev["concurrent"] == 1, "refusal counted a job spawned during the park"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_attempt_sends_its_result_inside_a_permit(
+    wire: FakeWire, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """d3 at admission: the refusal finishes inside the permit it waited for, as
+    the terminal path does, so its admin-API result send counts as running."""
+    clock = [0.0]
+    monkeypatch.setattr(jobs, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+
+    async def oversleep(delay: float) -> None:
+        clock[0] += delay + 5
+
+    monkeypatch.setattr(jobs, "asyncio", _sleep_on(oversleep))
+    running_at_send: list[int] = []
+
+    async def send(envelope: Envelope) -> None:
+        if envelope.type is MessageType.COMMAND_RESULT:
+            running_at_send.append(mgr.load()["running"])
+        await wire.send(envelope)
+
+    mgr = JobManager("agent-1", send)
+
+    async def handler(progress: ProgressCallback) -> JobOutcome:
+        return _asks()
+
+    mgr.start("req-1", "wait_for_dep", "demo", handler, retry_window_s=2)
+    await _settle(mgr)
+
+    (result,) = _results(wire)
+    assert result.payload["retries_exhausted"] is True
+    assert running_at_send == [1], "the refusal finished without holding a permit"

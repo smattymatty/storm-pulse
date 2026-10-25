@@ -191,6 +191,10 @@ class _RetryWindow:
             return False
         return delay_s <= self._deadline - time.monotonic()
 
+    def admits(self) -> bool:
+        """Whether an attempt may still start: now is at or before the deadline."""
+        return self._deadline is not None and time.monotonic() <= self._deadline
+
 
 @dataclass(frozen=True, slots=True)
 class _Tally:
@@ -454,9 +458,9 @@ class JobManager:
         """Drive the job through its attempts to one terminal result.
 
         Each attempt holds a permit; the terminal one keeps it through the result
-        and on_success hook, both admin-API calls. An attempt the window grants
-        (CORE-012) parks WITHOUT its permit, so deferred jobs cannot starve the
-        cap. ``duration_ms`` sums the attempts' work, never parked time."""
+        and on_success hook. A granted ask (CORE-012) parks WITHOUT its permit, so
+        deferred jobs cannot starve the cap; the next attempt starts only if the
+        window is open once it holds one. ``duration_ms`` is handler work only."""
         # Attribute every admin call made by this job's handler AND its
         # on_success hook (both run in this task's context) to this command.
         events.trigger_var.set("job")
@@ -465,10 +469,18 @@ class JobManager:
         window = _RetryWindow(job.retry_window_s)
         attempts = 0
         work_ms = 0
+        last: tuple[JobOutcome, int] | None = None
         while True:
-            attempts += 1
             async with self._permit(job.command):
                 window.open()
+                if last is not None and not window.admits():
+                    # Overslept or queued past the window: the last real outcome
+                    # is terminal, as if its ask had not been granted.
+                    outcome, concurrent = last
+                    tally = _Tally(attempts, work_ms, concurrent, True)
+                    await self._finish(job, outcome, tally)
+                    return
+                attempts += 1
                 start = time.monotonic()
                 # Jobs spawned right now (running + queued for a permit), so a
                 # high count signals queue pressure, not that this many ran.
@@ -483,6 +495,7 @@ class JobManager:
                     tally = _Tally(attempts, work_ms, concurrent, exhausted)
                     await self._finish(job, outcome, tally)
                     return
+                last = (outcome, concurrent)
                 await progress(
                     "running",
                     0,
