@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.receipt import Receipt
 from stormpulse.logging.tailer import StreamingDockerTailer
 
 
@@ -132,11 +133,13 @@ def test_first_run_seeds_from_now(tmp_path: Path) -> None:
             ),
             patch.object(tailer, "_read_timeout", 0.05),
         ):
-            lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+            lines, receipt = tailer.read_new_lines(max_lines=10)
+            from_ts, to_ts = receipt.from_position, receipt.to_position
     finally:
         os.close(w)
         os.close(r)
     assert lines == []
+    assert isinstance(from_ts, str)
     assert from_ts.startswith("20")
     assert "1970" not in from_ts
     assert from_ts == to_ts
@@ -188,7 +191,8 @@ def test_returns_empty_when_silent(tmp_path: Path) -> None:
         _inject_fake_proc(tailer, fake)
         with patch.object(tailer, "_read_timeout", 0.1):
             started = time.monotonic()
-            lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+            lines, receipt = tailer.read_new_lines(max_lines=10)
+            from_ts, to_ts = receipt.from_position, receipt.to_position
             elapsed = time.monotonic() - started
     finally:
         os.close(w)
@@ -345,7 +349,8 @@ def test_to_ts_advanced_past_last_line(tmp_path: Path) -> None:
         os.write(w, b"2026-04-15T13:23:53.100000000Z last\n")
         _inject_fake_proc(tailer, fake)
         with patch.object(tailer, "_read_timeout", 0.2):
-            lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+            lines, receipt = tailer.read_new_lines(max_lines=10)
+            from_ts, to_ts = receipt.from_position, receipt.to_position
     finally:
         os.close(w)
         os.close(r)
@@ -361,7 +366,9 @@ def test_confirm_shipped_persists(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     group = _make_docker_group()
     tailer = StreamingDockerTailer(group, store)
-    tailer.confirm_shipped("2026-04-15T14:00:00.000000Z")
+    assert tailer.confirm_shipped(
+        Receipt("web", "web", None, "", "2026-04-15T14:00:00.000000Z")
+    )
     assert store.get_docker_ts("web") == "2026-04-15T14:00:00.000000Z"
     store.close()
 
@@ -486,7 +493,8 @@ def test_docker_binary_missing(tmp_path: Path) -> None:
         "stormpulse.logging.tailer.subprocess.Popen",
         side_effect=FileNotFoundError,
     ):
-        lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+        lines, receipt = tailer.read_new_lines(max_lines=10)
+        from_ts, to_ts = receipt.from_position, receipt.to_position
 
     assert lines == []
     assert from_ts == to_ts == "2026-04-15T13:00:00.000000Z"
@@ -514,7 +522,7 @@ def test_read_new_lines_never_raises(tmp_path: Path) -> None:
             ),
             patch.object(tailer, "_read_timeout", 0.2),
         ):
-            lines, _, _ = tailer.read_new_lines(max_lines=10)
+            lines, receipt = tailer.read_new_lines(max_lines=10)
     finally:
         os.close(w)
         os.close(r)

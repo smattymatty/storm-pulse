@@ -10,6 +10,7 @@ is the at-least-once delivery guarantee across restarts.
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import logging
 import os
@@ -21,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.receipt import FileGeneration, Receipt
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,20 @@ MAX_LINES_PER_INTERVAL = 1000
 
 _JOURNALCTL_BINARY = "journalctl"
 _JOURNALCTL_TIMEOUT_SECONDS = 15
+# Bytes of a file's head that name its generation alongside the inode.
+_HEAD_BYTES = 4096
+
+
+def _is_own(receipt: Receipt, group: LogGroupConfig, source: str) -> bool:
+    """True when ``receipt`` was issued for this group's current source."""
+    return receipt.group == group.name and receipt.source == source
+
+
+def _generation(fd: int, inode: int, upto: int) -> FileGeneration:
+    """The generation of open file ``fd``: its inode and its first ``upto`` bytes (capped)."""
+    head = os.pread(fd, min(_HEAD_BYTES, upto), 0)
+    digest = hashlib.blake2b(head, digest_size=16).digest()
+    return FileGeneration(inode, len(head), digest)
 
 
 class LogTailer:
@@ -36,87 +52,95 @@ class LogTailer:
     def __init__(self, group: LogGroupConfig, position_store: LogPositionStore) -> None:
         self._group = group
         self._store = position_store
-        # In-flight range: lines have been read but not yet confirmed shipped.
-        self._pending_position: int | None = None
-        self._pending_inode: int | None = None
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], int, int]:
-        """Read up to ``max_lines`` new lines from the source file.
+    def _receipt(
+        self, generation: FileGeneration | None, start: int, end: int
+    ) -> Receipt:
+        return Receipt(
+            self._group.name, str(self._group.source_path), generation, start, end
+        )
 
-        Returns a tuple of (lines, from_position, to_position).
-        ``from_position`` is the byte offset at the start of the read;
-        ``to_position`` is after the last line actually read - unread
-        lines beyond ``max_lines`` stay in the file and are picked up
-        on the next call.
+    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
+        """Read up to ``max_lines`` new lines; return them and the read's receipt.
 
-        Does NOT advance the stored position - call ``confirm_shipped``
-        to persist ``to_position`` after the batch is acknowledged.
+        The receipt's range runs from the start offset to just past the last
+        line read; its generation names the file read. Nothing is stored until
+        ``confirm_shipped`` is handed that receipt after the batch is ACKed.
         """
         path = self._group.source_path
-        if not path.exists():
-            return ([], 0, 0)
-
         try:
             stat = path.stat()
-        except OSError:
-            return ([], 0, 0)
+        except OSError:  # missing, or unreadable
+            return ([], self._receipt(None, 0, 0))
+        start = self._start(stat)
+        capped = min(max_lines, MAX_LINES_PER_INTERVAL)
+        lines: list[str] = []
+        try:
+            with open(path, "rb") as f:
+                f.seek(start)
+                while len(lines) < capped and (raw := f.readline()):
+                    lines.append(raw.decode("utf-8", errors="replace"))
+                end = f.tell()
+                generation = _generation(f.fileno(), stat.st_ino, end)
+        except OSError as exc:
+            logger.warning("Failed reading %s: %s", path, exc)
+            return ([], self._receipt(None, start, start))
+        return (lines, self._receipt(generation, start, end))
 
+    def _start(self, stat: os.stat_result) -> int:
+        """The stored offset, or 0 when the inode changed or the file shrank below it."""
         stored_position, stored_inode = self._store.get(self._group.name)
-        current_inode = stat.st_ino
-
-        # Rotation detected: file replaced since last read
-        if stored_inode is not None and stored_inode != current_inode:
+        if stored_inode is not None and stored_inode != stat.st_ino:
             logger.info(
                 "Log rotation detected for group %s (inode %s -> %s)",
                 self._group.name,
                 stored_inode,
-                current_inode,
+                stat.st_ino,
             )
-            stored_position = 0
+            return 0
+        return 0 if stored_position > stat.st_size else stored_position
 
-        # File shrank (truncated in place)
-        if stored_position > stat.st_size:
-            stored_position = 0
+    def confirm_shipped(self, receipt: Receipt) -> bool:
+        """Store the receipt's end if the file still holds the generation it read.
 
-        start = stored_position
-        lines: list[str] = []
-        to_position = start
+        Refused (False): another group or source, an inode the path no longer
+        names, a shorter file, a rewritten head, or a range that does not cover
+        the checkpoint (a late or duplicate ACK ends at or before it; one past
+        it would skip an unconfirmed gap).
+        """
+        owned = self._own_range(receipt)
+        if owned is None:
+            return False
+        gen, start, end = owned
+        size = self._still_holds(gen, end)
+        if size is None:
+            return False
+        stored, stored_inode = self._store.get(self._group.name)
+        # A checkpoint from another inode or past the end is an earlier generation's.
+        base = stored if stored_inode == gen.inode and stored <= size else 0
+        if not start <= base < end:
+            return False
+        self._store.set(self._group.name, str(self._group.source_path), end, gen.inode)
+        return True
 
-        capped = min(max_lines, MAX_LINES_PER_INTERVAL)
+    def _own_range(self, receipt: Receipt) -> tuple[FileGeneration, int, int] | None:
+        """The receipt's generation and byte range, or None if this tailer never issued it."""
+        gen, start, end = receipt.generation, receipt.from_position, receipt.to_position
+        if not _is_own(receipt, self._group, str(self._group.source_path)):
+            return None
+        if gen is None or not isinstance(start, int) or not isinstance(end, int):
+            return None
+        return gen, start, end
 
+    def _still_holds(self, gen: FileGeneration, end: int) -> int | None:
+        """The file's size if the path still names ``gen`` and reaches ``end``, else None."""
         try:
-            with open(path, "rb") as f:
-                f.seek(start)
-                while len(lines) < capped:
-                    raw = f.readline()
-                    if not raw:
-                        break
-                    lines.append(raw.decode("utf-8", errors="replace"))
-                    to_position = f.tell()
-        except OSError as exc:
-            logger.warning("Failed reading %s: %s", path, exc)
-            return ([], start, start)
-
-        self._pending_position = to_position
-        self._pending_inode = current_inode
-        return (lines, start, to_position)
-
-    def confirm_shipped(self, to_position: int) -> None:
-        """Persist ``to_position`` as the new stored position."""
-        inode = self._pending_inode
-        if inode is None:
-            try:
-                inode = self._group.source_path.stat().st_ino
-            except OSError:
-                return
-        self._store.set(
-            self._group.name,
-            str(self._group.source_path),
-            to_position,
-            inode,
-        )
-        self._pending_position = None
-        self._pending_inode = None
+            with open(self._group.source_path, "rb") as f:
+                st = os.fstat(f.fileno())
+                same = _generation(f.fileno(), st.st_ino, gen.head_len) == gen
+        except OSError:
+            return None
+        return st.st_size if same and st.st_size >= end else None
 
 
 _DOCKER_TS_PREFIX_RE = re.compile(
@@ -138,23 +162,77 @@ def _advance_nanos(ts: str) -> str:
     smallest effective resolution is 1µs, which is plenty: we're past
     any Docker log line that shared the same microsecond window.
     """
-    try:
-        parsed = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ")
-    except ValueError:
-        try:
-            parsed = datetime.strptime(ts, "%Y-%m-%dT%H:%M:%SZ")
-        except ValueError:
-            # Docker's nanosecond format: truncate to 6 fractional digits.
-            if "." in ts and ts.endswith("Z"):
-                base, frac = ts[:-1].rsplit(".", 1)
-                parsed = datetime.strptime(
-                    f"{base}.{frac[:6].ljust(6, '0')}Z",
-                    "%Y-%m-%dT%H:%M:%S.%fZ",
-                )
-            else:
-                return ts
-    advanced = parsed.replace(tzinfo=UTC) + timedelta(microseconds=1)
+    parsed = _parse_docker_ts(ts)
+    if parsed is None:
+        return ts
+    advanced = parsed + timedelta(microseconds=1)
     return advanced.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _parse_docker_ts(ts: str) -> datetime | None:
+    """A Docker ``...Z`` timestamp as a UTC instant, truncated to microseconds."""
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(ts, fmt).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+    # Docker's nanosecond format: truncate to 6 fractional digits.
+    if "." in ts and ts.endswith("Z"):
+        base, frac = ts[:-1].rsplit(".", 1)
+        try:
+            return datetime.strptime(
+                f"{base}.{frac[:6].ljust(6, '0')}Z", "%Y-%m-%dT%H:%M:%S.%fZ"
+            ).replace(tzinfo=UTC)
+        except ValueError:
+            return None
+    return None
+
+
+def _confirm_docker_ts(
+    group: LogGroupConfig, store: LogPositionStore, receipt: Receipt
+) -> bool:
+    """Both Docker kinds: store the end ts of a receipt this container issued."""
+    start, end = receipt.from_position, receipt.to_position
+    if not _is_own(receipt, group, group.container_name):
+        return False
+    if not isinstance(start, str) or not isinstance(end, str):
+        return False
+    stored = store.get_docker_ts(group.name)
+    if stored is not None and not _covers(start, stored, end):
+        return False
+    store.set_docker_ts(group.name, group.container_name, end)
+    return True
+
+
+def _docker_from_ts(group: LogGroupConfig, store: LogPositionStore) -> str:
+    """Both Docker kinds: the stored ts, or "now" persisted as the seed.
+
+    Persisting the seed makes the next interval query a back-window; re-seeding
+    to "now" every call would ship nothing until a first confirm that never comes.
+    """
+    stored = store.get_docker_ts(group.name)
+    if stored is not None:
+        return stored
+    seed = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    store.set_docker_ts(group.name, group.container_name, seed)
+    return seed
+
+
+def _last_ts(lines: list[str], from_ts: str) -> str:
+    """One tick past the last timestamped line, or ``from_ts`` if none carries one."""
+    for line in reversed(lines):
+        m = _DOCKER_TS_PREFIX_RE.match(line)
+        if m is not None:
+            return _advance_nanos(m.group(1))
+    return from_ts
+
+
+def _covers(start: str, stored: str, end: str) -> bool:
+    """True when ``start <= stored < end`` as instants: no rewind, no skipped gap."""
+    a, s, e = (_parse_docker_ts(ts) for ts in (start, stored, end))
+    if s is None:
+        return True  # an unreadable checkpoint protects nothing
+    return a is not None and e is not None and a <= s < e
 
 
 class DockerTailer:
@@ -168,34 +246,25 @@ class DockerTailer:
         self._group = group
         self._store = position_store
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], str, str]:
-        """Run ``docker logs --since <last_ts> --timestamps`` and return new lines.
+    def _receipt(self, from_ts: str, to_ts: str) -> Receipt:
+        return Receipt(
+            self._group.name, self._group.container_name, None, from_ts, to_ts
+        )
 
-        Returns ``(lines, from_ts, to_ts)``. ``from_ts`` is the stored
-        last_ts (or the current time on first run, to avoid replaying
-        the entire container history). ``to_ts`` is the timestamp of
-        the last line received - stays equal to ``from_ts`` when no
-        new lines arrive so we don't advance past unseen output.
+    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
+        """Run ``docker logs --since <last_ts> --timestamps``; return lines and receipt.
 
-        Never raises: missing binary, missing container, timeout, and
-        non-zero exit codes all collapse to an empty batch.
+        The receipt runs from the stored ts (seeded to "now" on first run, so no
+        history replays) to one tick past the last line, or stays at ``from_ts``.
+        Never raises: every failure to run collapses to an empty batch.
         """
-        stored = self._store.get_docker_ts(self._group.name)
-        if stored is None:
-            from_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            # Persist the seed immediately so the next interval actually
-            # queries a back-window. Without this, every call would re-seed
-            # to "now" and nothing would ever be shipped until the first
-            # confirmed batch - and the first batch can't happen if the
-            # window is empty.
-            self._store.set_docker_ts(
-                self._group.name,
-                self._group.container_name,
-                from_ts,
-            )
-        else:
-            from_ts = stored
+        from_ts = _docker_from_ts(self._group, self._store)
+        raw_lines = self._run_logs(from_ts)
+        lines = raw_lines[: min(max_lines, MAX_LINES_PER_INTERVAL)]
+        return (lines, self._receipt(from_ts, _last_ts(lines, from_ts)))
 
+    def _run_logs(self, from_ts: str) -> list[str]:
+        """stdout then stderr lines of ``docker logs --since``; [] when it could not run."""
         cmd = [
             self._group.docker_binary,
             "logs",
@@ -220,10 +289,10 @@ class DockerTailer:
                 self._group.name,
                 self._group.docker_binary,
             )
-            return ([], from_ts, from_ts)
+            return []
         except subprocess.TimeoutExpired:
             logger.warning("docker logs timed out for group %s", self._group.name)
-            return ([], from_ts, from_ts)
+            return []
 
         if result.returncode != 0:
             logger.warning(
@@ -232,29 +301,12 @@ class DockerTailer:
                 result.returncode,
                 result.stderr.strip()[:200],
             )
-            return ([], from_ts, from_ts)
+            return []
+        return result.stdout.splitlines() + result.stderr.splitlines()
 
-        raw_lines = result.stdout.splitlines() + result.stderr.splitlines()
-
-        capped = min(max_lines, MAX_LINES_PER_INTERVAL)
-        lines = raw_lines[:capped]
-
-        to_ts = from_ts
-        for line in reversed(lines):
-            m = _DOCKER_TS_PREFIX_RE.match(line)
-            if m is not None:
-                to_ts = _advance_nanos(m.group(1))
-                break
-
-        return (lines, from_ts, to_ts)
-
-    def confirm_shipped(self, to_ts: str) -> None:
-        """Persist ``to_ts`` as the new stored last_ts for this group."""
-        self._store.set_docker_ts(
-            self._group.name,
-            self._group.container_name,
-            to_ts,
-        )
+    def confirm_shipped(self, receipt: Receipt) -> bool:
+        """Store the receipt's end ts; refuse one this group's container never issued."""
+        return _confirm_docker_ts(self._group, self._store, receipt)
 
 
 class JournaldTailer:
@@ -283,8 +335,15 @@ class JournaldTailer:
         """Run journalctl, returning stdout, or None when it could not run."""
         try:
             result = subprocess.run(
-                [_JOURNALCTL_BINARY, "--unit", self._group.unit, "--output", "json",
-                 "--no-pager", *args],
+                [
+                    _JOURNALCTL_BINARY,
+                    "--unit",
+                    self._group.unit,
+                    "--output",
+                    "json",
+                    "--no-pager",
+                    *args,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=_JOURNALCTL_TIMEOUT_SECONDS,
@@ -323,39 +382,32 @@ class JournaldTailer:
         cursor = record.get("__CURSOR")
         return cursor if isinstance(cursor, str) else ""
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], str, str]:
-        """Return up to ``max_lines`` journal records newer than the cursor.
+    def _receipt(self, from_cursor: str, to_cursor: str) -> Receipt:
+        return Receipt(self._group.name, self._group.unit, None, from_cursor, to_cursor)
 
-        Returns ``(lines, from_cursor, to_cursor)``, where each line is one
-        JSON record for the ``journald`` parser. ``to_cursor`` is the cursor of
-        the last record actually taken, so a backlog larger than ``max_lines``
-        drains over successive intervals instead of being skipped. That is the
-        same contract the file tailer offers, and the reason this does not pass
-        ``--lines`` to journalctl: combined with ``--after-cursor`` that would
-        return the NEWEST n and silently drop the oldest.
+    def _seed(self) -> None:
+        """Store the newest record's cursor; an empty journal stays unseeded, retried next interval."""
+        seed = self._run(["--lines", "1"])
+        cursor = self._cursor_of(seed.strip().splitlines()[-1]) if seed else ""
+        if cursor:
+            self._store.set_cursor(self._group.name, self._group.unit, cursor)
 
-        On the first run for a group there is no cursor, so this seeds from the
-        newest existing record and ships nothing. Without the seed the agent
-        would replay the unit's entire retained journal on first start.
+    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
+        """Return up to ``max_lines`` JSON records after the cursor, and their receipt.
+
+        The receipt ends at the last record taken, so a backlog drains over
+        intervals; ``--lines`` with ``--after-cursor`` would keep the NEWEST n and
+        drop the oldest. With no cursor yet, seed from the newest record, ship nothing.
         """
         stored = self._store.get_cursor(self._group.name)
         if stored is None:
-            seed = self._run(["--lines", "1"])
-            if seed:
-                cursor = self._cursor_of(seed.strip().splitlines()[-1])
-                if cursor:
-                    self._store.set_cursor(self._group.name, self._group.unit, cursor)
-            # Nothing shipped either way: an empty journal leaves the group
-            # unseeded and the next interval tries again.
-            return ([], "", "")
+            self._seed()
+            return ([], self._receipt("", ""))
 
-        out = self._run(["--after-cursor", stored])
-        if not out:
-            return ([], stored, stored)
-
+        out = self._run(["--after-cursor", stored]) or ""
         records = [line for line in out.splitlines() if line.strip()]
         if not records:
-            return ([], stored, stored)
+            return ([], self._receipt(stored, stored))
 
         taken = records[:max_lines]
         to_cursor = ""
@@ -367,14 +419,18 @@ class JournaldTailer:
             # Every record we took is unparseable, so there is no cursor to
             # advance to. Do not move the position: re-reading is the correct
             # failure, losing the window is not.
-            return (taken, stored, stored)
-        return (taken, stored, to_cursor)
+            return (taken, self._receipt(stored, stored))
+        return (taken, self._receipt(stored, to_cursor))
 
-    def confirm_shipped(self, to_cursor: str) -> None:
-        """Persist ``to_cursor`` as the new stored cursor for this group."""
-        if not to_cursor:
-            return
-        self._store.set_cursor(self._group.name, self._group.unit, to_cursor)
+    def confirm_shipped(self, receipt: Receipt) -> bool:
+        """Store the receipt's end cursor; refuse an empty one or another unit's."""
+        cursor = receipt.to_position
+        if not _is_own(receipt, self._group, self._group.unit):
+            return False
+        if not isinstance(cursor, str) or not cursor:
+            return False
+        self._store.set_cursor(self._group.name, self._group.unit, cursor)
+        return True
 
 
 class StreamingDockerTailer:
@@ -415,7 +471,12 @@ class StreamingDockerTailer:
             self._group.ship_interval_seconds * 0.9,
         )
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], str, str]:
+    def _receipt(self, from_ts: str, to_ts: str) -> Receipt:
+        return Receipt(
+            self._group.name, self._group.container_name, None, from_ts, to_ts
+        )
+
+    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
         """Drain up to ``max_lines`` lines from the running subprocess stdout.
 
         ``from_ts`` is the stored last_ts (seeded to "now" on first run, same
@@ -423,43 +484,20 @@ class StreamingDockerTailer:
         received advanced by 1µs; equals ``from_ts`` when no lines arrive.
         Never raises.
         """
-        stored = self._store.get_docker_ts(self._group.name)
-        if stored is None:
-            from_ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            self._store.set_docker_ts(
-                self._group.name,
-                self._group.container_name,
-                from_ts,
-            )
-        else:
-            from_ts = stored
-
+        from_ts = _docker_from_ts(self._group, self._store)
         if not self._ensure_running():
-            return ([], from_ts, from_ts)
+            return ([], self._receipt(from_ts, from_ts))
 
         raw_lines = self._drain_lines(max_lines)
         if not raw_lines:
-            return ([], from_ts, from_ts)
+            return ([], self._receipt(from_ts, from_ts))
 
-        capped = min(max_lines, MAX_LINES_PER_INTERVAL)
-        lines = raw_lines[:capped]
+        lines = raw_lines[: min(max_lines, MAX_LINES_PER_INTERVAL)]
+        return (lines, self._receipt(from_ts, _last_ts(lines, from_ts)))
 
-        to_ts = from_ts
-        for line in reversed(lines):
-            m = _DOCKER_TS_PREFIX_RE.match(line)
-            if m is not None:
-                to_ts = _advance_nanos(m.group(1))
-                break
-
-        return (lines, from_ts, to_ts)
-
-    def confirm_shipped(self, to_ts: str) -> None:
-        """Persist ``to_ts`` as the new stored last_ts for this group."""
-        self._store.set_docker_ts(
-            self._group.name,
-            self._group.container_name,
-            to_ts,
-        )
+    def confirm_shipped(self, receipt: Receipt) -> bool:
+        """Store the receipt's end ts; refuse one this group's container never issued."""
+        return _confirm_docker_ts(self._group, self._store, receipt)
 
     def close(self) -> None:
         """Terminate the subprocess if running. Called on agent shutdown."""

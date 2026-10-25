@@ -17,6 +17,7 @@ from stormpulse.config import LogGroupConfig
 from stormpulse.garage.state_reader import GarageStateReader
 from stormpulse.integrations import Freshness
 from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.receipt import Receipt
 from stormpulse.logging.shipper import LogShipper
 from stormpulse.logging.tailer import LogTailer
 from stormpulse.protocol import MetricsPayload
@@ -300,3 +301,46 @@ async def test_log_loop_ships_the_collected_batch_as_the_group_declares_it(
     assert payload["from_position"] == 0
     assert payload["to_position"] == log.stat().st_size
     assert payload["batch_id"] in agent.pending_batches
+
+
+async def _one_filtered_tick(
+    agent: Agent, shutdown: asyncio.Event, tmp_path: Path
+) -> tuple[Path, LogPositionStore, AsyncMock]:
+    """Run ``log_loop`` one tick over a file whose only line the filter excludes."""
+    log, group = _pulse_log_group(tmp_path)
+    group = replace(group, filter_contains="needle")
+    store = LogPositionStore(tmp_path / "pos.db")
+    agent.shippers["pulse"] = LogShipper(group, LogTailer(group, store))
+    ws = AsyncMock()
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    await asyncio.gather(loops.log_loop(agent, ws, "pulse", lambda: None), stop_soon())
+    return log, store, ws
+
+
+@pytest.mark.asyncio
+async def test_log_loop_consumes_a_wholly_filtered_read_without_a_frame(
+    agent: Agent, shutdown: asyncio.Event, tmp_path: Path
+) -> None:
+    log, store, ws = await _one_filtered_tick(agent, shutdown, tmp_path)
+    try:
+        assert store.get("pulse") == (log.stat().st_size, log.stat().st_ino)
+    finally:
+        store.close()
+    ws.send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_log_loop_holds_a_filtered_checkpoint_behind_a_pending_batch(
+    agent: Agent, shutdown: asyncio.Event, tmp_path: Path
+) -> None:
+    log = tmp_path / "pulse.log"
+    agent.pending_batches.add("in-flight", Receipt("pulse", str(log), None, 0, 1))
+    _, store, _ = await _one_filtered_tick(agent, shutdown, tmp_path)
+    try:
+        assert store.get("pulse") == (0, None)
+    finally:
+        store.close()

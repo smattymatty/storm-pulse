@@ -11,6 +11,7 @@ import pytest
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.receipt import FileGeneration, Receipt
 from stormpulse.logging.shipper import LogShipper
 from stormpulse.logging.tailer import DockerTailer, LogTailer
 
@@ -113,7 +114,7 @@ def test_max_batch_limit_respected(tmp_path: Path) -> None:
     assert len(batch.lines) == 3
     # Remaining lines should be available on next call after confirm
     assert isinstance(batch.to_position, int)
-    shipper.tailer.confirm_shipped(batch.to_position)  # type: ignore[arg-type]
+    assert shipper.confirm(batch.receipt)
     batch2 = shipper.collect_batch()
     assert batch2 is not None
     assert len(batch2.lines) == 3
@@ -214,7 +215,7 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
     assert isinstance(batch.to_position, str)
     assert batch.to_position > "2026-04-16T13:00:01.000000Z"
     # Confirm round-trips through the store cleanly
-    shipper.tailer.confirm_shipped(batch.to_position)  # type: ignore[arg-type]
+    assert shipper.confirm(batch.receipt)
     assert store.get_docker_ts("web") == batch.to_position
     store.close()
 
@@ -363,4 +364,69 @@ def test_non_garage_group_ignores_resolver(tmp_path: Path) -> None:
     batch = shipper.collect_batch(resolver)
     assert batch is not None
     assert "bucket_id" not in batch.lines[0]
+    store.close()
+
+
+def test_confirm_reports_and_logs_a_refused_receipt(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = LogPositionStore(tmp_path / "pos.db")
+    log = tmp_path / "t.log"
+    log.write_text(_stormpulse_line("old") + "\n")
+    group = _make_group(log)
+    shipper = LogShipper(group, LogTailer(group, store))
+    batch = shipper.collect_batch()
+    assert batch is not None
+    log.rename(tmp_path / "t.log.1")
+    log.write_text(_stormpulse_line("new") + "\n")
+
+    with caplog.at_level("INFO", logger="stormpulse.logging.shipper"):
+        assert not shipper.confirm(batch.receipt)
+
+    assert "Refused log receipt for group test" in caplog.text
+    assert store.get("test") == (0, None)
+    store.close()
+
+
+def _filtered_then_needle(tmp_path: Path) -> tuple[LogPositionStore, LogShipper, int]:
+    """Two filtered lines then a match, read two at a time; returns the filtered end."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    log = tmp_path / "t.log"
+    first = _stormpulse_line("skip1") + "\n" + _stormpulse_line("skip2") + "\n"
+    log.write_text(first + _stormpulse_line("needle") + "\n")
+    group = _make_group(log, filter_contains="needle", max_batch=2)
+    return store, LogShipper(group, LogTailer(group, store)), len(first)
+
+
+def test_a_wholly_filtered_read_consumes_its_range_when_nothing_is_pending(
+    tmp_path: Path,
+) -> None:
+    store, shipper, filtered_end = _filtered_then_needle(tmp_path)
+    assert shipper.collect_batch(pending=()) is None
+    assert store.get("test")[0] == filtered_end
+    batch = shipper.collect_batch(pending=())
+    assert batch is not None
+    assert [e["message"] for e in batch.lines] == ["needle"]
+    store.close()
+
+
+def test_a_wholly_filtered_read_checkpoints_nothing_when_pending_is_unknown(
+    tmp_path: Path,
+) -> None:
+    store, shipper, _ = _filtered_then_needle(tmp_path)
+    assert shipper.collect_batch() is None
+    assert store.get("test") == (0, None)
+    store.close()
+
+
+def test_a_pending_receipt_below_the_filtered_end_holds_the_checkpoint(
+    tmp_path: Path,
+) -> None:
+    store, shipper, _ = _filtered_then_needle(tmp_path)
+    inode = (tmp_path / "t.log").stat().st_ino
+    in_flight = Receipt(
+        "test", str(tmp_path / "t.log"), FileGeneration(inode, 0, b""), 0, 9
+    )
+    assert shipper.collect_batch(pending=(in_flight,)) is None
+    assert store.get("test") == (0, None)
     store.close()

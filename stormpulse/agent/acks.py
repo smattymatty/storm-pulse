@@ -63,21 +63,20 @@ async def handle_log_batch_ack(
     if not isinstance(batch_id, str):
         logger.warning("log.batch.ack missing batch_id")
         return
-    pending = agent.pending_batches.pop(batch_id)
-    if pending is None:
+    receipt = agent.pending_batches.pop(batch_id)
+    if receipt is None:
         logger.debug("log.batch.ack for unknown batch_id %s", batch_id)
         return
-    group_name, to_position = pending
-    shipper = agent.shippers.get(group_name)
+    shipper = agent.shippers.get(receipt.group)
     if shipper is None:
         return
-    await asyncio.to_thread(shipper.tailer.confirm_shipped, to_position)  # type: ignore[arg-type]
-    logger.debug(
-        "Advanced position for group %s to %s (batch %s)",
-        group_name,
-        to_position,
-        batch_id,
-    )
+    if await asyncio.to_thread(shipper.confirm, receipt):
+        logger.debug(
+            "Advanced position for group %s to %s (batch %s)",
+            receipt.group,
+            receipt.to_position,
+            batch_id,
+        )
 
 
 async def handle_metrics_ack(

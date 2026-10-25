@@ -6,8 +6,11 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.receipt import Receipt
 from stormpulse.logging.tailer import MAX_LINES_PER_INTERVAL, DockerTailer
 
 
@@ -62,7 +65,8 @@ def test_subsequent_run_uses_stored_ts(tmp_path: Path) -> None:
 
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = _mk_result(stdout="")
-        _, from_ts, _ = tailer.read_new_lines(max_lines=10)
+        _, receipt = tailer.read_new_lines(max_lines=10)
+        from_ts = receipt.from_position
     assert from_ts == "2026-04-15T13:00:00.000000Z"
     args = mock_run.call_args.args[0]
     assert "--since" in args
@@ -79,7 +83,8 @@ def test_docker_binary_missing(tmp_path: Path) -> None:
     with patch(
         "stormpulse.logging.tailer.subprocess.run", side_effect=FileNotFoundError
     ):
-        lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+        lines, receipt = tailer.read_new_lines(max_lines=10)
+        from_ts, to_ts = receipt.from_position, receipt.to_position
     assert lines == []
     assert from_ts == to_ts == "2026-04-15T13:00:00.000000Z"
     store.close()
@@ -95,7 +100,7 @@ def test_timeout_returns_empty(tmp_path: Path) -> None:
         "stormpulse.logging.tailer.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="docker", timeout=30),
     ):
-        lines, _, _ = tailer.read_new_lines(max_lines=10)
+        lines, receipt = tailer.read_new_lines(max_lines=10)
     assert lines == []
     store.close()
 
@@ -108,7 +113,8 @@ def test_nonzero_exit_returns_empty(tmp_path: Path) -> None:
 
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = _mk_result(stderr="No such container: web", rc=1)
-        lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+        lines, receipt = tailer.read_new_lines(max_lines=10)
+        from_ts, to_ts = receipt.from_position, receipt.to_position
     assert lines == []
     assert from_ts == to_ts
     store.close()
@@ -129,7 +135,8 @@ def test_to_ts_is_one_tick_past_last_line(tmp_path: Path) -> None:
     )
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = _mk_result(stdout=stdout)
-        lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+        lines, receipt = tailer.read_new_lines(max_lines=10)
+        from_ts, to_ts = receipt.from_position, receipt.to_position
     assert len(lines) == 3
     assert from_ts == "2026-04-15T13:00:00.000000Z"
     # Last line was ...53.100000000Z; cursor advances one microsecond past it.
@@ -141,7 +148,9 @@ def test_confirm_shipped_persists(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     group = _make_docker_group()
     tailer = DockerTailer(group, store)
-    tailer.confirm_shipped("2026-04-15T14:00:00.000000Z")
+    assert tailer.confirm_shipped(
+        Receipt("web", "web", None, "", "2026-04-15T14:00:00.000000Z")
+    )
     assert store.get_docker_ts("web") == "2026-04-15T14:00:00.000000Z"
     store.close()
 
@@ -172,7 +181,7 @@ def test_max_lines_cap(tmp_path: Path) -> None:
     )
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = _mk_result(stdout=stdout)
-        lines, _, _ = tailer.read_new_lines(max_lines=MAX_LINES_PER_INTERVAL + 50)
+        lines, receipt = tailer.read_new_lines(max_lines=MAX_LINES_PER_INTERVAL + 50)
     assert len(lines) == MAX_LINES_PER_INTERVAL
     store.close()
 
@@ -214,8 +223,8 @@ def test_cursor_does_not_stall_on_boundary_line(tmp_path: Path) -> None:
     stuck_line = "2026-04-16T15:37:00.600193533Z single line\n"
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = _mk_result(stdout=stuck_line)
-        _, _, to_ts = tailer.read_new_lines(max_lines=10)
-        tailer.confirm_shipped(to_ts)
+        _, receipt = tailer.read_new_lines(max_lines=10)
+        tailer.confirm_shipped(receipt)
 
     # Now the stored cursor must be strictly past the line we shipped.
     stored = store.get_docker_ts("web")
@@ -227,7 +236,8 @@ def test_cursor_does_not_stall_on_boundary_line(tmp_path: Path) -> None:
     # excluded by --since so we get nothing back.
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = _mk_result(stdout="")
-        lines, from_ts, to_ts2 = tailer.read_new_lines(max_lines=10)
+        lines, receipt = tailer.read_new_lines(max_lines=10)
+        from_ts = receipt.from_position
         args = mock_run.call_args.args[0]
     assert lines == []
     assert from_ts == "2026-04-16T15:37:00.600194Z"
@@ -263,7 +273,87 @@ def test_empty_output_does_not_advance(tmp_path: Path) -> None:
 
     with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
         mock_run.return_value = _mk_result(stdout="")
-        lines, from_ts, to_ts = tailer.read_new_lines(max_lines=10)
+        lines, receipt = tailer.read_new_lines(max_lines=10)
+        from_ts, to_ts = receipt.from_position, receipt.to_position
     assert lines == []
     assert from_ts == to_ts == "2026-04-15T13:00:00.000000Z"
+    store.close()
+
+
+def test_confirm_refuses_another_groups_or_containers_receipt(tmp_path: Path) -> None:
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
+    tailer = DockerTailer(_make_docker_group(), store)
+    ts = "2026-04-15T14:00:00.000000Z"
+
+    assert not tailer.confirm_shipped(Receipt("api", "web", None, "", ts))
+    assert not tailer.confirm_shipped(Receipt("web", "api", None, "", ts))
+    assert store.get_docker_ts("web") == "2026-04-15T13:00:00.000000Z"
+    store.close()
+
+
+def test_confirm_refuses_a_range_that_starts_past_the_checkpoint(
+    tmp_path: Path,
+) -> None:
+    """Storing it would skip the unconfirmed gap between checkpoint and start."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
+    tailer = DockerTailer(_make_docker_group(), store)
+    gap = Receipt(
+        "web", "web", None, "2026-04-15T13:30:00.000000Z", "2026-04-15T14:00:00.000000Z"
+    )
+
+    assert not tailer.confirm_shipped(gap)
+    assert store.get_docker_ts("web") == "2026-04-15T13:00:00.000000Z"
+    store.close()
+
+
+def test_confirm_replaces_an_unreadable_checkpoint(tmp_path: Path) -> None:
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_docker_ts("web", "web", "garbage")
+    tailer = DockerTailer(_make_docker_group(), store)
+    ts = "2026-04-15T14:00:00.000000Z"
+
+    assert tailer.confirm_shipped(Receipt("web", "web", None, "garbage", ts))
+    assert store.get_docker_ts("web") == ts
+    store.close()
+
+
+def test_confirm_refuses_a_duplicate_ack(tmp_path: Path) -> None:
+    """A range ending at the checkpoint is already stored: refused, not re-applied."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
+    tailer = DockerTailer(_make_docker_group(), store)
+    receipt = Receipt(
+        "web", "web", None, "2026-04-15T13:00:00.000000Z", "2026-04-15T14:00:00.000000Z"
+    )
+    assert tailer.confirm_shipped(receipt)
+
+    assert not tailer.confirm_shipped(receipt)
+    assert store.get_docker_ts("web") == "2026-04-15T14:00:00.000000Z"
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        pytest.param("2026-04-15T13:00:00.000000Z", "garbage", id="unreadable-end"),
+        pytest.param(
+            "2026-04-15T13:00:00.000000Z",
+            "2026-04-15T14:00:00.xyzZ",
+            id="unreadable-fraction",
+        ),
+        pytest.param(0, 10, id="byte-offsets"),
+    ],
+)
+def test_confirm_refuses_a_range_no_docker_read_issues(
+    tmp_path: Path, start: int | str, end: int | str
+) -> None:
+    """Own group and container, but not a ts range: refused, never raised or stored."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
+    tailer = DockerTailer(_make_docker_group(), store)
+
+    assert not tailer.confirm_shipped(Receipt("web", "web", None, start, end))
+    assert store.get_docker_ts("web") == "2026-04-15T13:00:00.000000Z"
     store.close()

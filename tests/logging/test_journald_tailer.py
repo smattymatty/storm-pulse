@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.receipt import Receipt
 from stormpulse.logging.tailer import JournaldTailer
 
 
@@ -32,15 +33,23 @@ def _make_group(name: str = "guard", unit: str = "example.service") -> LogGroupC
 
 
 def _record(cursor: str, message: str, ts_us: int = 1_755_000_000_000_000) -> str:
-    return json.dumps({
-        "__CURSOR": cursor,
-        "__REALTIME_TIMESTAMP": str(ts_us),
-        "MESSAGE": message,
-    })
+    return json.dumps(
+        {
+            "__CURSOR": cursor,
+            "__REALTIME_TIMESTAMP": str(ts_us),
+            "MESSAGE": message,
+        }
+    )
+
+
+def _receipt(to_cursor: str) -> Receipt:
+    return Receipt("guard", "example.service", None, "s=1;i=9", to_cursor)
 
 
 def _mk_result(stdout: str = "", stderr: str = "", rc: int = 0):
-    return subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr=stderr)
+    return subprocess.CompletedProcess(
+        args=[], returncode=rc, stdout=stdout, stderr=stderr
+    )
 
 
 def test_first_run_seeds_from_newest_and_ships_nothing(tmp_path: Path) -> None:
@@ -50,7 +59,7 @@ def test_first_run_seeds_from_newest_and_ships_nothing(tmp_path: Path) -> None:
 
     with patch("stormpulse.logging.tailer.subprocess.run") as run:
         run.return_value = _mk_result(_record("s=1;i=9", "old line") + "\n")
-        lines, _, _ = tailer.read_new_lines(10)
+        lines, receipt = tailer.read_new_lines(10)
 
     assert lines == []
     assert store.get_cursor("guard") == "s=1;i=9"
@@ -75,7 +84,8 @@ def test_reads_after_the_stored_cursor(tmp_path: Path) -> None:
 
     with patch("stormpulse.logging.tailer.subprocess.run") as run:
         run.return_value = _mk_result(_record("s=1;i=10", "new line") + "\n")
-        lines, from_cursor, to_cursor = tailer.read_new_lines(10)
+        lines, receipt = tailer.read_new_lines(10)
+        from_cursor, to_cursor = receipt.from_position, receipt.to_position
 
     argv = run.call_args[0][0]
     assert "--after-cursor" in argv
@@ -95,7 +105,8 @@ def test_a_backlog_drains_oldest_first_over_intervals(tmp_path: Path) -> None:
     out = "\n".join(_record(f"s=1;i={i}", f"line {i}") for i in (10, 11, 12)) + "\n"
     with patch("stormpulse.logging.tailer.subprocess.run") as run:
         run.return_value = _mk_result(out)
-        lines, _, to_cursor = tailer.read_new_lines(2)
+        lines, receipt = tailer.read_new_lines(2)
+        to_cursor = receipt.to_position
 
     assert "--lines" not in run.call_args[0][0]
     assert [json.loads(line)["MESSAGE"] for line in lines] == ["line 10", "line 11"]
@@ -106,7 +117,7 @@ def test_confirm_shipped_persists_the_cursor(tmp_path: Path) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     tailer = JournaldTailer(_make_group(), store)
 
-    tailer.confirm_shipped("s=1;i=11")
+    assert tailer.confirm_shipped(_receipt("s=1;i=11"))
 
     assert store.get_cursor("guard") == "s=1;i=11"
 
@@ -116,9 +127,11 @@ def test_confirm_shipped_ignores_an_empty_cursor(tmp_path: Path) -> None:
     store.set_cursor("guard", "example.service", "s=1;i=9")
     tailer = JournaldTailer(_make_group(), store)
 
-    tailer.confirm_shipped("")
+    assert not tailer.confirm_shipped(_receipt(""))
 
-    assert store.get_cursor("guard") == "s=1;i=9", "an empty cursor must not erase position"
+    assert store.get_cursor("guard") == "s=1;i=9", (
+        "an empty cursor must not erase position"
+    )
 
 
 def test_unparseable_records_do_not_advance_the_cursor(tmp_path: Path) -> None:
@@ -128,7 +141,8 @@ def test_unparseable_records_do_not_advance_the_cursor(tmp_path: Path) -> None:
 
     with patch("stormpulse.logging.tailer.subprocess.run") as run:
         run.return_value = _mk_result("not json\nalso not json\n")
-        lines, from_cursor, to_cursor = tailer.read_new_lines(10)
+        lines, receipt = tailer.read_new_lines(10)
+        from_cursor, to_cursor = receipt.from_position, receipt.to_position
 
     assert len(lines) == 2
     assert to_cursor == from_cursor == "s=1;i=9", "re-reading beats losing the window"
@@ -139,8 +153,11 @@ def test_a_missing_journalctl_is_an_empty_batch_not_a_crash(tmp_path: Path) -> N
     store.set_cursor("guard", "example.service", "s=1;i=9")
     tailer = JournaldTailer(_make_group(), store)
 
-    with patch("stormpulse.logging.tailer.subprocess.run", side_effect=FileNotFoundError):
-        lines, from_cursor, to_cursor = tailer.read_new_lines(10)
+    with patch(
+        "stormpulse.logging.tailer.subprocess.run", side_effect=FileNotFoundError
+    ):
+        lines, receipt = tailer.read_new_lines(10)
+        from_cursor, to_cursor = receipt.from_position, receipt.to_position
 
     assert lines == []
     assert from_cursor == to_cursor == "s=1;i=9"
@@ -155,7 +172,8 @@ def test_a_timeout_is_an_empty_batch_not_a_crash(tmp_path: Path) -> None:
         "stormpulse.logging.tailer.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="journalctl", timeout=15),
     ):
-        lines, _, to_cursor = tailer.read_new_lines(10)
+        lines, receipt = tailer.read_new_lines(10)
+        to_cursor = receipt.to_position
 
     assert lines == []
     assert to_cursor == "s=1;i=9"
@@ -168,7 +186,8 @@ def test_a_nonzero_exit_is_an_empty_batch_not_a_crash(tmp_path: Path) -> None:
 
     with patch("stormpulse.logging.tailer.subprocess.run") as run:
         run.return_value = _mk_result(stderr="No such unit", rc=1)
-        lines, _, to_cursor = tailer.read_new_lines(10)
+        lines, receipt = tailer.read_new_lines(10)
+        to_cursor = receipt.to_position
 
     assert lines == []
     assert to_cursor == "s=1;i=9"
@@ -185,3 +204,17 @@ def test_the_unit_is_passed_to_journalctl(tmp_path: Path) -> None:
 
     argv = run.call_args[0][0]
     assert argv[argv.index("--unit") + 1] == "my-daemon.service"
+
+
+def test_confirm_shipped_refuses_another_groups_or_units_cursor(tmp_path: Path) -> None:
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_cursor("guard", "example.service", "s=1;i=9")
+    tailer = JournaldTailer(_make_group(), store)
+
+    assert not tailer.confirm_shipped(
+        Receipt("other", "example.service", None, "", "s=1;i=11")
+    )
+    assert not tailer.confirm_shipped(
+        Receipt("guard", "other.service", None, "", "s=1;i=11")
+    )
+    assert store.get_cursor("guard") == "s=1;i=9"

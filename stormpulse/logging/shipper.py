@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.parsers import PARSERS
+from stormpulse.logging.receipt import Receipt, holds_back
 from stormpulse.logging.tailer import (
     DockerTailer,
     JournaldTailer,
@@ -35,8 +36,15 @@ class Batch:
 
     lines: list[dict[str, Any]]
     dropped: int
-    from_position: int | str
-    to_position: int | str
+    receipt: Receipt
+
+    @property
+    def from_position(self) -> int | str:
+        return self.receipt.from_position
+
+    @property
+    def to_position(self) -> int | str:
+        return self.receipt.to_position
 
 
 class LogShipper:
@@ -75,33 +83,39 @@ class LogShipper:
     def collect_batch(
         self,
         bucket_id_resolver: BucketIdResolver | None = None,
+        *,
+        pending: Collection[Receipt] | None = None,
     ) -> Batch | None:
         """Read, filter and parse new lines from a worker thread.
 
         Return None when no lines match, or an empty batch with a drop count
         when every matching line fails parsing. The current-state resolver maps
         (key_id, bucket name) to bucket_id for garage_s3; unresolved IDs are empty.
-        Other parsers ignore the resolver.
+        ``pending`` is every receipt still awaiting its ACK; see ``_skip_filtered``.
         """
-        max_batch = self._group.max_lines_per_batch
-        raw_lines, from_pos, to_pos = self._tailer.read_new_lines(max_batch)
+        raw_lines, receipt = self._tailer.read_new_lines(
+            self._group.max_lines_per_batch
+        )
         if not raw_lines:
             return None
-
         filter_substr = self._group.filter_contains
+        matched = [line for line in raw_lines if filter_substr in line]
+        # Nothing matched the filter - not our business, nothing to ship.
+        if not matched:
+            self._skip_filtered(receipt, pending)
+            return None
+        parsed, dropped = self._parse(matched, bucket_id_resolver)
+        return Batch(lines=parsed, dropped=dropped, receipt=receipt)
+
+    def _parse(
+        self, lines: list[str], bucket_id_resolver: BucketIdResolver | None
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Parse matched lines; return the entries and how many failed to parse."""
         stamp_bucket_id = self._group.parser == _BUCKET_ID_PARSER
         parsed: list[dict[str, Any]] = []
-        dropped = 0
-        any_matched_filter = False
-
-        for line in raw_lines:
-            if filter_substr and filter_substr not in line:
-                # Silent skip - not a drop; just not relevant to this group.
-                continue
-            any_matched_filter = True
+        for line in lines:
             entry = self._parser(line)
             if entry is None:
-                dropped += 1
                 continue
             if stamp_bucket_id:
                 entry["bucket_id"] = (
@@ -110,14 +124,33 @@ class LogShipper:
                     else ""
                 )
             parsed.append(entry)
+        return parsed, len(lines) - len(parsed)
 
-        # Nothing matched the filter - not our business, nothing to ship.
-        if filter_substr and not any_matched_filter:
-            return None
+    def _skip_filtered(
+        self, receipt: Receipt, pending: Collection[Receipt] | None
+    ) -> None:
+        """STAB-01: checkpoint a wholly filtered read locally; no wire, no empty batch.
 
-        return Batch(
-            lines=parsed,
-            dropped=dropped,
-            from_position=from_pos,
-            to_position=to_pos,
+        Held while ``pending`` is unknown (None) or any receipt in it may carry
+        matches below this read's end: their ACK, not this, moves past them.
+        """
+        if pending is None or any(holds_back(p, receipt) for p in pending):
+            return
+        if self._tailer.confirm_shipped(receipt):
+            logger.debug(
+                "Filtered range consumed for group %s to %s",
+                self._group.name,
+                receipt.to_position,
+            )
+
+    def confirm(self, receipt: Receipt) -> bool:
+        """Hand an ACKed receipt to this group's own tailer; False when it refuses."""
+        if self._tailer.confirm_shipped(receipt):
+            return True
+        logger.info(
+            "Refused log receipt for group %s (issued for %s at %s)",
+            self._group.name,
+            receipt.group,
+            receipt.source,
         )
+        return False

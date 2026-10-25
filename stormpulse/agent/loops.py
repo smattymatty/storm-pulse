@@ -123,7 +123,11 @@ async def log_loop(
             # Tick-fresh enrichment map; state is reassigned
             # atomically, so each tick sees a consistent view.
             resolver = resolver_provider()
-            batch = await asyncio.to_thread(shipper.collect_batch, resolver)
+            batch = await asyncio.to_thread(
+                shipper.collect_batch,
+                resolver,
+                pending=agent.pending_batches.receipts(),
+            )
             if batch is not None:
                 batch_id = str(uuid.uuid4())
                 log_batch = LogBatchPayload(
@@ -136,7 +140,7 @@ async def log_loop(
                     to_position=batch.to_position,
                 )
                 envelope = make(agent_id, log_batch)
-                agent.pending_batches.add(batch_id, group_name, batch.to_position)
+                agent.pending_batches.add(batch_id, batch.receipt)
                 await ws.send(envelope.to_json())
                 # INFO + duration_ms while shipping is being proven out; drop to
                 # debug once steady.

@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,8 +24,12 @@ from stormpulse.agent.integrations_runtime import (
 from stormpulse.auth import NonceStore
 from stormpulse.commands import ParamValidationError
 from stormpulse.commands.jobs import JobManager, JobOutcome
-from stormpulse.config import CommandSpec, Config
+from stormpulse.config import CommandSpec, Config, LogGroupConfig
 from stormpulse.integrations import Freshness
+from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.receipt import Receipt
+from stormpulse.logging.shipper import LogShipper
+from stormpulse.logging.tailer import LogTailer
 from stormpulse.protocol import (
     SPEAKS,
     CancelReason,
@@ -547,15 +552,50 @@ async def test_log_batch_ack_unknown_batch_is_noop(agent: Agent) -> None:
 @pytest.mark.asyncio
 async def test_log_batch_ack_advances_position(agent: Agent) -> None:
     fake_shipper = MagicMock()
-    fake_shipper.tailer.confirm_shipped = MagicMock()
     agent.shippers["grp"] = fake_shipper
-    agent.pending_batches.add("bid-1", "grp", 4242)
+    receipt = Receipt("grp", "/var/log/x.log", None, 0, 4242)
+    agent.pending_batches.add("bid-1", receipt)
 
     env = envelope(MessageType.LOG_BATCH_ACK, {"batch_id": "bid-1"}, id="x")
     await acks.handle_log_batch_ack(agent, AsyncMock(), env)
 
-    fake_shipper.tailer.confirm_shipped.assert_called_once_with(4242)
+    fake_shipper.confirm.assert_called_once_with(receipt)
     assert "bid-1" not in agent.pending_batches
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_confirms_on_the_receipts_own_group(
+    agent: Agent, tmp_path: Path
+) -> None:
+    """Two groups ship; the ACK lands on the group its receipt names, not another."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    tailers: dict[str, LogTailer] = {}
+    for name in ("a", "b"):
+        log = tmp_path / f"{name}.log"
+        log.write_text("line\n")
+        group = LogGroupConfig(
+            name=name,
+            enabled=True,
+            source_type="file",
+            source_path=log,
+            filter_contains="",
+            parser="stormpulse",
+            ship_interval_seconds=10.0,
+            max_lines_per_batch=50,
+        )
+        tailers[name] = LogTailer(group, store)
+        agent.shippers[name] = LogShipper(group, tailers[name])
+    _, receipt = tailers["b"].read_new_lines(max_lines=10)
+    agent.pending_batches.add("bid-b", receipt)
+
+    env = envelope(MessageType.LOG_BATCH_ACK, {"batch_id": "bid-b"}, id="x")
+    await acks.handle_log_batch_ack(agent, AsyncMock(), env)
+
+    try:
+        assert store.get("b")[0] == len("line\n")
+        assert store.get("a") == (0, None)
+    finally:
+        store.close()
 
 
 # ---------------------------------------------------------------------------

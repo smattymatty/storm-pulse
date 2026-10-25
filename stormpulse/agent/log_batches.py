@@ -1,15 +1,16 @@
-"""In-flight log-batch tracking: batch_id → (group, target_position, sent_at), with stale-pruning by timeout."""
+"""In-flight log-batch tracking: batch_id → (receipt, sent_at), with stale-pruning by timeout."""
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass
 
+from stormpulse.logging.receipt import Receipt
+
 
 @dataclass(frozen=True, slots=True)
 class _Entry:
-    group: str
-    to_position: int | str
+    receipt: Receipt
     sent_at: float
 
 
@@ -20,16 +21,18 @@ class PendingBatches:
         self._ack_timeout = ack_timeout_seconds
         self._entries: dict[str, _Entry] = {}
 
-    def add(self, batch_id: str, group: str, to_position: int | str) -> None:
-        """Record a batch as in flight."""
-        self._entries[batch_id] = _Entry(group, to_position, time.monotonic())
+    def add(self, batch_id: str, receipt: Receipt) -> None:
+        """Record a batch as in flight with the receipt of the read it carries."""
+        self._entries[batch_id] = _Entry(receipt, time.monotonic())
 
-    def pop(self, batch_id: str) -> tuple[str, int | str] | None:
-        """Resolve an ack. Returns ``(group, to_position)`` or ``None`` if unknown."""
+    def pop(self, batch_id: str) -> Receipt | None:
+        """Resolve an ack. Returns the batch's receipt, or ``None`` if unknown."""
         entry = self._entries.pop(batch_id, None)
-        if entry is None:
-            return None
-        return entry.group, entry.to_position
+        return None if entry is None else entry.receipt
+
+    def receipts(self) -> tuple[Receipt, ...]:
+        """Every receipt still awaiting its ACK, as a snapshot a worker thread may hold."""
+        return tuple(e.receipt for e in self._entries.values())
 
     def prune_stale(self, *, now: float | None = None) -> int:
         """Drop entries past the timeout; returns count. Dropped batches retransmit (at-least-once)."""
