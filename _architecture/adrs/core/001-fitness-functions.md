@@ -72,12 +72,14 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 
 **Function 17 - Tests run as the real user.** A test that patches `os.geteuid`, `os.access`, `os.stat` or `pwd`/`grp` proves the branch it picked, not the host it runs on. The check walks `tests/` and reports each file with its count of such fakes; fault injection (`os.replace`, `os.fsync`) and metric sources are outside it. Added 2026-10-21, after CI as root failed two spool tests that passed for the wrong reason; 30 fakes in 5 files open the baseline by count and leave as each file runs as the real user. Sealed at the commit that lands this line.
 
+**Function 18 - Every tailer keeps the cursor contract.** A tailer moves its checkpoint on an ACK, so a source kind tested only in its own file can rewind, skip or stall that checkpoint unseen. The check reads `stormpulse/` by AST and fails when a class defining `confirm_shipped` is missing from `TAILERS` in `tests/logging/test_cursor_contract.py`, or when that tuple is gone. Added 2026-10-25 with 0.8.1 (`_architecture/tasks/0.8.1-stability.md` STAB-01 and STAB-02), when the shared suite's first run found 17 failing cases across the four tailers against the 2 predicted; built in b52a06e. Sealed at the commit that lands this line.
+
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**
 
 - Function 1 runs as `lint-imports`.
-- Functions 2 through 16 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
+- Functions 2 through 18 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
 - The `fitness/` runner runs every check and reports every violation before exiting non-zero, never fail-fast. Stopping at the first violation would hide the rest; the cost of decoupling from pytest is hand-rolled reporting, and the reporting has to be honest.
 - `make fitness` runs the whole suite: `lint-imports && python -m fitness`.
 
