@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".forgejo" / "workflows"
 TEST_WORKFLOW = WORKFLOWS / "test.yml"
 MAKEFILE = ROOT / "Makefile"
+# `gates` is `check` with these diff-scoped targets moved into `gates-clone`.
+CLONE_TARGETS = {"quality", "comments-diff"}
 
 CI_IMAGE = re.compile(r"storm-ci-python:(\S+)")
 JOB_RUNNER = re.compile(r"^  ([a-z][a-z0-9-]*):\n    runs-on: (\S+)", re.MULTILINE)
@@ -38,6 +40,7 @@ def check_ci_workflow() -> list[str]:
         *_one_image(),
         *_one_runner(rel, test_yml),
         *_every_check_target_runs(rel, test_yml),
+        *_gates_is_check(),
         *(
             f"{rel}: runs {tool} directly; call its make target"
             for tool in sorted(set(DIRECT_TOOL.findall(test_yml)))
@@ -70,9 +73,30 @@ def _one_runner(rel: Path, text: str) -> list[str]:
     ]
 
 
+def _prereqs(target: str) -> set[str]:
+    match = re.search(rf"^{target}:(.*)$", _text(MAKEFILE), re.MULTILINE)
+    return set(match.group(1).split()) if match else set()
+
+
+def _gates_is_check() -> list[str]:
+    gates = _prereqs("gates")
+    if not gates:
+        return ["Makefile: no `gates:` prerequisites parsed"]
+    want = (_prereqs("check") - CLONE_TARGETS) | {"gates-clone"}
+    return [
+        *(
+            f"Makefile: `make check` runs {t}, `make gates` never does"
+            for t in sorted(want - gates)
+        ),
+        *(
+            f"Makefile: `make gates` runs {t}, `make check` never does"
+            for t in sorted(gates - want)
+        ),
+    ]
+
+
 def _every_check_target_runs(rel: Path, text: str) -> list[str]:
-    match = re.search(r"^check:(.*)$", _text(MAKEFILE), re.MULTILINE)
-    wanted = set(match.group(1).split()) if match else set()
+    wanted = _prereqs("check")
     if not wanted:
         return ["Makefile: no `check:` prerequisites parsed"]
     called = {

@@ -8,7 +8,7 @@ import pytest
 
 import fitness.ci_workflow as fn12
 
-MAKEFILE = "check: quality security test\n"
+MAKEFILE = "check: quality security test\ngates: gates-clone security test\n"
 WORKFLOW = """jobs:
   quality:
     runs-on: docker
@@ -42,6 +42,13 @@ def edit(tree: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new), encoding="utf-8")
 
 
+def edit_makefile(tree: Path, old: str, new: str) -> None:
+    path = tree / "Makefile"
+    text = path.read_text(encoding="utf-8")
+    assert old in text
+    path.write_text(text.replace(old, new), encoding="utf-8")
+
+
 def test_the_real_tree_is_clean() -> None:
     assert fn12.check_ci_workflow() == []
 
@@ -55,6 +62,31 @@ def test_a_check_target_ci_never_calls(tree: Path) -> None:
     assert fn12.check_ci_workflow() == [
         "workflows/test.yml: `make check` runs test, CI never does"
     ]
+
+
+def test_a_check_target_gates_never_runs(tree: Path) -> None:
+    edit_makefile(
+        tree, "check: quality security test", "check: quality security test mypy"
+    )
+    edit(tree, "make VENV= security test", "make VENV= security test mypy")
+    assert fn12.check_ci_workflow() == [
+        "Makefile: `make check` runs mypy, `make gates` never does"
+    ]
+
+
+def test_gates_running_quality_outside_the_clone(tree: Path) -> None:
+    edit_makefile(tree, "gates: gates-clone", "gates: quality gates-clone")
+    assert fn12.check_ci_workflow() == [
+        "Makefile: `make gates` runs quality, `make check` never does"
+    ]
+
+
+def test_a_target_named_like_check_is_not_check(tree: Path) -> None:
+    (tree / "Makefile").write_text(
+        "pre-release-check: release-smoke\npre-gates: wheel\n" + MAKEFILE,
+        encoding="utf-8",
+    )
+    assert fn12.check_ci_workflow() == []
 
 
 def test_a_tool_run_directly(tree: Path) -> None:
@@ -91,4 +123,5 @@ def test_an_empty_parse_fails_loudly(tree: Path) -> None:
         "no workflow names the storm-ci-python image",
         "workflows/test.yml: no jobs parsed",
         "Makefile: no `check:` prerequisites parsed",
+        "Makefile: no `gates:` prerequisites parsed",
     ]

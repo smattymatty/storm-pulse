@@ -12,7 +12,7 @@ SCA_DIR ?= /tmp/stormpulse-sca
 
 GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 
-.PHONY: check gates test mypy fitness deadcode security quality pre-release-check release-smoke clean \
+.PHONY: check gates gates-clone test mypy fitness deadcode security quality pre-release-check release-smoke clean \
         wire-contract log-line-contract garage-up garage-down test-wire test-garage-wire \
         test-ci
 
@@ -20,8 +20,21 @@ GARAGE_COMPOSE = docker compose -f docker/garage.test.yml
 # `security`, whose AI-defect checks may consult the PyPI registry).
 check: quality comments-diff security test mypy fitness deadcode
 
-# What CI runs, under the name the build workflow asks for.
-gates: check
+# What CI runs, under the name the build workflow asks for, on the uncommitted tree.
+gates: gates-clone security test mypy fitness deadcode
+
+# quality and comments-diff read only commits, so a throwaway clone commits the tree.
+# $(abspath) needs a VENV path: under VENV= it breaks, and CI never calls this.
+gates-clone:
+	@set -e; T=$$(mktemp -d); trap 'rm -rf "$$T"' EXIT; \
+	B=$$(git rev-parse --verify "$(BASE)^{commit}"); \
+	git clone -q --local --no-hardlinks . "$$T/r"; \
+	git diff --binary HEAD | git -C "$$T/r" apply --allow-empty --whitespace=nowarn; \
+	git ls-files -o --exclude-standard -z | tar --null -T - -cf - | tar -xf - -C "$$T/r"; \
+	git -C "$$T/r" add -A; \
+	git -C "$$T/r" -c user.name=gates -c user.email=gates@localhost commit -qm gates --allow-empty; \
+	$(MAKE) --no-print-directory -C "$$T/r" quality comments-diff BASE=$$B \
+		SKYLOS=$(abspath $(SKYLOS)) PYTHON=$(abspath $(PYTHON))
 
 # Check unused functions, imports, variables, classes, and files (SKY-U001..U005).
 # Exclude parameters: callbacks must preserve interface signatures.
