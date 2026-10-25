@@ -21,21 +21,26 @@ class Refusal(StrEnum):
 
 
 class RefusedFile(Exception):
-    """The file failed a check; ``detail`` reads after the file's name."""
+    """The file failed a check; ``detail`` reads after the file's name, ``st``
+    is the refused file's fstat (``None`` for a symlink, never opened)."""
 
-    def __init__(self, refusal: Refusal, detail: str) -> None:
+    def __init__(
+        self, refusal: Refusal, detail: str, st: os.stat_result | None = None
+    ) -> None:
         super().__init__(detail)
         self.refusal = refusal
         self.detail = detail
+        self.st = st
 
 
 def read_bounded(
     path: str | os.PathLike[str],
     cap: int,
     owner_ok: Callable[[os.stat_result], bool],
-) -> bytes:
-    """The file's bytes; ``RefusedFile`` on a failed check, ``OSError`` when
-    unreadable. O_NONBLOCK keeps a FIFO from blocking the open."""
+) -> tuple[bytes, os.stat_result]:
+    """The file's bytes and the fstat of the file they came from; ``RefusedFile``
+    on a failed check, ``OSError`` when unreadable. O_NONBLOCK keeps a FIFO
+    from blocking the open."""
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
     try:
         fd = os.open(path, flags)
@@ -46,13 +51,13 @@ def read_bounded(
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
-            raise RefusedFile(Refusal.NOT_REGULAR, "is not a regular file")
+            raise RefusedFile(Refusal.NOT_REGULAR, "is not a regular file", st)
         if not owner_ok(st):
-            raise RefusedFile(Refusal.FOREIGN_OWNER, f"owned by uid {st.st_uid}")
+            raise RefusedFile(Refusal.FOREIGN_OWNER, f"owned by uid {st.st_uid}", st)
         with os.fdopen(fd, "rb", closefd=False) as fh:
             raw = fh.read(cap + 1)  # skylos: ignore[SKY-P401] bounded by cap
     finally:
         os.close(fd)
     if len(raw) > cap:
-        raise RefusedFile(Refusal.TOO_LARGE, f"exceeds {cap} bytes")
-    return raw
+        raise RefusedFile(Refusal.TOO_LARGE, f"exceeds {cap} bytes", st)
+    return raw, st

@@ -31,9 +31,12 @@ MAX_SEGMENT_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 1024
 MAX_SPOOL_BYTES = 64 * 1024 * 1024
 MAX_SPOOL_AGE_SECONDS = 7 * 24 * 3600
+_ASIDE = ".settling."  # settling's private name for a segment it holds
 _SEGMENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.jsonl$")
 _TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$")
 _SCALARS = (str, int, float, bool)
+# The file a segment was read from: (inode, mtime_ns) of its own fstat.
+Identity = tuple[int, int]
 
 # Published in the artifact (``integration_events.segment``) for emitters.
 SEGMENT_FORMAT: dict[str, Any] = {
@@ -133,30 +136,45 @@ class SpoolFeeder:
         self.source = source
         self._dir_uid = dir_stat.st_uid
         self._dir_gid = dir_stat.st_gid
-        self._pending: dict[str, range] = {}
-        # Settled but not deletable: name -> (inode, mtime_ns), skipped until
-        # the file changes, so a stuck segment never ships twice.
-        self._stuck: dict[str, tuple[int, int]] = {}
+        # name -> (the file read, its event seqs); settling acts on that file.
+        self._pending: dict[str, tuple[Identity | None, range]] = {}
+        # Settled but not deletable: name -> the file read, skipped until the
+        # name holds another file, so a stuck segment never ships twice.
+        self._stuck: dict[str, Identity] = {}
+        self._recover_asides()
+
+    def _recover_asides(self) -> None:
+        """A crash mid-settle strands a file aside; it goes back under its name
+        before anything is read (a re-read is the consumer's dedupe to absorb)."""
+        spool = self.source.spool_dir
+        try:
+            names = os.listdir(spool)
+        except OSError:
+            return
+        for aside in names:
+            name = aside.removeprefix(_ASIDE)
+            if name != aside and _SEGMENT_NAME.match(name):
+                self._put_back(spool / aside, spool / name)
 
     def tick(self) -> None:
         """Settle segments, then read new ones while the buffer has room."""
         buf = events.buffer()
-        for name, seqs in list(self._pending.items()):
+        for name, (read_id, seqs) in list(self._pending.items()):
             if not buf.holds_any(seqs):
                 del self._pending[name]
-                self._settle(name)
+                self._settle(name, read_id)
         for name in self._segments():
             if buf.room() < MAX_SEGMENT_EVENTS:
                 return
             read = self._read(self.source.spool_dir / name)
             if read is None:
                 continue
-            admitted, refused = read
+            read_id, admitted, refused = read
             seqs = buf.extend(admitted, refused=refused)
             if seqs:
-                self._pending[name] = seqs
+                self._pending[name] = (read_id, seqs)
             else:
-                self._settle(name)
+                self._settle(name, read_id)
 
     def _segments(self) -> list[str]:
         try:
@@ -170,18 +188,22 @@ class SpoolFeeder:
                 del self._stuck[name]  # gone or rewritten: read it afresh
         return sorted(listed - self._pending.keys() - self._stuck.keys())
 
-    def _read(self, path: Path) -> tuple[list[dict[str, Any]], int] | None:
-        """The segment's admitted events and the count it refused; ``None``
+    def _read(
+        self, path: Path
+    ) -> tuple[Identity | None, list[dict[str, Any]], int] | None:
+        """The file read, its admitted events and the count it refused; ``None``
         leaves it for the next tick (unreadable now, perhaps not later)."""
         try:
-            raw = read_bounded(path, MAX_SEGMENT_BYTES, self._owner_ok)
+            raw, st = read_bounded(path, MAX_SEGMENT_BYTES, self._owner_ok)
         except RefusedFile as exc:
             logger.warning("event segment %s refused: %s", path.name, exc.detail)
-            return [], 1
+            # A symlink is never opened: its lstat is all there is.
+            st_id = _stat_id(exc.st) if exc.st else _identity(path)
+            return st_id, [], 1
         except OSError as exc:
             logger.warning("event segment %s unreadable: %s", path.name, exc)
             return None
-        return self._parse(path.name, raw)
+        return (_stat_id(st), *self._parse(path.name, raw))
 
     def _parse(self, name: str, raw: bytes) -> tuple[list[dict[str, Any]], int]:
         lines = [line for line in raw.split(b"\n") if line.strip()]
@@ -210,26 +232,69 @@ class SpoolFeeder:
         event["kind"] = kind
         return event if events.admit(event, record) else None
 
-    def _settle(self, name: str) -> None:
-        """Delete a segment whose events are all settled; one that cannot go is
-        parked in ``_stuck`` with one warning, never read again unchanged."""
+    def _settle(self, name: str, read_id: Identity | None) -> None:
+        """Delete the file ``read_id`` names once its events are settled. It is
+        renamed aside first, so a replacement renamed in at any moment is put
+        back, never deleted; one that cannot go is parked in ``_stuck``."""
         path = self.source.spool_dir / name
+        aside = self.source.spool_dir / f"{_ASIDE}{name}"
+        if not self._put_back(aside, path):  # never rename over an earlier aside
+            self._park(name, read_id, f"{aside.name} is in the way")
+            return
+        # TODO(0.8.2): a directory at this name is renamed aside and cannot be
+        # linked back (EPERM), so later segments at the name ship once but are
+        # never deleted. Park anything not a regular file without renaming it.
         try:
-            path.unlink()
+            os.rename(path, aside)
         except FileNotFoundError:
             return  # already gone: settled either way
         except OSError as exc:
-            identity = _identity(path)
-            if identity is not None:
-                self._stuck[name] = identity
-            logger.warning("event segment %s not deleted, parked: %s", name, exc)
+            self._park(name, read_id, exc)
+            return
+        if read_id is not None and _identity(aside) == read_id:
+            try:
+                aside.unlink()
+            except OSError as exc:
+                self._park(name, read_id, exc)
+                self._put_back(aside, path)
+            return
+        self._put_back(aside, path)
+
+    def _put_back(self, aside: Path, path: Path) -> bool:
+        """Return a file to its name without overwriting what took the name
+        since; that newer file wins, as the emitter's own rename would have.
+        True once nothing is left aside."""
+        try:
+            os.link(aside, path)
+        except FileNotFoundError:
+            return True  # nothing aside
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            logger.warning("event segment %s left at %s: %s", path.name, aside, exc)
+            return False
+        try:
+            aside.unlink()
+        except OSError as exc:
+            logger.warning("event segment %s also at %s: %s", path.name, aside, exc)
+            return False
+        return True
+
+    def _park(self, name: str, read_id: Identity | None, why: object) -> None:
+        if read_id is not None:
+            self._stuck[name] = read_id
+        logger.warning("event segment %s not deleted, parked: %s", name, why)
 
 
-def _identity(path: Path) -> tuple[int, int] | None:
+def _identity(path: Path) -> Identity | None:
+    """Whatever the name holds now; compared against a read file's identity."""
     try:
-        st = os.lstat(path)
+        return _stat_id(os.lstat(path))
     except OSError:
         return None
+
+
+def _stat_id(st: os.stat_result) -> Identity:
     return st.st_ino, st.st_mtime_ns
 
 

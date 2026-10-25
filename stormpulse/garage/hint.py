@@ -69,7 +69,8 @@ def read_hint(
 def _read_bounded(path: str, uid: int) -> bytes | HintRead:
     """The file's bytes past the first four checks, or the refusal."""
     try:
-        return read_bounded(path, MAX_HINT_BYTES, lambda st: st.st_uid == uid)
+        raw, _ = read_bounded(path, MAX_HINT_BYTES, lambda st: st.st_uid == uid)
+        return raw
     except RefusedFile as exc:
         return _refuse(Refusal(exc.refusal), f"hint file {exc.detail}")
     except OSError as exc:
