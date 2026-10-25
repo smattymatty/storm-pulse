@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = ROOT / ".forgejo" / "workflows"
 TEST_WORKFLOW = WORKFLOWS / "test.yml"
 MAKEFILE = ROOT / "Makefile"
-# `gates` is `check` with these diff-scoped targets moved into `gates-clone`.
-CLONE_TARGETS = {"quality", "comments-diff"}
+# `gates` is `check` with the recipe's diff-scoped targets moved into `gates-clone`.
+CLONE_TARGETS = re.compile(r"^CLONE_TARGETS\s*:=(.*)$", re.MULTILINE)
 
 CI_IMAGE = re.compile(r"storm-ci-python:(\S+)")
 JOB_RUNNER = re.compile(r"^  ([a-z][a-z0-9-]*):\n    runs-on: (\S+)", re.MULTILINE)
@@ -80,9 +80,15 @@ def _prereqs(target: str) -> set[str]:
 
 def _gates_is_check() -> list[str]:
     gates = _prereqs("gates")
-    if not gates:
-        return ["Makefile: no `gates:` prerequisites parsed"]
-    want = (_prereqs("check") - CLONE_TARGETS) | {"gates-clone"}
+    match = CLONE_TARGETS.search(_text(MAKEFILE))
+    clone = set(match.group(1).split()) if match else set()
+    unparsed = [
+        *([] if gates else ["Makefile: no `gates:` prerequisites parsed"]),
+        *([] if clone else ["Makefile: no `CLONE_TARGETS` parsed"]),
+    ]
+    if unparsed:
+        return unparsed
+    want = (_prereqs("check") - clone) | {"gates-clone"}
     return [
         *(
             f"Makefile: `make check` runs {t}, `make gates` never does"

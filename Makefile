@@ -23,7 +23,8 @@ check: quality comments-diff security test mypy fitness deadcode
 # What CI runs, under the name the build workflow asks for, on the uncommitted tree.
 gates: gates-clone security test mypy fitness deadcode
 
-# quality and comments-diff read only commits, so a throwaway clone commits the tree.
+# Clone targets read only commits, so a throwaway clone commits the tree.
+CLONE_TARGETS := quality comments-diff
 # $(abspath) needs a VENV path: under VENV= it breaks, and CI never calls this.
 gates-clone:
 	@set -e; T=$$(mktemp -d); trap 'rm -rf "$$T"' EXIT; \
@@ -33,7 +34,7 @@ gates-clone:
 	git ls-files -o --exclude-standard -z | tar --null -T - -cf - | tar -xf - -C "$$T/r"; \
 	git -C "$$T/r" add -A; \
 	git -C "$$T/r" -c user.name=gates -c user.email=gates@localhost commit -qm gates --allow-empty; \
-	$(MAKE) --no-print-directory -C "$$T/r" quality comments-diff BASE=$$B \
+	$(MAKE) --no-print-directory -C "$$T/r" $(CLONE_TARGETS) BASE=$$B \
 		SKYLOS=$(abspath $(SKYLOS)) PYTHON=$(abspath $(PYTHON))
 
 # Check unused functions, imports, variables, classes, and files (SKY-U001..U005).
