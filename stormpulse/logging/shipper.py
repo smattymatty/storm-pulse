@@ -10,12 +10,7 @@ from typing import Any
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.parsers import PARSERS
 from stormpulse.logging.receipt import Receipt, holds_back
-from stormpulse.logging.tailer import (
-    DockerTailer,
-    JournaldTailer,
-    LogTailer,
-    StreamingDockerTailer,
-)
+from stormpulse.logging.tailer import AnyTailer
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +48,7 @@ class LogShipper:
     def __init__(
         self,
         group: LogGroupConfig,
-        tailer: LogTailer | DockerTailer | StreamingDockerTailer | JournaldTailer,
+        tailer: AnyTailer,
     ) -> None:
         self._group = group
         self._tailer = tailer
@@ -71,9 +66,7 @@ class LogShipper:
         return self._group.parser
 
     @property
-    def tailer(
-        self,
-    ) -> LogTailer | DockerTailer | StreamingDockerTailer | JournaldTailer:
+    def tailer(self) -> AnyTailer:
         return self._tailer
 
     @property

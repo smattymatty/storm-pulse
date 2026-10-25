@@ -37,6 +37,7 @@ from stormpulse.logging import (
     LogTailer,
     StreamingDockerTailer,
 )
+from stormpulse.logging.tailer import AnyTailer
 from stormpulse.sdk import command_specs_digest
 
 logger = logging.getLogger(__name__)
@@ -220,7 +221,7 @@ def build_agent_dependencies(
         for group in config.log_groups:
             if not group.enabled:
                 continue
-            tailer: LogTailer | DockerTailer | StreamingDockerTailer | JournaldTailer
+            tailer: AnyTailer
             if group.source_type == "docker_stream":
                 streaming = StreamingDockerTailer(group, log_position_store)
                 streaming_tailers.append(streaming)

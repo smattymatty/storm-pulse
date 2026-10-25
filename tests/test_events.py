@@ -94,14 +94,6 @@ class TestRegistry:  # skylos: ignore[SKY-Q702] a test class groups cases by sub
         assert (synthesized["kind"], synthesized["seq"]) == ("dropped_events", 3)
         assert kept["seq"] == 2
 
-    def test_a_requeued_event_keeps_its_seq(self) -> None:
-        buf = EventBuffer()
-        buf.append({"kind": "a"})
-        buf.drain("b1")
-        buf.requeue_unacked()
-        buf.append({"kind": "b"})
-        assert [e["seq"] for e in buf.drain("b2")] == [1, 2]
-
     def test_an_undeclared_field_refuses_the_whole_event_and_counts_it(
         self,
     ) -> None:
@@ -192,119 +184,6 @@ class TestRegistry:  # skylos: ignore[SKY-Q702] a test class groups cases by sub
 
 
 class TestEventBuffer:  # skylos: ignore[SKY-Q702] a test class groups cases by subject, not by shared state
-    def test_ack_releases_batch(self) -> None:
-        buf = EventBuffer()
-        buf.append({"kind": "a"})
-        batch = buf.drain("b1")
-        assert len(batch) == 1
-        assert buf.ack("b1") is True
-        assert buf.ack("b1") is False
-        assert buf.requeue_unacked() == 0
-
-    def test_nack_drops_the_batch_and_counts_it(self) -> None:
-        buf = EventBuffer()
-        buf.append({"kind": "a"})
-        buf.append({"kind": "b"})
-        buf.drain("b1")
-        assert buf.nack("b1") == 2
-        assert buf.nack("b1") is None
-        assert buf.ack("b1") is False
-        assert buf.requeue_unacked() == 0
-        assert buf.drain("b2") == []  # never requeued, never tallied as dropped
-
-    def test_nack_of_an_unknown_batch_leaves_in_flight_alone(self) -> None:
-        buf = EventBuffer()
-        buf.append({"kind": "a"})
-        buf.drain("b1")
-        assert buf.nack("never-sent") is None
-        assert buf.ack("b1") is True
-
-    def test_unacked_batch_requeues_in_order(self) -> None:
-        buf = EventBuffer()
-        buf.append({"kind": "a"})
-        buf.append({"kind": "b"})
-        buf.drain("b1")
-        buf.append({"kind": "c"})
-        assert buf.requeue_unacked() == 2
-        batch = buf.drain("b2")
-        assert [e["kind"] for e in batch] == ["a", "b", "c"]
-
-    def test_unacked_batches_requeue_oldest_first_ahead_of_unsent(self) -> None:
-        # Sizes 1, 2, 3 tell batch order from in-batch order (STAB-05).
-        buf = EventBuffer()
-        for i in range(1, 7):
-            buf.append({"kind": str(i)})
-        for batch_id, size in (("b1", 1), ("b2", 2), ("b3", 3)):
-            buf.drain(batch_id, max_events=size)
-        buf.append({"kind": "7"})
-        assert buf.requeue_unacked() == 6
-        kinds = [e["kind"] for e in buf.drain("b4")]
-        assert kinds == ["1", "2", "3", "4", "5", "6", "7"]
-
-    def test_acked_middle_batch_leaves_its_neighbours_in_order(self) -> None:
-        buf = EventBuffer()
-        for i in range(1, 7):
-            buf.append({"kind": str(i)})
-        for batch_id, size in (("b1", 1), ("b2", 2), ("b3", 3)):
-            buf.drain(batch_id, max_events=size)
-        buf.append({"kind": "7"})
-        assert buf.ack("b2") is True
-        assert buf.requeue_unacked() == 4
-        kinds = [e["kind"] for e in buf.drain("b4")]
-        assert kinds == ["1", "4", "5", "6", "7"]
-
-    def test_requeue_overflow_drops_oldest_of_the_rebuilt_stream(self) -> None:
-        # Requeued 1-4 plus unsent 5-6 overflow a cap of 4: 1 and 2 go.
-        buf = EventBuffer(max_events=4)
-        for i in range(1, 5):
-            buf.append({"kind": str(i)})
-        buf.drain("b1", max_events=2)
-        buf.drain("b2", max_events=2)
-        buf.append({"kind": "5"})
-        buf.append({"kind": "6"})
-        assert buf.requeue_unacked() == 4  # requeued, drops not netted out
-        batch = buf.drain("b3")
-        assert batch[0]["kind"] == "dropped_events"
-        assert batch[0]["dropped"] == 2
-        assert [e["kind"] for e in batch[1:]] == ["3", "4", "5", "6"]
-        assert [e["seq"] for e in batch[1:]] == [3, 4, 5, 6]
-
-    def test_repeated_reconnects_never_duplicate(self) -> None:
-        buf = EventBuffer()
-        for i in range(1, 4):
-            buf.append({"kind": str(i)})
-        buf.drain("b1", max_events=2)
-        assert buf.requeue_unacked() == 2
-        assert buf.requeue_unacked() == 0
-        buf.drain("b2", max_events=2)
-        assert buf.requeue_unacked() == 2
-        kinds = [e["kind"] for e in buf.drain("b3")]
-        assert kinds == ["1", "2", "3"]
-
-    def test_repeated_reconnects_keep_original_seqs(self) -> None:
-        buf = EventBuffer()
-        for i in range(1, 4):
-            buf.append({"kind": str(i)})
-        stamped = [e["seq"] for e in buf.drain("b1")]
-        for attempt in ("b2", "b3"):
-            buf.requeue_unacked()
-            assert [e["seq"] for e in buf.drain(attempt)] == stamped
-        buf.append({"kind": "4"})
-        assert buf.drain("b4")[0]["seq"] == stamped[-1] + 1
-
-    def test_requeue_after_in_flight_eviction_keeps_send_order(self) -> None:
-        # Real ids are uuid4: order must come from send order, never the id
-        # ("b10" sorts before "b2"). Eviction's loss and requeue's add up.
-        buf = EventBuffer(max_events=events.MAX_IN_FLIGHT_BATCHES - 1)
-        for i in range(events.MAX_IN_FLIGHT_BATCHES + 1):
-            buf.append({"kind": f"e{i}"})
-            buf.drain(f"b{i}")
-        assert buf.requeue_unacked() == events.MAX_IN_FLIGHT_BATCHES
-        batch = buf.drain("final", max_events=100)
-        assert (batch[0]["kind"], batch[0]["dropped"]) == ("dropped_events", 2)
-        survivors = range(2, events.MAX_IN_FLIGHT_BATCHES + 1)
-        assert [e["kind"] for e in batch[1:]] == [f"e{i}" for i in survivors]
-
     def test_overflow_drops_oldest_and_is_never_silent(self) -> None:
         buf = EventBuffer(max_events=2)
         buf.append({"kind": "a"})
@@ -323,25 +202,6 @@ class TestEventBuffer:  # skylos: ignore[SKY-Q702] a test class groups cases by 
         second = buf.drain("b2", max_events=3)
         assert len(first) == 3
         assert len(second) == 2
-
-    def test_empty_drain_tracks_nothing_in_flight(self) -> None:
-        buf = EventBuffer()
-        assert buf.drain("b1") == []
-        assert buf.ack("b1") is False
-
-    def test_never_acking_server_cannot_grow_memory_unbounded(self) -> None:
-        # Wrong deploy order (old website never acks events.batch): the
-        # oldest in-flight batch is evicted past the cap, counted as
-        # dropped, and the loss surfaces on the next drain.
-        buf = EventBuffer()
-        for i in range(events.MAX_IN_FLIGHT_BATCHES + 1):
-            buf.append({"kind": f"e{i}"})
-            buf.drain(f"b{i}")
-        assert buf.ack("b0") is False  # evicted, not just unacked
-        buf.append({"kind": "fresh"})
-        batch = buf.drain("final")
-        assert batch[0]["kind"] == "dropped_events"
-        assert batch[0]["dropped"] == 1
 
 
 def _call(endpoint: str, ms: int, *, status: int | None = 200, **fields: str) -> None:

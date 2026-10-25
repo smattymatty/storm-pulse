@@ -193,7 +193,7 @@ class _RetryWindow:
 
     def admits(self) -> bool:
         """Whether an attempt may still start: now is at or before the deadline."""
-        return self._deadline is not None and time.monotonic() <= self._deadline
+        return self.grants(0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,40 +469,38 @@ class JobManager:
         window = _RetryWindow(job.retry_window_s)
         attempts = 0
         work_ms = 0
-        last: tuple[JobOutcome, int] | None = None
+        delay: int | None = None
         while True:
+            if delay is not None:
+                await asyncio.sleep(delay)
             async with self._permit(job.command):
                 window.open()
-                if last is not None and not window.admits():
-                    # Overslept or queued past the window: the last real outcome
-                    # is terminal, as if its ask had not been granted.
-                    outcome, concurrent = last
-                    tally = _Tally(attempts, work_ms, concurrent, True)
-                    await self._finish(job, outcome, tally)
-                    return
-                attempts += 1
-                start = time.monotonic()
-                # Jobs spawned right now (running + queued for a permit), so a
-                # high count signals queue pressure, not that this many ran.
-                concurrent = len(self._jobs)
-                outcome = await self._attempt(job, progress)
-                if self._closing:
-                    return
-                work_ms += int((time.monotonic() - start) * 1000)
-                delay = outcome.retry_after_s
-                if delay is None or not window.grants(delay):
-                    exhausted = delay is not None
-                    tally = _Tally(attempts, work_ms, concurrent, exhausted)
-                    await self._finish(job, outcome, tally)
-                    return
-                last = (outcome, concurrent)
-                await progress(
-                    "running",
-                    0,
-                    None,
-                    f"Attempt {attempts} will run again in {delay}s: {outcome.stderr}",
+                if attempts == 0 or window.admits():
+                    attempts += 1
+                    start = time.monotonic()
+                    # Jobs spawned right now (running + queued for a permit), so a
+                    # high count signals queue pressure, not that this many ran.
+                    concurrent = len(self._jobs)
+                    outcome = await self._attempt(job, progress)
+                    if self._closing:
+                        return
+                    work_ms += int((time.monotonic() - start) * 1000)
+                    delay = outcome.retry_after_s
+                    if delay is not None and window.grants(delay):
+                        await progress(
+                            "running",
+                            0,
+                            None,
+                            f"Attempt {attempts} will run again in {delay}s: {outcome.stderr}",
+                        )
+                        continue
+                # Reached past the window too (overslept or queued): the last
+                # real outcome is terminal, as if its ask had not been granted.
+                exhausted = outcome.retry_after_s is not None
+                await self._finish(
+                    job, outcome, _Tally(attempts, work_ms, concurrent, exhausted)
                 )
-            await asyncio.sleep(delay)
+                return
 
     @asynccontextmanager
     async def _permit(self, command: str) -> AsyncIterator[None]:

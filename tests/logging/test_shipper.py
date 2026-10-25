@@ -368,9 +368,8 @@ def test_non_garage_group_ignores_resolver(tmp_path: Path) -> None:
 
 
 def test_confirm_reports_and_logs_a_refused_receipt(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, store: LogPositionStore, caplog: pytest.LogCaptureFixture
 ) -> None:
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "t.log"
     log.write_text(_stormpulse_line("old") + "\n")
     group = _make_group(log)
@@ -385,48 +384,45 @@ def test_confirm_reports_and_logs_a_refused_receipt(
 
     assert "Refused log receipt for group test" in caplog.text
     assert store.get("test") == (0, None)
-    store.close()
 
 
-def _filtered_then_needle(tmp_path: Path) -> tuple[LogPositionStore, LogShipper, int]:
+def _filtered_then_needle(
+    tmp_path: Path, store: LogPositionStore
+) -> tuple[LogShipper, int]:
     """Two filtered lines then a match, read two at a time; returns the filtered end."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "t.log"
     first = _stormpulse_line("skip1") + "\n" + _stormpulse_line("skip2") + "\n"
     log.write_text(first + _stormpulse_line("needle") + "\n")
     group = _make_group(log, filter_contains="needle", max_batch=2)
-    return store, LogShipper(group, LogTailer(group, store)), len(first)
+    return LogShipper(group, LogTailer(group, store)), len(first)
 
 
 def test_a_wholly_filtered_read_consumes_its_range_when_nothing_is_pending(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
-    store, shipper, filtered_end = _filtered_then_needle(tmp_path)
+    shipper, filtered_end = _filtered_then_needle(tmp_path, store)
     assert shipper.collect_batch(pending=()) is None
     assert store.get("test")[0] == filtered_end
     batch = shipper.collect_batch(pending=())
     assert batch is not None
     assert [e["message"] for e in batch.lines] == ["needle"]
-    store.close()
 
 
 def test_a_wholly_filtered_read_checkpoints_nothing_when_pending_is_unknown(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
-    store, shipper, _ = _filtered_then_needle(tmp_path)
+    shipper, _ = _filtered_then_needle(tmp_path, store)
     assert shipper.collect_batch() is None
     assert store.get("test") == (0, None)
-    store.close()
 
 
 def test_a_pending_receipt_below_the_filtered_end_holds_the_checkpoint(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
-    store, shipper, _ = _filtered_then_needle(tmp_path)
+    shipper, _ = _filtered_then_needle(tmp_path, store)
     inode = (tmp_path / "t.log").stat().st_ino
     in_flight = Receipt(
         "test", str(tmp_path / "t.log"), FileGeneration(inode, 0, b""), 0, 9
     )
     assert shipper.collect_batch(pending=(in_flight,)) is None
     assert store.get("test") == (0, None)
-    store.close()

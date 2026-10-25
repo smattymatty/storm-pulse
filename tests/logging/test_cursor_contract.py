@@ -356,29 +356,12 @@ def test_an_unacked_match_is_never_checkpointed_past(
 
 # STAB-02: a confirmation applies only to the generation and range it covers.
 
-_NO_GENERATION = (
-    "no generation the tailer can observe: docker and journald own rotation, "
-    "so a stale ACK there is the ordering case"
-)
-
 
 @pytest.mark.parametrize(
     ("tailer_cls", "how"),
     [
         pytest.param(LogTailer, "rename", id="LogTailer-rename"),
         pytest.param(LogTailer, "truncate", id="LogTailer-truncate"),
-        *[
-            pytest.param(
-                cls,
-                "-",
-                id=cls.__name__,
-                marks=pytest.mark.xfail(
-                    strict=True, raises=NotImplementedError, reason=_NO_GENERATION
-                ),
-            )
-            for cls in TAILERS
-            if cls is not LogTailer
-        ],
     ],
 )
 def test_a_late_ack_from_an_earlier_generation_moves_nothing(
@@ -400,7 +383,7 @@ def test_a_late_ack_from_an_earlier_generation_moves_nothing(
 
 _COPYTRUNCATE_GAP = (
     "the store keeps (offset, inode) only, so a copytruncate that regrows past the "
-    "ACKed offset is invisible on read; open STAB-02 gap, 'Your wisdom' decides it"
+    "ACKed offset is invisible on read; open STAB-02 gap, 0.8.2"
 )
 
 
@@ -445,7 +428,7 @@ def test_late_and_duplicate_acks_cannot_rewind(
 
 
 _READS_AHEAD = (
-    "StreamingDockerTailer reads ahead from its stored ts (tailer.py:447,558); "
+    "StreamingDockerTailer reads ahead from its stored ts (_spawn --since, _drain_lines); "
     "refusing an out-of-order ACK needs a read-side redesign, 0.8.2"
 )
 

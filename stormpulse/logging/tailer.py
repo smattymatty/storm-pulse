@@ -229,6 +229,15 @@ def _last_ts(lines: list[str], from_ts: str) -> str:
     return from_ts
 
 
+def _docker_batch(
+    group: LogGroupConfig, from_ts: str, raw_lines: list[str], max_lines: int
+) -> tuple[list[str], Receipt]:
+    """Both Docker kinds: the capped lines and a receipt from ``from_ts`` past the last."""
+    lines = raw_lines[: min(max_lines, MAX_LINES_PER_INTERVAL)]
+    to_ts = _last_ts(lines, from_ts)
+    return (lines, Receipt(group.name, group.container_name, None, from_ts, to_ts))
+
+
 def _covers(start: str, stored: str, end: str) -> bool:
     """True when ``start <= stored < end`` as instants: no rewind, no skipped gap."""
     a, s, e = (_parse_docker_ts(ts) for ts in (start, stored, end))
@@ -248,11 +257,6 @@ class DockerTailer:
         self._group = group
         self._store = position_store
 
-    def _receipt(self, from_ts: str, to_ts: str) -> Receipt:
-        return Receipt(
-            self._group.name, self._group.container_name, None, from_ts, to_ts
-        )
-
     def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
         """Run ``docker logs --since <last_ts> --timestamps``; return lines and receipt.
 
@@ -261,9 +265,7 @@ class DockerTailer:
         Never raises: every failure to run collapses to an empty batch.
         """
         from_ts = _docker_from_ts(self._group, self._store)
-        raw_lines = self._run_logs(from_ts)
-        lines = raw_lines[: min(max_lines, MAX_LINES_PER_INTERVAL)]
-        return (lines, self._receipt(from_ts, _last_ts(lines, from_ts)))
+        return _docker_batch(self._group, from_ts, self._run_logs(from_ts), max_lines)
 
     def _run_logs(self, from_ts: str) -> list[str]:
         """stdout then stderr lines of ``docker logs --since``; [] when it could not run."""
@@ -473,11 +475,6 @@ class StreamingDockerTailer:
             self._group.ship_interval_seconds * 0.9,
         )
 
-    def _receipt(self, from_ts: str, to_ts: str) -> Receipt:
-        return Receipt(
-            self._group.name, self._group.container_name, None, from_ts, to_ts
-        )
-
     def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
         """Drain up to ``max_lines`` lines from the running subprocess stdout.
 
@@ -487,15 +484,8 @@ class StreamingDockerTailer:
         Never raises.
         """
         from_ts = _docker_from_ts(self._group, self._store)
-        if not self._ensure_running():
-            return ([], self._receipt(from_ts, from_ts))
-
-        raw_lines = self._drain_lines(max_lines)
-        if not raw_lines:
-            return ([], self._receipt(from_ts, from_ts))
-
-        lines = raw_lines[: min(max_lines, MAX_LINES_PER_INTERVAL)]
-        return (lines, self._receipt(from_ts, _last_ts(lines, from_ts)))
+        raw_lines = self._drain_lines(max_lines) if self._ensure_running() else []
+        return _docker_batch(self._group, from_ts, raw_lines, max_lines)
 
     def confirm_shipped(self, receipt: Receipt) -> bool:
         """Store the receipt's end ts; refuse one this group's container never issued."""
@@ -528,8 +518,7 @@ class StreamingDockerTailer:
 
     def _spawn(self) -> bool:
         """Spawn ``docker logs --follow --timestamps --since <last_ts>``."""
-        stored = self._store.get_docker_ts(self._group.name)
-        from_ts = stored or datetime.now(UTC).strftime(_DOCKER_TS_FORMAT)
+        from_ts = _docker_from_ts(self._group, self._store)
         cmd = [
             self._group.docker_binary,
             "logs",
@@ -646,3 +635,6 @@ class StreamingDockerTailer:
                 pass
         self._proc = None
         self._buffer = b""
+
+
+AnyTailer = LogTailer | DockerTailer | StreamingDockerTailer | JournaldTailer

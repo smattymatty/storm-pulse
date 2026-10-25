@@ -280,8 +280,9 @@ def test_empty_output_does_not_advance(tmp_path: Path) -> None:
     store.close()
 
 
-def test_confirm_refuses_another_groups_or_containers_receipt(tmp_path: Path) -> None:
-    store = LogPositionStore(tmp_path / "pos.db")
+def test_confirm_refuses_another_groups_or_containers_receipt(
+    store: LogPositionStore,
+) -> None:
     store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
     tailer = DockerTailer(_make_docker_group(), store)
     ts = "2026-04-15T14:00:00.000000Z"
@@ -289,14 +290,12 @@ def test_confirm_refuses_another_groups_or_containers_receipt(tmp_path: Path) ->
     assert not tailer.confirm_shipped(Receipt("api", "web", None, "", ts))
     assert not tailer.confirm_shipped(Receipt("web", "api", None, "", ts))
     assert store.get_docker_ts("web") == "2026-04-15T13:00:00.000000Z"
-    store.close()
 
 
 def test_confirm_refuses_a_range_that_starts_past_the_checkpoint(
-    tmp_path: Path,
+    store: LogPositionStore,
 ) -> None:
     """Storing it would skip the unconfirmed gap between checkpoint and start."""
-    store = LogPositionStore(tmp_path / "pos.db")
     store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
     tailer = DockerTailer(_make_docker_group(), store)
     gap = Receipt(
@@ -305,23 +304,19 @@ def test_confirm_refuses_a_range_that_starts_past_the_checkpoint(
 
     assert not tailer.confirm_shipped(gap)
     assert store.get_docker_ts("web") == "2026-04-15T13:00:00.000000Z"
-    store.close()
 
 
-def test_confirm_replaces_an_unreadable_checkpoint(tmp_path: Path) -> None:
-    store = LogPositionStore(tmp_path / "pos.db")
+def test_confirm_replaces_an_unreadable_checkpoint(store: LogPositionStore) -> None:
     store.set_docker_ts("web", "web", "garbage")
     tailer = DockerTailer(_make_docker_group(), store)
     ts = "2026-04-15T14:00:00.000000Z"
 
     assert tailer.confirm_shipped(Receipt("web", "web", None, "garbage", ts))
     assert store.get_docker_ts("web") == ts
-    store.close()
 
 
-def test_confirm_refuses_a_duplicate_ack(tmp_path: Path) -> None:
+def test_confirm_refuses_a_duplicate_ack(store: LogPositionStore) -> None:
     """A range ending at the checkpoint is already stored: refused, not re-applied."""
-    store = LogPositionStore(tmp_path / "pos.db")
     store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
     tailer = DockerTailer(_make_docker_group(), store)
     receipt = Receipt(
@@ -331,7 +326,6 @@ def test_confirm_refuses_a_duplicate_ack(tmp_path: Path) -> None:
 
     assert not tailer.confirm_shipped(receipt)
     assert store.get_docker_ts("web") == "2026-04-15T14:00:00.000000Z"
-    store.close()
 
 
 @pytest.mark.parametrize(
@@ -347,13 +341,11 @@ def test_confirm_refuses_a_duplicate_ack(tmp_path: Path) -> None:
     ],
 )
 def test_confirm_refuses_a_range_no_docker_read_issues(
-    tmp_path: Path, start: int | str, end: int | str
+    store: LogPositionStore, start: int | str, end: int | str
 ) -> None:
     """Own group and container, but not a ts range: refused, never raised or stored."""
-    store = LogPositionStore(tmp_path / "pos.db")
     store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
     tailer = DockerTailer(_make_docker_group(), store)
 
     assert not tailer.confirm_shipped(Receipt("web", "web", None, start, end))
     assert store.get_docker_ts("web") == "2026-04-15T13:00:00.000000Z"
-    store.close()

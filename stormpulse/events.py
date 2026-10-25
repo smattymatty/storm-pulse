@@ -346,11 +346,9 @@ class EventBuffer:
         outage cannot grow the buffer without limit.
         """
         with self._lock:
-            requeued = 0
-            for batch in reversed(self._in_flight.values()):
-                for event in reversed(batch):
-                    self._buf.appendleft(event)
-                    requeued += 1
+            unacked = [e for b in self._in_flight.values() for e in b]
+            self._buf.extendleft(reversed(unacked))
+            requeued = len(unacked)
             self._in_flight.clear()
             while len(self._buf) > self._max:
                 self._buf.popleft()

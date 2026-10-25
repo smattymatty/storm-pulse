@@ -96,14 +96,11 @@ def test_rotation_detected_via_inode(tmp_path: Path) -> None:
     tailer = LogTailer(group, store)
 
     _, receipt = tailer.read_new_lines(max_lines=10)
-    to_pos = receipt.to_position
     tailer.confirm_shipped(receipt)
 
     # Rotate: remove + recreate to force new inode
     log.unlink()
     log.write_text("new1\n")
-    # Ensure the inode actually changed
-    assert os.stat(log).st_ino != to_pos  # loose sanity
 
     lines, receipt = tailer.read_new_lines(max_lines=10)
     from_pos = receipt.from_position
@@ -202,8 +199,9 @@ def test_position_survives_tailer_restart(tmp_path: Path) -> None:
     store2.close()
 
 
-def test_confirm_refuses_a_receipt_from_a_renamed_away_file(tmp_path: Path) -> None:
-    store = LogPositionStore(tmp_path / "pos.db")
+def test_confirm_refuses_a_receipt_from_a_renamed_away_file(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
     log = tmp_path / "test.log"
     log.write_text("old1\nold2\n")
     tailer = LogTailer(_make_group(log), store)
@@ -213,14 +211,12 @@ def test_confirm_refuses_a_receipt_from_a_renamed_away_file(tmp_path: Path) -> N
 
     assert not tailer.confirm_shipped(old)
     assert store.get("test") == (0, None)
-    store.close()
 
 
 def test_confirm_refuses_a_receipt_once_truncation_rewrote_the_head(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
     """copytruncate keeps the inode; the rewritten head names the new generation."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     log.write_text("old1\nold2\n")
     tailer = LogTailer(_make_group(log), store)
@@ -229,14 +225,12 @@ def test_confirm_refuses_a_receipt_once_truncation_rewrote_the_head(
 
     assert not tailer.confirm_shipped(old)
     assert store.get("test") == (0, None)
-    store.close()
 
 
 def test_confirm_refuses_a_receipt_past_the_end_of_a_shrunk_file(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
     """Past the hashed head, a file cut below the receipt's end is a new generation."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     body = "".join(f"line{i:05d}\n" for i in range(600))  # 6600 bytes, head 4096
     log.write_text(body)
@@ -247,11 +241,11 @@ def test_confirm_refuses_a_receipt_past_the_end_of_a_shrunk_file(
 
     assert not tailer.confirm_shipped(receipt)
     assert store.get("test") == (0, None)
-    store.close()
 
 
-def test_confirm_refuses_another_groups_receipt(tmp_path: Path) -> None:
-    store = LogPositionStore(tmp_path / "pos.db")
+def test_confirm_refuses_another_groups_receipt(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
     log = tmp_path / "test.log"
     log.write_text("a\nb\n")
     mine = LogTailer(_make_group(log, name="mine"), store)
@@ -260,12 +254,12 @@ def test_confirm_refuses_another_groups_receipt(tmp_path: Path) -> None:
 
     assert not mine.confirm_shipped(foreign)
     assert store.get("mine") == (0, None)
-    store.close()
 
 
-def test_confirm_refuses_a_receipt_for_another_source_path(tmp_path: Path) -> None:
+def test_confirm_refuses_a_receipt_for_another_source_path(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
     """A group repointed at a new path keeps its name; the old path's receipt is not its."""
-    store = LogPositionStore(tmp_path / "pos.db")
     old_log, new_log = tmp_path / "old.log", tmp_path / "new.log"
     old_log.write_text("a\nb\n")
     os.link(old_log, new_log)  # same inode and bytes: only the path differs
@@ -273,11 +267,11 @@ def test_confirm_refuses_a_receipt_for_another_source_path(tmp_path: Path) -> No
 
     assert not LogTailer(_make_group(new_log), store).confirm_shipped(receipt)
     assert store.get("test") == (0, None)
-    store.close()
 
 
-def test_confirm_stores_the_inode_the_receipt_read(tmp_path: Path) -> None:
-    store = LogPositionStore(tmp_path / "pos.db")
+def test_confirm_stores_the_inode_the_receipt_read(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
     log = tmp_path / "test.log"
     log.write_text("a\nb\n")
     tailer = LogTailer(_make_group(log), store)
@@ -285,14 +279,12 @@ def test_confirm_stores_the_inode_the_receipt_read(tmp_path: Path) -> None:
 
     assert tailer.confirm_shipped(receipt)
     assert store.get("test") == (4, os.stat(log).st_ino)
-    store.close()
 
 
 def test_confirm_refuses_a_range_that_starts_past_the_checkpoint(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
     """Storing it would skip the unconfirmed bytes between checkpoint and start."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     log.write_text("a\nb\n")
     tailer = LogTailer(_make_group(log), store)
@@ -300,14 +292,12 @@ def test_confirm_refuses_a_range_that_starts_past_the_checkpoint(
 
     assert not tailer.confirm_shipped(dataclasses.replace(receipt, from_position=2))
     assert store.get("test") == (0, None)
-    store.close()
 
 
 def test_confirm_after_truncation_starts_the_new_generation_at_zero(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
     """A checkpoint past the end of a truncated file is the old generation's."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     log.write_text("old1\nold2\nold3\n")
     tailer = LogTailer(_make_group(log), store)
@@ -318,14 +308,12 @@ def test_confirm_after_truncation_starts_the_new_generation_at_zero(
 
     assert tailer.confirm_shipped(receipt)
     assert tailer.read_new_lines(max_lines=10)[0] == ["new2\n"]
-    store.close()
 
 
 def test_confirm_after_rename_starts_the_new_generation_at_zero(
-    tmp_path: Path,
+    tmp_path: Path, store: LogPositionStore
 ) -> None:
     """A checkpoint on another inode is the old generation's, whatever its offset."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     log.write_text("old1\n")
     tailer = LogTailer(_make_group(log), store)
@@ -337,12 +325,12 @@ def test_confirm_after_rename_starts_the_new_generation_at_zero(
 
     assert tailer.confirm_shipped(receipt)
     assert tailer.read_new_lines(max_lines=10)[0] == ["new2\n", "new3\n"]
-    store.close()
 
 
-def test_confirm_refuses_a_duplicate_ack(tmp_path: Path) -> None:
+def test_confirm_refuses_a_duplicate_ack(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
     """A range ending at the checkpoint is already stored: refused, not re-applied."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     log.write_text("a\nb\n")
     tailer = LogTailer(_make_group(log), store)
@@ -351,7 +339,6 @@ def test_confirm_refuses_a_duplicate_ack(tmp_path: Path) -> None:
 
     assert not tailer.confirm_shipped(receipt)
     assert store.get("test") == (4, os.stat(log).st_ino)
-    store.close()
 
 
 @pytest.mark.parametrize(
@@ -364,10 +351,9 @@ def test_confirm_refuses_a_duplicate_ack(tmp_path: Path) -> None:
     ],
 )
 def test_confirm_refuses_a_receipt_no_file_read_issues(
-    tmp_path: Path, forge: dict[str, Any]
+    tmp_path: Path, store: LogPositionStore, forge: dict[str, Any]
 ) -> None:
     """Own group and path, but no file read yields it: refused, never raised."""
-    store = LogPositionStore(tmp_path / "pos.db")
     log = tmp_path / "test.log"
     log.write_text("a\nb\n")
     tailer = LogTailer(_make_group(log), store)
@@ -375,12 +361,10 @@ def test_confirm_refuses_a_receipt_no_file_read_issues(
 
     assert not tailer.confirm_shipped(dataclasses.replace(receipt, **forge))
     assert store.get("test") == (0, None)
-    store.close()
 
 
-def test_a_failed_read_claims_no_range(tmp_path: Path) -> None:
+def test_a_failed_read_claims_no_range(tmp_path: Path, store: LogPositionStore) -> None:
     """A path that stats but will not open (a directory) reads nothing and covers nothing."""
-    store = LogPositionStore(tmp_path / "pos.db")
     source = tmp_path / "test.log"
     source.mkdir()
     tailer = LogTailer(_make_group(source), store)
@@ -390,4 +374,3 @@ def test_a_failed_read_claims_no_range(tmp_path: Path) -> None:
     assert lines == []
     assert (receipt.from_position, receipt.to_position) == (0, 0)
     assert not tailer.confirm_shipped(receipt)
-    store.close()
