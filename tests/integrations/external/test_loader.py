@@ -28,7 +28,7 @@ from stormpulse.sdk import (
     command_specs_digest,
 )
 
-from ._helpers import approve, keypair, state_dir
+from ._helpers import approve, keypair, persist_grant, state_dir
 
 _AGENT = "agent-1"
 
@@ -239,7 +239,7 @@ def test_adapter_honest_about_sdk_two_installs_seals_and_loads(tmp_path: Path) -
     assert integ.components({}, None) == (SdkComponent("adtwo-daemon", "1.0.0", ""),)
 
 
-def test_gate_evaluates_the_adapter_once_per_bootstrap() -> None:
+def test_gate_evaluates_the_adapter_once_per_bootstrap(tmp_path: Path) -> None:
     """One seam (CORE-011 d4): the receipt the register carries is the evaluation
     whose commands were registered, so ``specs`` runs once and the declaration
     answers from it; asked cold, the receipt still evaluates on its own."""
@@ -271,7 +271,9 @@ def test_gate_evaluates_the_adapter_once_per_bootstrap() -> None:
         sealed_at="2026-01-01T00:00:00Z",
         command_specs_digest=command_specs_digest({"adonce_ping": spec}),
     )
-    integ = _translate(sdk, grant)
+    state = state_dir(tmp_path)
+    persist_grant(state, grant)
+    integ = _translate(sdk, grant, state)
     runtime = _resolve_integration(integ, {}, {}, frozenset({"adonce"}))
     assert runtime.status == "live"
     assert runtime.command_specs_digest == grant.command_specs_digest
@@ -298,7 +300,9 @@ def _grant(integration_id: str, *caps: CapabilityRequest, **fields: object) -> o
     )
 
 
-def test_adapter_without_commands_registers_live_with_an_empty_receipt() -> None:
+def test_adapter_without_commands_registers_live_with_an_empty_receipt(
+    tmp_path: Path,
+) -> None:
     """A state-only adapter (no ``specs``) has no gate to evaluate: it registers
     live, its receipt is ``("", None)`` and nothing in the pair is an object
     bootstrap would try to call (CORE-011 d4)."""
@@ -309,7 +313,10 @@ def test_adapter_without_commands_registers_live_with_an_empty_receipt() -> None
     sdk = SdkIntegration(
         id="adstate", parse_config=lambda s: dict(s), enabled=lambda c: True
     )
-    integ = _translate(sdk, _grant("adstate", CapabilityRequest.INTEGRATION_LOAD))  # type: ignore[arg-type]
+    grant = _grant("adstate", CapabilityRequest.INTEGRATION_LOAD)
+    state = state_dir(tmp_path)
+    persist_grant(state, grant)  # type: ignore[arg-type]
+    integ = _translate(sdk, grant, state)  # type: ignore[arg-type]
     assert integ.specs is None
     assert integ.command_gate is None
     assert integ.components is None
@@ -319,7 +326,7 @@ def test_adapter_without_commands_registers_live_with_an_empty_receipt() -> None
 
 
 def test_fenced_build_logs_one_warning_naming_the_reason(
-    caplog: pytest.LogCaptureFixture,
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
 ) -> None:
     """The node-local receipt beside the wire one: building fenced commands
     warns once, with the adapter id and the same reason the register carries."""
@@ -333,7 +340,10 @@ def test_fenced_build_logs_one_warning_naming_the_reason(
         enabled=lambda c: True,
         specs=lambda config: {"adquiet_ping": spec},
     )
-    integ = _translate(sdk, _grant("adquiet", CapabilityRequest.INTEGRATION_LOAD))  # type: ignore[arg-type]
+    grant = _grant("adquiet", CapabilityRequest.INTEGRATION_LOAD)
+    state = state_dir(tmp_path)
+    persist_grant(state, grant)  # type: ignore[arg-type]
+    integ = _translate(sdk, grant, state)  # type: ignore[arg-type]
     assert integ.specs is not None
     with caplog.at_level("WARNING", logger="stormpulse.agent.external_adapters"):
         assert integ.specs({}) == {}

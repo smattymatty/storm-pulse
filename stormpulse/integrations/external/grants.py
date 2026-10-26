@@ -87,7 +87,9 @@ def from_dict(data: Any, name: str) -> SealedGrantV1:
 
     integration_id = _req_str(data, "integration_id", name)
     if not INTEGRATION_ID_RE.match(integration_id):
-        raise PackageError(FailureCode.F9, f"grant {name} has a malformed integration id")
+        raise PackageError(
+            FailureCode.F9, f"grant {name} has a malformed integration id"
+        )
 
     return SealedGrantV1(
         agent_id=_req_str(data, "agent_id", name),
@@ -118,13 +120,19 @@ def read_grant(path: Path) -> SealedGrantV1:
     # Location must agree with content: a grant in grants/<id>/<hex>.json cannot
     # claim a different id or digest.
     if path.stem != grant.package_digest.split(":", 1)[1]:
-        raise PackageError(FailureCode.F9, f"grant {path.name} filename disagrees with its digest")
+        raise PackageError(
+            FailureCode.F9, f"grant {path.name} filename disagrees with its digest"
+        )
     if path.parent.name != grant.integration_id:
-        raise PackageError(FailureCode.F9, f"grant {path.name} directory disagrees with its id")
+        raise PackageError(
+            FailureCode.F9, f"grant {path.name} directory disagrees with its id"
+        )
     return grant
 
 
-def lookup(state_dir: Path, integration_id: str, package_digest: str) -> SealedGrantV1 | None:
+def lookup(
+    state_dir: Path, integration_id: str, package_digest: str
+) -> SealedGrantV1 | None:
     path = grant_path(state_dir, integration_id, package_digest)
     return read_grant(path) if path.exists() else None
 
@@ -140,7 +148,9 @@ def active_integration_ids(state_dir: Path) -> list[str]:
     root = layout.grants_dir(state_dir)
     if not root.exists():
         return []
-    return sorted(d.name for d in root.iterdir() if d.is_dir() and (d / "active").exists())
+    return sorted(
+        d.name for d in root.iterdir() if d.is_dir() and (d / "active").exists()
+    )
 
 
 def active_grant(state_dir: Path, integration_id: str) -> SealedGrantV1 | None:
@@ -156,6 +166,19 @@ def effective_capabilities(grant: SealedGrantV1) -> frozenset[CapabilityRequest]
     """Granted minus revoked. `integration_load` absent here means the whole
     adapter is fenced; `command_contributor` absent means its commands are."""
     return frozenset(grant.granted_capabilities) - frozenset(grant.revoked_capabilities)
+
+
+def current_capabilities(
+    state_dir: Path, integration_id: str, package_digest: str
+) -> frozenset[CapabilityRequest]:
+    """The authority on disk right now for one sealed digest, read fresh at each
+    execution boundary (D3). A missing or unreadable grant holds nothing: fail closed."""
+    try:
+        return effective_capabilities(
+            read_grant(grant_path(state_dir, integration_id, package_digest))
+        )
+    except PackageError:
+        return frozenset()
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +203,9 @@ def seal(state_dir: Path, *, package_digest: str) -> SealedGrantV1:
 
         record = trust.lookup(state_dir, receipt.publisher_fingerprint)
         if record is None or not trust.is_active(record):
-            raise PackageError(FailureCode.F7, "publisher is unknown or revoked; cannot seal")
+            raise PackageError(
+                FailureCode.F7, "publisher is unknown or revoked; cannot seal"
+            )
 
         grant = SealedGrantV1(
             agent_id=receipt.agent_id,
@@ -198,15 +223,21 @@ def seal(state_dir: Path, *, package_digest: str) -> SealedGrantV1:
         return grant
 
 
-def revoke(state_dir: Path, *, package_digest: str, capability: CapabilityRequest) -> SealedGrantV1:
+def revoke(
+    state_dir: Path, *, package_digest: str, capability: CapabilityRequest
+) -> SealedGrantV1:
     """Fence one capability on a grant (D3: revocation fences, never unloads).
     Idempotent for an already-revoked capability."""
     with layout.state_lock(state_dir):
         grant = _find_grant_unlocked(state_dir, package_digest)
         if grant is None:
-            raise PackageError(FailureCode.F11, "no grant for that digest; seal it first")
+            raise PackageError(
+                FailureCode.F11, "no grant for that digest; seal it first"
+            )
         if capability not in grant.granted_capabilities:
-            raise PackageError(FailureCode.F5, f"capability {capability.value} was never granted")
+            raise PackageError(
+                FailureCode.F5, f"capability {capability.value} was never granted"
+            )
         if capability in grant.revoked_capabilities:
             return grant
         revoked = dataclasses.replace(
@@ -218,7 +249,9 @@ def revoke(state_dir: Path, *, package_digest: str, capability: CapabilityReques
         return revoked
 
 
-def rollback(state_dir: Path, *, integration_id: str, package_digest: str) -> SealedGrantV1:
+def rollback(
+    state_dir: Path, *, integration_id: str, package_digest: str
+) -> SealedGrantV1:
     """Re-activate a previously sealed, non-load-revoked digest (D3)."""
     with layout.state_lock(state_dir):
         path = grant_path(state_dir, integration_id, package_digest)
@@ -226,7 +259,9 @@ def rollback(state_dir: Path, *, integration_id: str, package_digest: str) -> Se
             raise PackageError(FailureCode.F11, "no such sealed grant to roll back to")
         grant = read_grant(path)
         if CapabilityRequest.INTEGRATION_LOAD in grant.revoked_capabilities:
-            raise PackageError(FailureCode.F7, "cannot roll back to a load-revoked grant")
+            raise PackageError(
+                FailureCode.F7, "cannot roll back to a load-revoked grant"
+            )
         _write_active(state_dir, integration_id, package_digest)
         return grant
 
@@ -246,7 +281,10 @@ def _write_grant(state_dir: Path, grant: SealedGrantV1) -> None:
 def _write_active(state_dir: Path, integration_id: str, package_digest: str) -> None:
     path = _active_path(state_dir, integration_id)
     path.parent.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)
-    layout.atomic_write(path, layout.canonical_json({"schema_version": 1, "package_digest": package_digest}))
+    layout.atomic_write(
+        path,
+        layout.canonical_json({"schema_version": 1, "package_digest": package_digest}),
+    )
 
 
 def _read_active(state_dir: Path, integration_id: str) -> str | None:
@@ -271,7 +309,9 @@ def _list_grants_unlocked(state_dir: Path) -> list[SealedGrantV1]:
         return []
     grants: list[SealedGrantV1] = []
     for integration_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-        for path in sorted(integration_dir.glob("*.json")):  # skips the extensionless `active` pointer
+        for path in sorted(
+            integration_dir.glob("*.json")
+        ):  # skips the extensionless `active` pointer
             try:
                 grants.append(read_grant(path))
             except PackageError:
@@ -305,7 +345,9 @@ def _find_receipt_unlocked(state_dir: Path, package_digest: str) -> InstallRecei
             candidate = integration_dir / f"{hex_part}.json"
             if candidate.exists():
                 return ledger.read_receipt(candidate)
-    raise PackageError(FailureCode.F11, f"no installed package with digest {package_digest}")
+    raise PackageError(
+        FailureCode.F11, f"no installed package with digest {package_digest}"
+    )
 
 
 def _capabilities(raw: Any, name: str) -> tuple[CapabilityRequest, ...]:
@@ -314,11 +356,15 @@ def _capabilities(raw: Any, name: str) -> tuple[CapabilityRequest, ...]:
     result: list[CapabilityRequest] = []
     for item in raw:
         if not isinstance(item, str):
-            raise PackageError(FailureCode.F9, f"grant {name} has a non-string capability")
+            raise PackageError(
+                FailureCode.F9, f"grant {name} has a non-string capability"
+            )
         try:
             result.append(CapabilityRequest(item))
         except ValueError:
-            raise PackageError(FailureCode.F9, f"grant {name} has an unknown capability") from None
+            raise PackageError(
+                FailureCode.F9, f"grant {name} has an unknown capability"
+            ) from None
     return tuple(result)
 
 
@@ -341,12 +387,16 @@ def _opt_str(data: dict[str, Any], key: str, name: str) -> str | None:
 def _req_digest(data: dict[str, Any], key: str, name: str) -> str:
     value = _req_str(data, key, name)
     if not DIGEST_RE.match(value):
-        raise PackageError(FailureCode.F9, f"grant {name} field '{key}' is not a digest")
+        raise PackageError(
+            FailureCode.F9, f"grant {name} field '{key}' is not a digest"
+        )
     return value
 
 
 def _opt_digest(data: dict[str, Any], key: str, name: str) -> str | None:
     value = _opt_str(data, key, name)
     if value is not None and not DIGEST_RE.match(value):
-        raise PackageError(FailureCode.F9, f"grant {name} field '{key}' is not a digest")
+        raise PackageError(
+            FailureCode.F9, f"grant {name} field '{key}' is not a digest"
+        )
     return value

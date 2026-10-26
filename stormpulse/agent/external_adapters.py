@@ -1,28 +1,15 @@
-"""Entry-layer glue for sealed external adapters (CORE-007).
-
-The loader (``integrations/external/loader.py``) executes and returns the loaded
-``SdkIntegration`` objects; this module translates each into the internal
-``registry.Integration`` and registers it. It lives in the Entry layer because
-translating a command handler constructs a ``commands.jobs.JobOutcome``, which
-the CORE-000 topology forbids ``integrations/`` from importing.
-
-Two authorization gates live here:
-
-- **id collision (D6):** an external id that matches a built-in is quarantined
-  (built-ins always win) - the registry is idempotent-by-id and would otherwise
-  silently drop it, so the loud, named refusal happens here.
-- **command gate (D2):** the translated ``specs`` builder is a closure that, when
-  the command table is assembled, returns commands only if ``command_contributor``
-  is effective AND the recomputed ``command_specs_digest`` matches the seal;
-  otherwise it returns nothing (the adapter still loads for state/health).
-
-Command-name collision is enforced by the bootstrap command-table assembly,
-where all command names meet.
+"""Entry-layer glue for sealed external adapters (CORE-007): translates what the
+loader returns into ``registry.Integration`` (Entry, since a handler builds a
+``JobOutcome``). Three gates: an id colliding with a built-in is quarantined
+(D6); registration advertises commands only with ``command_contributor`` and a
+matching ``command_specs_digest`` (D2); every callback, command and job attempt
+re-reads the grant and fails closed (D3). Command-name collision is bootstrap's.
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -64,7 +51,7 @@ def load_and_register_external(state_dir: Path) -> frozenset[str]:
             )
             continue
         try:
-            register_integration(_translate(sdk, adapter.grant))
+            register_integration(_translate(sdk, adapter.grant, state_dir))
             registered.add(sdk.id)
         except Exception as exc:  # noqa: BLE001 - one bad adapter must never crash the agent
             logger.warning(
@@ -73,6 +60,40 @@ def load_and_register_external(state_dir: Path) -> frozenset[str]:
                 exc,
             )
     return frozenset(registered)
+
+
+class AdapterFenced(ConfigError):
+    """An adapter callback refused because its current grant no longer holds the
+    capability. A ConfigError, so every host caller soft-disables on it."""
+
+
+def _fence(
+    state_dir: Path, grant: SealedGrantV1, *needed: CapabilityRequest
+) -> Callable[[], str | None]:
+    """Why ``needed`` is not in force right now, or None: the grant re-read per call."""
+
+    def refused() -> str | None:
+        held = grants.current_capabilities(
+            state_dir, grant.integration_id, grant.package_digest
+        )
+        missing = [c.value for c in needed if c not in held]
+        return f"{', '.join(missing)} revoked or not granted" if missing else None
+
+    return refused
+
+
+def _fenced(fence: Callable[[], str | None], callback: Any) -> Any:
+    """``callback`` that runs only while ``fence`` passes; None stays None."""
+    if callback is None:
+        return None
+
+    def call(*args: Any, **kwargs: Any) -> Any:
+        refused = fence()
+        if refused is not None:
+            raise AdapterFenced(f"external integration is fenced: {refused}")
+        return callback(*args, **kwargs)
+
+    return call
 
 
 def _wrap_parse_config(sdk_parse: Any) -> Any:
@@ -84,6 +105,8 @@ def _wrap_parse_config(sdk_parse: Any) -> Any:
     def parse(raw: dict[str, object]) -> Any:
         try:
             return sdk_parse(raw)
+        except AdapterFenced:
+            raise
         except SdkConfigError as exc:
             raise ConfigError(str(exc)) from exc
         except Exception as exc:
@@ -96,26 +119,37 @@ def _wrap_parse_config(sdk_parse: Any) -> Any:
     return parse
 
 
-def _translate(sdk: SdkIntegration, grant: SealedGrantV1) -> Integration:
+def _translate(
+    sdk: SdkIntegration, grant: SealedGrantV1, state_dir: Path
+) -> Integration:
+    load = _fence(state_dir, grant, CapabilityRequest.INTEGRATION_LOAD)
+    command = _fence(
+        state_dir,
+        grant,
+        CapabilityRequest.INTEGRATION_LOAD,
+        CapabilityRequest.COMMAND_CONTRIBUTOR,
+    )
     build, gate = (
-        _gated_specs_builder(sdk, grant) if sdk.specs is not None else (None, None)
+        _gated_specs_builder(sdk, grant, load, command)
+        if sdk.specs is not None
+        else (None, None)
     )
     return Integration(
         id=sdk.id,
         in_release_catalog=False,
-        parse_config=_wrap_parse_config(sdk.parse_config),
-        enabled=sdk.enabled,
-        preconditions=sdk.preconditions,
+        parse_config=_wrap_parse_config(_fenced(load, sdk.parse_config)),
+        enabled=_fenced(load, sdk.enabled),
+        preconditions=_fenced(load, sdk.preconditions),
         specs=build,
         command_gate=gate,
         capabilities=sdk.capabilities,
-        readiness=sdk.readiness,
-        # Ungated, unlike specs: a deploy subject is data no allow rule binds
-        # to, so it needs no command-contributor grant and moves no digest
-        # (CORE-005 D14). The node's own table still overrides whatever it says.
-        deploy_subjects=sdk.deploy_subjects,
+        readiness=_fenced(load, sdk.readiness),
+        # Needs no command-contributor grant, unlike specs: a deploy subject is
+        # data no allow rule binds to, so it moves no digest (CORE-005 D14).
+        # The node's own table still overrides whatever it says.
+        deploy_subjects=_fenced(load, sdk.deploy_subjects),
         components=(
-            _translate_components(sdk.components)
+            _translate_components(_fenced(load, sdk.components))
             if sdk.components is not None
             else None
         ),
@@ -144,13 +178,18 @@ def _translate_components(sdk_components: Any) -> Any:
     return components
 
 
-def _gated_specs_builder(sdk: SdkIntegration, grant: SealedGrantV1) -> tuple[Any, Any]:
+def _gated_specs_builder(
+    sdk: SdkIntegration,
+    grant: SealedGrantV1,
+    load: Callable[[], str | None],
+    command: Callable[[], str | None],
+) -> tuple[Any, Any]:
     """The command gate (D2) as two views of one evaluation: ``build`` is the
     registry's ``specs`` (translated commands, nothing when fenced) and records
     its receipt; ``declare`` is that receipt, the digest a grant pins and why it
     is fenced, so the wire describes the evaluation that was registered."""
-    sdk_specs_of = sdk.specs
-    assert sdk_specs_of is not None  # guarded by the caller
+    assert sdk.specs is not None  # guarded by the caller
+    sdk_specs_of = _fenced(load, sdk.specs)
     receipt: list[
         tuple[Any, str, str | None]
     ] = []  # (parsed, digest, fenced) of the last build
@@ -158,9 +197,7 @@ def _gated_specs_builder(sdk: SdkIntegration, grant: SealedGrantV1) -> tuple[Any
     def gate(parsed: Any) -> tuple[dict[str, SdkCommandSpec], str, str | None]:
         sdk_specs = dict(sdk_specs_of(parsed))
         digest = command_specs_digest(sdk_specs)
-        if CapabilityRequest.COMMAND_CONTRIBUTOR not in grants.effective_capabilities(
-            grant
-        ):
+        if command() is not None:
             return sdk_specs, digest, "command_contributor not granted"
         if digest != grant.command_specs_digest:
             return (
@@ -177,7 +214,10 @@ def _gated_specs_builder(sdk: SdkIntegration, grant: SealedGrantV1) -> tuple[Any
         if fenced is not None:
             logger.warning("external adapter %r: %s; commands fenced", sdk.id, fenced)
             return {}
-        return {name: _translate_command_spec(spec) for name, spec in sdk_specs.items()}
+        return {
+            name: _translate_command_spec(spec, command)
+            for name, spec in sdk_specs.items()
+        }
 
     def declare(parsed: Any) -> tuple[str, str | None]:
         if receipt and receipt[0][0] is parsed:
@@ -188,7 +228,9 @@ def _gated_specs_builder(sdk: SdkIntegration, grant: SealedGrantV1) -> tuple[Any
     return build, declare
 
 
-def _translate_command_spec(spec: SdkCommandSpec) -> CommandSpec:
+def _translate_command_spec(
+    spec: SdkCommandSpec, authorize: Callable[[], str | None]
+) -> CommandSpec:
     return CommandSpec(
         group=spec.group,
         command=list(spec.command),
@@ -199,10 +241,15 @@ def _translate_command_spec(spec: SdkCommandSpec) -> CommandSpec:
         sensitive_output=spec.sensitive_output,
         read_only=spec.read_only,
         self_reconciling=spec.self_reconciling,
-        handler=_translate_handler(spec.handler) if spec.handler is not None else None,
+        handler=(
+            _translate_handler(spec.handler, authorize)
+            if spec.handler is not None
+            else None
+        ),
         params={name: _translate_param(p) for name, p in spec.params.items()},
         result=spec.result,
         retry_window_s=spec.retry_window_s,
+        authorize=authorize,
     )
 
 
@@ -218,9 +265,12 @@ def _translate_param(param: SdkParamDef) -> ParamDef:
     )
 
 
-def _translate_handler(sdk_handler: SdkCommandHandler) -> Any:
+def _translate_handler(
+    sdk_handler: SdkCommandHandler, authorize: Callable[[], str | None]
+) -> Any:
     """Wrap the SDK command handler (a factory returning an async job body over
-    the SDK progress/outcome types) into the internal ``CommandHandler`` shape."""
+    the SDK progress/outcome types) into the internal ``CommandHandler`` shape.
+    Each attempt re-asks the grant, so a revoke fences queued work and retries."""
 
     def factory(params: dict[str, Any]) -> JobHandler | None:
         sdk_job = sdk_handler(params)
@@ -228,6 +278,14 @@ def _translate_handler(sdk_handler: SdkCommandHandler) -> Any:
             return None
 
         async def run(progress: ProgressCallback) -> JobOutcome:
+            refused = authorize()
+            if refused is not None:
+                return JobOutcome(
+                    success=False,
+                    exit_code=-1,
+                    stderr=f"external integration is fenced: {refused}",
+                    failure_reason=FailureReason.FORBIDDEN,
+                )
             outcome = await sdk_job(_ProgressAdapter(progress))
             reason, own_word = _translate_reason(outcome.failure_reason)
             return JobOutcome(

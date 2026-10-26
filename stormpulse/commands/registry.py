@@ -285,6 +285,11 @@ def get_command(name: str, *, registry: dict[str, CommandSpec]) -> CommandSpec:
             "not in a sequence",
             reason=FailureReason.FORBIDDEN,
         )
+    refused = cmd_def.authorize() if cmd_def.authorize is not None else None
+    if refused is not None:
+        raise CommandError(
+            f"Command {name!r} is fenced: {refused}", reason=FailureReason.FORBIDDEN
+        )
     return cmd_def
 
 

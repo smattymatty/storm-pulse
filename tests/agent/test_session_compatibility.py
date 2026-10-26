@@ -1,6 +1,7 @@
 """Compatibility fences commands while preserving observer traffic."""
 
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -121,7 +122,9 @@ def test_loaded_adapter_does_not_change_release_catalog(*, with_commands: bool):
         granted_capabilities=(),
         sealed_at='2026-10-09T00:00:00Z',
     )
-    adapter = _translate(sdk, grant)
+    adapter = _translate(
+        sdk, grant, Path('/nonexistent')
+    )  # never asked: nothing is called
     assert not adapter.in_release_catalog
     with patch.object(
         registry, '_integrations', [*registry.registered_integrations(), adapter]

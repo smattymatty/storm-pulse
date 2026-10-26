@@ -129,6 +129,9 @@ class CommandSpec:
     # d9): declared in the artifact, so a consumer reads keys it was told about.
     result: type | None = None
     retry_window_s: int | None = None
+    # Set only by the external translator: asked before each new execution, it
+    # returns why the current grant refuses it, or None (CORE-007 D3).
+    authorize: Callable[[], str | None] | None = None
 
     def __post_init__(self) -> None:
         if self.mode == "job":

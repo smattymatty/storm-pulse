@@ -10,7 +10,8 @@ from pathlib import Path
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from stormpulse.integrations.external import digest, layout, trust
+from stormpulse.integrations.external import digest, grants, layout, trust
+from stormpulse.integrations.external.model import SealedGrantV1
 
 
 def keypair() -> tuple[Ed25519PrivateKey, str]:
@@ -25,6 +26,13 @@ def state_dir(tmp_path: Path) -> Path:
     state = tmp_path / "state"
     state.mkdir()
     return state
+
+
+def persist_grant(state: Path, grant: SealedGrantV1) -> None:
+    """Write an in-memory grant where the execution fence reads it (D3)."""
+    path = grants.grant_path(state, grant.integration_id, grant.package_digest)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    layout.atomic_write(path, layout.canonical_json(grants.to_dict(grant)))
 
 
 def approve(state: Path, tmp_path: Path, private: Ed25519PrivateKey) -> None:

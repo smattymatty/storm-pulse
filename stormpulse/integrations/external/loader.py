@@ -29,7 +29,7 @@ from pathlib import Path
 from types import ModuleType
 
 from stormpulse.integrations.external import digest, grants, layout, manifest
-from stormpulse.integrations.external.model import SealedGrantV1
+from stormpulse.integrations.external.model import CapabilityRequest, SealedGrantV1
 from stormpulse.sdk import SdkIntegration
 
 logger = logging.getLogger(__name__)
@@ -80,7 +80,9 @@ _FINDER_INSTALLED = False
 def _ensure_finder() -> None:
     global _FINDER_INSTALLED
     if not _FINDER_INSTALLED:
-        sys.meta_path.append(_FINDER)  # append: our finder is the last resort, never a shadow
+        sys.meta_path.append(
+            _FINDER
+        )  # append: our finder is the last resort, never a shadow
         _FINDER_INSTALLED = True
 
 
@@ -97,12 +99,16 @@ def load_sealed_adapters(state_dir: Path) -> list[LoadedAdapter]:
             loaded.append(_load_one(state_dir, grant))
         except Exception as exc:  # noqa: BLE001 - one bad adapter must never crash the agent
             logger.warning(
-                "external adapter %r failed to load (soft-disabled): %s", integration_id, exc
+                "external adapter %r failed to load (soft-disabled): %s",
+                integration_id,
+                exc,
             )
     return loaded
 
 
-def load_one_sealed_adapter(state_dir: Path, integration_id: str) -> LoadedAdapter | None:
+def load_one_sealed_adapter(
+    state_dir: Path, integration_id: str
+) -> LoadedAdapter | None:
     """Load a single sealed adapter by id (for `integration init`). Returns None
     if it has no active grant; raises with a clear reason if it is granted but
     unloadable, so the caller can report it rather than silently skipping."""
@@ -114,6 +120,9 @@ def load_one_sealed_adapter(state_dir: Path, integration_id: str) -> LoadedAdapt
 
 
 def _load_one(state_dir: Path, grant: SealedGrantV1) -> LoadedAdapter:
+    # D3: a load-revoked grant imports nothing, on every entry point.
+    if CapabilityRequest.INTEGRATION_LOAD not in grants.effective_capabilities(grant):
+        raise RuntimeError("integration_load is revoked or was never granted")
     installed = layout.packages_dir(state_dir) / grant.package_digest.split(":", 1)[1]
     if not installed.is_dir():
         raise RuntimeError("installed package tree is missing")
@@ -122,7 +131,9 @@ def _load_one(state_dir: Path, grant: SealedGrantV1) -> LoadedAdapter:
     # authority is bound to the digest, so a tampered or corrupt tree loads nothing.
     scan = digest.scan_and_hash(installed)
     if scan.package_digest != grant.package_digest:
-        raise RuntimeError("installed tree does not match the sealed digest (tampered or corrupt)")
+        raise RuntimeError(
+            "installed tree does not match the sealed digest (tampered or corrupt)"
+        )
     if scan.manifest_bytes is None:
         raise RuntimeError("installed package has no manifest")
 
@@ -131,7 +142,9 @@ def _load_one(state_dir: Path, grant: SealedGrantV1) -> LoadedAdapter:
     module = importlib.import_module(parsed.entry_module)
     entry = getattr(module, parsed.entry_object, None)
     if not isinstance(entry, SdkIntegration):
-        raise RuntimeError(f"entry object {parsed.entry_object!r} is not an SdkIntegration")
+        raise RuntimeError(
+            f"entry object {parsed.entry_object!r} is not an SdkIntegration"
+        )
     if entry.id != grant.integration_id:
         raise RuntimeError(
             f"adapter declares id {entry.id!r} but was sealed as {grant.integration_id!r}"

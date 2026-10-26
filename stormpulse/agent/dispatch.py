@@ -182,6 +182,9 @@ async def handle_command_request(
     if await _refuse_if_sealed(agent, ws, envelope, payload, cmd_def):
         return
 
+    if await _refuse_if_fenced(agent, ws, envelope, payload, cmd_def):
+        return
+
     if await _deflect_if_restart_pending(agent, ws, envelope, payload):
         return
 
@@ -253,6 +256,37 @@ async def _refuse_if_sealed(
         payload.command,
         envelope.id,
     )
+    return True
+
+
+async def _refuse_if_fenced(
+    agent: Agent,
+    ws: ClientConnection,
+    envelope: Envelope,
+    payload: CommandRequestPayload,
+    cmd_def: CommandSpec | None,
+) -> bool:
+    """Refuse, in every mode, a command its current grant no longer authorizes
+    (CORE-007 D3). Returns ``True`` if handled."""
+    if cmd_def is None or cmd_def.authorize is None:
+        return False
+    refused = cmd_def.authorize()
+    if refused is None:
+        return False
+    message = f"Command {payload.command!r} is fenced: {refused}"
+    logger.warning("Refused %s (request %s): %s", payload.command, envelope.id, refused)
+    events.emit(
+        "whitelist_rejection",
+        source="commands",
+        status="refused",
+        command=str(payload.command)[:100],
+        command_ref=str(envelope.id)[:100],
+        error=message,
+    )
+    failure = CommandResultPayload.failed(
+        envelope.id, payload.command, cmd_def.group, FailureReason.FORBIDDEN, message
+    )
+    await ws.send(make(agent.config.agent.id, failure).to_json())
     return True
 
 
@@ -617,13 +651,16 @@ async def handle_command_sequence(
                 registry=agent.registry,
                 runtime_params=step.params or None,
             )
-        except ParamValidationError as exc:
+        except (CommandError, ParamValidationError) as exc:
+            # A CommandError here is a grant revoked mid-sequence (CORE-007 D3).
             logger.warning("Sequence %s step %d: %s", payload.sequence_id, index, exc)
             result = CommandResultPayload.failed(
                 request_id,
                 step.command,
                 agent.registry[step.command].group,
-                FailureReason.VALIDATION_FAILED,
+                exc.reason
+                if isinstance(exc, CommandError)
+                else FailureReason.VALIDATION_FAILED,
                 str(exc),
             )
         await ws.send(step_result(result, index))

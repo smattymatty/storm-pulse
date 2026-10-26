@@ -232,3 +232,34 @@ checked. Loading reads the grant tree and imports the package (D1) and writes
 nothing; host preconditions still run at boot only (CORE-005 decision 6). Pinned
 by `tests/integrations/external/test_config_check.py`, three outcomes, each
 proven by mutation.
+
+## Amendment (2026-10-26): current grants authorize each execution
+
+**Status:** operator ruling 2026-10-26, D3 wins. Sealed at the commit that lands this section.
+
+An audit at `46b16c2` found D3 unenforced. A package whose `integration_load`
+was revoked before a cold start still imported and ran its command, and a
+command whose `command_contributor` was revoked after boot still dispatched. The
+cause is the 2026-07-22 command gate above: it was checked at registration only
+and the dispatcher stayed grant-unaware, so a revoke never reached a running agent.
+
+- **D2, amended.** Registration decides what commands are advertised, as
+  before. Each new execution is authorized by the grant as it stands on disk at
+  that moment. The dispatcher still knows nothing about grants: it asks the
+  spec's `authorize`, which only the external translator sets.
+- **Boundaries.** `integration_load` is required for the import, through both
+  loader entry points, and for every adapter callback the host makes
+  (`parse_config`, `enabled`, `preconditions`, `specs`, `readiness`,
+  `deploy_subjects`, `components`). Every command needs `integration_load` and
+  `command_contributor`, in every mode: at dispatch, at each sequence step, and
+  at each queued or retried job attempt.
+- **Semantics.** Revoking `command_contributor` keeps observation running and
+  refuses new commands. Revoking `integration_load` fences both. A missing or
+  unreadable grant holds nothing, so the check fails closed. A refusal reaches
+  the wire as `forbidden` with a `whitelist_rejection` event; no new wire reason.
+- **Limits.** Revocation fences future execution only. It does not stop a job
+  already past its check, unload imported code, stop a declared event spool the
+  host reads, or recover a process whose adapter already ran with agent
+  authority. A suspected compromise is a restart and a reinstall, not a revoke.
+- **Pinned by** `tests/integrations/external/test_revocation_fence.py` and
+  Fitness Function 19 (CORE-001), each proven by mutation.

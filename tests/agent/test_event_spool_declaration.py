@@ -145,7 +145,7 @@ def test_the_translator_carries_the_declared_source_onto_the_integration(
         granted_capabilities=(),
         sealed_at="2026-10-13T00:00:00Z",
     )
-    assert _translate(sdk, grant).event_source == events.EventSource(
+    assert _translate(sdk, grant, spool).event_source == events.EventSource(
         name=SOURCE, kinds={"seen": frozenset({"record_id"})}, spool_dir=spool
     )
 

@@ -16,6 +16,10 @@ from stormpulse.protocol import FailureReason
 from stormpulse.sdk import SdkCommandSpec, SdkJobOutcome, SdkProgress
 
 
+def _authorized() -> None:
+    return None
+
+
 async def _progress(*_args: object, **_kw: object) -> None:
     return None
 
@@ -26,7 +30,7 @@ async def _run(reason: str | None) -> JobOutcome:
             success=False, exit_code=1, stderr="it broke", failure_reason=reason
         )
 
-    handler = _translate_handler(lambda _params: job)({})
+    handler = _translate_handler(lambda _params: job, _authorized)({})
     assert handler is not None
     return await handler(_progress)
 
@@ -74,10 +78,10 @@ def test_a_declared_result_shape_reaches_the_internal_spec() -> None:
         handler=lambda _p: job,
         result=_Figures,
     )
-    assert _translate_command_spec(spec).result is _Figures
+    assert _translate_command_spec(spec, _authorized).result is _Figures
     assert (
         _translate_command_spec(
-            SdkCommandSpec(group="g", command=["/bin/true"], timeout=5)
+            SdkCommandSpec(group="g", command=["/bin/true"], timeout=5), _authorized
         ).result
         is None
     )
@@ -104,7 +108,7 @@ async def test_an_adapter_word_on_a_success_is_no_error_and_the_result_still_shi
     async def send(envelope: Envelope) -> None:
         sent.append(envelope)
 
-    handler = _translate_handler(lambda _params: job)({})
+    handler = _translate_handler(lambda _params: job, _authorized)({})
     assert handler is not None
     mgr = JobManager("agent-1", send)
     mgr.start("req-1", "ext_job", "ext", handler)
@@ -133,7 +137,7 @@ async def test_a_retry_ask_and_its_window_survive_the_translation() -> None:
         handler=lambda _p: job,
         retry_window_s=90,
     )
-    internal = _translate_command_spec(spec)
+    internal = _translate_command_spec(spec, _authorized)
     assert internal.retry_window_s == 90
     assert internal.handler is not None
     handler = internal.handler({})

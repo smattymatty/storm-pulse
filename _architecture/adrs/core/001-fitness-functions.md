@@ -74,6 +74,8 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 
 **Function 18 - Every tailer keeps the cursor contract.** A tailer moves its checkpoint on an ACK, so a source kind tested only in its own file can rewind, skip or stall that checkpoint unseen. The check reads `stormpulse/` by AST and fails when a class defining `confirm_shipped` is missing from `TAILERS` in `tests/logging/test_cursor_contract.py`, or when that tuple is gone. Added 2026-10-25 with 0.8.1 (`_architecture/tasks/0.8.1-stability.md` STAB-01 and STAB-02), when the shared suite's first run found 17 failing cases across the four tailers against the 2 predicted; built in b52a06e. Sealed at the commit that lands this line.
 
+**Function 19 - Every external seam answers to the current grant.** CORE-007 D3 as amended 2026-10-26: registration advertises, the current grant authorizes. The check translates a probe adapter whose every `Callable` field is a tripwire, revokes on disk, and fails when a command still authorizes or a queued job attempt runs after `command_contributor` is revoked, or when any callback on the translated Integration reaches adapter code after `integration_load` is revoked. Added 2026-10-26, after an audit at `46b16c2` ran a revoked adapter's command both ways while 156 tests stayed green. Sealed at the commit that lands this line.
+
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**
