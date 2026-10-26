@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import sqlite3
 from pathlib import Path
 
-from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.positions import Checkpoint, LogPositionStore
+from stormpulse.logging.receipt import FileGeneration
 
 
 def test_get_unseen_group(tmp_path: Path) -> None:
@@ -19,6 +22,45 @@ def test_set_and_get_roundtrip(tmp_path: Path) -> None:
     pos, inode = store.get("storage")
     assert pos == 12345
     assert inode == 999
+    store.close()
+
+
+def test_checkpoint_head_roundtrip_and_cleared_by_a_headless_set(
+    tmp_path: Path,
+) -> None:
+    store = LogPositionStore(tmp_path / "pos.db")
+    assert store.checkpoint("storage") == Checkpoint(0, None, None)
+    store.set("storage", "/a.log", 300, 7, head=(120, b"\x00digest"))
+    assert store.checkpoint("storage") == Checkpoint(
+        300, 7, FileGeneration(7, 120, b"\x00digest")
+    )
+    assert store.get("storage") == (300, 7)
+    store.set("storage", "/a.log", 400, 7, head=(64, b"other"))
+    assert store.checkpoint("storage") == Checkpoint(
+        400, 7, FileGeneration(7, 64, b"other")
+    )
+    # A head belongs to one generation: a set without one must not keep the old.
+    store.set("storage", "/a.log", 0, 8)
+    assert store.checkpoint("storage") == Checkpoint(0, 8, None)
+    store.close()
+
+
+def test_legacy_row_without_head_columns_reads_back_headless(tmp_path: Path) -> None:
+    db = tmp_path / "pos.db"
+    # The schema an agent wrote before heads were kept.
+    with contextlib.closing(sqlite3.connect(db)) as conn, conn:
+        conn.execute(
+            "CREATE TABLE log_positions (group_name TEXT PRIMARY KEY, source_type TEXT "
+            "NOT NULL DEFAULT 'file', file_path TEXT, position INTEGER NOT NULL DEFAULT 0, "
+            "inode INTEGER, last_ts TEXT, cursor TEXT, updated_at REAL NOT NULL)"
+        )
+        conn.execute(
+            "INSERT INTO log_positions (group_name, file_path, position, inode, updated_at) "
+            "VALUES ('storage', '/a.log', 500, 42, 0)"
+        )
+    store = LogPositionStore(db)
+    assert store.checkpoint("storage") == Checkpoint(500, 42, None)
+    assert store.get("storage") == (500, 42)
     store.close()
 
 

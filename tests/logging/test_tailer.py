@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from stormpulse.config import LogGroupConfig
-from stormpulse.logging.positions import LogPositionStore
+from stormpulse.logging.positions import Checkpoint, LogPositionStore
 from stormpulse.logging.tailer import LogTailer
 
 
@@ -363,14 +363,94 @@ def test_confirm_refuses_a_receipt_no_file_read_issues(
     assert store.get("test") == (0, None)
 
 
-def test_a_failed_read_claims_no_range(tmp_path: Path, store: LogPositionStore) -> None:
-    """A path that stats but will not open (a directory) reads nothing and covers nothing."""
+def test_a_failed_read_claims_no_range(
+    tmp_path: Path, store: LogPositionStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A path that exists but will not open (a directory) warns, reads and covers nothing."""
     source = tmp_path / "test.log"
     source.mkdir()
     tailer = LogTailer(_make_group(source), store)
 
-    lines, receipt = tailer.read_new_lines(max_lines=10)
+    with caplog.at_level("WARNING", logger="stormpulse.logging.tailer"):
+        lines, receipt = tailer.read_new_lines(max_lines=10)
 
+    assert "Failed reading" in caplog.text
     assert lines == []
     assert (receipt.from_position, receipt.to_position) == (0, 0)
     assert not tailer.confirm_shipped(receipt)
+
+
+def test_a_legacy_checkpoint_without_a_head_resumes_at_its_offset(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
+    """A row an older agent wrote trusts its offset: an upgrade re-ships nothing."""
+    log = tmp_path / "test.log"
+    log.write_text("a\nb\n")
+    store.set("test", str(log), 4, os.stat(log).st_ino)  # no head, as before
+    with log.open("a") as f:
+        f.write("c\n")
+
+    lines, receipt = LogTailer(_make_group(log), store).read_new_lines(max_lines=10)
+
+    assert lines == ["c\n"]
+    assert receipt.from_position == 4
+
+
+def test_a_legacy_checkpoint_is_confirmed_and_gains_a_head(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
+    """The first ACK after an upgrade is accepted and stores the head it read."""
+    log = tmp_path / "test.log"
+    log.write_text("a\nb\n")
+    ino = os.stat(log).st_ino
+    store.set("test", str(log), 4, ino)
+    with log.open("a") as f:
+        f.write("c\n")
+    tailer = LogTailer(_make_group(log), store)
+
+    _, receipt = tailer.read_new_lines(max_lines=10)
+
+    assert tailer.confirm_shipped(receipt)
+    assert store.checkpoint("test") == Checkpoint(6, ino, receipt.generation)
+
+
+def test_a_legacy_checkpoint_from_another_inode_restarts_at_zero(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
+    """No head to compare: a rotation across the upgrade is still caught by inode."""
+    log = tmp_path / "test.log"
+    log.write_text("new1\nnew2\n")
+    store.set("test", str(log), 5, os.stat(log).st_ino + 1)
+
+    lines, receipt = LogTailer(_make_group(log), store).read_new_lines(max_lines=10)
+
+    assert lines == ["new1\n", "new2\n"]
+    assert receipt.from_position == 0
+
+
+def test_a_legacy_checkpoint_past_a_shrunk_file_restarts_at_zero(
+    tmp_path: Path, store: LogPositionStore
+) -> None:
+    """No head to compare: a truncation across the upgrade is still caught by size."""
+    log = tmp_path / "test.log"
+    log.write_text("short\n")
+    store.set("test", str(log), 100, os.stat(log).st_ino)
+
+    lines, receipt = LogTailer(_make_group(log), store).read_new_lines(max_lines=10)
+
+    assert lines == ["short\n"]
+    assert receipt.from_position == 0
+
+
+def test_a_missing_file_reads_nothing_without_a_warning(
+    tmp_path: Path, store: LogPositionStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Polled every interval: an absent file is normal, not a warning per tick."""
+    tailer = LogTailer(_make_group(tmp_path / "absent.log"), store)
+
+    with caplog.at_level("WARNING", logger="stormpulse.logging.tailer"):
+        lines, receipt = tailer.read_new_lines(max_lines=10)
+
+    assert lines == []
+    assert receipt.generation is None
+    assert caplog.records == []

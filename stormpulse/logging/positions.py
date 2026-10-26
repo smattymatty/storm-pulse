@@ -1,8 +1,9 @@
 """SQLite-backed log position store.
 
 Shares the database file with the NonceStore. File-based log groups persist
-last-read byte position + inode (so rotation is detectable); Docker-based
-groups persist the timestamp of the last line received.
+last-read byte position, inode and head (length + digest), so rotation and an
+in-place truncation are both detectable; Docker-based groups persist the
+timestamp of the last line received.
 """
 
 from __future__ import annotations
@@ -10,7 +11,22 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
+
+from stormpulse.logging.receipt import FileGeneration
+
+
+@dataclass(frozen=True, slots=True)
+class Checkpoint:
+    """A file group's stored resume point and the generation it belongs to.
+
+    ``generation`` is None for an unseen group or a row written before heads were kept.
+    """
+
+    position: int
+    inode: int | None
+    generation: FileGeneration | None
 
 
 class LogPositionStore:
@@ -53,6 +69,8 @@ class LogPositionStore:
             # normalization below rewrites values that merely LOOK like
             # timestamps.
             ("cursor", "TEXT"),
+            ("head_len", "INTEGER"),
+            ("head_digest", "BLOB"),
         ]:
             try:
                 self._conn.execute(  # skylos: ignore[SKY-D211] col/definition from the hardcoded list above
@@ -84,20 +102,52 @@ class LogPositionStore:
             return (0, None)
         return (int(row[0]), int(row[1]) if row[1] is not None else None)
 
-    def set(self, group: str, file_path: str, position: int, inode: int) -> None:
-        """Upsert the stored position and inode for a file group."""
+    def checkpoint(self, group: str) -> Checkpoint:
+        """Return the file group's position, inode and generation. Unseen: (0, None, None)."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT position, inode, head_len, head_digest "
+                "FROM log_positions WHERE group_name = ?",
+                (group,),
+            ).fetchone()
+        if row is None:
+            return Checkpoint(0, None, None)
+        position, inode, head_len, head_digest = row
+        if inode is None:
+            return Checkpoint(int(position), None, None)
+        generation = (
+            None
+            if head_len is None or head_digest is None
+            else FileGeneration(int(inode), int(head_len), bytes(head_digest))
+        )
+        return Checkpoint(int(position), int(inode), generation)
+
+    def set(
+        self,
+        group: str,
+        file_path: str,
+        position: int,
+        inode: int,
+        *,
+        head: tuple[int, bytes] | None = None,
+    ) -> None:
+        """Upsert a file group's position, inode and head; no head clears the stored one."""
+        head_len, head_digest = head if head is not None else (None, None)
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO log_positions "
-                "  (group_name, source_type, file_path, position, inode, updated_at) "
-                "VALUES (?, 'file', ?, ?, ?, ?) "
+                "  (group_name, source_type, file_path, position, inode, "
+                "   head_len, head_digest, updated_at) "
+                "VALUES (?, 'file', ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(group_name) DO UPDATE SET "
                 "  source_type='file', "
                 "  file_path=excluded.file_path, "
                 "  position=excluded.position, "
                 "  inode=excluded.inode, "
+                "  head_len=excluded.head_len, "
+                "  head_digest=excluded.head_digest, "
                 "  updated_at=excluded.updated_at",
-                (group, file_path, position, inode, time.time()),
+                (group, file_path, position, inode, head_len, head_digest, time.time()),
             )
 
     def get_docker_ts(self, group: str) -> str | None:
