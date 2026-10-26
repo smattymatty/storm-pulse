@@ -58,7 +58,7 @@ async def handle_events_batch_nack(
 async def handle_log_batch_ack(
     agent: Agent, _ws: ClientConnection, envelope: Envelope
 ) -> None:
-    """Advance the stored log position for an acknowledged batch."""
+    """Confirm an acknowledged batch with its shipper, then resolve it."""
     batch_id = envelope.payload.get(_BATCH_ID)
     if not isinstance(batch_id, str):
         logger.warning("log.batch.ack missing batch_id")
@@ -77,10 +77,10 @@ async def handle_log_batch_ack(
         agent.pending_batches.pop(batch_id)
     if confirmed:
         logger.debug(
-            "Advanced position for group %s to %s (batch %s)",
+            "Confirmed batch %s for group %s (range ends %s)",
+            batch_id,
             receipt.group,
             receipt.to_position,
-            batch_id,
         )
 
 
