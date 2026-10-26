@@ -30,12 +30,12 @@ def test_checkpoint_head_roundtrip_and_cleared_by_a_headless_set(
 ) -> None:
     store = LogPositionStore(tmp_path / "pos.db")
     assert store.checkpoint("storage") == Checkpoint(0, None, None)
-    store.set("storage", "/a.log", 300, 7, head=(120, b"\x00digest"))
+    store.set("storage", "/a.log", 300, 7, head=FileGeneration(7, 120, b"\x00digest"))
     assert store.checkpoint("storage") == Checkpoint(
         300, 7, FileGeneration(7, 120, b"\x00digest")
     )
     assert store.get("storage") == (300, 7)
-    store.set("storage", "/a.log", 400, 7, head=(64, b"other"))
+    store.set("storage", "/a.log", 400, 7, head=FileGeneration(7, 64, b"other"))
     assert store.checkpoint("storage") == Checkpoint(
         400, 7, FileGeneration(7, 64, b"other")
     )

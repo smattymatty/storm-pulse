@@ -657,3 +657,20 @@ def test_a_rewind_respawns_at_once_ends_the_old_follow_and_warns(
     assert old.poll() is not None
     warned = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warned) == 1 and _DOCKER_SEED in warned[0].getMessage()
+
+
+def test_a_rewind_warning_counts_the_confirmed_ranges_it_re_reads(
+    world: World, caplog: pytest.LogCaptureFixture
+) -> None:
+    src, tailer = _stream(world)
+    src.write(["l1", "l2", "l3"])
+    tailer.read_new_lines(1, None)  # r1
+    _, r2 = tailer.read_new_lines(1, None)  # None never rewinds
+    _, r3 = tailer.read_new_lines(1, None)
+    # Done, not popped: r1 is open. 2 of 3, so neither count is the complement.
+    assert tailer.confirm_shipped(r2) and tailer.confirm_shipped(r3)
+    with caplog.at_level(logging.WARNING, logger="stormpulse.logging.tailer"):
+        lines, _ = tailer.read_new_lines(1, PendingBatches().receipts())
+    assert _said(lines) == ["l1"]
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warned) == 1 and "re-reading 3 ranges, 2 already confirmed" in warned[0]

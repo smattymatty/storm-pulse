@@ -93,14 +93,8 @@ class LogPositionStore:
 
     def get(self, group: str) -> tuple[int, int | None]:
         """Return (position, inode) for a file group. (0, None) if unseen."""
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT position, inode FROM log_positions WHERE group_name = ?",
-                (group,),
-            ).fetchone()
-        if row is None:
-            return (0, None)
-        return (int(row[0]), int(row[1]) if row[1] is not None else None)
+        cp = self.checkpoint(group)
+        return (cp.position, cp.inode)
 
     def checkpoint(self, group: str) -> Checkpoint:
         """Return the file group's position, inode and generation. Unseen: (0, None, None)."""
@@ -129,10 +123,12 @@ class LogPositionStore:
         position: int,
         inode: int,
         *,
-        head: tuple[int, bytes] | None = None,
+        head: FileGeneration | None = None,
     ) -> None:
         """Upsert a file group's position, inode and head; no head clears the stored one."""
-        head_len, head_digest = head if head is not None else (None, None)
+        head_len, head_digest = (
+            (head.head_len, head.head_digest) if head is not None else (None, None)
+        )
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO log_positions "

@@ -20,6 +20,7 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from stormpulse.config import LogGroupConfig
@@ -146,15 +147,11 @@ class LogTailer:
         if owned is None:
             return False
         gen, start, end = owned
-        base = self._still_holds(gen, end)
+        base = self._base_for(gen, end)
         if base is None or not start <= base < end:
             return False
         self._store.set(
-            self._group.name,
-            str(self._group.source_path),
-            end,
-            gen.inode,
-            head=(gen.head_len, gen.head_digest),
+            self._group.name, str(self._group.source_path), end, gen.inode, head=gen
         )
         return True
 
@@ -173,8 +170,11 @@ class LogTailer:
             return None
         return gen, start, end
 
-    def _still_holds(self, gen: FileGeneration, end: int) -> int | None:
-        """The resume point if the path still names ``gen`` and reaches ``end``, else None."""
+    def _base_for(self, gen: FileGeneration, end: int) -> int | None:
+        """The checkpoint a receipt of ``gen`` must cover.
+
+        None if the path left ``gen`` or is short of ``end``.
+        """
         try:
             with open(self._group.source_path, "rb") as f:
                 st = os.fstat(f.fileno())
@@ -493,6 +493,14 @@ class JournaldTailer:
         return _consume_filtered(self.confirm_shipped, receipt, pending)
 
 
+@dataclass(slots=True)
+class _Range:
+    """An issued range, done once ACKed or wholly filtered."""
+
+    receipt: Receipt
+    done: bool = False
+
+
 class StreamingDockerTailer:
     """Tail a container via a long-lived ``docker logs --follow`` subprocess.
 
@@ -515,10 +523,9 @@ class StreamingDockerTailer:
         self._store = position_store
         self._proc: subprocess.Popen[bytes] | None = None
         self._buffer: bytes = b""
-        # Where the stream is (None: at the checkpoint), and every range issued
-        # since, in order, with whether it is done (ACKed or wholly filtered).
+        # Where the stream is (None: at the checkpoint), and every range issued since.
         self._stream_ts: str | None = None
-        self._issued: list[tuple[Receipt, bool]] = []
+        self._issued: list[_Range] = []
         # Confirm (ACK worker) and read (log worker) run in different threads;
         # held for bookkeeping only, never across the pipe wait.
         self._lock = threading.Lock()
@@ -556,7 +563,7 @@ class StreamingDockerTailer:
             lines, receipt = _docker_batch(self._group, from_ts, raw_lines, max_lines)
             if lines:
                 self._stream_ts = str(receipt.to_position)
-                self._issued.append((receipt, False))
+                self._issued.append(_Range(receipt))
             return lines, receipt
 
     def confirm_shipped(self, receipt: Receipt) -> bool:
@@ -568,15 +575,15 @@ class StreamingDockerTailer:
         checkpoint, a late pre-rewind ACK equal to a new range confirms delivered lines.
         """
         with self._lock:
-            for i, (issued, done) in enumerate(self._issued):
-                if issued == receipt and not done:
-                    self._issued[i] = (issued, True)
+            for issued in self._issued:
+                if issued.receipt == receipt and not issued.done:
+                    issued.done = True
                     break
             else:
                 return False
             end: str | None = None
-            while self._issued and self._issued[0][1]:
-                end = str(self._issued.pop(0)[0].to_position)
+            while self._issued and self._issued[0].done:
+                end = str(self._issued.pop(0).receipt.to_position)
             if end is not None:
                 self._store.set_docker_ts(
                     self._group.name, self._group.container_name, end
@@ -597,19 +604,20 @@ class StreamingDockerTailer:
     def _lost(self, pending: Collection[Receipt]) -> bool:
         """True when a range issued, never confirmed, is no longer awaiting its ACK."""
         live = set(pending)
-        return any(not done and r not in live for r, done in self._issued)
+        return any(not r.done and r.receipt not in live for r in self._issued)
 
     def _rewind(self) -> None:
-        """Respawn from the checkpoint at once, past the throttle: lost lines read again."""
+        """End the follow and lift the throttle: ``_ensure_running`` respawns now."""
         logger.warning(
-            "Rewinding docker logs for group %s to %s: a batch was lost (%d ranges dropped)",
+            "Rewinding docker logs for group %s to %s: a batch was lost "
+            "(re-reading %d ranges, %d already confirmed)",
             self._group.name,
             self._store.get_docker_ts(self._group.name),
             len(self._issued),
+            sum(r.done for r in self._issued),
         )
         self._terminate()
-        self._last_respawn_attempt = time.monotonic()
-        self._spawn()
+        self._last_respawn_attempt = float("-inf")
 
     def _ensure_running(self) -> bool:
         """Start the subprocess if not running. Returns True if running."""
