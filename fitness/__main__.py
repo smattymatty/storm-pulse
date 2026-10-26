@@ -1,9 +1,9 @@
-"""Fitness harness: Functions 2-19, every check, every violation.
+"""Fitness harness: Functions 2-20, never fail-fast; baseline.txt suppresses by match.
 
 CORE-001 defines 1-4 (1 is ``lint-imports``), CORE-005 5-6, CORE-007 7-8, CORE-008 9;
 10-11 guard what readers are told; 12 holds CI to `make check`; 13-14 the seal and
 the signing key; 15 one JSON encoder; 16 every event declared; 17 no faked host
-identity; 18 the cursor contract; 19 the external grant fence. Never fail-fast; ``baseline.txt`` suppresses by match.
+identity; 18 the cursor contract; 19 the external grant fence; 20 per-step reseal.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from fitness.dependency_allowlist import check_dependencies
 from fitness.event_registry import check_event_registry
 from fitness.external_fence import check_external_fence
 from fitness.external_loader_p1 import check_external_loader_no_execution
+from fitness.hatch_reseal import check_hatch_rechecks_seal
 from fitness.integration_contract import check_integration_contract
 from fitness.merge_fence import check_merge_fence
 from fitness.no_fake_os import check_no_fake_os
@@ -80,6 +81,10 @@ def main() -> int:
         (
             "Function 19 - every external seam answers to the current grant",
             check_external_fence,
+        ),
+        (
+            "Function 20 - every hatch execution rechecks the seal",
+            check_hatch_rechecks_seal,
         ),
     ]:
         violations = check()
