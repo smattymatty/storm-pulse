@@ -1,5 +1,6 @@
 """Log shipping: tail, parse, batch, ship."""
 
+from stormpulse.logging.docker_tailer import DockerTailer, StreamingDockerTailer
 from stormpulse.logging.parsers import (
     parse_caddy_json,
     parse_docker_raw,
@@ -8,12 +9,7 @@ from stormpulse.logging.parsers import (
 )
 from stormpulse.logging.positions import LogPositionStore
 from stormpulse.logging.shipper import LogShipper
-from stormpulse.logging.tailer import (
-    DockerTailer,
-    JournaldTailer,
-    LogTailer,
-    StreamingDockerTailer,
-)
+from stormpulse.logging.tailer import JournaldTailer, LogTailer
 from stormpulse.logging.writer import PulseLogger
 
 __all__ = [

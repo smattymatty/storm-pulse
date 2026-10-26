@@ -25,14 +25,10 @@ import pytest
 
 from stormpulse.agent.log_batches import PendingBatches
 from stormpulse.config import LogGroupConfig
+from stormpulse.logging.docker_tailer import DockerTailer, StreamingDockerTailer
 from stormpulse.logging.positions import LogPositionStore
 from stormpulse.logging.shipper import Batch, LogShipper
-from stormpulse.logging.tailer import (
-    DockerTailer,
-    JournaldTailer,
-    LogTailer,
-    StreamingDockerTailer,
-)
+from stormpulse.logging.tailer import JournaldTailer, LogTailer
 
 # Every class defining confirm_shipped belongs here.
 TAILERS = (LogTailer, DockerTailer, StreamingDockerTailer, JournaldTailer)
@@ -651,7 +647,7 @@ def test_a_rewind_respawns_at_once_ends_the_old_follow_and_warns(
     tailer.read_new_lines(1, pending.receipts())
     old = tailer._proc
     assert old is not None
-    with caplog.at_level(logging.WARNING, logger="stormpulse.logging.tailer"):
+    with caplog.at_level(logging.WARNING, logger="stormpulse.logging.docker_tailer"):
         lines, _ = tailer.read_new_lines(1, pending.receipts())  # r1 never pending
     assert _said(lines) == ["l1"]
     assert old.poll() is not None
@@ -669,7 +665,7 @@ def test_a_rewind_warning_counts_the_confirmed_ranges_it_re_reads(
     _, r3 = tailer.read_new_lines(1, None)
     # Done, not popped: r1 is open. 2 of 3, so neither count is the complement.
     assert tailer.confirm_shipped(r2) and tailer.confirm_shipped(r3)
-    with caplog.at_level(logging.WARNING, logger="stormpulse.logging.tailer"):
+    with caplog.at_level(logging.WARNING, logger="stormpulse.logging.docker_tailer"):
         lines, _ = tailer.read_new_lines(1, PendingBatches().receipts())
     assert _said(lines) == ["l1"]
     warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]

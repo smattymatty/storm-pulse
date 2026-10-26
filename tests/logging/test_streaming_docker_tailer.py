@@ -13,8 +13,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from stormpulse.config import LogGroupConfig
+from stormpulse.logging.docker_tailer import StreamingDockerTailer
 from stormpulse.logging.positions import LogPositionStore
-from stormpulse.logging.tailer import StreamingDockerTailer
 
 
 def _make_docker_group(name: str = "web", container: str = "web") -> LogGroupConfig:
@@ -92,7 +92,7 @@ def test_spawns_with_correct_args(tmp_path: Path) -> None:
     fake = _FakeProc(read_fd=r)
     try:
         with patch(
-            "stormpulse.logging.tailer.subprocess.Popen",
+            "stormpulse.logging.docker_tailer.subprocess.Popen",
             return_value=fake,
         ) as mock_popen:
             tailer._ensure_running()
@@ -128,7 +128,7 @@ def test_first_run_seeds_from_now(tmp_path: Path) -> None:
     try:
         with (
             patch(
-                "stormpulse.logging.tailer.subprocess.Popen",
+                "stormpulse.logging.docker_tailer.subprocess.Popen",
                 return_value=fake,
             ),
             patch.object(tailer, "_read_timeout", 0.05),
@@ -291,7 +291,7 @@ def test_respawn_backoff(tmp_path: Path) -> None:
     try:
         # First spawn fails → sets _last_respawn_attempt.
         with patch(
-            "stormpulse.logging.tailer.subprocess.Popen",
+            "stormpulse.logging.docker_tailer.subprocess.Popen",
             side_effect=FileNotFoundError,
         ) as mock_popen:
             assert tailer._ensure_running() is False
@@ -317,7 +317,7 @@ def test_respawn_after_backoff(tmp_path: Path) -> None:
         with (
             patch.object(tailer, "_RESPAWN_DELAY_SECONDS", 0.05),
             patch(
-                "stormpulse.logging.tailer.subprocess.Popen",
+                "stormpulse.logging.docker_tailer.subprocess.Popen",
                 side_effect=[FileNotFoundError, fake],
             ) as mock_popen,
         ):
@@ -521,7 +521,7 @@ def test_merges_stderr_into_stdout(tmp_path: Path) -> None:
     fake = _FakeProc(read_fd=r)
     try:
         with patch(
-            "stormpulse.logging.tailer.subprocess.Popen",
+            "stormpulse.logging.docker_tailer.subprocess.Popen",
             return_value=fake,
         ) as mock_popen:
             tailer._ensure_running()
@@ -539,7 +539,7 @@ def test_docker_binary_missing(tmp_path: Path) -> None:
     tailer = StreamingDockerTailer(group, store)
 
     with patch(
-        "stormpulse.logging.tailer.subprocess.Popen",
+        "stormpulse.logging.docker_tailer.subprocess.Popen",
         side_effect=FileNotFoundError,
     ):
         lines, receipt = tailer.read_new_lines(max_lines=10)
@@ -566,7 +566,7 @@ def test_read_new_lines_never_raises(tmp_path: Path) -> None:
         _inject_fake_proc(tailer, fake)
         with (
             patch(
-                "stormpulse.logging.tailer.os.read",
+                "stormpulse.logging.docker_tailer.os.read",
                 side_effect=OSError(errno.EIO, "pipe error"),
             ),
             patch.object(tailer, "_read_timeout", 0.2),

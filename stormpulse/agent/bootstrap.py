@@ -37,7 +37,7 @@ from stormpulse.logging import (
     LogTailer,
     StreamingDockerTailer,
 )
-from stormpulse.logging.tailer import AnyTailer
+from stormpulse.logging.shipper import AnyTailer
 from stormpulse.sdk import command_specs_digest
 
 logger = logging.getLogger(__name__)

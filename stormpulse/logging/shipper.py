@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from stormpulse.config import LogGroupConfig
+from stormpulse.logging.docker_tailer import DockerTailer, StreamingDockerTailer
 from stormpulse.logging.parsers import PARSERS
 from stormpulse.logging.receipt import Receipt
-from stormpulse.logging.tailer import AnyTailer
+from stormpulse.logging.tailer import JournaldTailer, LogTailer
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,8 @@ BucketIdResolver = Callable[[str, str], str]
 # Only this parser's lines carry the key_id the resolver needs beside the
 # bucket name; other parsers leave bucket_id off the wire entirely.
 _BUCKET_ID_PARSER = "garage_s3"
+
+AnyTailer = LogTailer | DockerTailer | StreamingDockerTailer | JournaldTailer
 
 
 @dataclass(frozen=True, slots=True)

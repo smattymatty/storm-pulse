@@ -41,7 +41,7 @@ def holds_back(pending: Receipt, read: Receipt) -> bool:
 
     Same group, source and inode only (copytruncate keeps the inode). Offsets
     compare; journald cursors are opaque and Docker ts order only once parsed
-    (tailer ``_covers``), so either pending holds: a later checkpoint, never a skip.
+    (docker_tailer ``_covers``), so either pending holds: a later checkpoint, never a skip.
     """
     if (pending.group, pending.source) != (read.group, read.source):
         return False

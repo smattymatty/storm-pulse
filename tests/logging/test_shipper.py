@@ -10,10 +10,11 @@ from unittest.mock import patch
 import pytest
 
 from stormpulse.config import LogGroupConfig
+from stormpulse.logging.docker_tailer import DockerTailer
 from stormpulse.logging.positions import LogPositionStore
 from stormpulse.logging.receipt import FileGeneration, Receipt
 from stormpulse.logging.shipper import LogShipper
-from stormpulse.logging.tailer import DockerTailer, LogTailer
+from stormpulse.logging.tailer import LogTailer
 
 
 def _make_group(
@@ -201,7 +202,7 @@ def test_shipper_with_docker_tailer(tmp_path: Path) -> None:
     shipper = LogShipper(group, tailer)
 
     stdout = "2026-04-16T13:00:01.000000Z some log line\n"
-    with patch("stormpulse.logging.tailer.subprocess.run") as mock_run:
+    with patch("stormpulse.logging.docker_tailer.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
             args=[],
             returncode=0,
