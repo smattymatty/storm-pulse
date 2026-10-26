@@ -6,6 +6,7 @@ import errno
 import fcntl
 import os
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
-from stormpulse.logging.receipt import Receipt
 from stormpulse.logging.tailer import StreamingDockerTailer
 
 
@@ -363,12 +363,61 @@ def test_to_ts_advanced_past_last_line(tmp_path: Path) -> None:
 
 
 def test_confirm_shipped_persists(tmp_path: Path) -> None:
+    """An issued receipt persists its end; an equal-valued one never issued again is refused."""
     store = LogPositionStore(tmp_path / "pos.db")
-    group = _make_docker_group()
-    tailer = StreamingDockerTailer(group, store)
-    assert tailer.confirm_shipped(
-        Receipt("web", "web", None, "", "2026-04-15T14:00:00.000000Z")
-    )
+    store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
+    tailer = StreamingDockerTailer(_make_docker_group(), store)
+
+    r, w = _make_pipe_nonblocking()
+    try:
+        os.write(w, b"2026-04-15T13:59:59.999999Z line\n")
+        _inject_fake_proc(tailer, _FakeProc(read_fd=r))
+        with patch.object(tailer, "_read_timeout", 0.2):
+            _, receipt = tailer.read_new_lines(max_lines=10)
+    finally:
+        os.close(w)
+        os.close(r)
+
+    assert tailer.confirm_shipped(receipt)
+    assert store.get_docker_ts("web") == "2026-04-15T14:00:00.000000Z"
+    assert not tailer.confirm_shipped(receipt)
+    store.close()
+
+
+def test_confirm_does_not_wait_out_a_drain(tmp_path: Path) -> None:
+    """An ACK landing while a read waits on a silent pipe returns at once."""
+    store = LogPositionStore(tmp_path / "pos.db")
+    store.set_docker_ts("web", "web", "2026-04-15T13:00:00.000000Z")
+    tailer = StreamingDockerTailer(_make_docker_group(), store)
+    draining = threading.Event()
+    drain = tailer._drain_lines
+
+    def _signalled_drain(max_lines: int) -> list[str]:
+        draining.set()
+        return drain(max_lines)
+
+    r, w = _make_pipe_nonblocking()
+    try:
+        os.write(w, b"2026-04-15T13:59:59.999999Z line\n")
+        _inject_fake_proc(tailer, _FakeProc(read_fd=r))
+        with patch.object(tailer, "_read_timeout", 0.2):
+            _, receipt = tailer.read_new_lines(max_lines=10)
+        with (
+            patch.object(tailer, "_read_timeout", 2.0),
+            patch.object(tailer, "_drain_lines", _signalled_drain),
+        ):
+            reader = threading.Thread(target=tailer.read_new_lines, args=(10,))
+            reader.start()
+            assert draining.wait(1.0)
+            started = time.monotonic()
+            assert tailer.confirm_shipped(receipt)
+            elapsed = time.monotonic() - started
+            reader.join()
+    finally:
+        os.close(w)
+        os.close(r)
+
+    assert elapsed < 0.5
     assert store.get_docker_ts("web") == "2026-04-15T14:00:00.000000Z"
     store.close()
 

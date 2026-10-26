@@ -30,6 +30,11 @@ class PendingBatches:
         entry = self._entries.pop(batch_id, None)
         return None if entry is None else entry.receipt
 
+    def peek(self, batch_id: str) -> Receipt | None:
+        """The batch's receipt, still pending: confirm it, then ``pop``, so no read sees it lost."""
+        entry = self._entries.get(batch_id)
+        return None if entry is None else entry.receipt
+
     def receipts(self) -> tuple[Receipt, ...]:
         """Every receipt still awaiting its ACK, as a snapshot a worker thread may hold."""
         return tuple(e.receipt for e in self._entries.values())

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import logging
 import os
 import stat
 import sys
@@ -108,6 +109,12 @@ class Loop:
             if issued is batch:
                 self.pending.pop(batch_id)
         self.shipper.confirm(batch.receipt)
+
+    def lose(self, batch: Batch) -> None:
+        """Drop the batch from pending unconfirmed, as an ACK timeout prunes it."""
+        for issued, batch_id in self.issued:
+            if issued is batch:
+                self.pending.pop(batch_id)
 
 
 @dataclass
@@ -381,13 +388,6 @@ def test_a_late_ack_from_an_earlier_generation_moves_nothing(
     assert _messages(src.restart().collect_batch())[:1] == ["b1"]
 
 
-_COPYTRUNCATE_GAP = (
-    "the store keeps (offset, inode) only, so a copytruncate that regrows past the "
-    "ACKed offset is invisible on read; open STAB-02 gap, 0.8.2"
-)
-
-
-@pytest.mark.xfail(strict=True, reason=_COPYTRUNCATE_GAP)
 def test_a_truncation_regrown_past_the_checkpoint_restarts_from_its_head(
     world: World,
 ) -> None:
@@ -400,6 +400,36 @@ def test_a_truncation_regrown_past_the_checkpoint_restarts_from_its_head(
     src.rotate("truncate")
     src.write(["b1", "b2", "b3"])
     assert _messages(src.restart().collect_batch())[:1] == ["b1"]
+
+
+def test_each_ack_of_a_regrown_truncation_advances_its_checkpoint(
+    world: World,
+) -> None:
+    src = make_source(world, LogTailer, limit=2)
+    src.write(["a1", "a2"])
+    shipper = src.shipper()
+    old = shipper.collect_batch()
+    assert old is not None
+    _ack(shipper, old)
+    old_end = world.store.get(src.group.name)[0]
+    src.rotate("truncate")
+    src.write(["b1", "b2", "b3"])
+    shipper = src.restart()
+    first = shipper.collect_batch()
+    assert first is not None and _messages(first) == ["b1", "b2"]
+    # Ending at or before the old offset is what a stale base would refuse.
+    end = first.receipt.to_position
+    assert isinstance(end, int) and 0 < end <= old_end
+    _ack(shipper, first)
+    # The offset alone cannot tell: a refused ACK leaves the old one, equal here.
+    gen = first.receipt.generation
+    assert gen is not None
+    assert world.store.checkpoint(src.group.name).generation == gen
+    second = shipper.collect_batch()
+    assert second is not None and _messages(second) == ["b3"]
+    _ack(shipper, second)
+    assert world.store.get(src.group.name)[0] == second.receipt.to_position
+    assert src.restart().collect_batch() is None
 
 
 _OPAQUE = "journald cursors are opaque: the spec forbids ordering them, so a stale one rewinds"
@@ -427,13 +457,7 @@ def test_late_and_duplicate_acks_cannot_rewind(
     assert _messages(src.restart().collect_batch())[:1] == [expected]
 
 
-_READS_AHEAD = (
-    "StreamingDockerTailer reads ahead from its stored ts (_spawn --since, _drain_lines); "
-    "refusing an out-of-order ACK needs a read-side redesign, 0.8.2"
-)
-
-
-@pytest.mark.parametrize("tailer_cls", _cases(StreamingDockerTailer=_READS_AHEAD))
+@pytest.mark.parametrize("tailer_cls", _cases())
 def test_an_out_of_order_ack_cannot_skip_an_unconfirmed_gap(
     world: World, tailer_cls: type[Any]
 ) -> None:
@@ -450,6 +474,23 @@ def test_an_out_of_order_ack_cannot_skip_an_unconfirmed_gap(
 
 
 @pytest.mark.parametrize("tailer_cls", _cases())
+def test_a_lost_batch_is_read_again_before_a_later_ack_moves_past_it(
+    world: World, tailer_cls: type[Any]
+) -> None:
+    written = ["l1", "l2", "l3"]
+    src = make_source(world, tailer_cls, limit=1)
+    src.write(written)
+    shipper = src.shipper()
+    r1 = shipper.collect_batch()
+    r2 = shipper.collect_batch()
+    assert r1 is not None and r2 is not None
+    shipper.lose(r1)
+    _ack(shipper, r2)
+    expected = _first_unacked(written, set(_messages(r2)))
+    assert _messages(shipper.collect_batch())[:1] == [expected]
+
+
+@pytest.mark.parametrize("tailer_cls", _cases())
 def test_a_receipt_this_tailer_never_issued_changes_nothing(
     world: World, tailer_cls: type[Any]
 ) -> None:
@@ -463,3 +504,156 @@ def test_a_receipt_this_tailer_never_issued_changes_nothing(
     assert foreign is not None
     _ack(shipper, foreign)
     assert _messages(mine.restart().collect_batch())[:1] == ["a1"]
+
+
+# The streaming tailer's prefix commit: ranges it issued, confirmed in order.
+
+
+@pytest.mark.parametrize("tailer_cls", _cases())
+def test_out_of_order_acks_land_in_order_without_a_rewind(
+    world: World, tailer_cls: type[Any]
+) -> None:
+    written = ["l1", "l2", "l3", "l4"]
+    src = make_source(world, tailer_cls, limit=1)
+    src.write(written)
+    shipper = src.shipper()
+    r1 = shipper.collect_batch()
+    r2 = shipper.collect_batch()
+    assert r1 is not None and r2 is not None
+    _ack(shipper, r2)
+    shipper.collect_batch()  # r3, never acknowledged: reads on past the gap
+    _ack(shipper, r1)
+    expected = _first_unacked(written, set(_messages(r1) + _messages(r2)))
+    assert _messages(src.restart().collect_batch())[:1] == [expected]
+
+
+@pytest.mark.parametrize("tailer_cls", _cases())
+def test_a_filtered_range_behind_a_pending_one_does_not_stall(
+    world: World, tailer_cls: type[Any]
+) -> None:
+    src = make_source(world, tailer_cls, filt="needle", limit=1)
+    src.write(["needle1", "skip1", "needle2"])
+    shipper = src.shipper()
+    first = shipper.collect_batch()
+    assert _messages(first) == ["needle1"]
+    shipped: list[str] = []
+    for tick in range(8):
+        if tick == 4:  # a pull tailer holds the filtered range until this ACK
+            assert first is not None
+            _ack(shipper, first)
+        batch = shipper.collect_batch()
+        if batch is not None:
+            shipped += _messages(batch)
+            _ack(shipper, batch)
+    assert "needle2" in shipped
+    assert src.restart().collect_batch() is None
+
+
+def _stream(world: World, limit: int = 1) -> tuple[Source, StreamingDockerTailer]:
+    src = make_source(world, StreamingDockerTailer, limit=limit)
+    tailer = src.shipper().shipper.tailer
+    assert isinstance(tailer, StreamingDockerTailer)
+    return src, tailer
+
+
+def _said(lines: list[str]) -> list[str]:
+    return [line.split(" ", 1)[1] for line in lines]
+
+
+def test_a_late_ack_from_before_a_rewind_is_refused(world: World) -> None:
+    src = make_source(world, StreamingDockerTailer, limit=1)
+    src.write(["l1", "l2", "l3"])
+    shipper = src.shipper()
+    r1 = shipper.collect_batch()
+    r2 = shipper.collect_batch()
+    assert r1 is not None and r2 is not None
+    shipper.lose(r1)
+    assert _messages(shipper.collect_batch()) == ["l1"]  # rewound
+    assert shipper.shipper.confirm(r2.receipt) is False
+    assert world.store.get_docker_ts(src.group.name) == _DOCKER_SEED
+
+
+def test_unknown_pending_never_rewinds(world: World) -> None:
+    src, tailer = _stream(world)
+    src.write(["l1", "l2"])
+    first, _ = tailer.read_new_lines(1, None)
+    second, _ = tailer.read_new_lines(1, None)
+    assert _said(first + second) == ["l1", "l2"]
+
+
+def test_a_respawn_after_a_death_starts_its_ranges_at_the_checkpoint(
+    world: World,
+) -> None:
+    src, tailer = _stream(world)
+    src.write(["l1", "l2"])
+    _, r1 = tailer.read_new_lines(1, None)
+    assert tailer.confirm_shipped(r1)
+    lines, r2 = tailer.read_new_lines(1, None)
+    assert _said(lines) == ["l2"]
+    assert tailer._proc is not None
+    tailer._proc.kill()
+    tailer._proc.wait()
+    lines, replayed = tailer.read_new_lines(1, None)
+    assert _said(lines) == ["l2"]
+    assert replayed.from_position == r1.to_position
+    assert tailer.confirm_shipped(replayed)
+    assert world.store.get_docker_ts(src.group.name) == r2.to_position
+
+
+def test_each_receipt_starts_where_the_last_one_ended(world: World) -> None:
+    src, tailer = _stream(world)
+    src.write(["l1", "l2"])
+    first, r1 = tailer.read_new_lines(1, None)
+    second, r2 = tailer.read_new_lines(1, None)
+    assert _said(first + second) == ["l1", "l2"]
+    assert r1.from_position == _DOCKER_SEED
+    assert r2.from_position == r1.to_position
+
+
+def test_a_duplicate_ack_behind_an_open_range_is_refused(world: World) -> None:
+    src, tailer = _stream(world)
+    src.write(["l1", "l2"])
+    _, _r1 = tailer.read_new_lines(1, None)
+    _, r2 = tailer.read_new_lines(1, None)
+    assert tailer.confirm_shipped(r2)
+    assert not tailer.confirm_shipped(r2)
+    assert world.store.get_docker_ts(src.group.name) == _DOCKER_SEED
+
+
+def test_an_empty_read_behind_a_pending_batch_does_not_rewind(world: World) -> None:
+    src = make_source(world, StreamingDockerTailer, limit=1)
+    src.write(["l1"])
+    shipper = src.shipper()
+    assert _messages(shipper.collect_batch()) == ["l1"]
+    assert shipper.collect_batch() is None  # nothing new: no range to lose
+    src.write(["l2"])
+    assert _messages(shipper.collect_batch()) == ["l2"]
+
+
+def test_a_filtered_range_behind_a_pending_one_is_done_without_a_rewind(
+    world: World,
+) -> None:
+    src = make_source(world, StreamingDockerTailer, filt="needle", limit=1)
+    src.write(["needle1", "skip1", "needle2"])
+    shipper = src.shipper()
+    assert _messages(shipper.collect_batch()) == ["needle1"]
+    shipped = [m for _ in range(4) for m in _messages(shipper.collect_batch())]
+    assert shipped == ["needle2"]  # a held skip1 reads as lost: needle1 again
+
+
+def test_a_rewind_respawns_at_once_ends_the_old_follow_and_warns(
+    world: World, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(StreamingDockerTailer, "_RESPAWN_DELAY_SECONDS", 60.0)
+    src, tailer = _stream(world)
+    src.write(["l1", "l2"])
+    pending = PendingBatches()
+    tailer.read_new_lines(1, pending.receipts())
+    old = tailer._proc
+    assert old is not None
+    with caplog.at_level(logging.WARNING, logger="stormpulse.logging.tailer"):
+        lines, _ = tailer.read_new_lines(1, pending.receipts())  # r1 never pending
+    assert _said(lines) == ["l1"]
+    assert old.poll() is not None
+    warned = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warned) == 1 and _DOCKER_SEED in warned[0].getMessage()

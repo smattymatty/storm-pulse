@@ -63,14 +63,19 @@ async def handle_log_batch_ack(
     if not isinstance(batch_id, str):
         logger.warning("log.batch.ack missing batch_id")
         return
-    receipt = agent.pending_batches.pop(batch_id)
+    receipt = agent.pending_batches.peek(batch_id)
     if receipt is None:
         logger.debug("log.batch.ack for unknown batch_id %s", batch_id)
         return
+    # Confirm, then pop: a read between the two would see the range lost and rewind.
     shipper = agent.shippers.get(receipt.group)
-    if shipper is None:
-        return
-    if await asyncio.to_thread(shipper.confirm, receipt):
+    try:
+        confirmed = shipper is not None and await asyncio.to_thread(
+            shipper.confirm, receipt
+        )
+    finally:
+        agent.pending_batches.pop(batch_id)
+    if confirmed:
         logger.debug(
             "Advanced position for group %s to %s (batch %s)",
             receipt.group,

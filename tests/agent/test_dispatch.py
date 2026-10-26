@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import Callable
@@ -560,6 +561,51 @@ async def test_log_batch_ack_advances_position(agent: Agent) -> None:
     await acks.handle_log_batch_ack(agent, AsyncMock(), env)
 
     fake_shipper.confirm.assert_called_once_with(receipt)
+    assert "bid-1" not in agent.pending_batches
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_confirms_while_the_batch_is_still_pending(
+    agent: Agent,
+) -> None:
+    """A read landing mid-confirm must still see the batch pending, or it reads as lost."""
+    receipt = Receipt("grp", "c", None, "t0", "t1")
+    seen: list[tuple[Receipt, ...]] = []
+    fake_shipper = MagicMock()
+    fake_shipper.confirm.side_effect = lambda _r: seen.append(
+        agent.pending_batches.receipts()
+    )
+    agent.shippers["grp"] = fake_shipper
+    agent.pending_batches.add("bid-1", receipt)
+
+    env = envelope(MessageType.LOG_BATCH_ACK, {"batch_id": "bid-1"}, id="x")
+    await acks.handle_log_batch_ack(agent, AsyncMock(), env)
+
+    assert seen == [(receipt,)]
+    assert "bid-1" not in agent.pending_batches
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_for_a_group_with_no_shipper_resolves_the_batch(
+    agent: Agent,
+) -> None:
+    agent.pending_batches.add("bid-1", Receipt("gone", "c", None, "t0", "t1"))
+    env = envelope(MessageType.LOG_BATCH_ACK, {"batch_id": "bid-1"}, id="x")
+    await acks.handle_log_batch_ack(agent, AsyncMock(), env)
+    assert "bid-1" not in agent.pending_batches
+
+
+@pytest.mark.asyncio
+async def test_log_batch_ack_resolves_the_batch_even_when_confirm_raises(
+    agent: Agent,
+) -> None:
+    fake_shipper = MagicMock()
+    fake_shipper.confirm.side_effect = OSError("disk full")
+    agent.shippers["grp"] = fake_shipper
+    agent.pending_batches.add("bid-1", Receipt("grp", "c", None, "t0", "t1"))
+    env = envelope(MessageType.LOG_BATCH_ACK, {"batch_id": "bid-1"}, id="x")
+    with contextlib.suppress(OSError):
+        await acks.handle_log_batch_ack(agent, AsyncMock(), env)
     assert "bid-1" not in agent.pending_batches
 
 

@@ -17,12 +17,14 @@ import os
 import re
 import select
 import subprocess
+import threading
 import time
+from collections.abc import Callable, Collection
 from datetime import UTC, datetime, timedelta
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.positions import LogPositionStore
-from stormpulse.logging.receipt import FileGeneration, Receipt
+from stormpulse.logging.receipt import FileGeneration, Receipt, holds_back
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +43,31 @@ def _is_own(receipt: Receipt, group: LogGroupConfig, source: str) -> bool:
     return receipt.group == group.name and receipt.source == source
 
 
+def _consume_filtered(
+    confirm: Callable[[Receipt], bool],
+    receipt: Receipt,
+    pending: Collection[Receipt] | None,
+) -> bool:
+    """Pull tailers: checkpoint a wholly filtered read unless a pending one may hold matches below it.
+
+    Held while ``pending`` is unknown (None) or any receipt in it may carry
+    matches below this read's end: their ACK, not this, moves past them.
+    """
+    if pending is None or any(holds_back(p, receipt) for p in pending):
+        return False
+    return confirm(receipt)
+
+
 def _generation(fd: int, inode: int, upto: int) -> FileGeneration:
     """The generation of open file ``fd``: its inode and its first ``upto`` bytes (capped)."""
     head = os.pread(fd, min(_HEAD_BYTES, upto), 0)
     digest = hashlib.blake2b(head, digest_size=16).digest()
     return FileGeneration(inode, len(head), digest)
+
+
+def _holds(fd: int, st: os.stat_result, gen: FileGeneration) -> bool:
+    """True when open file ``fd`` (stat ``st``) is still generation ``gen``."""
+    return _generation(fd, st.st_ino, gen.head_len) == gen
 
 
 class LogTailer:
@@ -62,7 +84,9 @@ class LogTailer:
             self._group.name, str(self._group.source_path), generation, start, end
         )
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
+    def read_new_lines(
+        self, max_lines: int, pending: Collection[Receipt] | None = None
+    ) -> tuple[list[str], Receipt]:
         """Read up to ``max_lines`` new lines; return them and the read's receipt.
 
         The receipt's range runs from the start offset to just past the last
@@ -70,37 +94,45 @@ class LogTailer:
         ``confirm_shipped`` is handed that receipt after the batch is ACKed.
         """
         path = self._group.source_path
-        try:
-            stat = path.stat()
-        except OSError:  # missing, or unreadable
-            return ([], self._receipt(None, 0, 0))
-        start = self._start(stat)
         capped = min(max_lines, MAX_LINES_PER_INTERVAL)
         lines: list[str] = []
+        start = 0
         try:
+            # Start, read and generation all from one descriptor: a rename
+            # between two opens would pair one file's offset with another.
             with open(path, "rb") as f:
+                st = os.fstat(f.fileno())
+                start = self._resume_point(f.fileno(), st)
                 f.seek(start)
                 while len(lines) < capped and (raw := f.readline()):
                     lines.append(raw.decode("utf-8", errors="replace"))
                 end = f.tell()
-                generation = _generation(f.fileno(), stat.st_ino, end)
+                generation = _generation(f.fileno(), st.st_ino, end)
+        except FileNotFoundError:
+            return ([], self._receipt(None, 0, 0))
         except OSError as exc:
             logger.warning("Failed reading %s: %s", path, exc)
             return ([], self._receipt(None, start, start))
         return (lines, self._receipt(generation, start, end))
 
-    def _start(self, stat: os.stat_result) -> int:
-        """The stored offset, or 0 when the inode changed or the file shrank below it."""
-        stored_position, stored_inode = self._store.get(self._group.name)
-        if stored_inode is not None and stored_inode != stat.st_ino:
+    def _resume_point(self, fd: int, st: os.stat_result) -> int:
+        """The stored offset if it belongs to open file ``fd``'s generation, else 0.
+
+        Another inode, a file shorter than the offset, or a head that no longer
+        matches the stored one (copytruncate, regrown) is a new generation. A row
+        stored without a head trusts its offset.
+        """
+        cp = self._store.checkpoint(self._group.name)
+        if cp.inode is not None and cp.inode != st.st_ino:
             logger.info(
                 "Log rotation detected for group %s (inode %s -> %s)",
                 self._group.name,
-                stored_inode,
-                stat.st_ino,
+                cp.inode,
+                st.st_ino,
             )
             return 0
-        return 0 if stored_position > stat.st_size else stored_position
+        held = cp.generation is None or _holds(fd, st, cp.generation)
+        return cp.position if held and cp.position <= st.st_size else 0
 
     def confirm_shipped(self, receipt: Receipt) -> bool:
         """Store the receipt's end if the file still holds the generation it read.
@@ -114,16 +146,23 @@ class LogTailer:
         if owned is None:
             return False
         gen, start, end = owned
-        size = self._still_holds(gen, end)
-        if size is None:
+        base = self._still_holds(gen, end)
+        if base is None or not start <= base < end:
             return False
-        stored, stored_inode = self._store.get(self._group.name)
-        # A checkpoint from another inode or past the end is an earlier generation's.
-        base = stored if stored_inode == gen.inode and stored <= size else 0
-        if not start <= base < end:
-            return False
-        self._store.set(self._group.name, str(self._group.source_path), end, gen.inode)
+        self._store.set(
+            self._group.name,
+            str(self._group.source_path),
+            end,
+            gen.inode,
+            head=(gen.head_len, gen.head_digest),
+        )
         return True
+
+    def skip_filtered(
+        self, receipt: Receipt, pending: Collection[Receipt] | None
+    ) -> bool:
+        """Consume a wholly filtered read; see ``_consume_filtered``."""
+        return _consume_filtered(self.confirm_shipped, receipt, pending)
 
     def _own_range(self, receipt: Receipt) -> tuple[FileGeneration, int, int] | None:
         """The receipt's generation and byte range, or None if this tailer never issued it."""
@@ -135,14 +174,15 @@ class LogTailer:
         return gen, start, end
 
     def _still_holds(self, gen: FileGeneration, end: int) -> int | None:
-        """The file's size if the path still names ``gen`` and reaches ``end``, else None."""
+        """The resume point if the path still names ``gen`` and reaches ``end``, else None."""
         try:
             with open(self._group.source_path, "rb") as f:
                 st = os.fstat(f.fileno())
-                same = _generation(f.fileno(), st.st_ino, gen.head_len) == gen
+                if not _holds(f.fileno(), st, gen) or st.st_size < end:
+                    return None
+                return self._resume_point(f.fileno(), st)
         except OSError:
             return None
-        return st.st_size if same and st.st_size >= end else None
 
 
 _DOCKER_TS_PREFIX_RE = re.compile(
@@ -257,7 +297,9 @@ class DockerTailer:
         self._group = group
         self._store = position_store
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
+    def read_new_lines(
+        self, max_lines: int, pending: Collection[Receipt] | None = None
+    ) -> tuple[list[str], Receipt]:
         """Run ``docker logs --since <last_ts> --timestamps``; return lines and receipt.
 
         The receipt runs from the stored ts (seeded to "now" on first run, so no
@@ -311,6 +353,12 @@ class DockerTailer:
     def confirm_shipped(self, receipt: Receipt) -> bool:
         """Store the receipt's end ts; refuse one this group's container never issued."""
         return _confirm_docker_ts(self._group, self._store, receipt)
+
+    def skip_filtered(
+        self, receipt: Receipt, pending: Collection[Receipt] | None
+    ) -> bool:
+        """Consume a wholly filtered read; see ``_consume_filtered``."""
+        return _consume_filtered(self.confirm_shipped, receipt, pending)
 
 
 class JournaldTailer:
@@ -396,7 +444,9 @@ class JournaldTailer:
         if cursor:
             self._store.set_cursor(self._group.name, self._group.unit, cursor)
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
+    def read_new_lines(
+        self, max_lines: int, pending: Collection[Receipt] | None = None
+    ) -> tuple[list[str], Receipt]:
         """Return up to ``max_lines`` JSON records after the cursor, and their receipt.
 
         The receipt ends at the last record taken, so a backlog drains over
@@ -436,18 +486,21 @@ class JournaldTailer:
         self._store.set_cursor(self._group.name, self._group.unit, cursor)
         return True
 
+    def skip_filtered(
+        self, receipt: Receipt, pending: Collection[Receipt] | None
+    ) -> bool:
+        """Consume a wholly filtered read; see ``_consume_filtered``."""
+        return _consume_filtered(self.confirm_shipped, receipt, pending)
+
 
 class StreamingDockerTailer:
     """Tail a container via a long-lived ``docker logs --follow`` subprocess.
 
-    One process per container for its lifetime. Lines are drained from the
-    non-blocking stdout pipe on each ``read_new_lines`` call. When the
-    container stops, the subprocess exits; ``_ensure_running`` respawns
-    after ``_RESPAWN_DELAY_SECONDS``.
-
-    Position is persisted as an ISO timestamp (same contract as DockerTailer)
-    so a respawn uses ``--since <last_ts>`` and doesn't replay container
-    history.
+    One process per container, drained from its non-blocking stdout pipe on
+    each ``read_new_lines``; a dead one respawns ``--since`` the checkpoint (an
+    ISO ts, as DockerTailer). Receipts chain from the stream's last end; the
+    checkpoint moves only to the end of the confirmed prefix, and a range lost
+    from ``pending`` rewinds the follow.
     """
 
     _RESPAWN_DELAY_SECONDS = 5.0
@@ -462,6 +515,13 @@ class StreamingDockerTailer:
         self._store = position_store
         self._proc: subprocess.Popen[bytes] | None = None
         self._buffer: bytes = b""
+        # Where the stream is (None: at the checkpoint), and every range issued
+        # since, in order, with whether it is done (ACKed or wholly filtered).
+        self._stream_ts: str | None = None
+        self._issued: list[tuple[Receipt, bool]] = []
+        # Confirm (ACK worker) and read (log worker) run in different threads;
+        # held for bookkeeping only, never across the pipe wait.
+        self._lock = threading.Lock()
         # Seed so the first ever call attempts a spawn (won't be throttled).
         self._last_respawn_attempt: float = float("-inf")
         # The per-drain read window TRACKS ship_interval (slightly under it, so a
@@ -475,25 +535,81 @@ class StreamingDockerTailer:
             self._group.ship_interval_seconds * 0.9,
         )
 
-    def read_new_lines(self, max_lines: int) -> tuple[list[str], Receipt]:
+    def read_new_lines(
+        self, max_lines: int, pending: Collection[Receipt] | None = None
+    ) -> tuple[list[str], Receipt]:
         """Drain up to ``max_lines`` lines from the running subprocess stdout.
 
-        ``from_ts`` is the stored last_ts (seeded to "now" on first run, same
-        as ``DockerTailer``). ``to_ts`` is the timestamp of the last line
-        received advanced by 1µs; equals ``from_ts`` when no lines arrive.
-        Never raises.
+        ``from_ts``: the previous receipt's end, else the stored ts (seeded to
+        "now", as ``DockerTailer``). ``to_ts``: last line's ts plus 1µs, else
+        ``from_ts``. Lines issue a range; an open range absent from ``pending``
+        rewinds first (None never). Never raises.
         """
-        from_ts = _docker_from_ts(self._group, self._store)
-        raw_lines = self._drain_lines(max_lines) if self._ensure_running() else []
-        return _docker_batch(self._group, from_ts, raw_lines, max_lines)
+        with self._lock:
+            if pending is not None and self._lost(pending):
+                self._rewind()
+            running = self._ensure_running()  # a respawn resets _stream_ts first
+            from_ts = self._stream_ts or _docker_from_ts(self._group, self._store)
+        # Only this worker spawns or drains, so nothing respawns while unlocked.
+        raw_lines = self._drain_lines(max_lines) if running else []
+        with self._lock:
+            lines, receipt = _docker_batch(self._group, from_ts, raw_lines, max_lines)
+            if lines:
+                self._stream_ts = str(receipt.to_position)
+                self._issued.append((receipt, False))
+            return lines, receipt
 
     def confirm_shipped(self, receipt: Receipt) -> bool:
-        """Store the receipt's end ts; refuse one this group's container never issued."""
-        return _confirm_docker_ts(self._group, self._store, receipt)
+        """Mark an issued range done; store the end of the done prefix, never past it.
+
+        Refused (False): a receipt not among the open ranges issued (another
+        group, a duplicate, or one from before this tailer or its last spawn).
+        Matched by value; harmless collisions: a zero-width range never moves the
+        checkpoint, a late pre-rewind ACK equal to a new range confirms delivered lines.
+        """
+        with self._lock:
+            for i, (issued, done) in enumerate(self._issued):
+                if issued == receipt and not done:
+                    self._issued[i] = (issued, True)
+                    break
+            else:
+                return False
+            end: str | None = None
+            while self._issued and self._issued[0][1]:
+                end = str(self._issued.pop(0)[0].to_position)
+            if end is not None:
+                self._store.set_docker_ts(
+                    self._group.name, self._group.container_name, end
+                )
+            return True
+
+    def skip_filtered(
+        self, receipt: Receipt, pending: Collection[Receipt] | None
+    ) -> bool:
+        """A wholly filtered range never goes on the wire: done at read, even unknown ``pending``."""
+        return self.confirm_shipped(receipt)
 
     def close(self) -> None:
         """Terminate the subprocess if running. Called on agent shutdown."""
+        with self._lock:
+            self._terminate()
+
+    def _lost(self, pending: Collection[Receipt]) -> bool:
+        """True when a range issued, never confirmed, is no longer awaiting its ACK."""
+        live = set(pending)
+        return any(not done and r not in live for r, done in self._issued)
+
+    def _rewind(self) -> None:
+        """Respawn from the checkpoint at once, past the throttle: lost lines read again."""
+        logger.warning(
+            "Rewinding docker logs for group %s to %s: a batch was lost (%d ranges dropped)",
+            self._group.name,
+            self._store.get_docker_ts(self._group.name),
+            len(self._issued),
+        )
         self._terminate()
+        self._last_respawn_attempt = time.monotonic()
+        self._spawn()
 
     def _ensure_running(self) -> bool:
         """Start the subprocess if not running. Returns True if running."""
@@ -517,7 +633,13 @@ class StreamingDockerTailer:
         return self._spawn()
 
     def _spawn(self) -> bool:
-        """Spawn ``docker logs --follow --timestamps --since <last_ts>``."""
+        """Spawn ``docker logs --follow --timestamps --since <last_ts>``.
+
+        Every spawn is a rewind point: the stream restarts at the checkpoint, so
+        the ranges issued before it are dropped and their late ACKs refused.
+        """
+        self._stream_ts = None
+        self._issued = []
         from_ts = _docker_from_ts(self._group, self._store)
         cmd = [
             self._group.docker_binary,

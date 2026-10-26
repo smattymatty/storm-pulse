@@ -9,7 +9,7 @@ from typing import Any
 
 from stormpulse.config import LogGroupConfig
 from stormpulse.logging.parsers import PARSERS
-from stormpulse.logging.receipt import Receipt, holds_back
+from stormpulse.logging.receipt import Receipt
 from stormpulse.logging.tailer import AnyTailer
 
 logger = logging.getLogger(__name__)
@@ -84,10 +84,10 @@ class LogShipper:
         Return None when no lines match, or an empty batch with a drop count
         when every matching line fails parsing. The current-state resolver maps
         (key_id, bucket name) to bucket_id for garage_s3; unresolved IDs are empty.
-        ``pending`` is every receipt still awaiting its ACK; see ``_skip_filtered``.
+        ``pending``: receipts awaiting ACK; the tailer gates.
         """
         raw_lines, receipt = self._tailer.read_new_lines(
-            self._group.max_lines_per_batch
+            self._group.max_lines_per_batch, pending
         )
         if not raw_lines:
             return None
@@ -122,14 +122,8 @@ class LogShipper:
     def _skip_filtered(
         self, receipt: Receipt, pending: Collection[Receipt] | None
     ) -> None:
-        """STAB-01: checkpoint a wholly filtered read locally; no wire, no empty batch.
-
-        Held while ``pending`` is unknown (None) or any receipt in it may carry
-        matches below this read's end: their ACK, not this, moves past them.
-        """
-        if pending is None or any(holds_back(p, receipt) for p in pending):
-            return
-        if self._tailer.confirm_shipped(receipt):
+        """STAB-01: checkpoint a wholly filtered read locally; no wire, no empty batch."""
+        if self._tailer.skip_filtered(receipt, pending):
             logger.debug(
                 "Filtered range consumed for group %s to %s",
                 self._group.name,
