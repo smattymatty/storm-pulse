@@ -281,10 +281,12 @@ def test_sdk_param_def_mirrors_param_def_field_for_field() -> None:
 def test_sdk_command_spec_mirrors_command_spec_field_for_field() -> None:
     # Names, order and defaults; ``handler`` and ``params`` carry the SDK's own
     # types by design. A field added to one spec fails here until the other follows.
+    # ``authorize`` is host-only: the translator sets it, an adapter never declares it.
     def shape(cls: type) -> list[tuple[str, object]]:
-        return [(f.name, f.default) for f in fields(cls)]
+        return [(f.name, f.default) for f in fields(cls) if f.name != "authorize"]
 
     assert shape(SdkCommandSpec) == shape(CommandSpec)
+    assert "authorize" not in {f.name for f in fields(SdkCommandSpec)}
 
 
 # ---------------------------------------------------------------------------

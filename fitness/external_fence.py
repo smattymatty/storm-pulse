@@ -15,7 +15,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from stormpulse.agent.external_adapters import _translate
+from stormpulse.agent.external_adapters import AdapterFenced, _translate
+from stormpulse.config import CommandSpec
+from stormpulse.integrations import Integration
 from stormpulse.integrations.external import grants, layout
 from stormpulse.integrations.external.model import CapabilityRequest, SealedGrantV1
 from stormpulse.sdk import (
@@ -26,21 +28,58 @@ from stormpulse.sdk import (
 )
 
 _ID = "fencefitness"
+_LOAD = CapabilityRequest.INTEGRATION_LOAD
+_CONTRIBUTOR = CapabilityRequest.COMMAND_CONTRIBUTOR
 
 
-def check_external_fence() -> list[str]:
-    """Return violation strings; empty list means clean."""
-    reached: list[str] = []
+class _Tripwires:
+    """Records every adapter callable that runs; any record is a breach."""
 
-    def tripwire(name: str, result: Any) -> Any:
+    def __init__(self) -> None:
+        self.reached: list[str] = []
+
+    def wire(self, name: str, result: Any = None) -> Any:
         def call(*_args: Any, **_kwargs: Any) -> Any:
-            reached.append(name)
+            self.reached.append(name)
             return result
 
         return call
 
+    def drain(self, when: str) -> list[str]:
+        breaches = [f"adapter {n} ran after {when}" for n in self.reached]
+        self.reached.clear()
+        return breaches
+
+
+def check_external_fence() -> list[str]:
+    """Return violation strings; empty list means clean."""
+    trips = _Tripwires()
+    sdk, grant = _probe(trips)
+    with tempfile.TemporaryDirectory(prefix="fitness-fence-") as tmp:
+        state = Path(tmp)
+        _persist(state, grant)
+        integ = _translate(sdk, grant, state)
+        assert integ.specs is not None
+        specs = integ.specs({})
+        trips.reached.clear()
+
+        _persist(
+            state, dataclasses.replace(grant, revoked_capabilities=(_CONTRIBUTOR,))
+        )
+        violations = _commands_still_run(specs, trips)
+        violations += trips.drain("command_contributor revoked")
+
+        _persist(state, dataclasses.replace(grant, revoked_capabilities=(_LOAD,)))
+        violations += _callbacks_not_refused(integ)
+        violations += trips.drain("integration_load revoked")
+    return violations
+
+
+def _probe(trips: _Tripwires) -> tuple[SdkIntegration, SealedGrantV1]:
+    """An adapter with one command per executing mode and every hook a tripwire."""
+
     async def job(_progress: Any) -> SdkJobOutcome:
-        reached.append("job body")
+        trips.reached.append("job body")
         return SdkJobOutcome(success=True)
 
     commands = {
@@ -54,67 +93,56 @@ def check_external_fence() -> list[str]:
         ),
     }
     hooks = {
-        f.name: tripwire(f.name, None)
+        f.name: trips.wire(f.name)
         for f in dataclasses.fields(SdkIntegration)
         if "Callable" in str(f.type)
     }
-    hooks["specs"] = tripwire("specs", commands)
-    sdk = SdkIntegration(id=_ID, **hooks)
-    full = (CapabilityRequest.INTEGRATION_LOAD, CapabilityRequest.COMMAND_CONTRIBUTOR)
+    hooks["specs"] = trips.wire("specs", commands)
     grant = SealedGrantV1(
         agent_id="fitness",
         integration_id=_ID,
-        publisher_fingerprint="sha256:" + "ab" * 32,
-        package_digest="sha256:" + "cd" * 32,
-        manifest_digest="sha256:" + "ef" * 32,
-        granted_capabilities=full,
+        publisher_fingerprint=_digest("ab"),
+        package_digest=_digest("cd"),
+        manifest_digest=_digest("ef"),
+        granted_capabilities=(_LOAD, _CONTRIBUTOR),
         sealed_at="2026-10-26T00:00:00Z",
         command_specs_digest=command_specs_digest(commands),
     )
+    return SdkIntegration(id=_ID, **hooks), grant
 
-    with tempfile.TemporaryDirectory(prefix="fitness-fence-") as tmp:
-        state = Path(tmp)
-        _persist(state, grant)
-        integ = _translate(sdk, grant, state)
-        assert integ.specs is not None
-        specs = integ.specs({})
-        violations = [
-            f"command {n!r} carries no authorize"
-            for n, s in specs.items()
-            if s.authorize is None
-        ]
 
-        _persist(state, dataclasses.replace(grant, revoked_capabilities=(full[1],)))
-        reached.clear()
-        for name, spec in specs.items():
-            if spec.authorize is not None and spec.authorize() is None:
-                violations.append(
-                    f"command {name!r} authorized after command_contributor revoked"
-                )
-            if spec.handler is not None:
-                asyncio.run(spec.handler({})(_no_progress))  # the queued attempt
-        violations += [f"{n} ran after command_contributor revoked" for n in reached]
-
-        _persist(state, dataclasses.replace(grant, revoked_capabilities=(full[0],)))
-        reached.clear()
-        for field in dataclasses.fields(integ):
-            hook = getattr(integ, field.name)
-            if callable(hook) and not isinstance(hook, type):
-                try:
-                    hook(*[{}] * len(inspect.signature(hook).parameters))
-                except Exception:  # noqa: BLE001, S110 - a refusal is the pass; reaching adapter code is the fail
-                    pass
-        violations += [
-            f"adapter {n} ran after integration_load revoked" for n in reached
-        ]
+def _commands_still_run(specs: dict[str, CommandSpec], trips: _Tripwires) -> list[str]:
+    violations: list[str] = []
+    for name, spec in specs.items():
+        if spec.authorize is None or spec.authorize() is None:
+            violations.append(
+                f"command {name!r} authorized after command_contributor revoked"
+            )
+        if spec.handler is not None:
+            asyncio.run(spec.handler({})(trips.wire("progress")))  # the queued attempt
     return violations
+
+
+def _callbacks_not_refused(integ: Integration) -> list[str]:
+    """Calls every callable on the Integration; each must refuse with AdapterFenced."""
+    violations: list[str] = []
+    for field in dataclasses.fields(integ):
+        hook = getattr(integ, field.name)
+        if not callable(hook) or isinstance(hook, type):
+            continue
+        try:
+            hook(*({} for _ in inspect.signature(hook).parameters))
+        except AdapterFenced:
+            continue
+        violations.append(f"{field.name} did not refuse after integration_load revoked")
+    return violations
+
+
+def _digest(pair: str) -> str:
+    return "sha256:" + pair * 32
 
 
 def _persist(state: Path, grant: SealedGrantV1) -> None:
     path = grants.grant_path(state, grant.integration_id, grant.package_digest)
     path.parent.mkdir(parents=True, exist_ok=True)
     layout.atomic_write(path, layout.canonical_json(grants.to_dict(grant)))
-
-
-async def _no_progress(*_args: Any, **_kwargs: Any) -> None:
-    return None

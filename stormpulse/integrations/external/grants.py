@@ -308,14 +308,12 @@ def _list_grants_unlocked(state_dir: Path) -> list[SealedGrantV1]:
     if not root.exists():
         return []
     grants: list[SealedGrantV1] = []
-    for integration_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-        for path in sorted(
-            integration_dir.glob("*.json")
-        ):  # skips the extensionless `active` pointer
-            try:
-                grants.append(read_grant(path))
-            except PackageError:
-                continue
+    # One level down only; the extensionless `active` pointer never matches.
+    for path in sorted(root.glob("*/*.json")):
+        try:
+            grants.append(read_grant(path))
+        except PackageError:
+            continue
     return grants
 
 

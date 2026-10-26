@@ -84,8 +84,6 @@ def _fence(
 
 def _fenced(fence: Callable[[], str | None], callback: Any) -> Any:
     """``callback`` that runs only while ``fence`` passes; None stays None."""
-    if callback is None:
-        return None
 
     def call(*args: Any, **kwargs: Any) -> Any:
         refused = fence()
@@ -93,7 +91,7 @@ def _fenced(fence: Callable[[], str | None], callback: Any) -> Any:
             raise AdapterFenced(f"external integration is fenced: {refused}")
         return callback(*args, **kwargs)
 
-    return call
+    return call if callback is not None else None
 
 
 def _wrap_parse_config(sdk_parse: Any) -> Any:

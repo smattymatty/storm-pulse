@@ -275,19 +275,24 @@ async def _refuse_if_fenced(
         return False
     message = f"Command {payload.command!r} is fenced: {refused}"
     logger.warning("Refused %s (request %s): %s", payload.command, envelope.id, refused)
-    events.emit(
-        "whitelist_rejection",
-        source="commands",
-        status="refused",
-        command=str(payload.command)[:100],
-        command_ref=str(envelope.id)[:100],
-        error=message,
-    )
+    _emit_whitelist_rejection(payload.command, envelope.id, message)
     failure = CommandResultPayload.failed(
         envelope.id, payload.command, cmd_def.group, FailureReason.FORBIDDEN, message
     )
     await ws.send(make(agent.config.agent.id, failure).to_json())
     return True
+
+
+def _emit_whitelist_rejection(command: str, ref: str, error: str) -> None:
+    """The alarm for a command the whitelist refused: unknown, or fenced (D3)."""
+    events.emit(
+        "whitelist_rejection",
+        source="commands",
+        status="refused",
+        command=str(command)[:100],
+        command_ref=str(ref)[:100],
+        error=error,
+    )
 
 
 async def _deflect_if_restart_pending(
@@ -347,14 +352,7 @@ async def _run_subprocess_command(
         # signal and it alarms. A ParamValidationError is an ordinary bad
         # request against a command that does exist, so it stays quiet.
         if isinstance(exc, CommandError):
-            events.emit(
-                "whitelist_rejection",
-                source="commands",
-                status="refused",
-                command=str(payload.command)[:100],
-                command_ref=str(request_id)[:100],
-                error=str(exc),
-            )
+            _emit_whitelist_rejection(payload.command, request_id, str(exc))
         cmd_def = agent.registry.get(payload.command)
         return CommandResultPayload.failed(
             request_id,
