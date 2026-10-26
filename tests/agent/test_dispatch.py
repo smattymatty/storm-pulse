@@ -288,6 +288,50 @@ async def test_dispatch_refuses_run_apply_block_when_sealed(
     assert sent_data["payload"]["exit_code"] == -1
 
 
+def _sealed_records() -> list[dict[str, Any]]:
+    return [e for e in events.buffer().drain("b") if e["kind"] == "sealed_refusal"]
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_refusal_is_one_record_not_an_alarm(agent: Agent) -> None:
+    """A sealed single command leaves one ``signoff/sealed_refusal`` keyed to the
+    envelope, carrying no params (shell text), and fires no whitelist alarm."""
+    agent.signoff_state.seal()
+    events.buffer().drain("b")
+    frame = sign_command_request(
+        command="run_verify_block", params={"verify_command": "echo s3cret"}
+    )
+    with patch("stormpulse.agent.dispatch.execute_command") as ex:
+        await dispatch.dispatch_message(agent, AsyncMock(), frame)
+    ex.assert_not_called()
+    drained = events.buffer().drain("b")
+    (e,) = [x for x in drained if x["kind"] == "sealed_refusal"]
+    assert not [x for x in drained if x["kind"] == "whitelist_rejection"]
+    assert (e["source"], e["status"], e["command"]) == (
+        "signoff",
+        "refused",
+        "run_verify_block",
+    )
+    assert "unseal" in e["error"]
+    assert e["command_ref"] == json.loads(frame)["id"]
+    assert "s3cret" not in json.dumps(e)
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_sequence_leaves_one_record_keyed_to_its_envelope(
+    agent: Agent,
+) -> None:
+    """The whole-batch seal refusal records too, keyed to the sequence envelope."""
+    agent.signoff_state.seal()
+    events.buffer().drain("b")
+    frame = signed_command_sequence(["git_pull", "run_apply_block"])
+    with patch("stormpulse.agent.dispatch.execute_command") as ex:
+        await dispatch.dispatch_message(agent, AsyncMock(), frame.to_json())
+    ex.assert_not_called()
+    (e,) = _sealed_records()
+    assert (e["command"], e["command_ref"]) == ("run_apply_block", frame.id)
+
+
 @pytest.mark.asyncio
 @patch("stormpulse.agent.dispatch.execute_command")
 async def test_dispatch_runs_run_apply_block_when_unsealed(
@@ -469,6 +513,153 @@ async def test_dispatch_sealed_sequence_sends_refusal(
     assert sent_data["payload"]["failure_reason"] == "signoff_sealed"
     assert sent_data["payload"]["command"] == "run_apply_block"
     assert sent_data["payload"]["sequence_id"]
+
+
+def _wire_results(ws: AsyncMock) -> list[dict[str, Any]]:
+    return [json.loads(c.args[0])["payload"] for c in ws.send.call_args_list]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_on_failure", [True, False])
+@pytest.mark.parametrize("hatch", ["run_verify_block", "run_apply_block"])
+@pytest.mark.parametrize("reseal_in", ["execution", "result transmission"])
+async def test_a_reseal_mid_sequence_refuses_the_next_hatch_step(
+    agent: Agent, *, hatch: str, stop_on_failure: bool, reseal_in: str
+) -> None:
+    """Admitted unsealed, resealed after step 0: the hatch at step 1 is refused
+    and the sequence ends, whatever stop_on_failure says (CORE-004 d6)."""
+    ws = AsyncMock()
+
+    def run(*_a: Any, **_k: Any) -> Any:
+        if reseal_in == "execution":
+            agent.signoff_state.seal()
+        return make_successful_result()
+
+    async def send(_frame: str) -> None:
+        if reseal_in == "result transmission":
+            agent.signoff_state.seal()
+
+    ws.send.side_effect = send
+    frame = signed_command_sequence(
+        ["git_pull", hatch, "git_pull"], stop_on_failure=stop_on_failure
+    )
+    with patch("stormpulse.agent.dispatch.execute_command", side_effect=run) as ex:
+        await dispatch.dispatch_message(agent, ws, frame.to_json())
+
+    ex.assert_called_once()
+    first, second = _wire_results(ws)
+    assert first["success"] is True
+    assert second["failure_reason"] == "signoff_sealed"
+    assert second["command"] == hatch
+    assert second["sequence_id"] == frame.payload["sequence_id"]
+    assert second["step_index"] == 1
+    (e,) = _sealed_records()
+    assert (e["command"], e["command_ref"]) == (hatch, frame.id)
+
+
+@pytest.mark.asyncio
+async def test_a_revoke_mid_sequence_ends_it_and_alarms(agent: Agent) -> None:
+    """A fence revoked between steps ends the sequence even with
+    stop_on_failure=false, and the fence's alarm fires on this path too."""
+    revoked: list[str] = []
+    agent.registry["git_pull"] = replace(
+        agent.registry["git_pull"], authorize=lambda: revoked[0] if revoked else None
+    )
+
+    def run(*_a: Any, **_k: Any) -> Any:
+        revoked.append("command_contributor revoked")
+        return make_successful_result()
+
+    ws = AsyncMock()
+    events.buffer().drain("b")
+    frame = signed_command_sequence(
+        ["docker_logs", "git_pull", "docker_logs"], stop_on_failure=False
+    )
+    with patch("stormpulse.agent.dispatch.execute_command", side_effect=run) as ex:
+        await dispatch.dispatch_message(agent, ws, frame.to_json())
+
+    ex.assert_called_once()
+    first, second = _wire_results(ws)
+    assert (second["step_index"], second["failure_reason"]) == (1, "forbidden")
+    (alarm,) = [
+        e for e in events.buffer().drain("b") if e["kind"] == "whitelist_rejection"
+    ]
+    assert alarm["command"] == "git_pull"
+
+
+@pytest.mark.asyncio
+async def test_a_mid_sequence_fence_alarm_names_the_sequence_envelope(
+    agent: Agent,
+) -> None:
+    """The alarm's ``command_ref`` is the envelope the dashboard sent, never the
+    step's fresh uuid, so the dashboard can match it to the run (Q5 A)."""
+    revoked: list[str] = []
+    agent.registry["git_pull"] = replace(
+        agent.registry["git_pull"], authorize=lambda: revoked[0] if revoked else None
+    )
+
+    def run(*_a: Any, **_k: Any) -> Any:
+        revoked.append("command_contributor revoked")
+        return make_successful_result()
+
+    events.buffer().drain("b")
+    frame = signed_command_sequence(["docker_logs", "git_pull"])
+    with patch("stormpulse.agent.dispatch.execute_command", side_effect=run):
+        await dispatch.dispatch_message(agent, AsyncMock(), frame.to_json())
+
+    (alarm,) = [
+        e for e in events.buffer().drain("b") if e["kind"] == "whitelist_rejection"
+    ]
+    assert alarm["command_ref"] == frame.id
+
+
+@pytest.mark.asyncio
+async def test_a_sealed_hatch_with_a_revoked_grant_is_refused_as_sealed(
+    agent: Agent,
+) -> None:
+    """Admission order is seal, then fence: the operator's seal wins, so a
+    sealed hatch is a quiet ``signoff_sealed`` record, never a fence alarm."""
+    agent.registry["run_verify_block"] = replace(
+        agent.registry["run_verify_block"], authorize=lambda: "grant revoked"
+    )
+    agent.signoff_state.seal()
+    events.buffer().drain("b")
+    ws = AsyncMock()
+    frame = sign_command_request(
+        command="run_verify_block", params={"verify_command": "true"}
+    )
+    with patch("stormpulse.agent.dispatch.execute_command") as ex:
+        await dispatch.dispatch_message(agent, ws, frame)
+
+    ex.assert_not_called()
+    (result,) = _wire_results(ws)
+    assert result["failure_reason"] == "signoff_sealed"
+    kinds = [e["kind"] for e in events.buffer().drain("b")]
+    assert "whitelist_rejection" not in kinds
+    assert kinds.count("sealed_refusal") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_reseal_from_another_process_stops_the_next_hatch_step(
+    agent: Agent,
+) -> None:
+    """The real reseal is ``stormpulse signoff seal`` in another process: a
+    second ``SignoffState`` on the same directory, not the agent's own object."""
+    ws = AsyncMock()
+
+    def run(*_a: Any, **_k: Any) -> Any:
+        SignoffState(agent.signoff_state.path.parent).seal()
+        return make_successful_result()
+
+    frame = signed_command_sequence(
+        ["git_pull", "run_apply_block"], stop_on_failure=False
+    )
+    with patch("stormpulse.agent.dispatch.execute_command", side_effect=run) as ex:
+        await dispatch.dispatch_message(agent, ws, frame.to_json())
+
+    ex.assert_called_once()
+    _, second = _wire_results(ws)
+    assert (second["step_index"], second["failure_reason"]) == (1, "signoff_sealed")
 
 
 # ---------------------------------------------------------------------------

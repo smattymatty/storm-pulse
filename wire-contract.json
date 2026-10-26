@@ -2069,7 +2069,7 @@
       "result": null
     }
   },
-  "contract_digest": "sha256:2e2937b5a8cea6eafe4e434b047d7a5cc9aa1ba56baa61b9877afd342e67a53b",
+  "contract_digest": "sha256:49e5eea4f450c1fa6aa1373f5eba429e321dc69fae50733d11dbfabbf8fed53a",
   "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
   "integration_events": {
@@ -2677,6 +2677,13 @@
             "quota_rejected",
             "quota_running",
             "retries_exhausted",
+            "status"
+          ]
+        },
+        "signoff": {
+          "sealed_refusal": [
+            "command",
+            "error",
             "status"
           ]
         },

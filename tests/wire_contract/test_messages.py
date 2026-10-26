@@ -197,12 +197,12 @@ def test_sequence_steps_and_step_index_are_declared_and_signed() -> None:
 
 
 def test_events_batch_entry_lists_every_source_and_kind_the_agent_declares() -> None:
-    """``sources`` is the registry verbatim: seven sources, ten kinds today, the
+    """``sources`` is the registry verbatim: eight sources, eleven kinds today, the
     envelope fields never among a kind's fields. No other entry carries it."""
     messages = wire_contract_messages()
     sources = messages["events.batch"]["sources"]
     assert sources == declared_events()
-    assert sum(len(kinds) for kinds in sources.values()) == 10
+    assert sum(len(kinds) for kinds in sources.values()) == 11
     assert set(sources) == {
         "auth",
         "cert",
@@ -210,6 +210,7 @@ def test_events_batch_entry_lists_every_source_and_kind_the_agent_declares() -> 
         "events",
         "garage_admin",
         "jobs",
+        "signoff",
         "ws",
     }
     for kinds in sources.values():

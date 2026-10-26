@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Fitness Function 20: every hatch execution rechecks the seal. A throwaway
+  agent booted unsealed fails the check when a verify or apply block reaches
+  the shell after an earlier sequence step reseals, or after a reseal before a
+  single request.
+- **`signoff/sealed_refusal` event.** Every sealed refusal, single command,
+  whole sequence or mid-sequence step, now leaves one event carrying the
+  command name, status and refusal text, keyed by `command_ref` to the
+  envelope the control plane sent. A record, not an alarm; params are never
+  included. This changes `contract_digest`: the control plane must refresh its
+  vendored `wire-contract.json` before or with this release, and commands pause
+  until both digests match.
+
+### Fixed
+
+- **A reseal during a sequence stops its later verify and apply steps.** The
+  seal was checked once for the whole batch, so a sequence admitted while
+  unsealed kept running its hatch steps after the operator resealed. Every step now meets the same admission gate as a single command
+  (seal, then fence, then pending restart) right before it runs. A refused step
+  sends its `signoff_sealed`, `forbidden` or `restart_required` result with the
+  `sequence_id` and `step_index`, and the sequence ends there, even with
+  `stop_on_failure` false. Effects of steps that already ran are not undone.
+
+### Changed
+
+- **A grant revoked mid-sequence now raises `commands/whitelist_rejection`.** A
+  fenced step used to fail quietly inside the sequence; it now fires the same
+  alarm a fenced single command does.
+
 ## [0.8.1] - 2026-10-25
 
 Stability fixes for log shipping, the integration event spool, job retries and

@@ -20,6 +20,11 @@ from stormpulse.agent.acks import (
     handle_log_batch_ack,
     handle_metrics_ack,
 )
+from stormpulse.agent.admission import (
+    emit_whitelist_rejection,
+    refusal_for,
+    sealed_refusal,
+)
 from stormpulse.agent.integrations_runtime import (
     STATUS_LIVE,
     build_metrics_envelope,
@@ -32,7 +37,6 @@ from stormpulse.agent.signoff_guard import (
     is_blocked_by_seal,
     needs_restart_to_load,
     restart_pending_result,
-    sealed_refusal_result,
 )
 from stormpulse.auth import AuthError, verify_envelope
 from stormpulse.commands import (
@@ -64,7 +68,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 events.declare_event("auth", "signature_failure", {"status", "failure_reason", "error"})
-events.declare_event("commands", "whitelist_rejection", {"status", "command", "error"})
 
 # The group a result reports when the registry holds no spec for the name.
 _UNKNOWN_GROUP = "unknown"
@@ -179,13 +182,9 @@ async def handle_command_request(
     logger.info("Executing command %r (request %s)", payload.command, envelope.id)
     cmd_def = agent.registry.get(payload.command)
 
-    if await _refuse_if_sealed(agent, ws, envelope, payload, cmd_def):
-        return
-
-    if await _refuse_if_fenced(agent, ws, envelope, payload, cmd_def):
-        return
-
-    if await _deflect_if_restart_pending(agent, ws, envelope, payload):
+    refusal = refusal_for(agent, payload.command, envelope.id, envelope.id)
+    if refusal is not None:
+        await ws.send(make(agent.config.agent.id, refusal).to_json())
         return
 
     if cmd_def is not None and cmd_def.mode == "refresh":
@@ -239,90 +238,6 @@ def _verify_typed_payload[PayloadT](
     return payload
 
 
-async def _refuse_if_sealed(
-    agent: Agent,
-    ws: ClientConnection,
-    envelope: Envelope,
-    payload: CommandRequestPayload,
-    cmd_def: CommandSpec | None,
-) -> bool:
-    """Refuse a sealed verify/apply block inline. Returns ``True`` if handled (ADR CORE-004)."""
-    if not is_blocked_by_seal(agent.signoff_state, [payload.command]):
-        return False
-    sealed = sealed_refusal_result(envelope.id, payload.command, cmd_def)
-    await ws.send(make(agent.config.agent.id, sealed).to_json())
-    logger.warning(
-        "Refused %s (request %s): signoff is sealed",
-        payload.command,
-        envelope.id,
-    )
-    return True
-
-
-async def _refuse_if_fenced(
-    agent: Agent,
-    ws: ClientConnection,
-    envelope: Envelope,
-    payload: CommandRequestPayload,
-    cmd_def: CommandSpec | None,
-) -> bool:
-    """Refuse, in every mode, a command its current grant no longer authorizes
-    (CORE-007 D3). Returns ``True`` if handled."""
-    if cmd_def is None or cmd_def.authorize is None:
-        return False
-    refused = cmd_def.authorize()
-    if refused is None:
-        return False
-    message = f"Command {payload.command!r} is fenced: {refused}"
-    logger.warning("Refused %s (request %s): %s", payload.command, envelope.id, refused)
-    _emit_whitelist_rejection(payload.command, envelope.id, message)
-    failure = CommandResultPayload.failed(
-        envelope.id, payload.command, cmd_def.group, FailureReason.FORBIDDEN, message
-    )
-    await ws.send(make(agent.config.agent.id, failure).to_json())
-    return True
-
-
-def _emit_whitelist_rejection(command: str, ref: str, error: str) -> None:
-    """The alarm for a command the whitelist refused: unknown, or fenced (D3)."""
-    events.emit(
-        "whitelist_rejection",
-        source="commands",
-        status="refused",
-        command=str(command)[:100],
-        command_ref=str(ref)[:100],
-        error=error,
-    )
-
-
-async def _deflect_if_restart_pending(
-    agent: Agent,
-    ws: ClientConnection,
-    envelope: Envelope,
-    payload: CommandRequestPayload,
-) -> bool:
-    """Deflect a now-unsealed hatch command the boot-built registry has not loaded yet.
-
-    Reply asking for a restart instead of letting it fall through to the
-    whitelist-violation path, which would fire a security alarm for the
-    operator's own legitimate command (ADR CORE-004). Returns ``True`` if handled.
-    """
-    restart_cmd = needs_restart_to_load(
-        agent.signoff_state, agent.registry, [payload.command]
-    )
-    if restart_cmd is None:
-        return False
-    result = restart_pending_result(envelope.id, restart_cmd)
-    await ws.send(make(agent.config.agent.id, result).to_json())
-    logger.warning(
-        "Deflected %s (request %s): unsealed after boot, registry not rebuilt "
-        "(restart required)",
-        payload.command,
-        envelope.id,
-    )
-    return True
-
-
 async def _run_subprocess_command(
     agent: Agent,
     payload: CommandRequestPayload,
@@ -352,7 +267,7 @@ async def _run_subprocess_command(
         # signal and it alarms. A ParamValidationError is an ordinary bad
         # request against a command that does exist, so it stays quiet.
         if isinstance(exc, CommandError):
-            _emit_whitelist_rejection(payload.command, request_id, str(exc))
+            emit_whitelist_rejection(payload.command, request_id, str(exc))
         cmd_def = agent.registry.get(payload.command)
         return CommandResultPayload.failed(
             request_id,
@@ -590,10 +505,9 @@ async def handle_command_sequence(
         stamped = replace(result, sequence_id=payload.sequence_id, step_index=index)
         return make(agent.config.agent.id, stamped).to_json()
 
-    # Deflect a now-unsealed hatch command missing from the boot-built
-    # registry before whitelist validation, which would otherwise reject it
-    # as unknown and fire the security alarm (ADR CORE-004). Mirrors the
-    # single-command path's _deflect_if_restart_pending.
+    # Deflect a now-unsealed hatch missing from the boot registry before the
+    # whitelist rejects it as unknown and fires the alarm (ADR CORE-004).
+    # Whole-batch pre-check, in its own order; each step meets the full gate below.
     restart_cmd = needs_restart_to_load(agent.signoff_state, agent.registry, names)
     if restart_cmd is not None:
         logger.warning(
@@ -621,7 +535,7 @@ async def handle_command_sequence(
             await ws.send(step_result(failure, index))
             return
 
-    # Sequence seal recheck mirrors the single-command path (ADR CORE-004).
+    # Whole-batch seal check: a sealed batch runs no step (ADR CORE-004).
     if is_blocked_by_seal(agent.signoff_state, names):
         sealed_in_sequence = sorted(SEALED_COMMANDS & set(names))
         logger.warning(
@@ -630,15 +544,25 @@ async def handle_command_sequence(
             ", ".join(sealed_in_sequence),
         )
         first_sealed = sealed_in_sequence[0]
-        sealed = sealed_refusal_result(
-            str(uuid.uuid4()), first_sealed, agent.registry.get(first_sealed)
-        )
+        sealed = sealed_refusal(str(uuid.uuid4()), first_sealed, agent, envelope.id)
         await ws.send(step_result(sealed, names.index(first_sealed)))
         return
 
     project = agent.config.project
     for index, step in enumerate(payload.steps):
         request_id = str(uuid.uuid4())
+        # The pre-check admitted the batch; a reseal or revoke since stops this step.
+        refusal = refusal_for(agent, step.command, request_id, envelope.id)
+        if refusal is not None:
+            await ws.send(step_result(refusal, index))
+            logger.warning(
+                "Sequence %s halted at step %d %r: %s",
+                payload.sequence_id,
+                index,
+                step.command,
+                refusal.failure_reason,
+            )
+            return
         try:
             result = await asyncio.to_thread(
                 execute_command,
