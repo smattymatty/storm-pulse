@@ -76,12 +76,14 @@ The suite is extensible: a later ADR that mechanizes a new invariant adds a func
 
 **Function 19 - Every external seam answers to the current grant.** CORE-007 D3 as amended 2026-10-26: registration advertises, the current grant authorizes. The check translates a probe adapter whose every `Callable` field is a tripwire, revokes on disk, and fails when a command still authorizes or a queued job attempt runs after `command_contributor` is revoked, or when any callback on the translated Integration reaches adapter code after `integration_load` is revoked. Added 2026-10-26, after an audit at `46b16c2` ran a revoked adapter's command both ways while 156 tests stayed green. Sealed at the commit that lands this line.
 
+**Function 20 - Every hatch execution rechecks the seal.** CORE-004 d6: a mid-run seal takes effect on the next dispatch, and for a sequence every step is one. The check boots a throwaway agent unsealed, replaces `subprocess.run` with a recorder, and fails when a shell argv (Function 13's `SHELLS`) spawns after a sequence's earlier step reseals, or after a reseal before a single request. An unsealed control of each case must reach the shell, so a probe blinded by some other refusal fails instead of passing. Added 2026-10-26, after an audit at `46b16c2` ran a hatch step after a mid-sequence reseal: the seal was checked once per batch while the fence was already checked per step. Sealed at the commit that lands this line.
+
 One candidate check - asserting every command in the registry uses an absolute binary path - remains unmechanized: most coupled to registry internals, hardest to mechanize cleanly. It stays a code-review concern until it earns its place.
 
 **Mechanization.**
 
 - Function 1 runs as `lint-imports`.
-- Functions 2 through 18 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
+- Functions 2 through 20 live in a `fitness/` package at the repo root: a sibling of `tests/`, deliberately not under it and not listed in `[tool.pytest.ini_options] testpaths`. Plain Python, not pytest. `python -m fitness` runs them all.
 - The `fitness/` runner runs every check and reports every violation before exiting non-zero, never fail-fast. Stopping at the first violation would hide the rest; the cost of decoupling from pytest is hand-rolled reporting, and the reporting has to be honest.
 - `make fitness` runs the whole suite: `lint-imports && python -m fitness`.
 
