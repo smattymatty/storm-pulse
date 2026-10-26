@@ -307,3 +307,74 @@ def test_a_refused_file_renamed_in_before_the_open_still_settles(
     feeder.tick()
     assert swapped
     assert not (spool / "0001.jsonl").exists(), "the refused file was never settled"
+
+
+def test_a_directory_at_a_segment_name_is_parked_where_it_stands(
+    feeder: SpoolFeeder, spool: Path
+) -> None:
+    """A directory cannot be linked back once moved aside, so it is never moved:
+    the name stays usable, and the segment written there after it settles."""
+    buf = events.buffer()
+    (spool / "0001.jsonl").mkdir()
+    feeder.tick()
+    assert (spool / "0001.jsonl").is_dir(), "the directory was moved off its name"
+    assert os.listdir(spool) == ["0001.jsonl"], "the directory took the aside slot"
+    feeder.tick()
+    (synthesized,) = buf.drain("b1")
+    assert synthesized["undeclared"] == 1, "the parked directory was refused again"
+    (spool / "0001.jsonl").rmdir()
+    seg = segment(spool, "0001.jsonl", seen("r1"))
+    feeder.tick()
+    assert record_ids(buf.drain("b2")) == ["r1"]
+    buf.ack("b2")
+    feeder.tick()
+    assert not seg.exists(), "the segment after the directory was never deleted"
+    assert os.listdir(spool) == []
+
+
+def test_a_directory_replacing_a_pending_segment_stays_at_its_name(
+    feeder: SpoolFeeder, spool: Path
+) -> None:
+    buf = events.buffer()
+    seg = segment(spool, "0001.jsonl", seen("old"))
+    feeder.tick()
+    assert record_ids(buf.drain("b1")) == ["old"]
+    seg.unlink()
+    seg.mkdir()  # the emitter puts a directory where the segment was
+    buf.ack("b1")
+    feeder.tick()
+    assert seg.is_dir(), "settling moved the directory off its name"
+    assert os.listdir(spool) == ["0001.jsonl"], "the directory took the aside slot"
+
+
+def test_a_symlink_to_a_directory_settles_like_any_symlink(
+    feeder: SpoolFeeder, spool: Path
+) -> None:
+    """Kind is read without following the link: only a real directory parks."""
+    (spool.parent / "elsewhere").mkdir()
+    (spool / "0001.jsonl").symlink_to(spool.parent / "elsewhere")
+    feeder.tick()
+    assert os.listdir(spool) == [], "the symlink was parked instead of settled"
+    buf = events.buffer()
+    buf.drain("b1")
+    seg = segment(spool, "0001.jsonl", seen("r1"))
+    feeder.tick()
+    assert record_ids(buf.drain("b2")) == ["r1"]
+    buf.ack("b2")
+    feeder.tick()
+    assert not seg.exists(), "the segment after the symlink was never deleted"
+
+
+def test_a_name_whose_kind_cannot_be_read_still_settles(
+    feeder: SpoolFeeder, spool: Path
+) -> None:
+    """The directory check is no exit: the emitter's spool bound deleted the
+    acked segment, so lstat fails and settling falls through to the rename."""
+    buf = events.buffer()
+    seg = segment(spool, "0001.jsonl", seen("r1"))
+    feeder.tick()
+    buf.drain("b1")
+    buf.ack("b1")
+    seg.unlink()
+    feeder.tick()
+    assert os.listdir(spool) == [], "settling a gone name left an aside"

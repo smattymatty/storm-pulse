@@ -243,9 +243,13 @@ class SpoolFeeder:
         if not self._put_back(aside, path):  # never rename over an earlier aside
             self._park(name, read_id, f"{aside.name} is in the way")
             return
-        # TODO(0.8.2): a directory at this name is renamed aside and cannot be
-        # linked back (EPERM), so later segments at the name ship once but are
-        # never deleted. Park anything not a regular file without renaming it.
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError:
+            mode = 0  # gone: the rename below finds it so
+        if stat.S_ISDIR(mode):  # renamed aside, it cannot be linked back
+            self._park(name, read_id, "a directory")
+            return
         try:
             os.rename(path, aside)
         except FileNotFoundError:
