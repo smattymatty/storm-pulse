@@ -7,35 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-10-26
+
+Security fixes for the sign-off seal and the external integration grant, and
+the two log-shipping gaps 0.8.1 left open. **This release changes the wire:** a
+new event moves `contract_digest`, so the control plane vendors this release's
+`wire-contract.json` in the same window as the agent update. Until both digests
+match, commands pause on that node; metrics, logs and events keep flowing. The
+v1 `digest`, the `commands` section and `SDK_API` 3 are as in 0.8.1.
+
+### Security
+
+- **A reseal during a sequence stops its later verify and apply steps.** The
+  seal was checked once for the whole batch, so a sequence admitted while
+  unsealed kept running its hatch steps after the operator resealed. Every step
+  now meets the same admission gate as a single command (seal, then fence,
+  then pending restart) right before it runs. A refused step sends its
+  `signoff_sealed`, `forbidden` or `restart_required` result with the
+  `sequence_id` and `step_index`, and the sequence ends there, even with
+  `stop_on_failure` false. Effects of steps that already ran are not undone.
+- **Revoking an external integration's grant takes effect on a running agent.**
+  The grant read at boot used to keep authorizing an adapter's commands, queued
+  jobs and callbacks after a revoke on disk. Every execution boundary now reads
+  the current grant: dispatch in every mode, the whitelist for subprocess
+  commands and each sequence step, and each job attempt. Revoking
+  `command_contributor` fences the commands and keeps observation; revoking
+  `integration_load` fences both, and before a cold start imports nothing. A
+  grant that cannot be read authorizes nothing.
+
 ### Added
 
+- **`signoff/sealed_refusal` event.** Every sealed refusal, single command,
+  whole sequence or mid-sequence step, leaves one event with the command name,
+  status and refusal text, keyed by `command_ref` to the envelope the control
+  plane sent. Params are never included. This is the event that moves
+  `contract_digest`.
+- Fitness Function 19: every external adapter seam answers to the current
+  grant. A probe adapter whose every callable is a tripwire fails the check when
+  any seam reaches adapter code after a revoke.
 - Fitness Function 20: every hatch execution rechecks the seal. A throwaway
   agent booted unsealed fails the check when a verify or apply block reaches
   the shell after an earlier sequence step reseals, or after a reseal before a
   single request.
-- **`signoff/sealed_refusal` event.** Every sealed refusal, single command,
-  whole sequence or mid-sequence step, now leaves one event carrying the
-  command name, status and refusal text, keyed by `command_ref` to the
-  envelope the control plane sent. A record, not an alarm; params are never
-  included. This changes `contract_digest`: the control plane must refresh its
-  vendored `wire-contract.json` before or with this release, and commands pause
-  until both digests match.
 
 ### Fixed
 
-- **A reseal during a sequence stops its later verify and apply steps.** The
-  seal was checked once for the whole batch, so a sequence admitted while
-  unsealed kept running its hatch steps after the operator resealed. Every step now meets the same admission gate as a single command
-  (seal, then fence, then pending restart) right before it runs. A refused step
-  sends its `signoff_sealed`, `forbidden` or `restart_required` result with the
-  `sequence_id` and `step_index`, and the sequence ends there, even with
-  `stop_on_failure` false. Effects of steps that already ran are not undone.
+- **The streaming Docker tailer no longer skips lines when ACKs arrive out of
+  order.** The checkpoint commits only the acknowledged prefix: out-of-order
+  ACKs land in order, a lost batch is read again before a later ACK moves past
+  it, and a late ACK from before a rewind is refused.
+- **A `copytruncate` that regrows past the ACKed offset is detected.** Each
+  checkpoint stores the head of the file it read (length and digest), so a file
+  truncated and rewritten past the old offset ships from its start. A
+  checkpoint an older agent wrote keeps its offset, so the upgrade re-ships
+  nothing; a rotation or truncation across the upgrade is still caught by inode
+  and size.
+- **A directory at a spool segment name is left where it stands.** It used to
+  be renamed aside and could not be linked back, so later segments at that name
+  shipped once and were never deleted.
 
 ### Changed
 
-- **A grant revoked mid-sequence now raises `commands/whitelist_rejection`.** A
-  fenced step used to fail quietly inside the sequence; it now fires the same
-  alarm a fenced single command does.
+- **A fenced step mid-sequence raises `commands/whitelist_rejection` and ends
+  the sequence.** It used to fail quietly, and with `stop_on_failure` false the
+  sequence went on.
+- The log ACK line reads `Confirmed batch <id> for group <group> (range ends
+  <offset>)`. It used to say the position advanced, even when the checkpoint
+  held.
 
 ## [0.8.1] - 2026-10-25
 
@@ -652,7 +690,9 @@ This release introduces a long-running command pattern in the Storm Pulse protoc
 - `register` payload's per-command metadata now includes `long_running`. Older agents that don't set it: dashboards should treat the absent field as `false`.
 - Versioning rule clarified: new message types added within v1 are *additive but not silently ignored* - current parsers reject unknown types with `ProtocolError`. Deploy dashboard updates before agent updates that emit new message types.
 
-[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.8.0...HEAD
+[Unreleased]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.8.2...HEAD
+[0.8.2]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.8.1...v0.8.2
+[0.8.1]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.8.0...v0.8.1
 [0.8.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.7.0...v0.8.0
 [0.7.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.6.0...v0.7.0
 [0.6.0]: https://git.stormdevelopments.ca/official-public/storm-pulse/compare/v0.5.1...v0.6.0
