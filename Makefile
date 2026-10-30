@@ -67,7 +67,7 @@ test:
 
 # CI's test job as CI runs it: its image, as root, on a read-only copy of this tree.
 # Catches what a .venv run cannot (root-only failures); needs Docker, so not in check.
-CI_IMAGE ?= $(shell grep -om1 '[^ ]*/storm-ci-python:[^ "]*' .forgejo/workflows/test.yml)
+CI_IMAGE ?= $(shell grep -om1 'image: [^ ]*' .forgejo/workflows/test.yml | cut -d' ' -f2)
 test-ci:
 	docker run --rm -v "$(CURDIR)":/src:ro $(CI_IMAGE) bash -c 'mkdir /w && \
 	  tar -C /src --exclude=.venv --exclude=.git --exclude=__pycache__ -cf - . | tar -xf - -C /w && \

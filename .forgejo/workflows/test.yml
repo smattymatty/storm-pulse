@@ -20,7 +20,7 @@ jobs:
   quality:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
+      image: python:3.12-bookworm
       volumes:
         - pip-cache:/pip-cache
 
@@ -29,7 +29,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          git clone --branch "$BRANCH" "https://git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
           git fetch origin main
 
       # PRs gate against their merge-base, pushes against the before-SHA. No usable
@@ -64,7 +64,7 @@ jobs:
   security:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
+      image: python:3.12-bookworm
       volumes:
         - pip-cache:/pip-cache
 
@@ -73,7 +73,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          git clone --depth 1 --branch "$BRANCH" "https://git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install the project and its dev extra
         run: pip install --cache-dir /pip-cache -e ".[dev]"
@@ -84,7 +84,7 @@ jobs:
   test:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
+      image: python:3.12-bookworm
       volumes:
         - pip-cache:/pip-cache
 
@@ -93,7 +93,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          git clone --depth 1 --branch "$BRANCH" "https://git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install dependencies
         run: pip install --cache-dir /pip-cache -e ".[dev]"
@@ -109,7 +109,7 @@ jobs:
   fitness:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
+      image: python:3.12-bookworm
       volumes:
         - pip-cache:/pip-cache
 
@@ -118,7 +118,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          git clone --depth 1 --branch "$BRANCH" "https://git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install dependencies
         run: pip install --cache-dir /pip-cache -e ".[dev]"
@@ -130,7 +130,7 @@ jobs:
   deadcode:
     runs-on: docker
     container:
-      image: git.stormdevelopments.ca/official-private/storm-ci-python:3.12-4
+      image: python:3.12-bookworm
       volumes:
         - pip-cache:/pip-cache
 
@@ -139,7 +139,7 @@ jobs:
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
-          git clone --depth 1 --branch "$BRANCH" "https://any:${GITHUB_TOKEN}@git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
+          git clone --depth 1 --branch "$BRANCH" "https://git.stormdevelopments.ca/${GITHUB_REPOSITORY}.git" .
 
       - name: Install skylos
         run: pip install --cache-dir /pip-cache "$(grep -o 'skylos==[0-9.]*' pyproject.toml)"

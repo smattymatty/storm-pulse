@@ -17,7 +17,9 @@ MAKEFILE = ROOT / "Makefile"
 # `gates` is `check` with the recipe's diff-scoped targets moved into `gates-clone`.
 CLONE_TARGETS = re.compile(r"^CLONE_TARGETS\s*:=(.*)$", re.MULTILINE)
 
-CI_IMAGE = re.compile(r"storm-ci-python:(\S+)")
+# The dependency-cadence workflow runs a Storm-private tool on its own image;
+# the Tests workflow is the public one and every job in it shares one image.
+CI_IMAGE = re.compile(r"^\s+image: (\S+)$", re.MULTILINE)
 JOB_RUNNER = re.compile(r"^  ([a-z][a-z0-9-]*):\n    runs-on: (\S+)", re.MULTILINE)
 MAKE_CALL = re.compile(r"\bmake\b([^\n]*)")
 DIRECT_TOOL = re.compile(
@@ -37,7 +39,7 @@ def check_ci_workflow() -> list[str]:
     test_yml = _text(TEST_WORKFLOW)
     rel = TEST_WORKFLOW.relative_to(ROOT)
     return [
-        *_one_image(),
+        *_one_image(rel, test_yml),
         *_one_runner(rel, test_yml),
         *_every_check_target_runs(rel, test_yml),
         *_gates_is_check(),
@@ -48,17 +50,12 @@ def check_ci_workflow() -> list[str]:
     ]
 
 
-def _one_image() -> list[str]:
-    tags = {
-        f"{path.name}:{tag}"
-        for path in sorted(WORKFLOWS.glob("*.yml"))
-        for tag in CI_IMAGE.findall(_text(path))
-    }
-    distinct = {t.split(":", 1)[1] for t in tags}
-    if not distinct:
-        return ["no workflow names the storm-ci-python image"]
-    if len(distinct) > 1:
-        return [f"storm-ci-python tags disagree: {', '.join(sorted(tags))}"]
+def _one_image(rel: Path, text: str) -> list[str]:
+    images = set(CI_IMAGE.findall(text))
+    if not images:
+        return [f"{rel}: no job names a container image"]
+    if len(images) > 1:
+        return [f"{rel}: images disagree: {', '.join(sorted(images))}"]
     return []
 
 

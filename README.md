@@ -230,7 +230,9 @@ pip install -e ".[dev]"
 make check      # pytest + mypy (strict) + architecture/security invariants
 ```
 
-`make check` needs no Docker, no network, and no credentials.
+`make check` needs no Docker, no network, and no credentials. CI runs the same
+targets on the public `python:3.12-bookworm` image; `make test-ci` runs them in
+that image on your machine, as root, the way the runner does.
 
 ### The wire tier
 

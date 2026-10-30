@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **CI runs on the public `python:3.12-bookworm` image.** The Tests workflow
+  used a Storm-private registry image, so nobody outside Storm could run the
+  pipeline the badge reports. Every job now runs on the official image, the
+  checkout needs no token, and `make test-ci` reproduces the run with no
+  registry login. Fitness Function 12 now checks that every job in the Tests
+  workflow names one image. The weekly dependency report keeps its own image.
+
 ## [0.8.2] - 2026-10-26
 
 Security fixes for the sign-off seal and the external integration grant, and

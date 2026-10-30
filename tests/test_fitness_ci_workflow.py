@@ -117,12 +117,14 @@ def test_a_job_off_the_docker_runner(tree: Path) -> None:
     ]
 
 
-def test_two_image_tags(tree: Path) -> None:
-    (tree / "workflows" / "cadence.yml").write_text(
-        "image: git.example/storm-ci-python:3.12-3\n", encoding="utf-8"
+def test_two_images_in_one_workflow(tree: Path) -> None:
+    edit(
+        fn12.TEST_WORKFLOW,
+        "  security:\n    runs-on: docker\n",
+        "  security:\n    runs-on: docker\n    container:\n      image: python:3.12\n",
     )
     assert fn12.check_ci_workflow() == [
-        "storm-ci-python tags disagree: cadence.yml:3.12-3, test.yml:3.12-2"
+        "workflows/test.yml: images disagree: git.example/storm-ci-python:3.12-2, python:3.12"
     ]
 
 
@@ -130,7 +132,7 @@ def test_an_empty_parse_fails_loudly(tree: Path) -> None:
     (tree / "workflows" / "test.yml").write_text("name: Tests\n", encoding="utf-8")
     (tree / "Makefile").write_text("all:\n", encoding="utf-8")
     assert fn12.check_ci_workflow() == [
-        "no workflow names the storm-ci-python image",
+        "workflows/test.yml: no job names a container image",
         "workflows/test.yml: no jobs parsed",
         "Makefile: no `check:` prerequisites parsed",
         "Makefile: no `gates:` prerequisites parsed",
