@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-30
+
 **Never root.** 0.9.0 removes the system install mode. There is one way to
 install and run Storm Pulse, as the sudo-less user that owns rootless Docker,
 and every `stormpulse` command refuses UID 0 before it reads an argument.
