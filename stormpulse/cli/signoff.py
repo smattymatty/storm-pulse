@@ -176,14 +176,22 @@ def add_signoff_subparser(subparsers: argparse._SubParsersAction) -> None:  # ty
         "signoff",
         help="manage the dashboard's verify-block seal (ADR CORE-004)",
     )
+    signoff_parser.set_defaults(
+        func=lambda _args: signoff_parser.exit(1, signoff_parser.format_help())
+    )
     signoff_sub = signoff_parser.add_subparsers(dest="signoff_command")
 
-    for name, help_text in (
-        ("status", "show whether verify-block dispatch is sealed"),
-        ("seal", "disable verify-block dispatch on this agent"),
-        ("unseal", "re-enable verify-block dispatch (requires confirmation)"),
+    for name, help_text, handler in (
+        ("status", "show whether verify-block dispatch is sealed", cmd_signoff_status),
+        ("seal", "disable verify-block dispatch on this agent", cmd_signoff_seal),
+        (
+            "unseal",
+            "re-enable verify-block dispatch (requires confirmation)",
+            cmd_signoff_unseal,
+        ),
     ):
         p = signoff_sub.add_parser(name, help=help_text)
+        p.set_defaults(func=handler)
         p.add_argument(
             "--config",
             default=_DEFAULT_CONFIG,

@@ -6,6 +6,8 @@ import argparse
 from dataclasses import replace
 from pathlib import Path
 
+from stormpulse.init.files import default_config_path
+
 
 def cmd_status(args: argparse.Namespace) -> None:
     from stormpulse.signoff import (
@@ -31,3 +33,15 @@ def cmd_status(args: argparse.Namespace) -> None:
             ),
         )
     print_status(info)
+
+
+def add_status_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    default_config = default_config_path()
+    parser = subparsers.add_parser("status", help="show agent status")
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=default_config,
+        help=f"path to config file (default: {default_config})",
+    )
+    parser.set_defaults(func=cmd_status)

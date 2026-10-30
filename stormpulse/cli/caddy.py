@@ -35,6 +35,9 @@ def add_caddy_subparser(subparsers: argparse._SubParsersAction) -> None:  # type
         "caddy",
         help="Caddy reverse-proxy integration",
     )
+    caddy_parser.set_defaults(
+        func=lambda _args: caddy_parser.exit(1, caddy_parser.format_help())
+    )
     caddy_sub = caddy_parser.add_subparsers(dest="caddy_command")
 
     # --- caddy init ---
@@ -57,3 +60,4 @@ def add_caddy_subparser(subparsers: argparse._SubParsersAction) -> None:  # type
         action="store_true",
         help="overwrite existing [caddy] section",
     )
+    init_parser.set_defaults(func=cmd_caddy_init)

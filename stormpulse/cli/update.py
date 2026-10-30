@@ -95,3 +95,41 @@ def cmd_update(args: argparse.Namespace) -> None:
     code = restart_user_unit()
     if code != 0:
         sys.exit(code)
+
+
+def add_update_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    parser = subparsers.add_parser(
+        "update",
+        help="reinstall the agent via pipx and restart the unit",
+    )
+    parser.add_argument(
+        "--source",
+        choices=["git", "pip"],
+        default="git",
+        help="install source: git (default) or pip (pypi)",
+    )
+    parser.add_argument(
+        "--branch",
+        default=None,
+        help="git branch or ref to install (only with --source git; default: main)",
+    )
+    parser.add_argument(
+        "--version",
+        default=None,
+        help="release to install, e.g. 0.6.0 (git: tag v0.6.0; pip: ==0.6.0)",
+    )
+    restart_group = parser.add_mutually_exclusive_group()
+    restart_group.add_argument(
+        "--restart",
+        dest="restart",
+        action="store_true",
+        default=True,
+        help="restart the systemd unit after install (default)",
+    )
+    restart_group.add_argument(
+        "--no-restart",
+        dest="restart",
+        action="store_false",
+        help="skip the restart; print the restart command instead",
+    )
+    parser.set_defaults(func=cmd_update)

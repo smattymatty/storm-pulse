@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`stormpulse` with no command prints argparse's own help.** The hand-written
+  list named 13 of 16 commands (`logs`, `rclone` and `integration` were missing).
+  Every command now registers itself through one `add_<name>_subparser` and
+  binds its handler with `set_defaults(func=...)`, so the list is generated from
+  what is registered and a test fails if it is not. A group with no subcommand
+  (`config`, `garage`, `caddy`, `rclone`, `logging`, `signoff`) prints its own
+  help the same way. Flags, defaults and exit codes are unchanged.
+
 ## [0.9.0] - 2026-10-30
 
 **Never root.** 0.9.0 removes the system install mode. There is one way to

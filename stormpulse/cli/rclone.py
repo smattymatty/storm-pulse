@@ -68,6 +68,9 @@ def add_rclone_subparser(subparsers: argparse._SubParsersAction) -> None:  # typ
         "rclone",
         help="rclone migration/backup Runner integration",
     )
+    rclone_parser.set_defaults(
+        func=lambda _args: rclone_parser.exit(1, rclone_parser.format_help())
+    )
     rclone_sub = rclone_parser.add_subparsers(dest="rclone_command")
 
     # --- rclone init ---
@@ -95,3 +98,4 @@ def add_rclone_subparser(subparsers: argparse._SubParsersAction) -> None:  # typ
         action="store_true",
         help="use the wizard SDK path (preview + transactional apply with rollback)",
     )
+    init_parser.set_defaults(func=cmd_rclone_init)

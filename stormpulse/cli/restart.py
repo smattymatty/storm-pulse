@@ -19,3 +19,11 @@ def cmd_restart(args: argparse.Namespace) -> None:
     code = restart_user_unit()
     if code != 0:
         sys.exit(code)
+
+
+def add_restart_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    parser = subparsers.add_parser(
+        "restart",
+        help="restart the user systemd unit",
+    )
+    parser.set_defaults(func=cmd_restart)

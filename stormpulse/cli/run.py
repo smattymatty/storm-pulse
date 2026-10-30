@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from stormpulse import __version__
+from stormpulse.init.files import default_config_path
 
 logger = logging.getLogger("stormpulse")
 
@@ -94,3 +95,15 @@ def cmd_run(args: argparse.Namespace) -> None:
         if log_position_store is not None:
             log_position_store.close()
         logger.info("Agent stopped")
+
+
+def add_run_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    default_config = default_config_path()
+    parser = subparsers.add_parser("run", help="start the agent")
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=default_config,
+        help=f"path to config file (default: {default_config})",
+    )
+    parser.set_defaults(func=cmd_run)

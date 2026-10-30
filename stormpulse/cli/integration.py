@@ -57,6 +57,7 @@ def add_integration_subparser(subparsers: Any) -> None:
     parser = subparsers.add_parser(
         "integration", help="manage external integration packages"
     )
+    parser.set_defaults(func=cmd_integration)
     sub = parser.add_subparsers(dest="integration_command")
 
     inspect_parser = sub.add_parser(

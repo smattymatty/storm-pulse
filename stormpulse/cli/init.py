@@ -7,6 +7,8 @@ import logging
 import sys
 from pathlib import Path
 
+from stormpulse.init.files import user_config_dir
+
 logger = logging.getLogger("stormpulse")
 
 
@@ -24,3 +26,22 @@ def cmd_init(args: argparse.Namespace) -> None:
     except InitError as exc:
         logger.error("%s", exc)
         sys.exit(1)
+
+
+def add_init_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    default_creds_dir = str(user_config_dir())
+    parser = subparsers.add_parser(
+        "init",
+        help="generate config and systemd unit after enrollment",
+    )
+    parser.add_argument(
+        "--creds-dir",
+        default=default_creds_dir,
+        help=f"directory containing credential files (default: {default_creds_dir})",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing config and systemd unit",
+    )
+    parser.set_defaults(func=cmd_init)

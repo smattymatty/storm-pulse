@@ -19,6 +19,7 @@ from stormpulse.enroll import (
     read_cert_not_after,
     renew_certificate,
 )
+from stormpulse.init.files import default_config_path
 
 
 def _days_left(cert: Path) -> str:
@@ -41,3 +42,18 @@ def cmd_renew(args: argparse.Namespace) -> None:
     except (ConfigError, OSError) as exc:
         sys.exit(f"Renewal failed: {exc}")
     print(f"Renewed: {_days_left(tls.client_cert)} remaining")
+
+
+def add_renew_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    default_config = default_config_path()
+    parser = subparsers.add_parser(
+        "renew",
+        help="renew the client cert now (CORE-010), ignoring the 30-day window",
+    )
+    parser.add_argument(
+        "config",
+        nargs="?",
+        default=default_config,
+        help=f"path to config file (default: {default_config})",
+    )
+    parser.set_defaults(func=cmd_renew)

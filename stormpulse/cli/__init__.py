@@ -1,4 +1,4 @@
-"""CLI argument parsing and command dispatch."""
+"""CLI composition root: root gate, one parser from every registrar, dispatch."""
 
 from __future__ import annotations
 
@@ -8,21 +8,47 @@ import os
 import sys
 
 from stormpulse import __version__
+from stormpulse.cli.caddy import add_caddy_subparser
+from stormpulse.cli.config_check import add_config_subparser
+from stormpulse.cli.enroll import add_enroll_subparser
+from stormpulse.cli.garage import add_garage_subparser
+from stormpulse.cli.init import add_init_subparser
+from stormpulse.cli.integration import add_integration_subparser
+from stormpulse.cli.investigate import add_investigate_subparser
+from stormpulse.cli.log import add_logging_subparser
+from stormpulse.cli.logs import add_logs_subparser
+from stormpulse.cli.rclone import add_rclone_subparser
+from stormpulse.cli.renew import add_renew_subparser
+from stormpulse.cli.restart import add_restart_subparser
+from stormpulse.cli.run import add_run_subparser
+from stormpulse.cli.signoff import add_signoff_subparser
+from stormpulse.cli.status import add_status_subparser
+from stormpulse.cli.update import add_update_subparser
 from stormpulse.init.checks import InitError, refuse_root
-from stormpulse.init.files import default_config_path, user_config_dir
 
-logger = logging.getLogger("stormpulse")
+# `stormpulse` with no command prints argparse's view of this tuple:
+# no second list to keep in step.
+REGISTRARS = (
+    add_run_subparser,
+    add_enroll_subparser,
+    add_init_subparser,
+    add_update_subparser,
+    add_restart_subparser,
+    add_logs_subparser,
+    add_status_subparser,
+    add_renew_subparser,
+    add_config_subparser,
+    add_investigate_subparser,
+    add_garage_subparser,
+    add_caddy_subparser,
+    add_rclone_subparser,
+    add_logging_subparser,
+    add_signoff_subparser,
+    add_integration_subparser,
+)
 
-_DEFAULT_CONFIG = default_config_path()
-_DEFAULT_CREDS_DIR = str(user_config_dir())
 
-
-def main() -> None:
-    # One gate for every command: run as root, any of them leaves files the rootless agent cannot read.
-    try:
-        refuse_root(os.geteuid())
-    except InitError as exc:
-        sys.exit(str(exc))
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="stormpulse",
         description="Storm Pulse agent - secure server management over WebSocket",
@@ -33,222 +59,19 @@ def main() -> None:
         version=f"storm-pulse-agent v{__version__}",
     )
     subparsers = parser.add_subparsers(dest="command")
+    for register in REGISTRARS:
+        register(subparsers)
+    return parser
 
-    # --- run subcommand ---
-    run_parser = subparsers.add_parser("run", help="start the agent")
-    run_parser.add_argument(
-        "config",
-        nargs="?",
-        default=_DEFAULT_CONFIG,
-        help=f"path to config file (default: {_DEFAULT_CONFIG})",
-    )
 
-    # --- enroll subcommand ---
-    enroll_parser = subparsers.add_parser(
-        "enroll",
-        help="enroll this agent with the dashboard",
-    )
-    enroll_parser.add_argument("endpoint", help="enrollment URL")
-    enroll_parser.add_argument("agent_id", help="unique agent identifier")
-    enroll_parser.add_argument("token", help="one-time enrollment token from dashboard")
-    enroll_parser.add_argument(
-        "--creds-dir",
-        default=_DEFAULT_CREDS_DIR,
-        help=f"directory for credential files (default: {_DEFAULT_CREDS_DIR})",
-    )
-    enroll_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="overwrite existing credential files",
-    )
-
-    # --- init subcommand ---
-    init_parser = subparsers.add_parser(
-        "init",
-        help="generate config and systemd unit after enrollment",
-    )
-    init_parser.add_argument(
-        "--creds-dir",
-        default=_DEFAULT_CREDS_DIR,
-        help=f"directory containing credential files (default: {_DEFAULT_CREDS_DIR})",
-    )
-    init_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="overwrite existing config and systemd unit",
-    )
-
-    # --- update subcommand ---
-    update_parser = subparsers.add_parser(
-        "update",
-        help="reinstall the agent via pipx and restart the unit",
-    )
-    update_parser.add_argument(
-        "--source",
-        choices=["git", "pip"],
-        default="git",
-        help="install source: git (default) or pip (pypi)",
-    )
-    update_parser.add_argument(
-        "--branch",
-        default=None,
-        help="git branch or ref to install (only with --source git; default: main)",
-    )
-    update_parser.add_argument(
-        "--version",
-        default=None,
-        help="release to install, e.g. 0.6.0 (git: tag v0.6.0; pip: ==0.6.0)",
-    )
-    restart_group = update_parser.add_mutually_exclusive_group()
-    restart_group.add_argument(
-        "--restart",
-        dest="restart",
-        action="store_true",
-        default=True,
-        help="restart the systemd unit after install (default)",
-    )
-    restart_group.add_argument(
-        "--no-restart",
-        dest="restart",
-        action="store_false",
-        help="skip the restart; print the restart command instead",
-    )
-
-    # --- restart subcommand ---
-    subparsers.add_parser(
-        "restart",
-        help="restart the user systemd unit",
-    )
-
-    # --- logs subcommand ---
-    logs_parser = subparsers.add_parser(
-        "logs",
-        help="tail the agent journal (journalctl --user wrapper)",
-    )
-    logs_parser.add_argument(
-        "-n",
-        "--lines",
-        type=int,
-        default=None,
-        help=(
-            "number of lines to show (default: 100, or the whole window "
-            "when --since/--until is given)"
-        ),
-    )
-    logs_parser.add_argument(
-        "-f",
-        "--follow",
-        dest="follow",
-        action="store_true",
-        default=None,
-        help="follow after printing (default unless --since/--until is given)",
-    )
-    logs_parser.add_argument(
-        "--no-follow",
-        dest="follow",
-        action="store_false",
-        help="dump lines and exit instead of following",
-    )
-    logs_parser.add_argument(
-        "--since",
-        default=None,
-        metavar="WHEN",
-        help='window start, journalctl syntax: "06:00", "1 hour ago", "2026-07-19 06:14"',
-    )
-    logs_parser.add_argument(
-        "--until",
-        default=None,
-        metavar="WHEN",
-        help="window end, same syntax as --since",
-    )
-    logs_parser.add_argument(
-        "-g",
-        "--grep",
-        default=None,
-        metavar="PATTERN",
-        help=(
-            "only lines whose message matches this PCRE "
-            "(case-insensitive when all-lowercase); combines with follow"
-        ),
-    )
-
-    # --- status subcommand ---
-    status_parser = subparsers.add_parser("status", help="show agent status")
-    status_parser.add_argument(
-        "config",
-        nargs="?",
-        default=_DEFAULT_CONFIG,
-        help=f"path to config file (default: {_DEFAULT_CONFIG})",
-    )
-
-    # --- renew subcommand ---
-    renew_parser = subparsers.add_parser(
-        "renew",
-        help="renew the client cert now (CORE-010), ignoring the 30-day window",
-    )
-    renew_parser.add_argument(
-        "config",
-        nargs="?",
-        default=_DEFAULT_CONFIG,
-        help=f"path to config file (default: {_DEFAULT_CONFIG})",
-    )
-
-    # --- config subcommand group ---
-    config_parser = subparsers.add_parser(
-        "config",
-        help="validate configuration without booting",
-    )
-    config_sub = config_parser.add_subparsers(dest="config_command")
-    config_check_parser = config_sub.add_parser(
-        "check",
-        help="validate the TOML and report each integration's status",
-    )
-    config_check_parser.add_argument(
-        "config",
-        nargs="?",
-        default=_DEFAULT_CONFIG,
-        help=f"path to config file (default: {_DEFAULT_CONFIG})",
-    )
-
-    # --- investigate subcommand ---
-    from stormpulse.cli.investigate import add_investigate_args
-
-    investigate_parser = subparsers.add_parser(
-        "investigate",
-        help="run a one-shot diagnostic case file (bare = list investigations)",
-    )
-    add_investigate_args(investigate_parser)
-
-    # --- garage subcommand group ---
-    from stormpulse.cli.garage import add_garage_subparser
-
-    add_garage_subparser(subparsers)
-
-    # --- caddy subcommand group ---
-    from stormpulse.cli.caddy import add_caddy_subparser
-
-    add_caddy_subparser(subparsers)
-
-    # --- rclone subcommand group ---
-    from stormpulse.cli.rclone import add_rclone_subparser
-
-    add_rclone_subparser(subparsers)
-
-    # --- logging subcommand group ---
-    from stormpulse.cli.log import add_logging_subparser
-
-    add_logging_subparser(subparsers)
-
-    # --- signoff subcommand group ---
-    from stormpulse.cli.signoff import add_signoff_subparser
-
-    add_signoff_subparser(subparsers)
-
-    # --- integration subcommand group ---
-    from stormpulse.cli.integration import add_integration_subparser
-
-    add_integration_subparser(subparsers)
-
+def main() -> None:
+    # One gate for every command: run as root, any of them leaves files the
+    # rootless agent cannot read.
+    try:
+        refuse_root(os.geteuid())
+    except InitError as exc:
+        sys.exit(str(exc))
+    parser = build_parser()
     args = parser.parse_args()
 
     log_level = os.environ.get("STORMPULSE_LOG_LEVEL", "INFO").upper()
@@ -258,192 +81,6 @@ def main() -> None:
         datefmt="%Y-%m-%dT%H:%M:%S",
     )
 
-    if args.command == "enroll":
-        from stormpulse.cli.enroll import cmd_enroll
-
-        cmd_enroll(args)
-    elif args.command == "init":
-        from stormpulse.cli.init import cmd_init
-
-        cmd_init(args)
-    elif args.command == "run":
-        from stormpulse.cli.run import cmd_run
-
-        cmd_run(args)
-    elif args.command == "status":
-        from stormpulse.cli.status import cmd_status
-
-        cmd_status(args)
-    elif args.command == "renew":
-        from stormpulse.cli.renew import cmd_renew
-
-        cmd_renew(args)
-    elif args.command == "config":
-        if getattr(args, "config_command", None) == "check":
-            from stormpulse.cli.config_check import cmd_config_check
-
-            cmd_config_check(args)
-        else:
-            print("Usage: stormpulse config <subcommand>\n", file=sys.stderr)
-            print("Subcommands:", file=sys.stderr)
-            print(
-                "  check    Validate the TOML and report integration status",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif args.command == "update":
-        from stormpulse.cli.update import cmd_update
-
-        cmd_update(args)
-    elif args.command == "restart":
-        from stormpulse.cli.restart import cmd_restart
-
-        cmd_restart(args)
-    elif args.command == "logs":
-        from stormpulse.cli.logs import cmd_logs
-
-        cmd_logs(args)
-    elif args.command == "investigate":
-        from stormpulse.cli.investigate import cmd_investigate
-
-        cmd_investigate(args)
-    elif args.command == "garage":
-        if getattr(args, "garage_command", None) == "init":
-            from stormpulse.cli.garage import cmd_garage_init
-
-            cmd_garage_init(args)
-        elif getattr(args, "garage_command", None) == "investigate":
-            from stormpulse.cli.investigate import cmd_integration_investigate
-
-            cmd_integration_investigate("garage", args)
-        else:
-            print("Usage: stormpulse garage <subcommand>\n", file=sys.stderr)
-            print("Subcommands:", file=sys.stderr)
-            print(
-                "  init         Detect and configure Garage integration",
-                file=sys.stderr,
-            )
-            print(
-                "  investigate  Run a garage diagnostic case file",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif args.command == "caddy":
-        if getattr(args, "caddy_command", None) == "init":
-            from stormpulse.cli.caddy import cmd_caddy_init
-
-            cmd_caddy_init(args)
-        else:
-            print("Usage: stormpulse caddy <subcommand>\n", file=sys.stderr)
-            print("Subcommands:", file=sys.stderr)
-            print("  init     Detect and configure Caddy integration", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "rclone":
-        if getattr(args, "rclone_command", None) == "init":
-            from stormpulse.cli.rclone import cmd_rclone_init
-
-            cmd_rclone_init(args)
-        else:
-            print("Usage: stormpulse rclone <subcommand>\n", file=sys.stderr)
-            print("Subcommands:", file=sys.stderr)
-            print(
-                "  init     Detect rclone and configure this box as a backup Runner",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif args.command == "logging":
-        if getattr(args, "logging_command", None) == "init":
-            from stormpulse.cli.log import cmd_logging_init
-
-            cmd_logging_init(args)
-        else:
-            print("Usage: stormpulse logging <subcommand>\n", file=sys.stderr)
-            print("Subcommands:", file=sys.stderr)
-            print(
-                "  init     Detect containers and configure log shipping",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif args.command == "signoff":
-        signoff_cmd = getattr(args, "signoff_command", None)
-        if signoff_cmd == "status":
-            from stormpulse.cli.signoff import cmd_signoff_status
-
-            cmd_signoff_status(args)
-        elif signoff_cmd == "seal":
-            from stormpulse.cli.signoff import cmd_signoff_seal
-
-            cmd_signoff_seal(args)
-        elif signoff_cmd == "unseal":
-            from stormpulse.cli.signoff import cmd_signoff_unseal
-
-            cmd_signoff_unseal(args)
-        else:
-            print("Usage: stormpulse signoff <subcommand>\n", file=sys.stderr)
-            print("Subcommands:", file=sys.stderr)
-            print(
-                "  status   Show whether verify-block dispatch is sealed",
-                file=sys.stderr,
-            )
-            print(
-                "  seal     Disable verify-block dispatch on this agent",
-                file=sys.stderr,
-            )
-            print(
-                "  unseal   Re-enable verify-block dispatch on this agent",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-    elif args.command == "integration":
-        from stormpulse.cli.integration import cmd_integration
-
-        cmd_integration(args)
-    elif args.command is None:
-        # Detect old syntax: stormpulse /path/to/config
-        if len(sys.argv) == 2 and not sys.argv[1].startswith("-"):
-            logger.error(
-                "Unknown command: %s. Did you mean: stormpulse run %s",
-                sys.argv[1],
-                sys.argv[1],
-            )
-        else:
-            print("Usage: stormpulse <command> [options]\n", file=sys.stderr)
-            print("Commands:", file=sys.stderr)
-            print("  run                  Start the agent", file=sys.stderr)
-            print(
-                "  enroll               Enroll this agent with the dashboard",
-                file=sys.stderr,
-            )
-            print(
-                "  init                 Generate config and systemd unit",
-                file=sys.stderr,
-            )
-            print("  status               Show agent status", file=sys.stderr)
-            print("  renew                Renew the client cert now", file=sys.stderr)
-            print(
-                "  config               Validate configuration without booting",
-                file=sys.stderr,
-            )
-            print(
-                "  update               Reinstall via pipx and restart", file=sys.stderr
-            )
-            print("  restart              Restart the systemd unit", file=sys.stderr)
-            print(
-                "  investigate          Run a diagnostic case file",
-                file=sys.stderr,
-            )
-            print("  garage               Garage S3 node management", file=sys.stderr)
-            print(
-                "  caddy                Caddy reverse-proxy integration",
-                file=sys.stderr,
-            )
-            print("  logging              Log shipping configuration", file=sys.stderr)
-            print(
-                "  signoff              Manage the verify-block seal (ADR CORE-004)",
-                file=sys.stderr,
-            )
-            print(
-                "\nRun 'stormpulse <command> --help' for details.",
-                file=sys.stderr,
-            )
-        sys.exit(1)
+    if args.command is None:
+        parser.exit(1, parser.format_help())
+    args.func(args)

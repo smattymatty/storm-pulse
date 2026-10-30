@@ -22,6 +22,8 @@ import logging
 import sys
 from pathlib import Path
 
+from stormpulse.init.files import default_config_path
+
 # The loader reports a granted adapter it could not load through these loggers
 # (soft-disable, never an exception). The CLI configures no logging, so without
 # a handler the reason would vanish and the section would read as merely
@@ -110,3 +112,24 @@ def _load_external_reporting_failures(state_dir: Path) -> frozenset[str]:
         for lg, level in zip(loggers, saved_levels, strict=True):
             lg.removeHandler(handler)
             lg.setLevel(level)
+
+
+def add_config_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    default_config = default_config_path()
+    parser = subparsers.add_parser(
+        "config",
+        help="validate configuration without booting",
+    )
+    parser.set_defaults(func=lambda _args: parser.exit(1, parser.format_help()))
+    sub = parser.add_subparsers(dest="config_command")
+    check_parser = sub.add_parser(
+        "check",
+        help="validate the TOML and report each integration's status",
+    )
+    check_parser.add_argument(
+        "config",
+        nargs="?",
+        default=default_config,
+        help=f"path to config file (default: {default_config})",
+    )
+    check_parser.set_defaults(func=cmd_config_check)

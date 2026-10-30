@@ -7,6 +7,8 @@ import logging
 import sys
 from pathlib import Path
 
+from stormpulse.init.files import user_config_dir
+
 logger = logging.getLogger("stormpulse")
 
 
@@ -75,3 +77,25 @@ def cmd_enroll(args: argparse.Namespace) -> None:
         "Next: run 'stormpulse init' to generate config, or edit %s/stormpulse.toml manually",
         creds_dir,
     )
+
+
+def add_enroll_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    default_creds_dir = str(user_config_dir())
+    parser = subparsers.add_parser(
+        "enroll",
+        help="enroll this agent with the dashboard",
+    )
+    parser.add_argument("endpoint", help="enrollment URL")
+    parser.add_argument("agent_id", help="unique agent identifier")
+    parser.add_argument("token", help="one-time enrollment token from dashboard")
+    parser.add_argument(
+        "--creds-dir",
+        default=default_creds_dir,
+        help=f"directory for credential files (default: {default_creds_dir})",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="overwrite existing credential files",
+    )
+    parser.set_defaults(func=cmd_enroll)

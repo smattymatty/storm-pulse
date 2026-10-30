@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from functools import partial
 from pathlib import Path
 
 from stormpulse.init.files import default_config_path
@@ -35,6 +36,9 @@ def add_garage_subparser(subparsers: argparse._SubParsersAction) -> None:  # typ
         "garage",
         help="Garage S3 node management",
     )
+    garage_parser.set_defaults(
+        func=lambda _args: garage_parser.exit(1, garage_parser.format_help())
+    )
     garage_sub = garage_parser.add_subparsers(dest="garage_command")
 
     # --- garage init ---
@@ -57,12 +61,17 @@ def add_garage_subparser(subparsers: argparse._SubParsersAction) -> None:  # typ
         action="store_true",
         help="overwrite existing [garage] section",
     )
+    init_parser.set_defaults(func=cmd_garage_init)
 
     # --- garage investigate ---
-    from stormpulse.cli.investigate import add_investigate_args
+    from stormpulse.cli.investigate import (
+        add_investigate_args,
+        cmd_integration_investigate,
+    )
 
     investigate_parser = garage_sub.add_parser(
         "investigate",
         help="run a garage diagnostic case file (bare = list investigations)",
     )
     add_investigate_args(investigate_parser)
+    investigate_parser.set_defaults(func=partial(cmd_integration_investigate, "garage"))

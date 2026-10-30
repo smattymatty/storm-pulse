@@ -31,6 +31,9 @@ def add_logging_subparser(subparsers: argparse._SubParsersAction) -> None:  # ty
         "logging",
         help="log shipping configuration",
     )
+    logging_parser.set_defaults(
+        func=lambda _args: logging_parser.exit(1, logging_parser.format_help())
+    )
     logging_sub = logging_parser.add_subparsers(dest="logging_command")
 
     init_parser = logging_sub.add_parser(
@@ -42,3 +45,4 @@ def add_logging_subparser(subparsers: argparse._SubParsersAction) -> None:  # ty
         default=_DEFAULT_CONFIG,
         help=f"path to stormpulse.toml (default: {_DEFAULT_CONFIG})",
     )
+    init_parser.set_defaults(func=cmd_logging_init)

@@ -95,3 +95,53 @@ def cmd_logs(args: argparse.Namespace) -> None:
         sys.exit(1)
     if returncode != 0:
         sys.exit(returncode)
+
+
+def add_logs_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    parser = subparsers.add_parser(
+        "logs",
+        help="tail the agent journal (journalctl --user wrapper)",
+    )
+    parser.add_argument(
+        "-n",
+        "--lines",
+        type=int,
+        default=None,
+        help=(
+            "number of lines to show (default: 100, or the whole window "
+            "when --since/--until is given)"
+        ),
+    )
+    parser.add_argument(
+        "-f",
+        "--follow",
+        action="store_true",
+        default=None,
+        help="follow after printing (default unless --since/--until is given)",
+    )
+    parser.add_argument(
+        "--no-follow",
+        dest="follow",
+        action="store_false",
+        help="dump lines and exit instead of following",
+    )
+    parser.add_argument(
+        "--since",
+        metavar="WHEN",
+        help='window start, journalctl syntax: "06:00", "1 hour ago", "2026-07-19 06:14"',
+    )
+    parser.add_argument(
+        "--until",
+        metavar="WHEN",
+        help="window end, same syntax as --since",
+    )
+    parser.add_argument(
+        "-g",
+        "--grep",
+        metavar="PATTERN",
+        help=(
+            "only lines whose message matches this PCRE "
+            "(case-insensitive when all-lowercase); combines with follow"
+        ),
+    )
+    parser.set_defaults(func=cmd_logs)

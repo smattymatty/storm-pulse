@@ -73,9 +73,7 @@ def _parse_point(raw: str, now: datetime) -> datetime:
             return datetime.strptime(raw.strip(), fmt)
         except ValueError:
             continue
-    raise SystemExit(
-        f"Cannot parse time {raw!r}: use 90m/24h/7d or YYYY-MM-DD [HH:MM]"
-    )
+    raise SystemExit(f"Cannot parse time {raw!r}: use 90m/24h/7d or YYYY-MM-DD [HH:MM]")
 
 
 _VERDICT_LABEL = {
@@ -129,34 +127,34 @@ _CORE: dict[str, _CoreInvestigation] = {
     "flaps": _CoreInvestigation(
         title="agent websocket reconnect churn",
         receipt="earned 2026-07-19: the alpha flap storm - drop taxonomy, "
-                "the journald-lag freeze signature, refresh-storm and "
-                "shipping-overload rule-outs, all field-tested that day.",
+        "the journald-lag freeze signature, refresh-storm and "
+        "shipping-overload rule-outs, all field-tested that day.",
         run=run_flaps,
     ),
     "box": _CoreInvestigation(
         title="host starvation, reboots, upgrades, kernel faults",
         receipt="earned 2026-07-19: the box was frozen by something no "
-                "in-guest suspect explained; every check here acquitted "
-                "one suspect that day, and scheduled reboots stopped "
-                "reading as anomalies.",
+        "in-guest suspect explained; every check here acquitted "
+        "one suspect that day, and scheduled reboots stopped "
+        "reading as anomalies.",
         run=run_box,
     ),
     "deploy": _CoreInvestigation(
         title="is this thing actually deployed on this node",
         receipt="earned 2026-09-07: the audit firm hand-assembled this "
-                "battery over SSH, burned two rounds on pgrep self-match, "
-                "and found a guard binary at /home/storm/buckets-guard while "
-                "every install site in the repo named /home/storm/guard. The "
-                "2026-08-26 measurement had checked a path that has never "
-                "existed on that box.",
+        "battery over SSH, burned two rounds on pgrep self-match, "
+        "and found a guard binary at /home/storm/buckets-guard while "
+        "every install site in the repo named /home/storm/guard. The "
+        "2026-08-26 measurement had checked a path that has never "
+        "existed on that box.",
         run=run_deploy,
     ),
     "logs-pipeline": _CoreInvestigation(
         title="per-group shipping health and parser drift",
         receipt="earned 2026-07-19: lines=0 dropped=45 duration=4502ms read "
-                "as three alarms and was zero - drain window by design, "
-                "drops mostly suppressed-by-design noise. This decides "
-                "noise vs format drift with a raw-source sample.",
+        "as three alarms and was zero - drain window by design, "
+        "drops mostly suppressed-by-design noise. This decides "
+        "noise vs format drift with a raw-source sample.",
         run=run_logs_pipeline,
     ),
 }
@@ -189,7 +187,9 @@ def _list_investigations() -> str:
     for name, core in _CORE.items():
         out.append(f"  {name:<15} {core.title}")
     for integ in registered_integrations():
-        for spec in integ.investigations or ():  # skylos: ignore[SKY-P403] bounded: a few integrations x their declared investigations
+        for spec in (  # skylos: ignore[SKY-P403] bounded: a few integrations x their declared investigations
+            integ.investigations or ()
+        ):
             qualified = f"{integ.id} {spec.name}"
             out.append(
                 f"  {qualified:<15} {spec.title}"
@@ -229,8 +229,17 @@ def add_investigate_args(parser: argparse.ArgumentParser) -> None:
         "--init",
         action="store_true",
         help="author a subject instead of running: offer this box's units and "
-             "derive one from the unit file (deploy only)",
+        "derive one from the unit file (deploy only)",
     )
+
+
+def add_investigate_subparser(subparsers: argparse._SubParsersAction) -> None:  # type: ignore[type-arg]
+    parser = subparsers.add_parser(
+        "investigate",
+        help="run a one-shot diagnostic case file (bare = list investigations)",
+    )
+    add_investigate_args(parser)
+    parser.set_defaults(func=cmd_investigate)
 
 
 def cmd_investigate(args: argparse.Namespace) -> None:
@@ -251,6 +260,7 @@ def cmd_investigate(args: argparse.Namespace) -> None:
             )
             sys.exit(2)
         from stormpulse.cli.deploy_subject_init import run_init
+
         sys.exit(run_init(Path(args.config)))
     core = _CORE.get(args.name)
     if core is None:
@@ -264,14 +274,17 @@ def cmd_investigate(args: argparse.Namespace) -> None:
     sys.stdout.write(render_case_file(core.run(args, window)))
 
 
-def cmd_integration_investigate(integ_id: str, args: argparse.Namespace) -> None:  # skylos: ignore[SKY-Q301] the second door's guard ladder - CORE-005 decision 14
+def cmd_integration_investigate(  # skylos: ignore[SKY-Q301] the second door's guard ladder - CORE-005 decision 14
+    integ_id: str, args: argparse.Namespace
+) -> None:
     """``stormpulse <integration> investigate [name]`` - the second door."""
     import stormpulse.agent.integrations_manifest  # noqa: F401  (registers Integrations)
     from stormpulse.config import ConfigError, load_config
     from stormpulse.integrations import registered_integrations
 
     integ = next(
-        (i for i in registered_integrations() if i.id == integ_id), None,
+        (i for i in registered_integrations() if i.id == integ_id),
+        None,
     )
     specs = {s.name: s for s in (integ.investigations if integ else None) or ()}
     if not args.name or args.name not in specs:
@@ -288,8 +301,7 @@ def cmd_integration_investigate(integ_id: str, args: argparse.Namespace) -> None
         sys.exit(1)
     if parsed is None:
         print(
-            f"No [{integ_id}] section in {args.config}; nothing to "
-            "investigate.",
+            f"No [{integ_id}] section in {args.config}; nothing to investigate.",
             file=sys.stderr,
         )
         sys.exit(1)
