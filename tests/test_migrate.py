@@ -15,6 +15,40 @@ from stormpulse.init.migrate import (
     translate_toml,
 )
 
+# A system-mode config as /etc/stormpulse holds it, before translate_toml.
+_OLD_SYSTEM_TOML = """
+[agent]
+id = "test-agent"
+pulse_token = "test-token"
+
+[dashboard]
+url = "wss://example.test/pulse"
+reconnect_min_seconds = 1
+reconnect_max_seconds = 30
+heartbeat_interval_seconds = 30
+
+[auth]
+hmac_secret = "/etc/stormpulse/hmac.key"
+command_max_age_seconds = 60
+
+[tls]
+ca_cert = "/etc/stormpulse/ca.pem"
+client_cert = "/etc/stormpulse/agent.pem"
+client_key = "/etc/stormpulse/agent-key.pem"
+
+[metrics]
+push_interval_seconds = 10
+collect_containers = false
+
+[project]
+project_dir = "{project}"
+compose_file = "{project}/docker-compose.yml"
+docker_service_name = "web"
+
+[storage]
+db_path = "/opt/stormpulse/data/stormpulse.db"
+"""
+
 
 def _make_plan(tmp_path: Path) -> MigrationPlan:
     """Build a plan with system + user paths under tmp_path."""
@@ -198,38 +232,7 @@ class TestRunMigration:
         project = tmp_path / "project"
         project.mkdir()
         (project / "docker-compose.yml").write_text("services: {}\n")
-        old_toml = f"""
-[agent]
-id = "test-agent"
-pulse_token = "test-token"
-
-[dashboard]
-url = "wss://example.test/pulse"
-reconnect_min_seconds = 1
-reconnect_max_seconds = 30
-heartbeat_interval_seconds = 30
-
-[auth]
-hmac_secret = "/etc/stormpulse/hmac.key"
-command_max_age_seconds = 60
-
-[tls]
-ca_cert = "/etc/stormpulse/ca.pem"
-client_cert = "/etc/stormpulse/agent.pem"
-client_key = "/etc/stormpulse/agent-key.pem"
-
-[metrics]
-push_interval_seconds = 10
-collect_containers = false
-
-[project]
-project_dir = "{project}"
-compose_file = "{project / 'docker-compose.yml'}"
-docker_service_name = "web"
-
-[storage]
-db_path = "/opt/stormpulse/data/stormpulse.db"
-"""
+        old_toml = _OLD_SYSTEM_TOML.format(project=project)
         with (
             patch.object(migrate, "build_plan", return_value=plan),
             patch.object(migrate, "check_preconditions"),
