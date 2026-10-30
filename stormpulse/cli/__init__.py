@@ -6,38 +6,23 @@ import argparse
 import logging
 import os
 import sys
-from pathlib import Path
 
 from stormpulse import __version__
+from stormpulse.init.checks import InitError, refuse_root
+from stormpulse.init.files import default_config_path, user_config_dir
 
 logger = logging.getLogger("stormpulse")
 
-
-def _default_creds_dir() -> str:
-    """Pick a creds-dir default that matches the install mode.
-
-    Root → /etc/stormpulse (legacy system install). Otherwise XDG
-    config dir (~/.config/stormpulse by default). The agent is
-    rootless on hardened boxes, so a non-root caller almost never
-    wants /etc/stormpulse - and writing there fails with PermissionError
-    after the CSR was already signed, burning the enrollment token.
-    """
-    if os.geteuid() == 0:
-        return "/etc/stormpulse"
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    base = Path(xdg) if xdg else Path.home() / ".config"
-    return str(base / "stormpulse")
-
-
-# Late import (after _default_creds_dir is defined) breaks a circular
-# import: stormpulse.init.files reads CLI symbols at module init.
-from stormpulse.init.files import default_config_path  # noqa: E402
-
 _DEFAULT_CONFIG = default_config_path()
-_DEFAULT_CREDS_DIR = _default_creds_dir()
+_DEFAULT_CREDS_DIR = str(user_config_dir())
 
 
 def main() -> None:
+    # One gate for every command: run as root, any of them leaves files the rootless agent cannot read.
+    try:
+        refuse_root(os.geteuid())
+    except InitError as exc:
+        sys.exit(str(exc))
     parser = argparse.ArgumentParser(
         prog="stormpulse",
         description="Storm Pulse agent - secure server management over WebSocket",
@@ -92,32 +77,6 @@ def main() -> None:
         action="store_true",
         help="overwrite existing config and systemd unit",
     )
-    mode_group = init_parser.add_mutually_exclusive_group()
-    mode_group.add_argument(
-        "--system",
-        dest="mode",
-        action="store_const",
-        const="system",
-        help="force system install (legacy rootful path)",
-    )
-    mode_group.add_argument(
-        "--user",
-        dest="mode",
-        action="store_const",
-        const="user",
-        help="force user install (rootless / user systemd unit)",
-    )
-
-    # --- migrate-to-rootless subcommand ---
-    migrate_parser = subparsers.add_parser(
-        "migrate-to-rootless",
-        help="convert an existing system install to user (rootless) mode",
-    )
-    migrate_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="overwrite existing user-mode files if a previous migration left them",
-    )
 
     # --- update subcommand ---
     update_parser = subparsers.add_parser(
@@ -158,13 +117,13 @@ def main() -> None:
     # --- restart subcommand ---
     subparsers.add_parser(
         "restart",
-        help="restart the systemd unit (user-mode auto, system-mode prints hint)",
+        help="restart the user systemd unit",
     )
 
     # --- logs subcommand ---
     logs_parser = subparsers.add_parser(
         "logs",
-        help="tail the agent journal (mode-aware journalctl wrapper)",
+        help="tail the agent journal (journalctl --user wrapper)",
     )
     logs_parser.add_argument(
         "-n",
@@ -307,10 +266,6 @@ def main() -> None:
         from stormpulse.cli.init import cmd_init
 
         cmd_init(args)
-    elif args.command == "migrate-to-rootless":
-        from stormpulse.cli.migrate import cmd_migrate_to_rootless
-
-        cmd_migrate_to_rootless(args)
     elif args.command == "run":
         from stormpulse.cli.run import cmd_run
 
@@ -461,10 +416,6 @@ def main() -> None:
             )
             print(
                 "  init                 Generate config and systemd unit",
-                file=sys.stderr,
-            )
-            print(
-                "  migrate-to-rootless  Convert system install to user mode",
                 file=sys.stderr,
             )
             print("  status               Show agent status", file=sys.stderr)

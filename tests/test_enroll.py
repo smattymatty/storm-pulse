@@ -38,7 +38,6 @@ from stormpulse.enroll import (
     write_credentials,
     write_enroll_metadata,
 )
-from stormpulse.init.mode import InstallMode
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -242,11 +241,11 @@ class TestWriteCredentials:
 
     def test_private_key_permissions(self, tmp_path: Path) -> None:
         creds = write_credentials(tmp_path / "creds", b"KEY_PEM", _mock_response())
-        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o640
+        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o600
 
     def test_hmac_key_permissions(self, tmp_path: Path) -> None:
         creds = write_credentials(tmp_path / "creds", b"KEY_PEM", _mock_response())
-        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o640
+        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o600
 
     def test_cert_permissions(self, tmp_path: Path) -> None:
         creds = write_credentials(tmp_path / "creds", b"KEY_PEM", _mock_response())
@@ -350,39 +349,31 @@ class TestPreflightCredsDir:
 
 
 # ---------------------------------------------------------------------------
-# CLI default creds-dir (euid-aware)
+# CLI default creds-dir
 # ---------------------------------------------------------------------------
 
 
 class TestDefaultCredsDir:
-    def test_root_gets_etc_stormpulse(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from stormpulse.cli import _default_creds_dir
-
-        monkeypatch.setattr(os, "geteuid", lambda: 0)
-        assert _default_creds_dir() == "/etc/stormpulse"
-
-    def test_user_gets_xdg_config(
+    def test_uses_xdg_config(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        from stormpulse.cli import _default_creds_dir
+        from stormpulse.init.files import user_config_dir
 
-        monkeypatch.setattr(os, "geteuid", lambda: 1000)
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-        assert _default_creds_dir() == str(tmp_path / "xdg" / "stormpulse")
+        assert str(user_config_dir()) == str(tmp_path / "xdg" / "stormpulse")
 
-    def test_user_falls_back_to_home_config(
+    def test_falls_back_to_home_config(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
-        from stormpulse.cli import _default_creds_dir
+        from stormpulse.init.files import user_config_dir
 
-        monkeypatch.setattr(os, "geteuid", lambda: 1000)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
-        assert _default_creds_dir() == str(tmp_path / ".config" / "stormpulse")
+        assert str(user_config_dir()) == str(tmp_path / ".config" / "stormpulse")
 
 
 # ---------------------------------------------------------------------------
@@ -495,8 +486,8 @@ class TestIntegration:
         )
         creds = write_credentials(tmp_path / "creds", key_pem, server_response)
 
-        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o640
-        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o640
+        assert stat.S_IMODE(creds.client_key.stat().st_mode) == 0o600
+        assert stat.S_IMODE(creds.hmac_key.stat().st_mode) == 0o600
         assert stat.S_IMODE(creds.client_cert.stat().st_mode) == 0o644
         assert stat.S_IMODE(creds.ca_cert.stat().st_mode) == 0o644
 
@@ -817,21 +808,6 @@ def test_read_only_creds_dir_fails_up_front_writing_nothing(tmp_path: Path) -> N
     gen.assert_not_called()
     assert server.calls == []
     assert sorted(p.name for p in creds.iterdir()) == ["agent.pem", "ca.pem"]
-
-
-def test_system_mode_fails_up_front_even_when_writable(tmp_path: Path) -> None:
-    """``sudo stormpulse renew`` would leave a root-only key (CORE-010 d1)."""
-    server = _FakeRenewServer()
-    with (
-        patch("stormpulse.enroll.urllib.request.urlopen", side_effect=server),
-        patch("stormpulse.enroll.detect_mode", return_value=InstallMode.SYSTEM),
-        patch("stormpulse.enroll.generate_keypair") as gen,
-    ):
-        with pytest.raises(RenewError) as exc_info:
-            renew_certificate(_tls(tmp_path), "a", DASHBOARD, MagicMock())
-    assert exc_info.value.reason == "creds_not_writable"
-    gen.assert_not_called()
-    assert server.calls == []
 
 
 def test_request_uses_the_renew_timeout(tmp_path: Path) -> None:

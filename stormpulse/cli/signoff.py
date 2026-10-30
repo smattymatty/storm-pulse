@@ -133,8 +133,7 @@ def cmd_signoff_unseal(args: argparse.Namespace) -> None:
         "whitelist is built once at boot, so verify-block and apply-block "
         "dispatch stay unloaded until then. Restart the agent to load them:",
     )
-    print("      systemctl --user restart stormpulse.service   # rootless (all prod)")
-    print("      # system-mode installs: sudo systemctl restart stormpulse.service")
+    print("      systemctl --user restart stormpulse.service")
     print(
         "Reseal as soon as verification is done. While unsealed the dashboard "
         "can run arbitrary HMAC-signed shell on this host.",

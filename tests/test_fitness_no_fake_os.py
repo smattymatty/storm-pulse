@@ -20,7 +20,7 @@ def test_a_faked_identity_is_counted_per_file(
 ) -> None:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_x.py").write_text(
-        '@patch("stormpulse.init.mode.os.geteuid", return_value=0)\n'
+        '@patch("stormpulse.cli.run.os.geteuid", return_value=0)\n'
         'monkeypatch.setattr(os, "access", lambda *a: True)\n'
         'patch.object(pwd, "getpwnam")\n',
         encoding="utf-8",

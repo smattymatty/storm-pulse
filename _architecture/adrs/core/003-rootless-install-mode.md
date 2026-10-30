@@ -19,14 +19,9 @@ Rootless Docker is per-user; the socket at `$XDG_RUNTIME_DIR/docker.sock` is mod
 
 ## Decision
 
-**Two install modes, auto-detected.** `stormpulse init` probes `$XDG_RUNTIME_DIR/docker.sock`:
+**One install, rootless.** (Amended 2026-10-30: System mode and `migrate-to-rootless` removed in 0.9.0; every node runs rootless.) Pipx install as the operator user that owns rootless Docker, config + creds under `~/.config/stormpulse/`, data under `~/.local/share/stormpulse/`, user systemd unit at `~/.config/systemd/user/stormpulse.service` with `Environment=DOCKER_HOST=unix://%t/docker.sock`. No `User=`, no `ProtectHome=yes`, no docker group, no `stormpulse` system user.
 
-- Socket present and readable → **user mode**. Pipx install, config + creds under `~/.config/stormpulse/`, data under `~/.local/share/stormpulse/`, user systemd unit at `~/.config/systemd/user/stormpulse.service` with `Environment=DOCKER_HOST=unix://%t/docker.sock`. No `User=`, no `ProtectHome=yes`, no docker group, no `stormpulse` system user.
-- Socket absent → **system mode** (existing rootful path, unchanged).
-
-`--user` and `--system` flags force the mode. Running `--user` as root or `--system` as non-root is refused with a message that points at the right resolution.
-
-**Migration via `stormpulse migrate-to-rootless`.** In-place: stops the system unit via sudo, copies the four cred files to the user-scoped dir and re-chowns to the invoking user, rewrites the TOML paths, writes the user unit, enables and starts it, verifies. Cryptographic identity is preserved so the dashboard sees the same agent. Old install is left for rollback; cleanup of `/etc/stormpulse/`, `/opt/stormpulse/`, and the `stormpulse` system user is a separate manual step.
+**Root is refused.** Root work is not Storm Pulse's purpose (maintainer, 2026-10-30: "if people want a root based system they can pair pulse with ansible").  `stormpulse`'s `main` checks `os.geteuid()` before it parses an argument and refuses UID 0, so every command refuses: a sudo install, a hand-written root unit or a `sudo stormpulse renew` (which would leave the agent a root-owned key) stops before it writes or opens anything.
 
 ## Corollary: edge services on the host
 
@@ -57,19 +52,17 @@ The agent already supports `file`-typed log sources (`stormpulse/config.py:_LOG_
 
 **Negative:**
 
-- Two install paths to maintain. The init wizard branches; tests are parameterised on mode.
-- Existing rootful installs need a one-time migration. `migrate-to-rootless` handles it; operator still has to run it.
 - `pipx` is a new prerequisite. One-line `apt install pipx` on Ubuntu 22.04+.
 - Caddy version follows Ubuntu's apt repo cadence rather than upstream.
 
 ## Governance
 
-**Automated enforcement.** None. Mode mismatch is caught at init time; downstream validation (e.g. dashboard sign-off requiring an active agent) lives in the control plane.
+**Automated enforcement.** No fitness function. The root refusal is a runtime check (`refuse_root`, `stormpulse/init/checks.py`), pinned per entry point by `tests/test_refuse_root.py`; downstream validation (e.g. dashboard sign-off requiring an active agent) lives in the control plane.
 
 **Manual review.** A future ADR is required to: re-introduce a docker-group dependency on hardened boxes, ship a `--rootless` containerised Caddy variant, or lower `ip_unprivileged_port_start` system-wide.
 
 **Related ADRs:**
 
-- [CORE-000 Internal module architecture](000-internal-module-architecture.md) - the layer topology the new `stormpulse.init.mode` module slots into.
+- [CORE-000 Internal module architecture](000-internal-module-architecture.md) - the layer topology `stormpulse.init` sits in.
 - [CORE-001 Fitness functions](001-fitness-functions.md) - `make fitness` verifies the layer topology holds after the additions.
 - [CORE-002 Release pipeline](002-release-and-ci-cd-pipeline.md) - the 0.1.7 entry in `CHANGELOG.md` ships this work.

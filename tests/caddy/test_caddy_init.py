@@ -188,7 +188,7 @@ class TestAppendCaddySection:
 class TestRunCaddyInit:
     def test_unwritable_config_dir_exits(self, tmp_path: Path) -> None:
         # Parent dir does not exist - writability gate (ADR core/003)
-        # fires before mode-specific paths.
+        # fires first.
         bad_path = tmp_path / "nonexistent" / "stormpulse.toml"
         with pytest.raises(InitError, match="Cannot write"):
             run_caddy_init(bad_path)
@@ -245,11 +245,9 @@ class TestRunCaddyInit:
         caddyfile = tmp_path / "Caddyfile"
         caddyfile.write_text("import conf.d/*.caddy\n")
 
-        # Prompts in order: admin URL, drop-in path, enable-caddy,
-        # ship-caddy-logs, ship-cert-events, restart. Empty strings
-        # accept defaults; "n" declines both log-group offers and the
-        # restart. Test runs unprivileged so detect_mode() returns
-        # USER, which is the path that prompts for restart at all.
+        # Prompts: admin URL, drop-in path, enable-caddy, ship-caddy-logs,
+        # ship-cert-events, restart. "" takes defaults; "n" declines the log
+        # groups and the restart.
         with patch(
             "stormpulse.caddy.init.find_caddy_main",
             return_value=caddyfile,
@@ -322,7 +320,7 @@ class TestRunCaddyInit:
                 patch("stormpulse.init.prompts.prompt", side_effect=mock_prompt),
             ):
                 with patch(
-                    "stormpulse.caddy.init.restart_or_hint",
+                    "stormpulse.caddy.init.offer_restart",
                 ) as mock_restart:
                     run_caddy_init(cfg)
 

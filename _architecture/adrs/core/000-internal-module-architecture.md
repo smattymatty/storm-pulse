@@ -20,8 +20,8 @@ kernel is defined. No import rule changed.
 ## Context
 
 `stormpulse/` runs on every host Storm operates, as the most privileged process
-on the box (host root in system mode, the rootless-Docker user in the hardened
-mode of [CORE-003](003-rootless-install-mode.md), see the
+on the box (the rootless-Docker user of
+[CORE-003](003-rootless-install-mode.md), see the
 [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture)).
 Its import graph has to be one a maintainer can hold in their head.
 

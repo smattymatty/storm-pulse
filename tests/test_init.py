@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -17,26 +16,19 @@ from stormpulse.init import (
     InitConfig,
     InitError,
     check_credentials,
-    check_root,
     derive_dashboard_url,
     detect_compose_files,
     extract_agent_id,
     generate_toml,
     load_enroll_metadata,
     parse_service_names,
-    parse_volume_mounts,
     prompt_compose_file,
     prompt_dashboard_url,
     prompt_docker_service,
     prompt_env_file,
     prompt_project_dir,
     prompt_pulse_token,
-    render_systemd_unit,
-    run_daemon_reload,
     run_init,
-    run_system_setup,
-    write_config_file,
-    write_systemd_unit,
 )
 from stormpulse.init.prompts import prompt_confirm
 
@@ -105,22 +97,6 @@ services:
     image: myapp:latest
     command: celery worker
 """
-
-
-# ---------------------------------------------------------------------------
-# TestCheckRoot
-# ---------------------------------------------------------------------------
-
-
-class TestCheckRoot:
-    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
-    def test_passes_as_root(self, _mock: MagicMock) -> None:
-        check_root()  # should not raise
-
-    @patch("stormpulse.init.checks.os.geteuid", return_value=1000)
-    def test_raises_when_not_root(self, _mock: MagicMock) -> None:
-        with pytest.raises(InitError, match="must be run as root"):
-            check_root()
 
 
 # ---------------------------------------------------------------------------
@@ -282,78 +258,6 @@ class TestParseServiceNames:
 
     def test_missing_file(self, tmp_path: Path) -> None:
         assert parse_service_names(tmp_path / "nope.yml") == []
-
-
-# ---------------------------------------------------------------------------
-# TestParseVolumeMounts
-# ---------------------------------------------------------------------------
-
-
-class TestParseVolumeMounts:
-    def test_relative_bind_mounts(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        p.write_text(SAMPLE_COMPOSE)
-        volumes = parse_volume_mounts(p, tmp_path)
-        assert volumes is not None
-        resolved = [v.name for v in volumes]
-        assert "data" in resolved
-        assert "logs" in resolved
-
-    def test_named_volumes_ignored(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        p.write_text(SAMPLE_COMPOSE)
-        volumes = parse_volume_mounts(p, tmp_path)
-        assert volumes is not None
-        names = [v.name for v in volumes]
-        assert "pgdata" not in names
-
-    def test_ro_flags_handled(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        p.write_text(SAMPLE_COMPOSE)
-        volumes = parse_volume_mounts(p, tmp_path)
-        assert volumes is not None
-        # ./logs:/app/logs:ro should be parsed
-        assert any(v.name == "logs" for v in volumes)
-
-    def test_no_volumes_section(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        p.write_text(SAMPLE_COMPOSE_NO_VOLUMES)
-        assert parse_volume_mounts(p, tmp_path) == []
-
-    def test_relative_path_resolution(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        p.write_text("services:\n  web:\n    volumes:\n      - ./mydata:/data\n")
-        volumes = parse_volume_mounts(p, tmp_path)
-        assert volumes is not None
-        assert len(volumes) == 1
-        assert volumes[0] == (tmp_path / "mydata").resolve()
-
-    def test_no_duplicates(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        # Same volume mounted in two services
-        p.write_text(
-            "services:\n"
-            "  web:\n    volumes:\n      - ./data:/app/data\n"
-            "  worker:\n    volumes:\n      - ./data:/worker/data\n"
-        )
-        volumes = parse_volume_mounts(p, tmp_path)
-        assert volumes is not None
-        assert len(volumes) == 1
-
-    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
-        assert parse_volume_mounts(tmp_path / "nope.yml", tmp_path) is None
-
-    def test_not_a_compose_file_returns_none(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        p.write_text("just some random text\nno services here\n")
-        assert parse_volume_mounts(p, tmp_path) is None
-
-    def test_empty_list_when_no_bind_mounts(self, tmp_path: Path) -> None:
-        p = tmp_path / "docker-compose.yml"
-        p.write_text(SAMPLE_COMPOSE_NO_VOLUMES)
-        result = parse_volume_mounts(p, tmp_path)
-        assert result is not None
-        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -751,6 +655,7 @@ class TestGenerateToml:
             compose_file=tmp_path / "project" / "docker-compose.yml",
             docker_service_name="web",
             env_file=env_file,
+            data_dir=tmp_path / "data",
         )
 
     def test_valid_toml(self, tmp_path: Path) -> None:
@@ -813,355 +718,82 @@ class TestGenerateToml:
         assert parsed["tls"]["client_key"] == f"{creds}/agent-key.pem"
         assert parsed["auth"]["hmac_secret"] == f"{creds}/hmac.key"
 
+    def test_db_path_under_data_dir(self, tmp_path: Path) -> None:
+        import tomllib
+
+        parsed = tomllib.loads(generate_toml(self._make_config(tmp_path)))
+        assert parsed["storage"]["db_path"] == str(tmp_path / "data" / "stormpulse.db")
+
 
 # ---------------------------------------------------------------------------
-# TestWriteConfigFile
+# TestUserWriters: the only writers init has, unmocked
 # ---------------------------------------------------------------------------
 
 
-class TestWriteConfigFile:
-    def test_correct_content(self, tmp_path: Path) -> None:
-        path = tmp_path / "stormpulse.toml"
-        write_config_file(path, "content = true\n", force=True)
-        assert path.read_text() == "content = true\n"
+class TestUserWriters:
+    def test_config_is_written_owner_only(self, tmp_path: Path) -> None:
+        import stat
 
-    def test_permissions(self, tmp_path: Path) -> None:
-        path = tmp_path / "stormpulse.toml"
-        write_config_file(path, "x = 1\n", force=True)
-        assert stat.S_IMODE(path.stat().st_mode) == 0o640
+        from stormpulse.init import write_user_config_file
 
-    def test_no_tmp_left(self, tmp_path: Path) -> None:
-        path = tmp_path / "stormpulse.toml"
-        write_config_file(path, "x = 1\n", force=True)
+        path = tmp_path / "cfg" / "stormpulse.toml"
+        write_user_config_file(path, "x = 1\n")
+        assert path.read_text() == "x = 1\n"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600  # holds the pulse token
         assert not path.with_suffix(".tmp").exists()
 
-    def test_refuses_overwrite_without_force(self, tmp_path: Path) -> None:
+    def test_config_refuses_overwrite_without_force(self, tmp_path: Path) -> None:
+        from stormpulse.init import InitError, write_user_config_file
+
         path = tmp_path / "stormpulse.toml"
         path.write_text("old")
         with pytest.raises(InitError, match="already exists"):
-            write_config_file(path, "new")
+            write_user_config_file(path, "new")
+        assert path.read_text() == "old"
+        write_user_config_file(path, "new", force=True)
+        assert path.read_text() == "new"
 
+    def test_unit_refuses_overwrite_without_force(self, tmp_path: Path) -> None:
+        import stat
 
-# ---------------------------------------------------------------------------
-# TestWriteSystemdUnit
-# ---------------------------------------------------------------------------
+        from stormpulse.init import InitError, write_user_systemd_unit
 
-
-class TestWriteSystemdUnit:
-    def test_correct_content(self, tmp_path: Path) -> None:
-        path = tmp_path / "stormpulse.service"
-        project = tmp_path / "project"
-        content = render_systemd_unit(project)
-        write_systemd_unit(path, content, force=True)
-        assert path.read_text() == content
-
-    def test_includes_project_dir_readwrite(self, tmp_path: Path) -> None:
-        path = tmp_path / "stormpulse.service"
-        project = tmp_path / "myproject"
-        content = render_systemd_unit(project)
-        write_systemd_unit(path, content, force=True)
-        written = path.read_text()
-        assert f"ReadWritePaths={project}" in written
-
-    def test_permissions(self, tmp_path: Path) -> None:
-        path = tmp_path / "stormpulse.service"
-        content = render_systemd_unit(tmp_path / "p")
-        write_systemd_unit(path, content, force=True)
+        path = tmp_path / "user" / "stormpulse.service"
+        write_user_systemd_unit(path, "[Unit]\n")
         assert stat.S_IMODE(path.stat().st_mode) == 0o644
-
-    def test_refuses_overwrite(self, tmp_path: Path) -> None:
-        path = tmp_path / "stormpulse.service"
-        path.write_text("old")
-        content = render_systemd_unit(tmp_path / "p")
         with pytest.raises(InitError, match="already exists"):
-            write_systemd_unit(path, content)
+            write_user_systemd_unit(path, "[Service]\n")
+        assert path.read_text() == "[Unit]\n"
 
-
-# ---------------------------------------------------------------------------
-# TestRunFindApply
-# ---------------------------------------------------------------------------
-
-
-class TestRunFindApply:
-    @patch("stormpulse.init.system.subprocess.Popen")
-    def test_builds_find_with_prune_args(
-        self,
-        mock_popen: MagicMock,
-        tmp_path: Path,
+    def test_init_writes_where_every_command_reads(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        from stormpulse.init import run_find_apply
-
-        mock_find = MagicMock()
-        mock_find.stdout = MagicMock()
-        mock_find.wait.return_value = 0
-        mock_find.returncode = 0
-
-        mock_xargs = MagicMock()
-        mock_xargs.communicate.return_value = (b"", b"")
-        mock_xargs.returncode = 0
-
-        mock_popen.side_effect = [mock_find, mock_xargs]
-
-        vol1 = tmp_path / "data"
-        vol2 = tmp_path / "logs"
-
-        result = run_find_apply(
-            tmp_path,
-            [vol1, vol2],
-            ["/usr/bin/chown", "root:stormpulse"],
-            description="test chown",
+        # signoff seal reads default_config_path(); init writes user_config_path().
+        from stormpulse.init.files import (
+            default_config_path,
+            user_config_path,
+            user_systemd_path,
         )
 
-        assert result is True
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        expected = tmp_path / "xdg" / "stormpulse" / "stormpulse.toml"
+        assert user_config_path() == Path(default_config_path()) == expected
+        unit = tmp_path / "xdg" / "systemd" / "user" / "stormpulse.service"
+        assert user_systemd_path() == unit
 
-        find_args = mock_popen.call_args_list[0][0][0]
-        assert find_args[0] == "/usr/bin/find"
-        assert find_args[1] == str(tmp_path)
-        # Prune structure: -path <vol1> -prune -o -path <vol2> -prune -o -print0
-        assert str(vol1) in find_args
-        assert str(vol2) in find_args
-        assert find_args.count("-prune") == 2
-        assert find_args[-1] == "-print0"
+    def test_daemon_reload_failure_raises(self) -> None:
+        import subprocess
 
-        xargs_args = mock_popen.call_args_list[1][0][0]
-        assert xargs_args == [
-            "/usr/bin/xargs",
-            "-0",
-            "/usr/bin/chown",
-            "root:stormpulse",
-        ]
+        from stormpulse.init import InitError
+        from stormpulse.init.system import run_user_daemon_reload
 
-    @patch("stormpulse.init.system.subprocess.Popen")
-    def test_returns_false_on_find_failure(
-        self,
-        mock_popen: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        from stormpulse.init import run_find_apply
-
-        mock_find = MagicMock()
-        mock_find.stdout = MagicMock()
-        mock_find.wait.return_value = 1
-        mock_find.returncode = 1
-
-        mock_xargs = MagicMock()
-        mock_xargs.communicate.return_value = (b"", b"permission denied")
-        mock_xargs.returncode = 0
-
-        mock_popen.side_effect = [mock_find, mock_xargs]
-
-        result = run_find_apply(
-            tmp_path,
-            [],
-            ["/usr/bin/chown", "root:stormpulse"],
-            description="test",
-        )
-        assert result is False
-
-    @patch("stormpulse.init.system.subprocess.Popen")
-    def test_returns_false_on_missing_binary(
-        self,
-        mock_popen: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        from stormpulse.init import run_find_apply
-
-        mock_popen.side_effect = FileNotFoundError(2, "No such file", "/usr/bin/find")
-
-        result = run_find_apply(
-            tmp_path,
-            [],
-            ["/usr/bin/chown", "root:stormpulse"],
-            description="test",
-        )
-        assert result is False
-
-
-# ---------------------------------------------------------------------------
-# TestRunSystemSetup
-# ---------------------------------------------------------------------------
-
-
-class TestRunSystemSetup:
-    @patch("stormpulse.init.system.subprocess.run")
-    @patch("stormpulse.init.system.parse_volume_mounts", return_value=[])
-    def test_no_volumes_uses_simple_chown(
-        self,
-        _mock_vol: MagicMock,
-        mock_run: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        project = tmp_path / "project"
-        project.mkdir()
-        compose = project / "docker-compose.yml"
-        compose.write_text("services:")
-
-        run_system_setup(project, compose)
-
-        all_args = [c[0][0] for c in mock_run.call_args_list]
-        assert any("/usr/sbin/usermod" in args for args in all_args)
-        assert any("/usr/bin/git" in args for args in all_args)
-        chown_calls = [a for a in all_args if "/usr/bin/chown" in a]
-        assert len(chown_calls) == 1
-        assert "-R" in chown_calls[0]
-        assert "root:stormpulse" in chown_calls[0]
-
-    @patch("stormpulse.init.system.run_find_apply", return_value=True)
-    @patch("stormpulse.init.system.subprocess.run")
-    def test_with_volumes_uses_find_prune(
-        self,
-        mock_run: MagicMock,
-        mock_find_apply: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        project = tmp_path / "project"
-        project.mkdir()
-        data_dir = project / "data"
-        data_dir.mkdir()
-        compose = project / "docker-compose.yml"
-        compose.write_text(
-            "services:\n  web:\n    volumes:\n      - ./data:/app/data\n"
-        )
-
-        run_system_setup(project, compose)
-
-        # run_find_apply called twice (chown + chmod)
-        assert mock_find_apply.call_count == 2
-
-        # First call: chown with volume excluded
-        chown_call = mock_find_apply.call_args_list[0]
-        assert chown_call[0][0] == project
-        assert data_dir.resolve() in chown_call[0][1]
-        assert "root:stormpulse" in chown_call[0][2]
-
-        # Second call: chmod with volume excluded
-        chmod_call = mock_find_apply.call_args_list[1]
-        assert "g+w" in chmod_call[0][2]
-
-        # No chown -R on the project dir via subprocess.run
-        run_args = [c[0][0] for c in mock_run.call_args_list]
-        project_chowns = [
-            a for a in run_args if "/usr/bin/chown" in a and str(project) in a
-        ]
-        assert len(project_chowns) == 0
-
-    @patch("stormpulse.init.system.run_find_apply", return_value=True)
-    @patch("stormpulse.init.system.subprocess.run")
-    def test_volume_dirs_never_chowned(
-        self,
-        mock_run: MagicMock,
-        mock_find_apply: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        project = tmp_path / "project"
-        project.mkdir()
-        data_dir = project / "data"
-        data_dir.mkdir()
-        logs_dir = project / "logs"
-        logs_dir.mkdir()
-        compose = project / "docker-compose.yml"
-        compose.write_text(
-            "services:\n  web:\n    volumes:\n"
-            "      - ./data:/app/data\n"
-            "      - ./logs:/app/logs\n"
-        )
-
-        run_system_setup(project, compose)
-
-        # No subprocess.run calls should reference volume dirs
-        for c in mock_run.call_args_list:
-            args_str = str(c[0][0])
-            if "chown" in args_str or "chmod" in args_str:
-                assert str(data_dir) not in args_str
-                assert str(logs_dir) not in args_str
-
-    @patch("stormpulse.init.system.subprocess.run")
-    @patch("stormpulse.init.system.parse_volume_mounts", return_value=None)
-    def test_parse_failure_skips_chown(
-        self,
-        _mock_vol: MagicMock,
-        mock_run: MagicMock,
-        tmp_path: Path,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        project = tmp_path / "project"
-        project.mkdir()
-        compose = project / "docker-compose.yml"
-
-        run_system_setup(project, compose)
-
-        # No chown or chmod calls at all (only usermod + git config)
-        all_args = [c[0][0] for c in mock_run.call_args_list]
-        chown_calls = [a for a in all_args if "/usr/bin/chown" in a]
-        chmod_calls = [a for a in all_args if "/usr/bin/chmod" in a]
-        assert len(chown_calls) == 0
-        assert len(chmod_calls) == 0
-
-        # Warning printed to stderr
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
-        assert "Could not parse" in captured.err
-
-    @patch("stormpulse.init.system.subprocess.run")
-    @patch("stormpulse.init.system.parse_volume_mounts", return_value=[])
-    def test_continues_on_failure(
-        self,
-        _mock_vol: MagicMock,
-        mock_run: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        import subprocess as sp
-
-        mock_run.side_effect = sp.CalledProcessError(1, "cmd", stderr=b"error")
-        project = tmp_path / "project"
-        project.mkdir()
-        compose = project / "docker-compose.yml"
-
-        # Should not raise
-        run_system_setup(project, compose)
-
-    @patch("stormpulse.init.system.run_find_apply", return_value=False)
-    @patch("stormpulse.init.system.subprocess.run")
-    def test_returns_early_on_chown_failure_with_volumes(
-        self,
-        mock_run: MagicMock,
-        mock_find_apply: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        project = tmp_path / "project"
-        project.mkdir()
-        data_dir = project / "data"
-        data_dir.mkdir()
-        compose = project / "docker-compose.yml"
-        compose.write_text(
-            "services:\n  web:\n    volumes:\n      - ./data:/app/data\n"
-        )
-
-        run_system_setup(project, compose)
-
-        # chown failed, so chmod should not be attempted
-        assert mock_find_apply.call_count == 1
-
-
-# ---------------------------------------------------------------------------
-# TestRunDaemonReload
-# ---------------------------------------------------------------------------
-
-
-class TestRunDaemonReload:
-    @patch("stormpulse.init.system.subprocess.run")
-    def test_calls_systemctl(self, mock_run: MagicMock) -> None:
-        run_daemon_reload()
-        mock_run.assert_called_once()
-        assert "daemon-reload" in mock_run.call_args[0][0]
-
-    @patch("stormpulse.init.system.subprocess.run")
-    def test_raises_on_failure(self, mock_run: MagicMock) -> None:
-        import subprocess as sp
-
-        mock_run.side_effect = sp.CalledProcessError(1, "systemctl", stderr=b"fail")
-        with pytest.raises(InitError, match="daemon-reload failed"):
-            run_daemon_reload()
+        failed = subprocess.CalledProcessError(1, "systemctl", stderr=b"no bus")
+        with (
+            patch("stormpulse.init.system.subprocess.run", side_effect=failed),
+            pytest.raises(InitError, match="daemon-reload failed"),
+        ):
+            run_user_daemon_reload()
 
 
 # ---------------------------------------------------------------------------
@@ -1170,33 +802,30 @@ class TestRunDaemonReload:
 
 
 class TestRunInit:
-    @patch("stormpulse.init.mode.os.geteuid", return_value=1000)
-    def test_aborts_not_root(self, _mock: MagicMock, tmp_path: Path) -> None:
-        # Force system mode (would otherwise auto-detect to user when
-        # the rootless socket is present on the test host).
-        from stormpulse.init import InstallMode
+    @pytest.fixture(autouse=True)
+    def _user_home(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        monkeypatch.setattr(
+            "stormpulse.init.orchestrator._resolve_user_agent_bin",
+            lambda: Path("/usr/bin/stormpulse"),
+        )
+        monkeypatch.setattr(
+            "stormpulse.init.orchestrator.check_linger_enabled", lambda: True
+        )
 
-        with pytest.raises(InitError, match="needs root|must be run as root"):
-            run_init(tmp_path, mode=InstallMode.SYSTEM)
-
-    @patch("stormpulse.init.mode.os.geteuid", return_value=0)
-    def test_aborts_missing_creds(self, _mock: MagicMock, tmp_path: Path) -> None:
-        from stormpulse.init import InstallMode
-
+    def test_aborts_missing_creds(self, tmp_path: Path) -> None:
         with pytest.raises(InitError, match="not found"):
-            run_init(tmp_path / "nonexistent", mode=InstallMode.SYSTEM)
+            run_init(tmp_path / "nonexistent")
 
     @patch("stormpulse.init.orchestrator.registered_init_steps", return_value=[])
-    @patch("stormpulse.init.orchestrator.run_daemon_reload")
+    @patch("stormpulse.init.orchestrator.run_user_daemon_reload")
     @patch("stormpulse.init.orchestrator.run_system_setup")
-    @patch("stormpulse.init.orchestrator.write_systemd_unit")
-    @patch("stormpulse.init.orchestrator.write_config_file")
-    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
+    @patch("stormpulse.init.orchestrator.write_user_systemd_unit")
+    @patch("stormpulse.init.orchestrator.write_user_config_file")
     @patch("builtins.input")
     def test_happy_path(
         self,
         mock_input: MagicMock,
-        _mock_root: MagicMock,
         mock_write_config: MagicMock,
         mock_write_unit: MagicMock,
         mock_setup: MagicMock,
@@ -1248,16 +877,14 @@ class TestRunInit:
         mock_setup.assert_called_once()
         mock_reload.assert_called_once()
 
-    @patch("stormpulse.init.orchestrator.run_daemon_reload")
+    @patch("stormpulse.init.orchestrator.run_user_daemon_reload")
     @patch("stormpulse.init.orchestrator.run_system_setup")
-    @patch("stormpulse.init.orchestrator.write_systemd_unit")
-    @patch("stormpulse.init.orchestrator.write_config_file")
-    @patch("stormpulse.init.checks.os.geteuid", return_value=0)
+    @patch("stormpulse.init.orchestrator.write_user_systemd_unit")
+    @patch("stormpulse.init.orchestrator.write_user_config_file")
     @patch("builtins.input")
     def test_runs_registered_steps(
         self,
         mock_input: MagicMock,
-        _mock_root: MagicMock,
         _mock_write_config: MagicMock,
         _mock_write_unit: MagicMock,
         _mock_setup: MagicMock,
@@ -1318,27 +945,10 @@ class TestInitRegistry:
             pass
 
         before = registered_init_steps()
-        register_init_step(_step, on_migrate=False)
+        register_init_step(_step)
         after = registered_init_steps()
         assert _step in after
         assert len(after) == len(before) + 1
-
-    def test_migration_runs_only_the_steps_that_ask(self) -> None:
-        from stormpulse.init.registry import (
-            migration_init_steps,
-            register_init_step,
-        )
-
-        def _carried(_path: Path) -> None:
-            pass
-
-        def _state(_path: Path) -> None:
-            pass
-
-        register_init_step(_carried, on_migrate=False)
-        register_init_step(_state, on_migrate=True)
-        assert _state in migration_init_steps()
-        assert _carried not in migration_init_steps()
 
     def test_returns_a_copy(self) -> None:
         from stormpulse.init.registry import registered_init_steps

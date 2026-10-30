@@ -10,11 +10,10 @@ import tomllib
 from pathlib import Path
 
 from stormpulse.init import InitError, prompt
-from stormpulse.init.files import default_config_path
-from stormpulse.init.mode import InstallMode, detect_mode
+from stormpulse.init.files import require_writable_config
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
-from stormpulse.init.system import restart_or_hint
+from stormpulse.init.system import offer_restart
 
 _GARAGE_CONFIG_SEARCH_PATHS = [
     Path("/opt/garage/garage.toml"),
@@ -334,18 +333,7 @@ def run_garage_init(
     force: bool = False,
 ) -> None:
     """Public entry point for ``stormpulse garage init``."""
-    # Writability gate. Replaces the old root-only check: USER mode is
-    # the default on hardened boxes (ADR core/003), so requiring sudo
-    # was wrong. The CLI has already routed ``config_path`` through
-    # ``default_config_path()`` for the operator's mode, so we just
-    # verify the parent dir is writable for whoever's running us.
-    if not os.access(config_path.parent, os.W_OK):
-        suggested = default_config_path()
-        raise InitError(
-            f"Cannot write to {config_path}. "
-            f"In USER mode the config should be at {suggested} "
-            f"and owned by the operator. In SYSTEM mode, re-run with sudo."
-        )
+    require_writable_config(config_path)
 
     # Find garage config
     garage_config = find_garage_config(garage_config_override)
@@ -432,19 +420,7 @@ def run_garage_init(
     )
     print(f"\n  [garage] section written to {config_path}", file=sys.stderr)
 
-    # Restart. No-escalation posture (see stormpulse.init.system):
-    # SYSTEM mode prints the hint and never shells out; USER mode runs
-    # the user unit restart after explicit operator consent.
-    mode = detect_mode()
-    if mode is InstallMode.SYSTEM:
-        restart_or_hint(mode)
-    elif prompt_confirm("Restart stormpulse now?"):
-        restart_or_hint(mode)
-    else:
-        print(
-            "\n  Restart later with:\n    systemctl --user restart stormpulse",
-            file=sys.stderr,
-        )
+    offer_restart()
 
 
 def garage_init_step(config_path: Path) -> None:
@@ -482,5 +458,4 @@ def garage_init_step(config_path: Path) -> None:
     )
 
 
-# Migration carries [garage] in the translated TOML; re-prompting adds nothing.
-register_init_step(garage_init_step, on_migrate=False)
+register_init_step(garage_init_step)

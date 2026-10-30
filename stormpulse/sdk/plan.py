@@ -132,9 +132,10 @@ class InitPlan:
 
 @dataclass(frozen=True, slots=True)
 class InitContext:
-    """Read-only facts the host hands the wizard: the install mode, the config
-    path, discovered values, and resolved dependency readiness. The wizard reads
-    this and returns data; it never mutates the host through it (I2)."""
+    """Read-only facts the host hands the wizard: the install mode (always
+    ``"user"`` since 0.9.0), the config path, discovered values, and resolved
+    dependency readiness. The wizard reads this and returns data; it never
+    mutates the host through it (I2)."""
 
     mode: str
     config_path: str

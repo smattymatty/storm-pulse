@@ -7,11 +7,6 @@ install the wrapper restarts the agent's user unit by default --
 ``pipx install --force`` replaces the binary on disk but the running
 process keeps the old code in memory until restart, so auto-restart
 is the correct default, not a cosmetic add-on.
-
-No subprocess sudo. In system-mode contexts (EUID 0 or detected via
-``stormpulse.init.mode.detect_mode``) the wrapper prints the restart
-command for the operator to run, matching the no-escalation posture
-of the install/init flow.
 """
 
 from __future__ import annotations
@@ -22,8 +17,7 @@ import shutil
 import subprocess
 import sys
 
-from stormpulse.init.mode import detect_mode
-from stormpulse.init.system import restart_or_hint
+from stormpulse.init.system import restart_user_unit
 
 logger = logging.getLogger("stormpulse")
 
@@ -98,6 +92,6 @@ def cmd_update(args: argparse.Namespace) -> None:
         )
         return
 
-    code = restart_or_hint(detect_mode())
+    code = restart_user_unit()
     if code != 0:
         sys.exit(code)

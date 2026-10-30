@@ -26,7 +26,7 @@ class IntegrationWizard(Protocol):
 
     def questions(self, context: InitContext) -> list[Question]:
         """The questions to ask, given the read-only context (discovered values,
-        dependency readiness, mode)."""
+        dependency readiness)."""
         ...
 
     def inspect(self, answers: Answers, context: InitContext) -> list[Finding]:

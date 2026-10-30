@@ -149,8 +149,8 @@ CORE-009 records its own testability mechanism (pure judges over fetched text).
 Not mechanized, and said so: CORE-002's release discipline (a four-step act on
 the maker's machine, guarded by `make pre-release-check` and by keeping no
 publishing credential on any server) is procedure, not a fitness function.
-CORE-003's two install modes are auto-detected at init and refused when forced
-wrongly, which is a runtime check and not a tree check.
+CORE-003's root refusal at `init`, `enroll` and `run` is a runtime check and
+not a tree check.
 
 ## Characteristic coverage map (derived, not extracted)
 

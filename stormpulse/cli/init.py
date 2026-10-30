@@ -17,17 +17,10 @@ def cmd_init(args: argparse.Namespace) -> None:
     import stormpulse.garage.init  # noqa: F401
     import stormpulse.logging.init  # noqa: F401
     import stormpulse.signoff.init  # noqa: F401
-    from stormpulse.init import InitError, InstallMode, run_init
-
-    mode: InstallMode | None = None
-    forced = getattr(args, "mode", None)
-    if forced == "user":
-        mode = InstallMode.USER
-    elif forced == "system":
-        mode = InstallMode.SYSTEM
+    from stormpulse.init import InitError, run_init
 
     try:
-        run_init(Path(args.creds_dir), force=args.force, mode=mode)
+        run_init(Path(args.creds_dir), force=args.force)
     except InitError as exc:
         logger.error("%s", exc)
         sys.exit(1)

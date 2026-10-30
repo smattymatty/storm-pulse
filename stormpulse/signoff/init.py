@@ -27,9 +27,9 @@ def signoff_init_step(config_path: Path) -> None:
     """Ship the agent sealed: create the seal flag before first run."""
     config = load_config(config_path)
     state_dir = state_dir_from_db_path(config.storage.db_path)
-    state_dir.mkdir(parents=True, exist_ok=True)
+    state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     SignoffState(state_dir).seal()
     logger.info("Sealed agent at install time: %s", state_dir)
 
 
-register_init_step(signoff_init_step, on_migrate=True)
+register_init_step(signoff_init_step)

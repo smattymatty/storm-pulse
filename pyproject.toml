@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "storm-pulse-agent"
 version = "0.8.2"
-description = "Secure server management agent for Storm Developments infrastructure"
+description = "The rootless fleet agent: mostly observes, drives rootless Docker, never runs as root"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "AGPL-3.0"

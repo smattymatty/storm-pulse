@@ -278,11 +278,11 @@ class TestPrintStatus:
         info = StatusInfo(
             version="0.1.0",
             agent_id="vps-toronto-01",
-            config_path=Path("/etc/stormpulse/stormpulse.toml"),
+            config_path=Path("/home/storm/.config/stormpulse/stormpulse.toml"),
             dashboard_url="wss://stormdevelopments.ca/ws/pulse/",
             cert_expiry=datetime(2026, 5, 22, tzinfo=UTC),
             cert_days_remaining=90,
-            db_path=Path("/opt/stormpulse/data/stormpulse.db"),
+            db_path=Path("/home/storm/.local/share/stormpulse/stormpulse.db"),
             db_entry_count=247,
             pid=1842,
         )

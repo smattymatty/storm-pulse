@@ -51,10 +51,10 @@ disk with the one loaded and rebuilds the context when they differ, so a
 renewal done by hand with `stormpulse renew` goes live within a day. Nothing
 extra is installed or scheduled on a node.
 
-Renewal is for **user mode**, which every production node runs. A system-mode
-unit is read-only to the agent and keeps its credentials root-owned, so there
-an attempt fails up front with reason `creds_not_writable`: the warning still
-fires, and the node re-enrolls by hand.
+A creds dir the agent cannot write fails an attempt up front with reason
+`creds_not_writable`: the warning still fires, and the node re-enrolls by hand.
+`stormpulse renew` refuses root (CORE-003): `sudo` would rewrite the key
+root-owned and leave the rootless agent unable to read it.
 
 ### 2. A fresh keypair every renewal, written before the request
 

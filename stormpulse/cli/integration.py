@@ -185,7 +185,6 @@ def _cmd_init(args: argparse.Namespace, config: object, config_path: Path) -> No
     """Load a sealed adapter by id (through the loader, the one sanctioned
     executor) and drive its setup wizard. No `importlib` here - Fn7 holds."""
     from stormpulse.cli.wizard_run import drive_wizard
-    from stormpulse.init.mode import detect_mode
     from stormpulse.integrations.external import loader
     from stormpulse.sdk import InitContext
 
@@ -211,14 +210,12 @@ def _cmd_init(args: argparse.Namespace, config: object, config_path: Path) -> No
         )
         sys.exit(2)
 
-    mode = detect_mode()
-    context = InitContext(mode=mode.name.lower(), config_path=str(config_path))
+    context = InitContext(mode="user", config_path=str(config_path))
     drive_wizard(
         wizard,
         context,
         config=config,
         config_path=config_path,
-        mode=mode,
         label=integration_id,
     )
 

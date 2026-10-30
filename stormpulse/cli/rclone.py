@@ -42,7 +42,6 @@ def _run_rclone_sdk_init(
     durable journal. The legacy ``run_rclone_init`` path is untouched."""
     from stormpulse.cli.wizard_run import drive_wizard
     from stormpulse.config import load_config
-    from stormpulse.init.mode import detect_mode
     from stormpulse.rclone.init import find_rclone_binary, has_rclone_section
     from stormpulse.rclone.wizard import RCLONE_WIZARD
     from stormpulse.sdk import InitContext
@@ -52,15 +51,14 @@ def _run_rclone_sdk_init(
         logger.error("[rclone] section already exists in %s; use --force", config_path)
         sys.exit(1)
 
-    mode = detect_mode()
     discovered = find_rclone_binary(binary_path_override)
     context = InitContext(
-        mode=mode.name.lower(),
+        mode="user",
         config_path=str(config_path),
         discovered={"binary_path": discovered} if discovered else {},
     )
     drive_wizard(
-        RCLONE_WIZARD, context, config=config, config_path=config_path, mode=mode, label="rclone"
+        RCLONE_WIZARD, context, config=config, config_path=config_path, label="rclone"
     )
 
 

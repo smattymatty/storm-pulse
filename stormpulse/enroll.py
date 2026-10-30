@@ -7,7 +7,6 @@ import binascii
 import json
 import logging
 import os
-import shutil
 import ssl
 import urllib.error
 import urllib.parse
@@ -22,7 +21,6 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
 from stormpulse.config import TlsConfig
-from stormpulse.init.mode import InstallMode, detect_mode
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +236,7 @@ def _write_file(path: Path, data: bytes, mode: int) -> None:
         tmp.unlink(missing_ok=True)
         raise EnrollError(
             f"Permission denied writing {path}. "
-            f"Run enrollment with sudo: sudo stormpulse enroll ..."
+            f"Pass --creds-dir to choose a writable location."
         ) from exc
     except OSError as exc:
         tmp.unlink(missing_ok=True)
@@ -254,13 +252,9 @@ def write_credentials(
 ) -> Credentials:
     """Write credential files with appropriate permissions.
 
-    Private key and HMAC key: 0o640 root:stormpulse (group-readable).
-    Certificates: 0o644 root:stormpulse (world-readable, not secret).
+    Private key and HMAC key: 0o600, the agent's user alone. Certificates: 0o644.
     Creates creds_dir if it does not exist (mode 0o700).
     If the directory already exists, its permissions are left unchanged.
-
-    Ownership is set to root:stormpulse so the agent can read at runtime.
-    Falls back silently if the stormpulse group does not exist (e.g. in tests).
 
     Raises EnrollError if credential files already exist and force is False.
     """
@@ -302,21 +296,10 @@ def write_credentials(
             "This may indicate a dashboard bug - contact the admin."
         ) from exc
 
-    _write_file(paths.client_key, key_pem, 0o640)
-    _write_file(paths.hmac_key, hmac_bytes, 0o640)
+    _write_file(paths.client_key, key_pem, 0o600)
+    _write_file(paths.hmac_key, hmac_bytes, 0o600)
     _write_file(paths.client_cert, response["client_cert_pem"].encode("ascii"), 0o644)
     _write_file(paths.ca_cert, response["ca_cert_pem"].encode("ascii"), 0o644)
-
-    # SYSTEM mode: chown to root:stormpulse so the agent (running as the
-    # stormpulse system user) can read the cred files. USER mode: the
-    # operator owns the files by virtue of having written them; chown would
-    # silently fail and confuse anyone reading the comment block above.
-    if os.geteuid() == 0:
-        for p in (paths.client_key, paths.hmac_key, paths.client_cert, paths.ca_cert):
-            try:
-                shutil.chown(p, "root", "stormpulse")
-            except (LookupError, PermissionError):
-                pass  # stormpulse group may not exist (e.g. tests, dev machines)
 
     return paths
 
@@ -539,12 +522,9 @@ def renew_certificate(
     raises ``RenewError``; ``ca_cert_pem`` in the response is ignored.
     """
     creds_dir = tls.client_key.parent
-    if detect_mode() is InstallMode.SYSTEM or not os.access(
-        creds_dir, os.W_OK | os.X_OK
-    ):  # root would leave a key the stormpulse user cannot read (decision 1)
+    if not os.access(creds_dir, os.W_OK | os.X_OK):
         raise _not_writable(
-            f"{creds_dir} is not writable by the agent; renewal needs user mode. "
-            f"Re-enroll this node by hand."
+            f"{creds_dir} is not writable by the agent. Re-enroll this node by hand."
         )
     endpoint = renew_endpoint(dashboard_url)
     private_key = _load_or_create_pending_key(pending_key_path(tls.client_key))

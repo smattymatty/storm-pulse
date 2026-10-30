@@ -4,7 +4,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Typed: mypy strict](https://img.shields.io/badge/mypy-strict-blue.svg)](https://mypy-lang.org/)
 
-Secure server management agent for [Storm Developments](https://stormdevelopments.ca). Connects outbound to a Django dashboard over WebSocket with mTLS, pushes system metrics, and executes whitelisted deploy commands. No listening ports: every connection is outbound.
+The rootless fleet agent. It mostly observes, and drives rootless Docker. It connects outbound to the Storm dashboard over a mutual-TLS WebSocket, streams metrics, logs and events, and runs whitelisted commands against Docker, Garage and Caddy. It never runs as root: every `stormpulse` command refuses UID 0 before it parses an argument. It opens no listening ports.
 
 ## How It Works
 
@@ -72,9 +72,8 @@ the events on `events.batch` like any source, and deletes the segment once
 every event it carried is acked, nacked or dropped. A restart re-reads what
 was not deleted, so carry your own record id as a declared field to dedupe.
 The spool must be a real directory owned by root or the agent, closed to
-others and writable by the agent (inside the unit's `ReadWritePaths`, such as
-`/opt/stormpulse/data`), fed by one source; otherwise the source is refused at
-boot. A record is at most 1 KiB. The emitter bounds its own spool (64 MiB,
+others and writable by the agent, fed by one source; otherwise the source is
+refused at boot. A record is at most 1 KiB. The emitter bounds its own spool (64 MiB,
 seven days, oldest first), since the agent reads only while the integration is
 live.
 
@@ -119,7 +118,7 @@ Five layers, each independent:
 - **Transport** -- mTLS with per-agent certs from a private CA.
 - **Application** -- HMAC-SHA256 + nonce + expiry on every command.
 - **Execution** -- Whitelisted commands only. Absolute paths. `shell=False`. Config placeholders from local config only; runtime params are typed and validated against the declared pattern, byte cap or schema.
-- **OS** -- Rootless by default: a sudo-less operator user against rootless Docker, no host root, no docker group. Systemd sandboxing. (A legacy system-mode install under a dedicated system user is still supported.)
+- **OS** -- Never root. A sudo-less operator user against rootless Docker, no host root, no docker group. Every `stormpulse` command refuses UID 0 before it parses an argument. `NoNewPrivileges` on the systemd user unit.
 
 See the [Security Architecture](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture) wiki page for the full design. Found a vulnerability? [SECURITY.md](SECURITY.md) has the reporting path.
 
@@ -148,19 +147,13 @@ the prompt shows `pulse.stormdevelopments.ca`; agents talking to an older
 dashboard retain the historical same-host derivation as a compatibility
 fallback.
 
-**Install modes.** `stormpulse init` auto-detects which to use:
-
-- **User mode (rootless), the default on hardened boxes.** Runs as a sudo-less operator user against rootless Docker. Config and creds under `~/.config/stormpulse/`, data under `~/.local/share/stormpulse/`, a systemd user unit. No host root, no docker group, no system user.
-- **System mode (legacy).** Runs under a dedicated `stormpulse` system user with a system unit; config and creds under `/etc/stormpulse/`. Used only where rootless Docker is not present.
-
-Already on a system install? `stormpulse migrate-to-rootless` converts it in place.
+Run every command as the sudo-less operator user that owns rootless Docker: config and creds under `~/.config/stormpulse/`, data under `~/.local/share/stormpulse/`, a systemd user unit. No host root, no docker group, no system user.
 
 ## CLI
 
 ```
 stormpulse enroll ENDPOINT AGENT_ID TOKEN [--creds-dir DIR] [--force]
-stormpulse init [--creds-dir DIR] [--user | --system] [--force]
-stormpulse migrate-to-rootless [--force]
+stormpulse init [--creds-dir DIR] [--force]
 stormpulse run [CONFIG]
 stormpulse status [CONFIG]
 stormpulse signoff status [CONFIG]
@@ -173,11 +166,9 @@ stormpulse update [--source {pip,git}] [--branch BRANCH] [--version VERSION] [--
 stormpulse --version
 ```
 
-**enroll** -- One-time enrollment. Generates an EC P-256 keypair, sends a CSR to the dashboard, writes the signed cert + CA cert + HMAC key to the credentials directory (`~/.config/stormpulse/` for a rootless user-mode install, `/etc/stormpulse/` for a legacy system install; override with `--creds-dir`). The private key never leaves the machine.
+**enroll** -- One-time enrollment. Generates an EC P-256 keypair, sends a CSR to the dashboard, writes the signed cert + CA cert + HMAC key to the credentials directory (`~/.config/stormpulse/`; override with `--creds-dir`). The private key never leaves the machine.
 
-**init** -- Interactive setup wizard. Auto-detects the install mode (rootless user mode when it finds a rootless Docker socket, legacy system mode otherwise; force with `--user` / `--system`). Generates config, creates the matching systemd unit (user unit or system unit), sets permissions. Run after enrollment. Auto-detects Garage installations and running Docker containers and offers to enable integration / log shipping.
-
-**migrate-to-rootless** -- Converts an existing legacy system install to rootless user mode in place. Preserves the agent's cryptographic identity so the dashboard sees the same agent. Use `--force` to overwrite user-mode files left by a previous migration.
+**init** -- Interactive setup wizard. Generates the config and the systemd user unit. Run after enrollment. Auto-detects Garage installations and running Docker containers and offers to enable integration / log shipping.
 
 **run** -- Starts the agent. Connects to the dashboard, sends heartbeats and metrics, executes commands. Reconnects automatically with exponential backoff.
 

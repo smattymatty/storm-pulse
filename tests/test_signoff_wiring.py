@@ -246,14 +246,6 @@ def test_init_step_is_registered_with_the_orchestrator() -> None:
     assert signoff_init_step in registered_init_steps()
 
 
-def test_init_step_runs_on_migration() -> None:
-    import stormpulse.signoff.init  # noqa: F401 - side-effect import
-    from stormpulse.init.registry import migration_init_steps
-    from stormpulse.signoff.init import signoff_init_step
-
-    assert signoff_init_step in migration_init_steps()
-
-
 def test_init_step_reseals_an_unsealed_agent(tmp_path: Path) -> None:
     from stormpulse.signoff.init import signoff_init_step
 

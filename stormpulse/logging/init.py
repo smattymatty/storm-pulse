@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 from stormpulse.init import InitError, prompt
-from stormpulse.init.files import default_config_path
+from stormpulse.init.files import require_writable_config
 from stormpulse.init.host_native_logs import (
     offer_caddy_events_log_group,
     offer_caddy_log_group,
 )
 from stormpulse.init.journald_logs import offer_journald_log_groups
-from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.init.prompts import prompt_confirm
 from stormpulse.init.registry import register_init_step
-from stormpulse.init.system import restart_or_hint
+from stormpulse.init.system import offer_restart
 
 _DEFAULT_DOCKER_BINARY = "/usr/bin/docker"
 
@@ -197,15 +195,7 @@ def _existing_log_group_names(config_path: Path) -> list[str]:
 
 def run_logging_init(config_path: Path) -> None:
     """Public entry point for ``stormpulse logging init``."""
-    # Writability gate. Replaces the old root-only check: USER mode is
-    # the default on hardened boxes (ADR core/003).
-    if not os.access(config_path.parent, os.W_OK):
-        suggested = default_config_path()
-        raise InitError(
-            f"Cannot write to {config_path}. "
-            f"In USER mode the config should be at {suggested} "
-            f"and owned by the operator. In SYSTEM mode, re-run with sudo."
-        )
+    require_writable_config(config_path)
     if not config_path.is_file():
         raise InitError(f"Config file not found: {config_path}")
 
@@ -251,19 +241,7 @@ def run_logging_init(config_path: Path) -> None:
     if not wrote_anything:
         return
 
-    # No-escalation posture (see stormpulse.init.system): SYSTEM mode
-    # prints the hint and never shells out; USER mode runs the user
-    # unit restart after explicit operator consent.
-    mode = detect_mode()
-    if mode is InstallMode.SYSTEM:
-        restart_or_hint(mode)
-    elif prompt_confirm("Restart stormpulse now?"):
-        restart_or_hint(mode)
-    else:
-        print(
-            "\n  Restart later with:\n    systemctl --user restart stormpulse",
-            file=sys.stderr,
-        )
+    offer_restart()
 
 
 def logging_init_step(config_path: Path) -> None:
@@ -298,5 +276,4 @@ def logging_init_step(config_path: Path) -> None:
         print(f"  Added: {g['name']} (docker_stream)", file=sys.stderr)
 
 
-# Migration carries [[log_groups]] in the translated TOML; re-prompting adds nothing.
-register_init_step(logging_init_step, on_migrate=False)
+register_init_step(logging_init_step)

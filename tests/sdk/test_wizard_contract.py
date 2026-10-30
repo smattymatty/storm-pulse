@@ -28,7 +28,7 @@ def test_init_context_is_frozen_dataclass() -> None:
     ctx = InitContext(mode="user", config_path="/tmp/x")
     assert dataclasses.is_dataclass(ctx)
     with pytest.raises(dataclasses.FrozenInstanceError):
-        ctx.mode = "system"  # type: ignore[misc]
+        ctx.mode = "other"  # type: ignore[misc]
 
 
 def test_init_context_exposes_only_data_fields() -> None:
@@ -44,8 +44,12 @@ def test_wizard_methods_are_side_effect_free(tmp_path: Path) -> None:
     cfg = tmp_path / "stormpulse.toml"
     cfg.write_text('[core]\nagent_id = "x"\n', encoding="utf-8")
     before = sorted(p.name for p in tmp_path.iterdir())
-    ctx = InitContext(mode="user", config_path=str(cfg), discovered={"binary_path": "/usr/bin/rclone"})
-    answers = answers_from([Answer("binary_path", "/usr/bin/rclone"), Answer("as_runner", "yes")])
+    ctx = InitContext(
+        mode="user", config_path=str(cfg), discovered={"binary_path": "/usr/bin/rclone"}
+    )
+    answers = answers_from(
+        [Answer("binary_path", "/usr/bin/rclone"), Answer("as_runner", "yes")]
+    )
 
     RCLONE_WIZARD.questions(ctx)
     RCLONE_WIZARD.inspect(answers, ctx)

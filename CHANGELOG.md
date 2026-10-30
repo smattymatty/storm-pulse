@@ -7,11 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+**Never root.** 0.9.0 removes the system install mode. There is one way to
+install and run Storm Pulse, as the sudo-less user that owns rootless Docker,
+and every `stormpulse` command refuses UID 0 before it reads an argument.
+Root work is not Storm Pulse's purpose. A box that needs it pairs Pulse with
+Ansible or another tool built for root, and that pairing is the operator's.
+
+### Removed
+
+- **System mode and `migrate-to-rootless`.** There is one install: rootless,
+  as the sudo-less operator user that owns rootless Docker, with config under
+  `~/.config/stormpulse/`, data under `~/.local/share/stormpulse/` and a
+  systemd user unit. `/etc/stormpulse`, `/opt/stormpulse`, the `stormpulse`
+  system user and the system unit are no longer written or read.
+- **`init --system` and `init --user`.**
+- `InitContext.mode` stays in the SDK and is always `"user"`. `SDK_API` is
+  unchanged.
+
+Still on a system install? Run `stormpulse migrate-to-rootless` from 0.8.x
+before upgrading.
+
 ### Security
 
+- **Every command refuses root.** `stormpulse` checks the effective uid before
+  it parses an argument and exits with "Storm Pulse will not run as root: run
+  as the user that owns rootless Docker, not with sudo." Run as root, any
+  command could leave files the rootless agent cannot read, such as a renewed
+  key or an edited config. A hand-written root unit now fails at start.
+- **`init` writes the config where every other command reads it.** It wrote
+  `~/.config/stormpulse/` and ignored `XDG_CONFIG_HOME`, while `signoff seal`,
+  `signoff unseal` and the other commands read `$XDG_CONFIG_HOME/stormpulse/`.
+  With `XDG_CONFIG_HOME` set, the reseal command could not find the config.
+  Every config path now comes from one resolver.
+
 - **A lost seal file no longer opens the hatch.** The agent read a missing
-  `signoff.sealed` as unsealed, so `migrate-to-rootless` (which starts a fresh
-  data directory and never copied the file), a wiped state directory, or
+  `signoff.sealed` as unsealed, so a migration to a fresh data directory, a
+  wiped state directory, or
   `stormpulse run` without `init` started an agent whose dashboard could
   dispatch `run_verify_block` and `run_apply_block` without the operator ever
   unsealing. The hatch is now open only while `signoff.unsealed_at` exists, and
@@ -19,12 +50,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so a downgraded agent stays sealed. An agent unsealed before 0.2.0 that never
   recorded an unseal time reads as sealed after this update; unseal it again
   if you meant it open. CORE-004 decisions 2 and 6 are amended.
-- **`migrate-to-rootless` runs the install steps that set state.** It now runs
-  every feature install step registered with `on_migrate=True` against the new
-  config before starting the unit; today that is the sign-off seal. Garage and
-  log groups ride in the translated config and are not re-prompted. Every
-  install step must declare `on_migrate`, so a new feature cannot be skipped by
-  omission.
 
 ### Changed
 

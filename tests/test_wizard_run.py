@@ -44,7 +44,11 @@ class _StubWizard:
         return InitPlan(
             sdk_api=SDK_API,
             integration_id="stub",
-            mutations=(ClaimTomlSection("stub", {"enabled": True, "val": answers["val"].value}),),
+            mutations=(
+                ClaimTomlSection(
+                    "stub", {"enabled": True, "val": answers["val"].value}
+                ),
+            ),
         )
 
 
@@ -57,15 +61,20 @@ def _config(tmp_path: Path) -> object:
     )
 
 
-def test_committed_plan_writes_the_toml_section(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_committed_plan_writes_the_toml_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg = tmp_path / "stormpulse.toml"
     cfg.write_text("[agent]\nid = 'agent-1'\n")
     monkeypatch.setattr(prompts, "prompt", lambda _p, default="": default)
     monkeypatch.setattr(prompts, "prompt_confirm", lambda _p: True)
 
     ok = drive_wizard(
-        _StubWizard(), InitContext(mode="user", config_path=str(cfg)),
-        config=_config(tmp_path), config_path=cfg, mode="user", label="stub",
+        _StubWizard(),
+        InitContext(mode="user", config_path=str(cfg)),
+        config=_config(tmp_path),
+        config_path=cfg,
+        label="stub",
     )
     assert ok is True
     doc = tomllib.loads(cfg.read_text())
@@ -73,21 +82,28 @@ def test_committed_plan_writes_the_toml_section(tmp_path: Path, monkeypatch: pyt
     assert doc["stub"]["val"] == "hi"
 
 
-def test_declining_the_confirm_applies_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_declining_the_confirm_applies_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg = tmp_path / "stormpulse.toml"
     cfg.write_text("[agent]\nid = 'agent-1'\n")
     monkeypatch.setattr(prompts, "prompt", lambda _p, default="": default)
     monkeypatch.setattr(prompts, "prompt_confirm", lambda _p: False)  # decline
 
     ok = drive_wizard(
-        _StubWizard(), InitContext(mode="user", config_path=str(cfg)),
-        config=_config(tmp_path), config_path=cfg, mode="user", label="stub",
+        _StubWizard(),
+        InitContext(mode="user", config_path=str(cfg)),
+        config=_config(tmp_path),
+        config_path=cfg,
+        label="stub",
     )
     assert ok is False
     assert "stub" not in tomllib.loads(cfg.read_text())
 
 
-def test_refusal_aborts_before_apply(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_refusal_aborts_before_apply(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     cfg = tmp_path / "stormpulse.toml"
     cfg.write_text("[agent]\nid = 'agent-1'\n")
     monkeypatch.setattr(prompts, "prompt", lambda _p, default="": default)
@@ -95,8 +111,11 @@ def test_refusal_aborts_before_apply(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     with pytest.raises(SystemExit) as exc:
         drive_wizard(
-            _StubWizard(refuse=True), InitContext(mode="user", config_path=str(cfg)),
-            config=_config(tmp_path), config_path=cfg, mode="user", label="stub",
+            _StubWizard(refuse=True),
+            InitContext(mode="user", config_path=str(cfg)),
+            config=_config(tmp_path),
+            config_path=cfg,
+            label="stub",
         )
     assert exc.value.code == 1
     assert "stub" not in tomllib.loads(cfg.read_text())

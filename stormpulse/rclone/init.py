@@ -6,7 +6,6 @@ missing or broken binary is caught here, not at first agent start."""
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 import sys
@@ -14,10 +13,9 @@ import tomllib
 from pathlib import Path
 
 from stormpulse.init import InitError
-from stormpulse.init.files import default_config_path
-from stormpulse.init.mode import InstallMode, detect_mode
+from stormpulse.init.files import require_writable_config
 from stormpulse.init.prompts import prompt, prompt_confirm
-from stormpulse.init.system import restart_or_hint
+from stormpulse.init.system import offer_restart
 
 _DEFAULT_BINARY = "/usr/bin/rclone"
 _VERSION_TIMEOUT_SECONDS = 15
@@ -116,13 +114,7 @@ def run_rclone_init(
     force: bool = False,
 ) -> None:
     """Public entry point for ``stormpulse rclone init``."""
-    if not os.access(config_path.parent, os.W_OK):
-        suggested = default_config_path()
-        raise InitError(
-            f"Cannot write to {config_path}. "
-            f"In USER mode the config should be at {suggested} "
-            f"and owned by the operator. In SYSTEM mode, re-run with sudo."
-        )
+    require_writable_config(config_path)
 
     binary_path = find_rclone_binary(binary_path_override)
     if binary_path is None:
@@ -157,15 +149,4 @@ def run_rclone_init(
     append_rclone_section(config_path, binary_path=chosen, force=force)
     print(f"\n  [rclone] section written to {config_path}", file=sys.stderr)
 
-    mode = detect_mode()
-    restart_cmd = (
-        "systemctl --user restart stormpulse"
-        if mode is InstallMode.USER
-        else "sudo systemctl restart stormpulse"
-    )
-    if mode is InstallMode.SYSTEM:
-        restart_or_hint(mode)
-    elif prompt_confirm("Restart stormpulse now?"):
-        restart_or_hint(mode)
-    else:
-        print(f"\n  Restart later with:\n    {restart_cmd}", file=sys.stderr)
+    offer_restart()

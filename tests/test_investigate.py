@@ -507,3 +507,24 @@ class TestContractSurface:
         garage = next(i for i in registered_integrations() if i.id == "garage")
         assert garage.investigations is not None
         assert [s.name for s in garage.investigations] == ["health"]
+
+
+class TestAgentJournalFetch:
+    def test_reads_the_user_journal_of_the_agent_unit(self) -> None:
+        """The agent is a user unit (CORE-003): the system journal never holds it."""
+        from unittest.mock import MagicMock, patch
+
+        from stormpulse.cli.investigate._journal import fetch_agent_journal
+
+        line = '{"__REALTIME_TIMESTAMP": "1784462400000000", "MESSAGE": "Reconnecting"}'
+        with patch(
+            "stormpulse.cli.investigate._journal.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout=line + "\n"),
+        ) as run:
+            entries = fetch_agent_journal(
+                Window(since=_NOW - timedelta(hours=1), until=_NOW)
+            )
+        argv = run.call_args.args[0]
+        assert argv[:4] == ["journalctl", "--user", "-u", "stormpulse"]
+        assert argv[argv.index("--until") + 1] == "2026-07-19 12:00:00"
+        assert entries is not None and [m for _, m in entries] == ["Reconnecting"]

@@ -1,27 +1,10 @@
-"""CLI handler for ``stormpulse logs``.
+"""CLI handler for ``stormpulse logs``: ``journalctl --user`` on the agent unit.
 
-Wraps ``journalctl`` for the agent's systemd unit so the operator
-doesn't have to remember whether it's ``--user`` or not. Mode-aware
-via ``detect_mode()``: USER installs hit the per-user journal,
-SYSTEM installs hit the system journal.
-
-Read-only. Unlike the install/init/update flow, there is no
-no-escalation concern here: journalctl read access is typically
-granted to the operator on Storm boxes (``adm`` or
-``systemd-journal`` group); a permission failure surfaces from
-journalctl itself rather than being pre-empted by this wrapper.
-
-Default invocation shows the last 100 lines and then follows, so
-``stormpulse logs`` gives both recent context and live tail in one
-command. ``--no-follow`` switches to a one-shot dump.
-
-Incident-window flags pass through to journalctl: ``--since`` /
-``--until`` accept anything journalctl does ("06:00", "1 hour ago",
-"2026-07-19 06:14"), and ``--grep`` is journalctl's PCRE message
-filter (case-insensitive when the pattern is all-lowercase). A
-bounded window changes the defaults: the ``-n`` cap and follow both
-drop away, because "the whole window, then exit" is what an incident
-reconstruction wants. ``-f``/``-n`` given explicitly always win.
+Read-only; a permission failure surfaces from journalctl itself. Defaults to
+the last 100 lines then follow (``--no-follow`` dumps once). ``--since``,
+``--until`` and ``--grep`` pass through; a bounded window drops the ``-n`` cap
+and follow, since an incident wants the whole window then exit. Explicit
+``-f``/``-n`` always win.
 """
 
 from __future__ import annotations
@@ -30,11 +13,8 @@ import argparse
 import subprocess
 import sys
 
-from stormpulse.init.mode import InstallMode, detect_mode
-
 
 def _journalctl_argv(
-    mode: InstallMode,
     lines: int | None,
     *,
     follow: bool,
@@ -42,11 +22,8 @@ def _journalctl_argv(
     until: str | None = None,
     grep: str | None = None,
 ) -> list[str]:
-    """Build the journalctl invocation for the chosen mode."""
-    argv = ["journalctl"]
-    if mode is InstallMode.USER:
-        argv.append("--user")
-    argv += ["-u", "stormpulse"]
+    """Build the journalctl invocation."""
+    argv = ["journalctl", "--user", "-u", "stormpulse"]
     if lines is not None:
         argv += ["-n", str(lines)]
     if since is not None:
@@ -78,7 +55,6 @@ def cmd_logs(args: argparse.Namespace) -> None:
     """``stormpulse logs`` - tail or window the agent journal."""
     lines, follow = _resolve_view(args)
     argv = _journalctl_argv(
-        detect_mode(),
         lines=lines,
         follow=follow,
         since=args.since,

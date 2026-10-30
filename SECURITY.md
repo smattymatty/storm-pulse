@@ -40,8 +40,8 @@ wiki page.
   `shell=False`; runtime parameters are regex-validated. The verify-block hatch
   ships sealed, and only the host operator can open it.
 - [Layer 5, OS](https://git.stormdevelopments.ca/official-public/storm-pulse/wiki/Security-Architecture#layer-5-os):
-  rootless by default. A sudo-less operator user against rootless Docker, no
-  host root, no docker group, systemd sandboxing.
+  rootless. A sudo-less operator user against rootless Docker, no host root, no
+  docker group. Every `stormpulse` command refuses UID 0.
 
 ## Scope
 

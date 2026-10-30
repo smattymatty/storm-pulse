@@ -24,7 +24,6 @@ from stormpulse.cli import main
 from stormpulse.cli.renew import cmd_renew
 from stormpulse.config import Config, ConfigError
 from stormpulse.enroll import RENEW_TIMEOUT_SECONDS
-from stormpulse.init.mode import InstallMode
 from tests.helpers import AGENT_ID
 
 URLOPEN = "stormpulse.enroll.urllib.request.urlopen"
@@ -197,23 +196,6 @@ def test_unloadable_pair_exits_without_request(config: Config) -> None:
     assert isinstance(exc.value.code, str)
     assert exc.value.code.startswith("Renewal failed: ")
     urlopen.assert_not_called()
-
-
-def test_sudo_on_a_system_node_exits_creds_not_writable(
-    config: Config, ctx: MagicMock
-) -> None:
-    _seed(config, days=10)
-    before = _snapshot(config.tls.client_cert.parent)
-    with (
-        patch("stormpulse.enroll.detect_mode", return_value=InstallMode.SYSTEM),
-        patch(URLOPEN) as urlopen,
-        pytest.raises(SystemExit) as exc,
-    ):
-        _run()
-    assert isinstance(exc.value.code, str)
-    assert exc.value.code.startswith("Renewal failed (creds_not_writable)")
-    urlopen.assert_not_called()
-    assert _snapshot(config.tls.client_cert.parent) == before
 
 
 def test_unreadable_cert_prints_unknown_days(

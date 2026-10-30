@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 import pytest
 
-from stormpulse.config import ConfigError
+from stormpulse.init import InitError
 from stormpulse.rclone.config import parse_rclone_config
 from stormpulse.rclone.init import (
     append_rclone_section,
@@ -22,11 +22,12 @@ from stormpulse.rclone.init import (
     remove_rclone_section,
     run_rclone_init,
 )
-from stormpulse.init import InitError
 
 
 def _ok_version(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=0, stdout="rclone v1.74.2", stderr="")
+    return subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="rclone v1.74.2", stderr=""
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +50,9 @@ class TestFindRcloneBinary:
         fake.write_text("#!/bin/sh\n")
 
         def fail(*a: object, **k: object) -> subprocess.CompletedProcess[str]:
-            return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
+            return subprocess.CompletedProcess(
+                args=[], returncode=1, stdout="", stderr=""
+            )
 
         with patch("stormpulse.rclone.init.subprocess.run", fail):
             assert find_rclone_binary(str(fake)) is None
@@ -141,15 +144,14 @@ class TestRunRcloneInit:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
         with (
-            patch("stormpulse.rclone.init.find_rclone_binary", return_value="/usr/bin/rclone"),
+            patch(
+                "stormpulse.rclone.init.find_rclone_binary",
+                return_value="/usr/bin/rclone",
+            ),
             patch("stormpulse.rclone.init.prompt_confirm", return_value=True),
             patch("stormpulse.rclone.init.prompt", return_value="/usr/bin/rclone"),
-            patch("stormpulse.rclone.init.detect_mode") as mode,
-            patch("stormpulse.rclone.init.restart_or_hint"),
+            patch("stormpulse.rclone.init.offer_restart"),
         ):
-            from stormpulse.init.mode import InstallMode
-
-            mode.return_value = InstallMode.SYSTEM
             run_rclone_init(cfg)
         assert has_rclone_section(cfg) is True
 
@@ -157,7 +159,10 @@ class TestRunRcloneInit:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
         with (
-            patch("stormpulse.rclone.init.find_rclone_binary", return_value="/usr/bin/rclone"),
+            patch(
+                "stormpulse.rclone.init.find_rclone_binary",
+                return_value="/usr/bin/rclone",
+            ),
             patch("stormpulse.rclone.init.prompt_confirm", return_value=False),
         ):
             run_rclone_init(cfg)
@@ -173,6 +178,6 @@ class TestRunRcloneInit:
     def test_unwritable_config_dir_raises(self, tmp_path: Path) -> None:
         cfg = tmp_path / "stormpulse.toml"
         cfg.write_text('[agent]\nid = "x"\n')
-        with patch("stormpulse.rclone.init.os.access", return_value=False):
+        with patch("stormpulse.init.files.os.access", return_value=False):
             with pytest.raises(InitError):
                 run_rclone_init(cfg)

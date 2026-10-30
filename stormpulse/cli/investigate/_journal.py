@@ -7,7 +7,6 @@ import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 
-from stormpulse.init.mode import InstallMode, detect_mode
 from stormpulse.sdk.investigate import Window
 
 
@@ -20,7 +19,11 @@ def run_evidence(argv: list[str], timeout: float = 30.0) -> str | None:
     turns None into INCONCLUSIVE, never into silence)."""
     try:
         result = subprocess.run(
-            argv, capture_output=True, text=True, timeout=timeout, check=False,
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return None
@@ -31,12 +34,15 @@ def run_evidence(argv: list[str], timeout: float = 30.0) -> str | None:
 
 def fetch_agent_journal(window: Window) -> list[tuple[datetime, str]] | None:
     """(journald receipt time, message) pairs for the agent unit in-window."""
-    argv = ["journalctl"]
-    if detect_mode() is InstallMode.USER:
-        argv.append("--user")
-    argv += [
-        "-u", "stormpulse", "--no-pager", "--output=json",
-        "--since", journal_ts(window.since),
+    argv = [
+        "journalctl",
+        "--user",
+        "-u",
+        "stormpulse",
+        "--no-pager",
+        "--output=json",
+        "--since",
+        journal_ts(window.since),
     ]
     if window.until is not None:
         argv += ["--until", journal_ts(window.until)]
@@ -88,10 +94,12 @@ def parse_shipped(messages: list[str]) -> list[ShippedBatch]:
     for message in messages:
         m = _SHIPPED_RE.search(message)
         if m is not None:
-            batches.append(ShippedBatch(
-                group=m.group("group"),
-                lines=int(m.group("lines")),
-                dropped=int(m.group("dropped")),
-                duration_ms=int(m.group("ms")),
-            ))
+            batches.append(
+                ShippedBatch(
+                    group=m.group("group"),
+                    lines=int(m.group("lines")),
+                    dropped=int(m.group("dropped")),
+                    duration_ms=int(m.group("ms")),
+                )
+            )
     return batches

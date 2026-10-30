@@ -1,6 +1,6 @@
 """Structured JSON logger for the agent's own activity log.
 
-One JSON object per line to ``/var/log/stormpulse/agent.log``. Runs alongside
+One JSON object per line to ``~/.local/share/stormpulse/agent.log``. Runs alongside
 stdlib logging - stdlib goes to stderr/journald; this class ships structured
 events to disk for tailing and shipping back to the dashboard.
 

@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from stormpulse.cli.logs import _journalctl_argv, _resolve_view, cmd_logs
-from stormpulse.init.mode import InstallMode
 
 
 def _ns(
@@ -25,8 +24,8 @@ def _ns(
 
 
 class TestJournalctlArgv:
-    def test_user_mode_default(self) -> None:
-        assert _journalctl_argv(InstallMode.USER, lines=100, follow=True) == [
+    def test_default(self) -> None:
+        assert _journalctl_argv(lines=100, follow=True) == [
             "journalctl",
             "--user",
             "-u",
@@ -36,18 +35,8 @@ class TestJournalctlArgv:
             "-f",
         ]
 
-    def test_system_mode_default(self) -> None:
-        assert _journalctl_argv(InstallMode.SYSTEM, lines=100, follow=True) == [
-            "journalctl",
-            "-u",
-            "stormpulse",
-            "-n",
-            "100",
-            "-f",
-        ]
-
     def test_no_follow(self) -> None:
-        assert _journalctl_argv(InstallMode.USER, lines=50, follow=False) == [
+        assert _journalctl_argv(lines=50, follow=False) == [
             "journalctl",
             "--user",
             "-u",
@@ -58,7 +47,6 @@ class TestJournalctlArgv:
 
     def test_window_and_grep_passthrough(self) -> None:
         assert _journalctl_argv(
-            InstallMode.SYSTEM,
             lines=None,
             follow=False,
             since="06:00",
@@ -66,6 +54,7 @@ class TestJournalctlArgv:
             grep="1011|Reconnecting",
         ) == [
             "journalctl",
+            "--user",
             "-u",
             "stormpulse",
             "--since",
@@ -77,7 +66,7 @@ class TestJournalctlArgv:
         ]
 
     def test_no_lines_cap_when_none(self) -> None:
-        argv = _journalctl_argv(InstallMode.USER, lines=None, follow=False)
+        argv = _journalctl_argv(lines=None, follow=False)
         assert "-n" not in argv
 
 
@@ -111,23 +100,15 @@ class TestCmdLogs:
             "stormpulse.cli.logs.subprocess.run",
             return_value=MagicMock(returncode=0),
         ):
-            with patch(
-                "stormpulse.cli.logs.detect_mode",
-                return_value=InstallMode.USER,
-            ):
-                cmd_logs(_ns())
+            cmd_logs(_ns())
 
     def test_nonzero_exit_propagates(self) -> None:
         with patch(
             "stormpulse.cli.logs.subprocess.run",
             return_value=MagicMock(returncode=130),
         ):
-            with patch(
-                "stormpulse.cli.logs.detect_mode",
-                return_value=InstallMode.USER,
-            ):
-                with pytest.raises(SystemExit) as exc:
-                    cmd_logs(_ns())
+            with pytest.raises(SystemExit) as exc:
+                cmd_logs(_ns())
         assert exc.value.code == 130
 
     def test_journalctl_missing_exits_1(self) -> None:
@@ -135,12 +116,8 @@ class TestCmdLogs:
             "stormpulse.cli.logs.subprocess.run",
             side_effect=FileNotFoundError(),
         ):
-            with patch(
-                "stormpulse.cli.logs.detect_mode",
-                return_value=InstallMode.USER,
-            ):
-                with pytest.raises(SystemExit) as exc:
-                    cmd_logs(_ns())
+            with pytest.raises(SystemExit) as exc:
+                cmd_logs(_ns())
         assert exc.value.code == 1
 
     def test_empty_journal_no_follow_prints_hint(
@@ -153,11 +130,7 @@ class TestCmdLogs:
             "stormpulse.cli.logs.subprocess.run",
             return_value=MagicMock(returncode=0, stdout="", stderr=""),
         ):
-            with patch(
-                "stormpulse.cli.logs.detect_mode",
-                return_value=InstallMode.USER,
-            ):
-                cmd_logs(_ns(follow=False))
+            cmd_logs(_ns(follow=False))
         captured = capsys.readouterr()
         assert "No stormpulse logs found" in captured.err
         assert "stormpulse init" in captured.err
@@ -172,11 +145,7 @@ class TestCmdLogs:
             "stormpulse.cli.logs.subprocess.run",
             return_value=MagicMock(returncode=0, stdout="", stderr=""),
         ):
-            with patch(
-                "stormpulse.cli.logs.detect_mode",
-                return_value=InstallMode.USER,
-            ):
-                cmd_logs(_ns(since="06:00", grep="zzz"))
+            cmd_logs(_ns(since="06:00", grep="zzz"))
         captured = capsys.readouterr()
         assert "matched" in captured.err
         assert "stormpulse init" not in captured.err
@@ -194,23 +163,17 @@ class TestCmdLogs:
                 stderr="",
             ),
         ):
-            with patch(
-                "stormpulse.cli.logs.detect_mode",
-                return_value=InstallMode.USER,
-            ):
-                cmd_logs(_ns(follow=False))
+            cmd_logs(_ns(follow=False))
         captured = capsys.readouterr()
         assert "some log line" in captured.out
         assert "No stormpulse logs found" not in captured.err
 
     def test_window_flags_reach_journalctl(self) -> None:
-        run_mock = MagicMock(return_value=MagicMock(returncode=0, stdout="x\n", stderr=""))
+        run_mock = MagicMock(
+            return_value=MagicMock(returncode=0, stdout="x\n", stderr="")
+        )
         with patch("stormpulse.cli.logs.subprocess.run", run_mock):
-            with patch(
-                "stormpulse.cli.logs.detect_mode",
-                return_value=InstallMode.SYSTEM,
-            ):
-                cmd_logs(_ns(since="06:00", until="07:10", grep="1011"))
+            cmd_logs(_ns(since="06:00", until="07:10", grep="1011"))
         argv = run_mock.call_args[0][0]
         assert ["--since", "06:00", "--until", "07:10", "-g", "1011"] == argv[-6:]
         assert "-f" not in argv

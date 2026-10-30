@@ -23,15 +23,13 @@ def drive_wizard(
     *,
     config: Any,
     config_path: Path,
-    mode: Any,
     label: str,
 ) -> bool:
     """Run the wizard end to end. Returns True if a plan committed, False if the
     operator aborted at the confirm; exits the process on a refusal or a failed
-    apply. ``config`` is the loaded Config (for state dir + agent id); ``mode`` is
-    the InstallMode (for the restart hint)."""
+    apply. ``config`` is the loaded Config (for state dir + agent id)."""
     from stormpulse.init.prompts import prompt, prompt_confirm
-    from stormpulse.init.system import restart_or_hint
+    from stormpulse.init.system import restart_user_unit
     from stormpulse.wizard import STATUS_COMMITTED, ApplyEnv, apply_plan, preview_plan
 
     answers: dict[str, Answer] = {}
@@ -47,7 +45,9 @@ def drive_wizard(
     findings = wizard.inspect(answers, context)
     for finding in findings:
         repair = f" ({finding.repair})" if finding.repair else ""
-        print(f"  [{finding.severity.value}] {finding.message}{repair}", file=sys.stderr)
+        print(
+            f"  [{finding.severity.value}] {finding.message}{repair}", file=sys.stderr
+        )
     if any(f.severity is Severity.REFUSAL for f in findings):
         print("Aborted.", file=sys.stderr)
         sys.exit(1)
@@ -63,7 +63,7 @@ def drive_wizard(
         return False
 
     def restart(_unit: str, _action: str) -> None:
-        restart_or_hint(mode)
+        restart_user_unit()
 
     env = ApplyEnv(
         config_path=config_path,
@@ -74,7 +74,10 @@ def drive_wizard(
     )
     receipt = apply_plan(plan, env, agent_id=config.agent.id)
     if receipt.status == STATUS_COMMITTED:
-        print(f"\n  [{label}] configured; {len(receipt.applied)} step(s) applied.", file=sys.stderr)
+        print(
+            f"\n  [{label}] configured; {len(receipt.applied)} step(s) applied.",
+            file=sys.stderr,
+        )
         return True
     print(f"apply {receipt.status}: {receipt.failure}", file=sys.stderr)
     sys.exit(5)

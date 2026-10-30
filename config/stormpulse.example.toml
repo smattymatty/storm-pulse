@@ -1,10 +1,7 @@
 # Storm Pulse Agent Configuration
 #
-# `stormpulse init` generates this file for you with paths that match the
-# detected install mode, so you normally do not hand-write it. This example
-# shows a rootless user-mode install (the production default) for an operator
-# user named `deploy`. A legacy system install puts creds under /etc/stormpulse/
-# and data under /opt/stormpulse/data/ instead.
+# `stormpulse init` generates this file for you, so you normally do not
+# hand-write it. This example is for an operator user named `deploy`.
 
 [agent]
 id = "vps-toronto-01"

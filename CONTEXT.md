@@ -7,22 +7,16 @@ and the host's edge services on the operator's behalf.
 ## Language
 
 **Blast radius**:
-The set of host resources a compromised agent can reach. On the production fleet
-(all rootless user mode) that is the operator user's home and its rootless-Docker
-namespace, and through it the Garage container and the locally-held admin token,
-but not host root.
-_Avoid_: root-equivalent (describes the legacy system mode, which no prod box runs)
+The set of host resources a compromised agent can reach: the operator user's
+home and its rootless-Docker namespace, and through it the Garage container and
+the locally-held admin token, but not host root.
+_Avoid_: root-equivalent
 
-**User mode (rootless)**:
-The canonical, production install mode. Pulse runs as a sudo-less operator user
-against rootless `dockerd`: no docker group, no system user, no host root. Every
-hardened (`001-ubuntu-baseline`) box runs this, which is all of prod.
-_Avoid_: rootful
-
-**System mode (rootful)**:
-Legacy / dev-only install mode where Pulse runs with host root via a system unit.
-Not deployed on any live box. Named in the docs only as the worst case the design
-defends against, never as the running reality.
+**Rootless**:
+The only way Pulse installs and runs. A sudo-less operator user against rootless
+`dockerd`: no docker group, no system user, no host root. Every `stormpulse`
+command refuses UID 0.
+_Avoid_: user mode (there is no other mode to contrast it with)
 
 **Control plane**:
 Storm's server-side system (the web app) that maps Garage identifiers to customer

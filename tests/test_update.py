@@ -136,9 +136,7 @@ class TestCmdUpdatePipxMissing:
 
 
 class TestCmdUpdateRestartFlow:
-    def test_user_mode_runs_pipx_then_systemctl_user_restart(self) -> None:
-        from stormpulse.init.mode import InstallMode
-
+    def test_runs_pipx_then_systemctl_user_restart(self) -> None:
         calls: list[list[str]] = []
 
         def fake_run(argv: list[str], **kwargs: object) -> MagicMock:
@@ -154,43 +152,13 @@ class TestCmdUpdateRestartFlow:
                     "stormpulse.init.system.subprocess.run",
                     side_effect=fake_run,
                 ):
-                    with patch(
-                        "stormpulse.cli.update.detect_mode",
-                        return_value=InstallMode.USER,
-                    ):
-                        cmd_update(_ns())
+                    cmd_update(_ns())
 
         # Two subprocess calls: pipx install, then systemctl --user restart.
         assert len(calls) == 2
         assert calls[0][:3] == ["pipx", "install", "--force"]
         assert calls[0][3] == f"{GIT_URL}@main"
         assert calls[1] == ["systemctl", "--user", "restart", "stormpulse"]
-
-    def test_system_mode_skips_auto_restart(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        from stormpulse.init.mode import InstallMode
-
-        calls: list[list[str]] = []
-
-        def fake_run(argv: list[str], **kwargs: object) -> MagicMock:
-            calls.append(list(argv))
-            return MagicMock(returncode=0)
-
-        with patch("stormpulse.cli.update.shutil.which", return_value="/usr/bin/pipx"):
-            with patch("stormpulse.cli.update.subprocess.run", side_effect=fake_run):
-                with patch(
-                    "stormpulse.cli.update.detect_mode",
-                    return_value=InstallMode.SYSTEM,
-                ):
-                    cmd_update(_ns())
-
-        # Only pipx ran; systemctl is the operator's job in system mode.
-        assert len(calls) == 1
-        assert calls[0][:3] == ["pipx", "install", "--force"]
-        err = capsys.readouterr().err
-        assert "System install detected" in err
-        assert "systemctl restart stormpulse" in err
 
     def test_no_restart_skips_systemctl(
         self, capsys: pytest.CaptureFixture[str]
@@ -222,8 +190,6 @@ class TestCmdUpdateRestartFlow:
         assert exc.value.code == 42
 
     def test_systemctl_failure_propagates_exit_code(self) -> None:
-        from stormpulse.init.mode import InstallMode
-
         # pipx runs in cli.update.subprocess.run; systemctl runs in
         # cli.restart.subprocess.run after the helper factoring. Mock each
         # at its own home so the test asserts both paths.
@@ -236,10 +202,6 @@ class TestCmdUpdateRestartFlow:
                     "stormpulse.init.system.subprocess.run",
                     return_value=MagicMock(returncode=5),  # systemctl --user failed
                 ):
-                    with patch(
-                        "stormpulse.cli.update.detect_mode",
-                        return_value=InstallMode.USER,
-                    ):
-                        with pytest.raises(SystemExit) as exc:
-                            cmd_update(_ns())
+                    with pytest.raises(SystemExit) as exc:
+                        cmd_update(_ns())
         assert exc.value.code == 5
