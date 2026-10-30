@@ -30,6 +30,7 @@ from stormpulse.protocol import (
     MessageType,
     MetricsPayload,
 )
+from stormpulse.signoff import SignoffState
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -41,6 +42,13 @@ PULSE_TOKEN = "tok-test-123"
 # Digests with the real shape and no real meaning: fixtures only.
 CONTRACT_DIGEST = "sha256:" + "0f" * 32
 WIRE_DIGEST = "sha256:" + "1f" * 32
+
+
+def unsealed_state(state_dir: Path) -> SignoffState:
+    """An opened hatch, as `stormpulse signoff unseal` leaves it; fresh dirs are sealed."""
+    state = SignoffState(state_dir)
+    state.unseal()
+    return state
 
 
 def matched_test_session(agent: Any) -> Any:

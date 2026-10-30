@@ -52,6 +52,7 @@ from tests.helpers import (
     sign_command_sequence,
     signed,
     signed_command_sequence,
+    unsealed_state,
 )
 
 # ---------------------------------------------------------------------------
@@ -857,7 +858,7 @@ async def test_command_result_logged_to_pulse_logger(
         nonce_store,
         ssl_ctx,
         shutdown,
-        signoff_state=SignoffState(config.storage.db_path.parent),
+        signoff_state=unsealed_state(config.storage.db_path.parent),
         pulse_logger=pulse_logger,
     )
     ws = AsyncMock()

@@ -17,7 +17,7 @@ from stormpulse.config import Config
 from stormpulse.garage import integration as garage_integration
 from stormpulse.garage.state_reader import GarageStateReader
 from stormpulse.signoff import SignoffState
-from tests.helpers import SECRET, build_config, matched_test_session
+from tests.helpers import SECRET, build_config, matched_test_session, unsealed_state
 
 
 @pytest.fixture(autouse=True)
@@ -128,7 +128,7 @@ def config(tmp_path: Path) -> Config:
 @pytest.fixture
 def signoff_state(config: Config) -> SignoffState:
     """Default unsealed SignoffState rooted at the test's tmp_path."""
-    return SignoffState(config.storage.db_path.parent)
+    return unsealed_state(config.storage.db_path.parent)
 
 
 @pytest.fixture

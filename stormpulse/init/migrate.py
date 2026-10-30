@@ -48,6 +48,7 @@ from stormpulse.init.files import (
 )
 from stormpulse.init.generate import USER_SYSTEMD_UNIT_TEMPLATE
 from stormpulse.init.mode import rootless_socket_path
+from stormpulse.init.registry import migration_init_steps
 
 logger = logging.getLogger(__name__)
 
@@ -286,6 +287,8 @@ def run_migration(*, force: bool = False) -> None:
         copy_creds(plan, force=force)
         write_user_toml(plan, force=force)
         write_user_unit(plan, force=force)
+        for step in migration_init_steps():
+            step(plan.new_config)
         enable_and_start(plan)
         verify(plan)
     except Exception as exc:

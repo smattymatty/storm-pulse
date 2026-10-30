@@ -56,6 +56,7 @@ class _Probe:
         self.frames: list[str] = []
         self.reseal_on_harmless = False
         self.nonces = NonceStore(state / "nonces.db")
+        SignoffState(state).unseal()  # a fresh state dir is sealed (CORE-004 d6)
         self.agent = Agent(
             _config(state),
             _SECRET,

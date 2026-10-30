@@ -17,6 +17,7 @@ from stormpulse.commands.registry import (
 )
 from stormpulse.config import CommandSpec
 from stormpulse.signoff import SignoffState
+from tests.helpers import unsealed_state
 
 
 def _hatch_spec() -> CommandSpec:
@@ -32,7 +33,7 @@ def test_sealed_commands_set_covers_verify_and_apply() -> None:
 
 
 def test_unsealed_state_blocks_nothing(tmp_path: Path) -> None:
-    state = SignoffState(tmp_path)
+    state = unsealed_state(tmp_path)
     assert not is_blocked_by_seal(state, [VERIFY_BLOCK_COMMAND])
     assert not is_blocked_by_seal(state, [APPLY_BLOCK_COMMAND])
     assert not is_blocked_by_seal(state, ["git_pull", "docker_logs"])
@@ -92,7 +93,7 @@ def test_sealed_refusal_falls_back_to_signoff_group_when_no_cmd_def() -> None:
 
 def test_needs_restart_when_unsealed_but_hatch_command_absent(tmp_path: Path) -> None:
     """Unsealed agent, hatch command missing from the boot-built registry."""
-    state = SignoffState(tmp_path)  # unsealed
+    state = unsealed_state(tmp_path)
     registry: dict[str, CommandSpec] = {"git_pull": _hatch_spec()}
     assert needs_restart_to_load(state, registry, [VERIFY_BLOCK_COMMAND]) == (
         VERIFY_BLOCK_COMMAND
@@ -104,7 +105,7 @@ def test_needs_restart_when_unsealed_but_hatch_command_absent(tmp_path: Path) ->
 
 def test_no_restart_when_hatch_command_already_loaded(tmp_path: Path) -> None:
     """Booted unsealed: the command is in the registry, nothing to reload."""
-    state = SignoffState(tmp_path)
+    state = unsealed_state(tmp_path)
     registry = {VERIFY_BLOCK_COMMAND: _hatch_spec()}
     assert needs_restart_to_load(state, registry, [VERIFY_BLOCK_COMMAND]) is None
 
@@ -127,7 +128,7 @@ def test_genuinely_unknown_command_is_not_deflected(tmp_path: Path) -> None:
 def test_needs_restart_returns_first_offending_command_in_sequence(
     tmp_path: Path,
 ) -> None:
-    state = SignoffState(tmp_path)
+    state = unsealed_state(tmp_path)
     registry: dict[str, CommandSpec] = {"git_pull": _hatch_spec()}
     got = needs_restart_to_load(
         state, registry, ["git_pull", APPLY_BLOCK_COMMAND, VERIFY_BLOCK_COMMAND]

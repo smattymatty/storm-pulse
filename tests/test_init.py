@@ -1318,10 +1318,27 @@ class TestInitRegistry:
             pass
 
         before = registered_init_steps()
-        register_init_step(_step)
+        register_init_step(_step, on_migrate=False)
         after = registered_init_steps()
         assert _step in after
         assert len(after) == len(before) + 1
+
+    def test_migration_runs_only_the_steps_that_ask(self) -> None:
+        from stormpulse.init.registry import (
+            migration_init_steps,
+            register_init_step,
+        )
+
+        def _carried(_path: Path) -> None:
+            pass
+
+        def _state(_path: Path) -> None:
+            pass
+
+        register_init_step(_carried, on_migrate=False)
+        register_init_step(_state, on_migrate=True)
+        assert _state in migration_init_steps()
+        assert _carried not in migration_init_steps()
 
     def test_returns_a_copy(self) -> None:
         from stormpulse.init.registry import registered_init_steps

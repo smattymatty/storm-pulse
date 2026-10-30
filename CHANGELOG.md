@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **A lost seal file no longer opens the hatch.** The agent read a missing
+  `signoff.sealed` as unsealed, so `migrate-to-rootless` (which starts a fresh
+  data directory and never copied the file), a wiped state directory, or
+  `stormpulse run` without `init` started an agent whose dashboard could
+  dispatch `run_verify_block` and `run_apply_block` without the operator ever
+  unsealing. The hatch is now open only while `signoff.unsealed_at` exists, and
+  only `stormpulse signoff unseal` writes it. `signoff.sealed` is still written,
+  so a downgraded agent stays sealed. An agent unsealed before 0.2.0 that never
+  recorded an unseal time reads as sealed after this update; unseal it again
+  if you meant it open. CORE-004 decisions 2 and 6 are amended.
+- **`migrate-to-rootless` runs the install steps that set state.** It now runs
+  every feature install step registered with `on_migrate=True` against the new
+  config before starting the unit; today that is the sign-off seal. Garage and
+  log groups ride in the translated config and are not re-prompted. Every
+  install step must declare `on_migrate`, so a new feature cannot be skipped by
+  omission.
+
 ### Changed
 
 - **CI runs on the public `python:3.12-bookworm` image.** The Tests workflow

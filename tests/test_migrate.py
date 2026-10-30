@@ -156,3 +156,91 @@ class TestTranslateToml:
         )
         # No paths to translate -> string is unchanged.
         assert translate_toml(old, plan) == old
+
+
+class TestRunMigration:
+    def test_runs_migration_steps_on_the_new_config_before_start(
+        self, tmp_path: Path
+    ) -> None:
+        from stormpulse.init import migrate
+
+        plan = _make_plan(tmp_path)
+        order: list[str] = []
+        with (
+            patch.object(migrate, "build_plan", return_value=plan),
+            patch.object(migrate, "check_preconditions"),
+            patch.object(migrate, "stop_system_unit"),
+            patch.object(migrate, "copy_creds"),
+            patch.object(migrate, "write_user_toml"),
+            patch.object(migrate, "write_user_unit"),
+            patch.object(
+                migrate,
+                "migration_init_steps",
+                return_value=[lambda path: order.append(f"step:{path}")],
+            ),
+            patch.object(
+                migrate,
+                "enable_and_start",
+                side_effect=lambda _p: order.append("start"),
+            ),
+            patch.object(migrate, "verify"),
+        ):
+            migrate.run_migration()
+        assert order == [f"step:{plan.new_config}", "start"]
+
+    def test_a_migrated_agent_starts_sealed(self, tmp_path: Path) -> None:
+        """The old seal file is never copied; the new state dir is sealed anyway."""
+        import stormpulse.signoff.init  # noqa: F401 - registers the step
+        from stormpulse.init import migrate
+        from stormpulse.signoff import SignoffState
+
+        plan = _make_plan(tmp_path)
+        project = tmp_path / "project"
+        project.mkdir()
+        (project / "docker-compose.yml").write_text("services: {}\n")
+        old_toml = f"""
+[agent]
+id = "test-agent"
+pulse_token = "test-token"
+
+[dashboard]
+url = "wss://example.test/pulse"
+reconnect_min_seconds = 1
+reconnect_max_seconds = 30
+heartbeat_interval_seconds = 30
+
+[auth]
+hmac_secret = "/etc/stormpulse/hmac.key"
+command_max_age_seconds = 60
+
+[tls]
+ca_cert = "/etc/stormpulse/ca.pem"
+client_cert = "/etc/stormpulse/agent.pem"
+client_key = "/etc/stormpulse/agent-key.pem"
+
+[metrics]
+push_interval_seconds = 10
+collect_containers = false
+
+[project]
+project_dir = "{project}"
+compose_file = "{project / 'docker-compose.yml'}"
+docker_service_name = "web"
+
+[storage]
+db_path = "/opt/stormpulse/data/stormpulse.db"
+"""
+        with (
+            patch.object(migrate, "build_plan", return_value=plan),
+            patch.object(migrate, "check_preconditions"),
+            patch.object(migrate, "stop_system_unit"),
+            patch.object(migrate, "copy_creds"),
+            patch.object(migrate, "_sudo_read_text", return_value=old_toml),
+            patch.object(migrate, "write_user_unit"),
+            patch.object(migrate, "enable_and_start"),
+            patch.object(migrate, "verify"),
+        ):
+            migrate.run_migration()
+        state = SignoffState(plan.new_data_dir)
+        assert state.is_sealed() is True
+        assert state.path.exists()

@@ -28,9 +28,8 @@ def signoff_init_step(config_path: Path) -> None:
     config = load_config(config_path)
     state_dir = state_dir_from_db_path(config.storage.db_path)
     state_dir.mkdir(parents=True, exist_ok=True)
-    state = SignoffState(state_dir)
-    if state.seal():
-        logger.info("Sealed agent at install time: %s", state.path)
+    SignoffState(state_dir).seal()
+    logger.info("Sealed agent at install time: %s", state_dir)
 
 
-register_init_step(signoff_init_step)
+register_init_step(signoff_init_step, on_migrate=True)

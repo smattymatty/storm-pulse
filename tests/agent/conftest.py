@@ -14,13 +14,13 @@ from stormpulse import events
 from stormpulse.agent import Agent
 from stormpulse.agent.event_spool import SpoolFeeder, spool_feeders
 from stormpulse.auth import NonceStore
-from stormpulse.signoff import SignoffState
 from tests.agent.spool_support import declared, runtime
 from tests.helpers import (
     SECRET,
     build_config,
     build_garage_config,
     matched_test_session,
+    unsealed_state,
 )
 
 
@@ -45,7 +45,7 @@ def agent_with_garage(
                 nonce_store,
                 ssl_ctx,
                 shutdown,
-                signoff_state=SignoffState(cfg.storage.db_path.parent),
+                signoff_state=unsealed_state(cfg.storage.db_path.parent),
             )
         )
 

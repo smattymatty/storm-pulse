@@ -201,7 +201,8 @@ def discover_admin_api(garage_config_path: Path) -> tuple[str, str]:
         host = "127.0.0.1"
     admin_url = f"http://{host}:{port}"
     host_token = _resolve_host_token_path(
-        garage_config_path, token_file if isinstance(token_file, str) else "",
+        garage_config_path,
+        token_file if isinstance(token_file, str) else "",
     )
     return admin_url, host_token
 
@@ -295,7 +296,8 @@ def append_garage_section(
     )
     if admin_url and admin_token_file:
         block += _GARAGE_ADMIN_LINES.format(
-            admin_url=admin_url, admin_token_file=admin_token_file,
+            admin_url=admin_url,
+            admin_token_file=admin_token_file,
         )
 
     try:
@@ -480,4 +482,5 @@ def garage_init_step(config_path: Path) -> None:
     )
 
 
-register_init_step(garage_init_step)
+# Migration carries [garage] in the translated TOML; re-prompting adds nothing.
+register_init_step(garage_init_step, on_migrate=False)

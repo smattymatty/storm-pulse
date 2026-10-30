@@ -1,11 +1,8 @@
-"""Seal state for dashboard-dispatched, HMAC-signed verify shell commands.
+"""Seal state for dashboard-dispatched, HMAC-signed shell commands.
 
-CORE-004: init seals by default. Operators use signoff unseal with hostname
-confirmation to enable verification, then signoff seal to disable it.
-Unsealed agents report warnings, dashboard state, and elapsed time.
-
-signoff.sealed marks the sealed state; signoff.unsealed_at records UTC unseal
-time. A missing timestamp means the unsealed age is unknown."""
+CORE-004 d6: the agent is open only while signoff.unsealed_at exists, and only
+`signoff unseal` writes it, so a missing, wiped or migrated state dir is sealed.
+signoff.sealed is still written so an agent older than 0.8.3 reads it sealed."""
 
 from __future__ import annotations
 
@@ -37,7 +34,7 @@ class SignoffState:
         return self._unsealed_at_path
 
     def is_sealed(self) -> bool:
-        return self._seal_path.exists()
+        return not self._unsealed_at_path.is_file()
 
     def unsealed_since(self) -> datetime | None:
         """Return the unseal timestamp, or None if sealed, missing, or invalid.
@@ -55,31 +52,26 @@ class SignoffState:
             return None
 
     def seal(self) -> bool:
-        """Create the seal and remove the timestamp; return True on transition.
+        """Remove the unseal marker; return True on transition.
 
-        Already sealed returns False and still removes any stray timestamp."""
-        if self._seal_path.exists():
-            # Remove any stray timestamp while sealed.
-            self._unsealed_at_path.unlink(missing_ok=True)
-            return False
+        The marker goes first, so a crash before the legacy file lands is sealed."""
+        was_open = not self.is_sealed()
+        self._unsealed_at_path.unlink(missing_ok=True)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._seal_path.touch(mode=0o640)
-        self._unsealed_at_path.unlink(missing_ok=True)
-        return True
+        return was_open
 
     def unseal(self) -> bool:
-        """Remove the seal and record the time; return True on transition.
+        """Write the unseal marker with the time; return True on transition.
 
         Already unsealed returns False and preserves the original timestamp."""
-        if not self._seal_path.exists():
+        if not self.is_sealed():
             return False
-        # Write the timestamp before removing the seal so a crash cannot leave
-        # the agent newly unsealed without a recorded time.
         self._dir.mkdir(parents=True, exist_ok=True)
         now_iso = datetime.now(UTC).isoformat()
         self._unsealed_at_path.write_text(now_iso, encoding="utf-8")
         self._unsealed_at_path.chmod(0o640)
-        self._seal_path.unlink()
+        self._seal_path.unlink(missing_ok=True)
         return True
 
 

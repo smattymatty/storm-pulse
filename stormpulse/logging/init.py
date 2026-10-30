@@ -298,4 +298,5 @@ def logging_init_step(config_path: Path) -> None:
         print(f"  Added: {g['name']} (docker_stream)", file=sys.stderr)
 
 
-register_init_step(logging_init_step)
+# Migration carries [[log_groups]] in the translated TOML; re-prompting adds nothing.
+register_init_step(logging_init_step, on_migrate=False)

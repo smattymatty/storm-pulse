@@ -1,4 +1,4 @@
-"""Tests for the sign-off seal - file-presence state, registry gating, CLI."""
+"""Tests for the sign-off seal - marker-presence state, registry gating, CLI."""
 
 from __future__ import annotations
 
@@ -18,19 +18,21 @@ from stormpulse.signoff import (
 )
 
 # ---------------------------------------------------------------------------
-# SignoffState: file-presence semantics
+# SignoffState: marker-presence semantics (CORE-004 d6)
 # ---------------------------------------------------------------------------
 
 
-def test_signoff_state_starts_unsealed(tmp_path: Path) -> None:
+def test_signoff_state_starts_sealed(tmp_path: Path) -> None:
+    # A fresh, wiped or migrated state dir holds no marker: sealed.
     state = SignoffState(tmp_path)
-    assert state.is_sealed() is False
-    assert not state.path.exists()
+    assert state.is_sealed() is True
+    assert state.unsealed_since() is None
 
 
-def test_signoff_state_seal_creates_flag_file(tmp_path: Path) -> None:
+def test_signoff_state_seal_writes_the_legacy_flag_file(tmp_path: Path) -> None:
+    # An agent older than 0.8.3 reads signoff.sealed, so a downgrade stays sealed.
     state = SignoffState(tmp_path)
-    assert state.seal() is True
+    assert state.seal() is False
     assert state.is_sealed() is True
     assert state.path.exists()
     assert state.path.name == "signoff.sealed"
@@ -38,6 +40,7 @@ def test_signoff_state_seal_creates_flag_file(tmp_path: Path) -> None:
 
 def test_signoff_state_seal_is_idempotent(tmp_path: Path) -> None:
     state = SignoffState(tmp_path)
+    state.unseal()
     assert state.seal() is True
     # Second call must return False (no state change), still sealed.
     assert state.seal() is False
@@ -54,7 +57,7 @@ def test_signoff_state_unseal_removes_flag_file(tmp_path: Path) -> None:
 
 def test_signoff_state_unseal_is_idempotent(tmp_path: Path) -> None:
     state = SignoffState(tmp_path)
-    # Never sealed in the first place.
+    assert state.unseal() is True
     assert state.unseal() is False
     assert state.is_sealed() is False
 
@@ -64,21 +67,38 @@ def test_signoff_state_creates_state_dir_if_missing(tmp_path: Path) -> None:
     # fresh install (no nonce DB yet) doesn't blow up the CLI.
     fresh = tmp_path / "does" / "not" / "exist"
     state = SignoffState(fresh)
-    assert state.seal() is True
+    state.seal()
     assert fresh.is_dir()
+    assert state.path.exists()
 
 
 def test_signoff_state_rereads_on_each_call(tmp_path: Path) -> None:
     # The dispatch-time recheck depends on is_sealed() actually
     # re-statting the path on every call (not caching a startup value).
     state = SignoffState(tmp_path)
-    assert state.is_sealed() is False
-    # External actor (operator running the CLI) creates the flag.
-    (tmp_path / "signoff.sealed").touch()
     assert state.is_sealed() is True
-    # And the reverse.
-    (tmp_path / "signoff.sealed").unlink()
+    # External actor (operator running the CLI) writes the marker.
+    state.unsealed_at_path.write_text("2026-10-30T00:00:00+00:00")
     assert state.is_sealed() is False
+    # And the reverse.
+    state.unsealed_at_path.unlink()
+    assert state.is_sealed() is True
+
+
+def test_deleting_the_legacy_flag_file_does_not_unseal(tmp_path: Path) -> None:
+    state = SignoffState(tmp_path)
+    state.seal()
+    state.path.unlink()
+    assert state.is_sealed() is True
+
+
+def test_wiping_the_state_dir_reseals(tmp_path: Path) -> None:
+    import shutil
+
+    state = SignoffState(tmp_path / "state")
+    state.unseal()
+    shutil.rmtree(tmp_path / "state")
+    assert state.is_sealed() is True
 
 
 def test_state_dir_from_db_path_returns_parent(tmp_path: Path) -> None:
@@ -124,15 +144,6 @@ def test_unsealed_since_survives_marker_only_state(tmp_path: Path) -> None:
     assert first is not None
     assert second is not None
     assert second > first
-
-
-def test_unsealed_since_returns_none_when_marker_missing(tmp_path: Path) -> None:
-    """Operator who did `rm signoff.sealed` by hand leaves us without a marker."""
-    # Manually create the unsealed state without going through the CLI:
-    # no seal file present AND no marker file. Treat as unsealed-age-unknown.
-    state = SignoffState(tmp_path)
-    assert state.is_sealed() is False
-    assert state.unsealed_since() is None
 
 
 def test_unsealed_since_returns_none_on_corrupt_marker(tmp_path: Path) -> None:
@@ -359,23 +370,14 @@ def test_cli_signoff_round_trip(
     cfg = _write_minimal_config(tmp_path)
     hostname = socket.gethostname()
 
-    # status -> unsealed (state dir is fresh, no seal file)
-    cmd_signoff_status(argparse.Namespace(config=str(cfg)))
-    out = capsys.readouterr().out
-    assert "UNSEALED" in out
-
-    # seal
-    cmd_signoff_seal(argparse.Namespace(config=str(cfg)))
-    out = capsys.readouterr().out
-    assert "Sealed" in out
-
-    # status -> sealed
+    # status -> sealed (state dir is fresh, no marker)
     cmd_signoff_status(argparse.Namespace(config=str(cfg)))
     out = capsys.readouterr().out
     assert "SEALED" in out
+    assert "UNSEALED" not in out
     assert "run_verify_block" in out
 
-    # seal again -> idempotent
+    # seal on a fresh dir -> already sealed
     cmd_signoff_seal(argparse.Namespace(config=str(cfg)))
     out = capsys.readouterr().out
     assert "Already sealed" in out
@@ -393,6 +395,13 @@ def test_cli_signoff_round_trip(
     )
     out = capsys.readouterr().out
     assert "Already unsealed" in out
+
+    cmd_signoff_status(argparse.Namespace(config=str(cfg)))
+    assert "UNSEALED" in capsys.readouterr().out
+
+    cmd_signoff_seal(argparse.Namespace(config=str(cfg)))
+    out = capsys.readouterr().out
+    assert "Sealed." in out
 
 
 # ---------------------------------------------------------------------------
@@ -420,3 +429,22 @@ def test_init_step_is_registered_with_the_orchestrator() -> None:
     from stormpulse.signoff.init import signoff_init_step
 
     assert signoff_init_step in registered_init_steps()
+
+
+def test_init_step_runs_on_migration() -> None:
+    import stormpulse.signoff.init  # noqa: F401 - side-effect import
+    from stormpulse.init.registry import migration_init_steps
+    from stormpulse.signoff.init import signoff_init_step
+
+    assert signoff_init_step in migration_init_steps()
+
+
+def test_init_step_reseals_an_unsealed_agent(tmp_path: Path) -> None:
+    from stormpulse.signoff.init import signoff_init_step
+
+    cfg = _write_minimal_config(tmp_path)
+    state = SignoffState(tmp_path / "state")
+    state.unseal()
+    signoff_init_step(cfg)
+    assert state.is_sealed() is True
+    assert state.path.exists()
