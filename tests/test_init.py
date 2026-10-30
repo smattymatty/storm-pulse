@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import stat
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -29,8 +31,16 @@ from stormpulse.init import (
     prompt_project_dir,
     prompt_pulse_token,
     run_init,
+    write_user_config_file,
+    write_user_systemd_unit,
+)
+from stormpulse.init.files import (
+    default_config_path,
+    user_config_path,
+    user_systemd_path,
 )
 from stormpulse.init.prompts import prompt_confirm
+from stormpulse.init.system import run_user_daemon_reload
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -726,74 +736,65 @@ class TestGenerateToml:
 
 
 # ---------------------------------------------------------------------------
-# TestUserWriters: the only writers init has, unmocked
+# The config and unit writers: the only files init writes, unmocked
 # ---------------------------------------------------------------------------
 
 
-class TestUserWriters:
-    def test_config_is_written_owner_only(self, tmp_path: Path) -> None:
-        import stat
+def test_config_is_written_owner_only(tmp_path: Path) -> None:
+    path = tmp_path / "cfg" / "stormpulse.toml"
+    write_user_config_file(path, "x = 1\n")
+    assert path.read_text() == "x = 1\n"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600  # holds the pulse token
+    assert not path.with_suffix(".tmp").exists()
 
-        from stormpulse.init import write_user_config_file
 
-        path = tmp_path / "cfg" / "stormpulse.toml"
-        write_user_config_file(path, "x = 1\n")
-        assert path.read_text() == "x = 1\n"
-        assert stat.S_IMODE(path.stat().st_mode) == 0o600  # holds the pulse token
-        assert not path.with_suffix(".tmp").exists()
+def test_config_refuses_overwrite_without_force(tmp_path: Path) -> None:
+    path = tmp_path / "stormpulse.toml"
+    path.write_text("old")
+    with pytest.raises(InitError, match="already exists"):
+        write_user_config_file(path, "new")
+    assert path.read_text() == "old"
+    write_user_config_file(path, "new", force=True)
+    assert path.read_text() == "new"
 
-    def test_config_refuses_overwrite_without_force(self, tmp_path: Path) -> None:
-        from stormpulse.init import InitError, write_user_config_file
 
-        path = tmp_path / "stormpulse.toml"
-        path.write_text("old")
-        with pytest.raises(InitError, match="already exists"):
-            write_user_config_file(path, "new")
-        assert path.read_text() == "old"
-        write_user_config_file(path, "new", force=True)
-        assert path.read_text() == "new"
+def test_unit_refuses_overwrite_without_force(tmp_path: Path) -> None:
+    path = tmp_path / "user" / "stormpulse.service"
+    write_user_systemd_unit(path, "[Unit]\n")
+    assert stat.S_IMODE(path.stat().st_mode) == 0o644
+    with pytest.raises(InitError, match="already exists"):
+        write_user_systemd_unit(path, "[Service]\n")
+    assert path.read_text() == "[Unit]\n"
 
-    def test_unit_refuses_overwrite_without_force(self, tmp_path: Path) -> None:
-        import stat
 
-        from stormpulse.init import InitError, write_user_systemd_unit
+# ---------------------------------------------------------------------------
+# One config path: init writes where signoff, caddy init and the rest read
+# ---------------------------------------------------------------------------
 
-        path = tmp_path / "user" / "stormpulse.service"
-        write_user_systemd_unit(path, "[Unit]\n")
-        assert stat.S_IMODE(path.stat().st_mode) == 0o644
-        with pytest.raises(InitError, match="already exists"):
-            write_user_systemd_unit(path, "[Service]\n")
-        assert path.read_text() == "[Unit]\n"
 
-    def test_init_writes_where_every_command_reads(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        # signoff seal reads default_config_path(); init writes user_config_path().
-        from stormpulse.init.files import (
-            default_config_path,
-            user_config_path,
-            user_systemd_path,
-        )
+def test_init_writes_where_every_command_reads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    expected = tmp_path / "xdg" / "stormpulse" / "stormpulse.toml"
+    assert user_config_path() == Path(default_config_path()) == expected
+    unit = tmp_path / "xdg" / "systemd" / "user" / "stormpulse.service"
+    assert user_systemd_path() == unit
 
-        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
-        monkeypatch.setenv("HOME", str(tmp_path / "home"))
-        expected = tmp_path / "xdg" / "stormpulse" / "stormpulse.toml"
-        assert user_config_path() == Path(default_config_path()) == expected
-        unit = tmp_path / "xdg" / "systemd" / "user" / "stormpulse.service"
-        assert user_systemd_path() == unit
 
-    def test_daemon_reload_failure_raises(self) -> None:
-        import subprocess
+# ---------------------------------------------------------------------------
+# systemctl --user daemon-reload
+# ---------------------------------------------------------------------------
 
-        from stormpulse.init import InitError
-        from stormpulse.init.system import run_user_daemon_reload
 
-        failed = subprocess.CalledProcessError(1, "systemctl", stderr=b"no bus")
-        with (
-            patch("stormpulse.init.system.subprocess.run", side_effect=failed),
-            pytest.raises(InitError, match="daemon-reload failed"),
-        ):
-            run_user_daemon_reload()
+def test_daemon_reload_failure_raises() -> None:
+    failed = subprocess.CalledProcessError(1, "systemctl", stderr=b"no bus")
+    with (
+        patch("stormpulse.init.system.subprocess.run", side_effect=failed),
+        pytest.raises(InitError, match="daemon-reload failed"),
+    ):
+        run_user_daemon_reload()
 
 
 # ---------------------------------------------------------------------------
