@@ -69,12 +69,13 @@ async def handle_log_batch_ack(
         return
     # Confirm, then pop: a read between the two would see the range lost and rewind.
     shipper = agent.shippers.get(receipt.group)
+    confirmed = False
     try:
         confirmed = shipper is not None and await asyncio.to_thread(
             shipper.confirm, receipt
         )
     finally:
-        agent.pending_batches.pop(batch_id)
+        agent.pending_batches.pop(batch_id, release=confirmed)
     if confirmed:
         logger.debug(
             "Confirmed batch %s for group %s (range ends %s)",

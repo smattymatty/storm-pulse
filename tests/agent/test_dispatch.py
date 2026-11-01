@@ -757,6 +757,27 @@ async def test_log_batch_ack_advances_position(agent: Agent) -> None:
 
 
 @pytest.mark.asyncio
+async def test_log_batch_ack_refused_by_the_shipper_pops_without_waking_the_loop(
+    agent: Agent,
+) -> None:
+    """The checkpoint did not move, so the loop re-reads on its interval, not at ACK pace."""
+    fake_shipper = MagicMock()
+    fake_shipper.confirm.return_value = False
+    agent.shippers["grp"] = fake_shipper
+    agent.pending_batches.add("bid-1", Receipt("grp", "/var/log/x.log", None, 0, 4242))
+    waiter = asyncio.ensure_future(agent.pending_batches.wait_released("grp"))
+    await asyncio.sleep(0)
+
+    env = envelope(MessageType.LOG_BATCH_ACK, {"batch_id": "bid-1"}, id="x")
+    await acks.handle_log_batch_ack(agent, AsyncMock(), env)
+
+    assert "bid-1" not in agent.pending_batches
+    await asyncio.sleep(0.02)
+    assert not waiter.done()
+    waiter.cancel()
+
+
+@pytest.mark.asyncio
 async def test_log_batch_ack_confirms_while_the_batch_is_still_pending(
     agent: Agent,
 ) -> None:

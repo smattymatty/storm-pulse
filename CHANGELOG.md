@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A journald log group drains a burst instead of falling hours behind.**
+  Each read ran `journalctl --after-cursor` to the end of the backlog and kept
+  200 lines, so a read grew with the backlog (about 7 s each on a node an hour
+  behind) and the group shipped one batch per 10 s interval whatever was
+  waiting. The reader now stops at the batch and ends the child, a full batch
+  is followed by the next read as soon as its ACK lands, and a group with a
+  batch in flight reads nothing until that ACK (a tick inside the window used
+  to ship the same range twice). The Checkpoint still moves only on ACK.
+
 ### Changed
 
 - **`stormpulse` with no command prints argparse's own help.** The hand-written

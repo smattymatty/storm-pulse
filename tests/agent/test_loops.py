@@ -334,13 +334,99 @@ async def test_log_loop_consumes_a_wholly_filtered_read_without_a_frame(
 
 
 @pytest.mark.asyncio
-async def test_log_loop_holds_a_filtered_checkpoint_behind_a_pending_batch(
+async def test_log_loop_drains_a_backlog_on_each_ack_not_each_interval(
     agent: Agent, shutdown: asyncio.Event, tmp_path: Path
 ) -> None:
-    log = tmp_path / "pulse.log"
-    agent.pending_batches.add("in-flight", Receipt("pulse", str(log), None, 0, 1))
-    _, store, _ = await _one_filtered_tick(agent, shutdown, tmp_path)
+    """Three lines, a cap of one, a ten-second interval: all three ship inside
+    one tick when each ACK lands moments after its send, because the loop is
+    woken by the ACK rather than the interval. A burst drains at wire speed."""
+    log, group = _pulse_log_group(tmp_path)
+    log.write_text(log.read_text() * 3)
+    group = replace(group, max_lines_per_batch=1)
+    store = LogPositionStore(tmp_path / "pos.db")
+    shipper = LogShipper(group, LogTailer(group, store))
+    agent.shippers["pulse"] = shipper
+    sent: list[str] = []
+    acks: set[asyncio.Task[None]] = set()
+
+    async def ack_later(batch_id: str) -> None:
+        """The ACK path as acks.py runs it, a round trip after the send."""
+        await asyncio.sleep(0.02)
+        receipt = agent.pending_batches.peek(batch_id)
+        assert receipt is not None and shipper.confirm(receipt)
+        agent.pending_batches.pop(batch_id)
+
+    async def send(msg: str) -> None:
+        sent.append(msg)
+        acks.add(asyncio.create_task(ack_later(json.loads(msg)["payload"]["batch_id"])))
+
+    ws = AsyncMock()
+    ws.send = AsyncMock(side_effect=send)
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.3)
+        shutdown.set()
+
     try:
-        assert store.get("pulse") == (0, None)
+        await asyncio.gather(
+            loops.log_loop(agent, ws, "pulse", lambda: None), stop_soon()
+        )
+        await asyncio.gather(*acks)
     finally:
         store.close()
+    assert len(sent) == 3
+
+
+def _reads_ahead_tailer(line: str) -> MagicMock:
+    """A tailer that reads past its receipts, as the streaming one does."""
+    tailer = MagicMock()
+    tailer.reads_ahead = True
+    tailer.read_new_lines.return_value = (
+        [line],
+        Receipt("pulse", "stream", None, 1, 2),
+    )
+    return tailer
+
+
+@pytest.mark.asyncio
+async def test_log_loop_never_holds_a_tailer_that_reads_ahead(
+    agent: Agent, shutdown: asyncio.Event, tmp_path: Path
+) -> None:
+    log, group = _pulse_log_group(tmp_path)
+    agent.shippers["pulse"] = LogShipper(
+        group, _reads_ahead_tailer(log.read_text().strip())
+    )
+    agent.pending_batches.add("in-flight", Receipt("pulse", "stream", None, 0, 1))
+    ws = AsyncMock()
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    await asyncio.gather(loops.log_loop(agent, ws, "pulse", lambda: None), stop_soon())
+    ws.send.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_log_loop_reads_nothing_while_the_groups_batch_is_in_flight(
+    agent: Agent, shutdown: asyncio.Event, tmp_path: Path
+) -> None:
+    """A pull read starts at the Checkpoint, so a second read before the ACK
+    would ship the same range twice (1.6 % of one burst's rows, measured)."""
+    log, group = _pulse_log_group(tmp_path)
+    store = LogPositionStore(tmp_path / "pos.db")
+    agent.shippers["pulse"] = LogShipper(group, LogTailer(group, store))
+    agent.pending_batches.add("in-flight", Receipt("pulse", str(log), None, 0, 1))
+    ws = AsyncMock()
+
+    async def stop_soon() -> None:
+        await asyncio.sleep(0.05)
+        shutdown.set()
+
+    try:
+        await asyncio.gather(
+            loops.log_loop(agent, ws, "pulse", lambda: None), stop_soon()
+        )
+    finally:
+        store.close()
+    ws.send.assert_not_called()

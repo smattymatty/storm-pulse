@@ -13,7 +13,9 @@ import hashlib
 import json
 import logging
 import os
+import signal
 import subprocess
+import threading
 from collections.abc import Callable, Collection
 
 from stormpulse.config import LogGroupConfig
@@ -198,24 +200,26 @@ class JournaldTailer:
         self._group = group
         self._store = position_store
 
-    def _run(self, args: list[str]) -> str | None:
-        """Run journalctl, returning stdout, or None when it could not run."""
+    def _argv(self, args: list[str]) -> list[str]:
+        return [
+            _JOURNALCTL_BINARY,
+            "--unit",
+            self._group.unit,
+            "--output",
+            "json",
+            "--no-pager",
+            *args,
+        ]
+
+    def _spawn(self, args: list[str]) -> subprocess.Popen[str] | None:
+        """One journalctl, its output piped; None when the binary is missing."""
         try:
-            result = subprocess.run(
-                [
-                    _JOURNALCTL_BINARY,
-                    "--unit",
-                    self._group.unit,
-                    "--output",
-                    "json",
-                    "--no-pager",
-                    *args,
-                ],
-                capture_output=True,
+            return subprocess.Popen(
+                self._argv(args),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=_JOURNALCTL_TIMEOUT_SECONDS,
                 shell=False,
-                check=False,
             )
         except FileNotFoundError:
             logger.warning(
@@ -223,19 +227,49 @@ class JournaldTailer:
                 self._group.name,
             )
             return None
-        except subprocess.TimeoutExpired:
-            logger.warning("journalctl timed out for group %s", self._group.name)
-            return None
 
-        if result.returncode != 0:
+    def _records(self, args: list[str], limit: int) -> list[str]:
+        """Up to ``limit`` records from one journalctl run, taken as it prints them
+        and stopped there, so a read costs one batch however deep the backlog.
+        Empty when journalctl cannot run or fails. A kill, ours at the cap or the
+        deadline's, keeps what was read: the receipt ends at the last record taken."""
+        proc = self._spawn(args)
+        if proc is None:
+            return []
+        timed_out = threading.Event()
+
+        def expire() -> None:
+            timed_out.set()
+            proc.kill()
+
+        killer = threading.Timer(_JOURNALCTL_TIMEOUT_SECONDS, expire)
+        records: list[str] = []
+        with proc:
+            assert proc.stdout is not None and proc.stderr is not None
+            killer.start()
+            for line in proc.stdout:
+                if line.strip():
+                    records.append(line.rstrip("\n"))
+                if len(records) >= limit:
+                    break
+            killer.cancel()
+            proc.kill()  # the rest of the backlog is the next read's; a no-op once exited
+            error = proc.stderr.readline().strip()[:200]
+        if timed_out.is_set():
+            logger.warning(
+                "journalctl timed out for group %s after %d record(s)",
+                self._group.name,
+                len(records),
+            )
+        elif proc.returncode not in (0, -signal.SIGKILL):
             logger.warning(
                 "journalctl failed for group %s (exit %d): %s",
                 self._group.name,
-                result.returncode,
-                result.stderr.strip()[:200],
+                proc.returncode,
+                error,
             )
-            return None
-        return result.stdout
+            return []
+        return records
 
     @staticmethod
     def _cursor_of(record_line: str) -> str:
@@ -254,8 +288,8 @@ class JournaldTailer:
 
     def _seed(self) -> None:
         """Store the newest record's cursor; an empty journal stays unseeded, retried next interval."""
-        seed = self._run(["--lines", "1"])
-        cursor = self._cursor_of(seed.strip().splitlines()[-1]) if seed else ""
+        seed = self._records(["--lines", "1"], 1)
+        cursor = self._cursor_of(seed[-1]) if seed else ""
         if cursor:
             self._store.set_cursor(self._group.name, self._group.unit, cursor)
 
@@ -273,12 +307,12 @@ class JournaldTailer:
             self._seed()
             return ([], self._receipt("", ""))
 
-        out = self._run(["--after-cursor", stored]) or ""
-        records = [line for line in out.splitlines() if line.strip()]
-        if not records:
+        taken = self._records(
+            ["--after-cursor", stored], min(max_lines, MAX_LINES_PER_INTERVAL)
+        )
+        if not taken:
             return ([], self._receipt(stored, stored))
 
-        taken = records[:max_lines]
         to_cursor = ""
         for record_line in reversed(taken):
             to_cursor = self._cursor_of(record_line)

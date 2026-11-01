@@ -231,7 +231,10 @@ known log signature. In load order:
   `duration_ms`.
 - **Log shipping** (`log_loop`, one per group): tail, parse, batch,
   ship. Bounded at 200 lines per batch, 1000 lines per tailer read,
-  4 KB per line. Signature: INFO `Shipped log.batch ... lines=N
+  4 KB per line. A full batch is followed by the next read on its ACK, so
+  a backlog ships at ACK pace, not one batch an interval; a pull group
+  with a batch in flight reads nothing until that ACK or the 30 s prune.
+  Signature: INFO `Shipped log.batch ... lines=N
   dropped=N duration_ms=N`. Two of those numbers mislead if read
   naively: `duration_ms` pinned near `ship_interval * 0.9` is the
   streaming tailer's deliberate drain window, not a stall; and

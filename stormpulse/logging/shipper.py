@@ -35,6 +35,9 @@ class Batch:
     lines: list[dict[str, Any]]
     dropped: int
     receipt: Receipt
+    # The read filled its cap, so the source likely holds more: the loop reads
+    # again on this batch's ACK instead of sleeping the interval.
+    more: bool = False
 
     @property
     def from_position(self) -> int | str:
@@ -101,7 +104,8 @@ class LogShipper:
             self._skip_filtered(receipt, pending)
             return None
         parsed, dropped = self._parse(matched, bucket_id_resolver)
-        return Batch(lines=parsed, dropped=dropped, receipt=receipt)
+        more = len(raw_lines) >= self._group.max_lines_per_batch
+        return Batch(parsed, dropped, receipt, more=more)
 
     def _parse(
         self, lines: list[str], bucket_id_resolver: BucketIdResolver | None

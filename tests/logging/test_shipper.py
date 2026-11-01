@@ -427,3 +427,19 @@ def test_a_pending_receipt_below_the_filtered_end_holds_the_checkpoint(
     )
     assert shipper.collect_batch(pending=(in_flight,)) is None
     assert store.get("test") == (0, None)
+
+
+def test_a_batch_says_whether_its_read_filled_the_cap(tmp_path: Path) -> None:
+    """``more`` is what lets the loop read again on the ACK instead of the interval."""
+    log = tmp_path / "t.log"
+    log.write_text("".join(_stormpulse_line(m) + "\n" for m in "abc"))
+    store = LogPositionStore(tmp_path / "pos.db")
+    group = _make_group(log, max_batch=2)
+    shipper = LogShipper(group, LogTailer(group, store))
+
+    full = shipper.collect_batch()
+    assert full is not None and full.more
+    assert shipper.confirm(full.receipt)
+    rest = shipper.collect_batch()
+    assert rest is not None and not rest.more
+    store.close()

@@ -218,6 +218,10 @@ class StreamingDockerTailer:
     from ``pending`` rewinds the follow.
     """
 
+    # The log loop holds a pull tailer while its batch is in flight; this one
+    # reads past its receipts by design and is never held.
+    reads_ahead = True
+
     _RESPAWN_DELAY_SECONDS = 5.0
     _READ_CHUNK_BYTES = 65536
     _TERMINATE_GRACE_SECONDS = 3.0

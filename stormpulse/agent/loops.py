@@ -20,6 +20,7 @@ from stormpulse.agent.integrations_runtime import (
     replace_runtime_state,
 )
 from stormpulse.integrations import LogEnricher
+from stormpulse.logging.shipper import LogShipper
 from stormpulse.protocol import (
     EventsBatchPayload,
     HeartbeatPayload,
@@ -114,52 +115,95 @@ async def log_loop(
     tick-fresh enrichment join, wired from ``log_enrichers`` by the composition root."""
     shipper = agent.shippers[group_name]
     interval = shipper.ship_interval_seconds
-    agent_id = agent.config.agent.id
+    # A pull read starts at the Checkpoint, which only an ACK moves, so a second
+    # read with one batch in flight ships the same range twice. A tailer that
+    # reads ahead of its receipts by design says so and is never held.
+    held_while_pending = not getattr(shipper.tailer, "reads_ahead", False)
+    pending = agent.pending_batches
     while not agent.shutdown.is_set():
+        wait_on_ack = False
         try:
-            agent.pending_batches.prune_stale()
-
-            started = time.monotonic()
-            # Tick-fresh enrichment map; state is reassigned
-            # atomically, so each tick sees a consistent view.
-            resolver = resolver_provider()
-            batch = await asyncio.to_thread(
-                shipper.collect_batch,
-                resolver,
-                pending=agent.pending_batches.receipts(),
-            )
-            if batch is not None:
-                batch_id = str(uuid.uuid4())
-                log_batch = LogBatchPayload(
-                    group=group_name,
-                    parser=shipper.parser_name,
-                    batch_id=batch_id,
-                    lines=batch.lines,
-                    dropped=batch.dropped,
-                    from_position=batch.from_position,
-                    to_position=batch.to_position,
-                )
-                envelope = make(agent_id, log_batch)
-                agent.pending_batches.add(batch_id, batch.receipt)
-                await ws.send(envelope.to_json())
-                # INFO + duration_ms while shipping is being proven out; drop to
-                # debug once steady.
-                duration_ms = int((time.monotonic() - started) * 1000)
-                logger.info(
-                    "Shipped log.batch %s group=%s lines=%d dropped=%d duration_ms=%d",
-                    batch_id,
-                    group_name,
-                    len(batch.lines),
-                    batch.dropped,
-                    duration_ms,
+            pending.prune_stale()
+            # The hold keeps a held group at one batch in flight, so the release
+            # it waits on below is always this batch's, never a stale one.
+            if held_while_pending and pending.in_flight(group_name):
+                wait_on_ack = True
+            else:
+                wait_on_ack = await _ship_one(
+                    agent, ws, shipper, group_name, resolver_provider
                 )
         except ConnectionClosed:
             raise
         except Exception:
             logger.warning("Log loop error for group %s", group_name, exc_info=True)
 
+        # A full batch means a backlog: read again when its ACK moves the
+        # Checkpoint, so a burst drains at wire speed instead of one batch an interval.
+        if wait_on_ack:
+            await _released_or_shutdown(agent, group_name, interval)
+            continue
         if await sleep_or_shutdown(agent.shutdown, interval):
             return
+
+
+async def _released_or_shutdown(agent: Agent, group: str, timeout: float) -> None:
+    """Wait for ``group``'s batch to be ACKed or pruned, for shutdown, or ``timeout``."""
+    waits = {
+        asyncio.ensure_future(agent.pending_batches.wait_released(group)),
+        asyncio.ensure_future(agent.shutdown.wait()),
+    }
+    _, unfinished = await asyncio.wait(
+        waits, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+    )
+    for task in unfinished:
+        task.cancel()
+    await asyncio.gather(*unfinished, return_exceptions=True)
+
+
+async def _ship_one(
+    agent: Agent,
+    ws: ClientConnection,
+    shipper: LogShipper,
+    group_name: str,
+    resolver_provider: Callable[[], LogEnricher | None],
+) -> bool:
+    """Collect and ship one batch; True when its read filled the cap."""
+    started = time.monotonic()
+    # Tick-fresh enrichment map; state is reassigned
+    # atomically, so each tick sees a consistent view.
+    resolver = resolver_provider()
+    batch = await asyncio.to_thread(
+        shipper.collect_batch,
+        resolver,
+        pending=agent.pending_batches.receipts(),
+    )
+    if batch is None:
+        return False
+    batch_id = str(uuid.uuid4())
+    log_batch = LogBatchPayload(
+        group=group_name,
+        parser=shipper.parser_name,
+        batch_id=batch_id,
+        lines=batch.lines,
+        dropped=batch.dropped,
+        from_position=batch.from_position,
+        to_position=batch.to_position,
+    )
+    envelope = make(agent.config.agent.id, log_batch)
+    agent.pending_batches.add(batch_id, batch.receipt)
+    await ws.send(envelope.to_json())
+    # INFO + duration_ms while shipping is being proven out; drop to
+    # debug once steady.
+    duration_ms = int((time.monotonic() - started) * 1000)
+    logger.info(
+        "Shipped log.batch %s group=%s lines=%d dropped=%d duration_ms=%d",
+        batch_id,
+        group_name,
+        len(batch.lines),
+        batch.dropped,
+        duration_ms,
+    )
+    return batch.more
 
 
 async def events_loop(agent: Agent, ws: ClientConnection) -> None:
