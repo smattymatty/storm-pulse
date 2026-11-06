@@ -37,7 +37,7 @@ from stormpulse.protocol.reasons import CancelReason
 def test_messages_section_lists_the_envelope_and_every_catalogued_type() -> None:
     messages = wire_contract_messages()
     assert set(messages) == {ENVELOPE_ENTRY} | {t.value for t in MessageType}
-    assert len(messages) == len(MESSAGES) + 1 == 21
+    assert len(messages) == len(MESSAGES) + 1 == 22
 
 
 def test_envelope_entry_is_walked_from_the_class_as_to_dict_writes_it() -> None:
@@ -77,6 +77,27 @@ def test_messages_entry_carries_direction_root_and_typed_classes() -> None:
     assert "register.ok" not in acks
     for name in acks:
         assert messages[name]["classes"] == dataclass_wire_types(AckPayload)
+
+
+def test_inventory_packages_is_agent_sent_with_a_release_and_name_version_rows() -> (
+    None
+):
+    """The package report: one release codename and the whole list of
+    ``{name, version}`` source packages, both required, neither nullable."""
+    entry = wire_contract_messages()["inventory.packages"]
+    assert entry["direction"] == "agent->dashboard"
+    assert entry["root"] == "InventoryPackagesPayload"
+    plain = {"nullable": False, "required": True}
+    assert entry["classes"] == {
+        "InventoryPackagesPayload": {
+            "release": {"type": "string", **plain},
+            "packages": {"type": "array", **plain},
+        },
+        "SourcePackage": {
+            "name": {"type": "string", **plain},
+            "version": {"type": "string", **plain},
+        },
+    }
 
 
 def test_notes_name_the_one_entry_where_the_wire_differs_from_the_class() -> None:
@@ -407,7 +428,7 @@ def test_fitness_names_every_message_when_the_file_predates_the_section(
     artifact["schema"] = 2
     violations = check_with(artifact)
     undeclared = [v for v in violations if "is catalogued but not declared" in v]
-    assert len(undeclared) == len(wire_contract_messages()) == 21
+    assert len(undeclared) == len(wire_contract_messages()) == 22
 
 
 def test_fitness_reports_a_hand_broken_messages_section_instead_of_crashing(

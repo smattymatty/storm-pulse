@@ -29,6 +29,7 @@ class MessageType(StrEnum):
     LOG_BATCH = "log.batch"
     EVENTS_BATCH = "events.batch"
     SIGNOFF_STATE = "signoff.state"
+    INVENTORY_PACKAGES = "inventory.packages"
 
     # Dashboard → Agent (actionable)
     COMMAND_REQUEST = "command.request"
@@ -343,6 +344,24 @@ class RegisterPayload(WirePayload):
 
 
 @dataclass(frozen=True, slots=True)
+class SourcePackage(WirePayload):
+    """One installed Debian source package at one version; lowercase name."""
+
+    name: str
+    version: str
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryPackagesPayload(WirePayload):
+    """Payload for ``inventory.packages``: the node's installed source packages
+    under its release codename. The whole list, every time: the receiver
+    replaces what it holds for the node, never merges."""
+
+    release: str
+    packages: list[SourcePackage]
+
+
+@dataclass(frozen=True, slots=True)
 class SignoffStatePayload(WirePayload):
     """Payload for signoff.state messages (agent -> dashboard).
 
@@ -473,6 +492,7 @@ MESSAGES: Mapping[MessageType, MessageSpec] = {
     MessageType.LOG_BATCH: MessageSpec(_OUT, LogBatchPayload),
     MessageType.EVENTS_BATCH: MessageSpec(_OUT, EventsBatchPayload),
     MessageType.SIGNOFF_STATE: MessageSpec(_OUT, SignoffStatePayload),
+    MessageType.INVENTORY_PACKAGES: MessageSpec(_OUT, InventoryPackagesPayload),
     MessageType.COMMAND_REQUEST: MessageSpec(_IN, CommandRequestPayload),
     MessageType.COMMAND_SEQUENCE: MessageSpec(_IN, CommandSequencePayload),
     MessageType.LOG_BATCH_ACK: MessageSpec(_IN, LogBatchAckPayload),

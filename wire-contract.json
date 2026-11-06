@@ -2069,7 +2069,7 @@
       "result": null
     }
   },
-  "contract_digest": "sha256:49e5eea4f450c1fa6aa1373f5eba429e321dc69fae50733d11dbfabbf8fed53a",
+  "contract_digest": "sha256:3f0a25c79b7caad4785a48754a5df5590adf0f30f1e11707c9aa3535955afca4",
   "digest": "sha256:2a36d610664c613cacf6fae9d14e38caf718601449aed32a1931419a7ece9dd6",
   "digest_covers": "integrations",
   "integration_events": {
@@ -2548,6 +2548,7 @@
               "log.batch",
               "events.batch",
               "signoff.state",
+              "inventory.packages",
               "command.request",
               "command.sequence",
               "log.batch.ack",
@@ -2740,6 +2741,36 @@
       },
       "direction": "dashboard->agent",
       "root": "AckPayload"
+    },
+    "inventory.packages": {
+      "classes": {
+        "InventoryPackagesPayload": {
+          "packages": {
+            "nullable": false,
+            "required": true,
+            "type": "array"
+          },
+          "release": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        },
+        "SourcePackage": {
+          "name": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          },
+          "version": {
+            "nullable": false,
+            "required": true,
+            "type": "string"
+          }
+        }
+      },
+      "direction": "agent->dashboard",
+      "root": "InventoryPackagesPayload"
     },
     "log.batch": {
       "classes": {

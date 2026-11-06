@@ -225,6 +225,7 @@ async def test_session_starts_the_loops_after_a_spoken_register_ok(
     await _run_session(agent, ws, "wss://cp/ws/")
     assert "receive_loop" in recorded_tasks
     assert "heartbeat_loop" in recorded_tasks
+    assert "packages_push_loop" in recorded_tasks
     assert agent.job_manager is None
 
 

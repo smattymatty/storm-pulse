@@ -43,6 +43,9 @@ from stormpulse.protocol.payloads import (
 from stormpulse.protocol.payloads import EventsBatchPayload as EventsBatchPayload
 from stormpulse.protocol.payloads import HeartbeatPayload as HeartbeatPayload
 from stormpulse.protocol.payloads import IntegrationReport as IntegrationReport
+from stormpulse.protocol.payloads import (
+    InventoryPackagesPayload as InventoryPackagesPayload,
+)
 from stormpulse.protocol.payloads import LogBatchAckPayload as LogBatchAckPayload
 from stormpulse.protocol.payloads import LogBatchPayload as LogBatchPayload
 from stormpulse.protocol.payloads import MessageSpec as MessageSpec
@@ -53,6 +56,7 @@ from stormpulse.protocol.payloads import RegisterOkPayload as RegisterOkPayload
 from stormpulse.protocol.payloads import RegisterPayload as RegisterPayload
 from stormpulse.protocol.payloads import ResultError as ResultError
 from stormpulse.protocol.payloads import SignoffStatePayload as SignoffStatePayload
+from stormpulse.protocol.payloads import SourcePackage as SourcePackage
 from stormpulse.protocol.payloads import Step as Step
 from stormpulse.protocol.payloads import TransferStats as TransferStats
 from stormpulse.protocol.reasons import CancelReason as CancelReason

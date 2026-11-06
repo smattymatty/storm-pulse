@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The agent reports a node's installed packages, and again whenever dpkg
+  changes.** A new agent-sent message, `inventory.packages`, carries the node's
+  release codename and every installed dpkg package folded to its source package
+  at the source version, one entry per (source, version). It is sent at session
+  start, then only when `/var/lib/dpkg/status` moves (checked every 300 s), never
+  per heartbeat. A list is the node's whole truth, so a partial one is never sent:
+  a package mid-upgrade, an error flag, or a host with no `dpkg-query` or no
+  `VERSION_CODENAME` sends nothing. The register OS block also carries `codename`.
+  This adds a message type, so the contract digest moves: update the control plane
+  first, then the agents.
+
 ### Fixed
 
 - **A journald log group drains a burst instead of falling hours behind.**
