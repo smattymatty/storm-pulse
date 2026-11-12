@@ -49,8 +49,9 @@ _GARAGE_S3_ERROR_RE = re.compile(
     r"(?P<path>\S+)\s*$"
 )
 
-# Garage names the key from the Authorization header only, so a presigned
-# request's line has no "(key ...)". Its key id leads X-Amz-Credential.
+# Until Deuxfleurs/garage#1603 runs on every node: Garage names the key from
+# the Authorization header only, so a presigned request's line has no
+# "(key ...)". Its key id leads X-Amz-Credential.
 _PRESIGNED_KEY_RE = re.compile(
     r"[?&]X-Amz-Credential=([A-Za-z0-9]+)(?:%2F|/)", re.IGNORECASE
 )
