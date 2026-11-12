@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Presigned S3 requests reach the access log.** Garage writes `(key ...)` on a
+  request line only when the key came in the `Authorization` header, so a
+  presigned request's line names no key and the `garage_s3` parser dropped it
+  (Deuxfleurs/garage#1603). The parser now takes the key id from the line's
+  `X-Amz-Credential` query parameter when Garage logged none. A line naming no
+  key either way is still dropped, and the query string is still never shipped.
+
 - **A journald log group drains a burst instead of falling hours behind.**
   Each read ran `journalctl --after-cursor` to the end of the backlog and kept
   200 lines, so a read grew with the backlog (about 7 s each on a node an hour

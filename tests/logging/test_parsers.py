@@ -237,21 +237,69 @@ class TestParseGarageS3:
             f"1.2.3.4 (via [::1]:1234) (key GKabc123) {method} {path}"
         )
 
-    def test_presigned_get_names_the_operation_never_the_query(self) -> None:
-        line = self._request(
-            "GET",
-            "/media/photos/x.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256"
-            "&X-Amz-Credential=GKabc123%2F20260410&X-Amz-Signature=s3cr3t",
-        )
+    # Captured from dxflrs/garage:v2.5.0. A presigned request's line names no
+    # key: Garage reads it from the Authorization header alone.
+    _SERVER = "2026-11-12T20:04:40.617729Z  INFO garage_api_common::generic_server: "
+    _PEER = "203.0.113.7 (via [::ffff:172.17.0.1]:56228) "
+    _PRESIGNED = (
+        "?X-Amz-Algorithm=AWS4-HMAC-SHA256"
+        "&X-Amz-Credential=GKlocaltestkeylog%2F20261112%2Fgarage%2Fs3%2Faws4_request"
+        "&X-Amz-Date=20261112T200440Z&X-Amz-Expires=120"
+        "&X-Amz-SignedHeaders=host&X-Amz-Signature=s3cr3t"
+    )
+
+    def test_presigned_put_takes_its_key_from_the_query(self) -> None:
+        line = self._SERVER + self._PEER + "PUT /keylog/presigned.txt" + self._PRESIGNED
         result = parse_garage_s3(line)
         assert result is not None
-        assert result["s3_op"] == "GetObject"
-        assert result["bucket"] == "media"
-        assert result["object_key"] == "photos/x.jpg"
-        assert result["message"] == "GetObject media"
+        assert result["key_id"] == "GKlocaltestkeylog"
+        assert result["s3_op"] == "PutObject"
+        assert result["bucket"] == "keylog"
+        assert result["object_key"] == "presigned.txt"
+        assert result["message"] == "PutObject keylog"
         assert "path" not in result
         flat = json.dumps(result)
         assert "X-Amz" not in flat and "s3cr3t" not in flat and "?" not in flat
+
+    def test_presigned_error_line_carries_its_key_and_status(self) -> None:
+        line = (
+            self._SERVER
+            + "error 404 Not Found, Key not found in response to "
+            + self._PEER
+            + "GET /keylog/missing.txt"
+            + self._PRESIGNED
+        )
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["key_id"] == "GKlocaltestkeylog"
+        assert result["response_code"] == 404
+        assert result["s3_op"] == "GetObject"
+
+    def test_the_key_garage_logged_wins_over_the_query(self) -> None:
+        line = self._request("GET", "/media/photos/x.jpg" + self._PRESIGNED)
+        result = parse_garage_s3(line)
+        assert result is not None
+        assert result["key_id"] == "GKabc123"
+
+    def test_lowercase_credential_parameter_is_read(self) -> None:
+        query = "?x-amz-credential=GKlower1%2F20261112%2Fgarage%2Fs3%2Faws4_request"
+        result = parse_garage_s3(
+            self._SERVER + self._PEER + "GET /keylog/a.txt" + query
+        )
+        assert result is not None
+        assert result["key_id"] == "GKlower1"
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/keylog/unsigned.txt",
+            "/keylog/a.txt?X-Amz-Credential=%2F20261112%2Fgarage%2Fs3%2Faws4_request",
+            "/keylog/a.txt?X-Amz-Credential=GKnoscope",
+            "/keylog/a.txt?NotX-Amz-Credential=GKabc%2F20261112",
+        ],
+    )
+    def test_request_line_naming_no_key_is_dropped(self, path: str) -> None:
+        assert parse_garage_s3(self._SERVER + self._PEER + "GET " + path) is None
 
     def test_the_operation_table(self) -> None:
         # One golden request per name (ADR CORE-011 decision 10).

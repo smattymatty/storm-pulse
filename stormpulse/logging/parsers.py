@@ -29,7 +29,7 @@ def _truncate(line: str, max_bytes: int = MAX_LINE_BYTES) -> tuple[str, bool]:
 _GARAGE_S3_RE = re.compile(
     r"(?P<ts>\S+)\s+INFO\s+garage_api_common::generic_server:\s+"
     r"(?P<ip>\S+)\s+\(via\s+(?P<proxy>[^)]+)\)\s+"
-    r"\(key\s+(?P<key_id>[A-Za-z0-9]+)\)\s+"
+    r"(?:\(key\s+(?P<key_id>[A-Za-z0-9]+)\)\s+)?"
     r"(?P<method>[A-Z]+)\s+"
     r"(?P<path>\S+)\s*$"
 )
@@ -44,9 +44,15 @@ _GARAGE_S3_ERROR_RE = re.compile(
     r"(?P<ts>\S+)\s+(?:INFO|WARN)\s+garage_api_common::generic_server:\s+"
     r"error\s+(?P<status>\d{3})\b.*\s+in response to\s+"
     r"(?P<ip>\S+)\s+\(via\s+(?P<proxy>[^)]+)\)\s+"
-    r"\(key\s+(?P<key_id>[A-Za-z0-9]+)\)\s+"
+    r"(?:\(key\s+(?P<key_id>[A-Za-z0-9]+)\)\s+)?"
     r"(?P<method>[A-Z]+)\s+"
     r"(?P<path>\S+)\s*$"
+)
+
+# Garage names the key from the Authorization header only, so a presigned
+# request's line has no "(key ...)". Its key id leads X-Amz-Credential.
+_PRESIGNED_KEY_RE = re.compile(
+    r"[?&]X-Amz-Credential=([A-Za-z0-9]+)(?:%2F|/)", re.IGNORECASE
 )
 
 _GARAGE_ADMIN_RE = re.compile(
@@ -73,6 +79,14 @@ _GARAGE_ADMIN_MUTATIONS: frozenset[str] = frozenset(
 )
 
 
+def _line_key_id(m: re.Match[str]) -> str:
+    """The key Garage logged, else the one a presigned query names, else ''."""
+    if m.group("key_id"):
+        return m.group("key_id")
+    presigned = _PRESIGNED_KEY_RE.search(m.group("path"))
+    return presigned.group(1) if presigned else ""
+
+
 def parse_garage_s3(line: str) -> dict[str, Any] | None:
     """Parse a Garage S3 access log line.
 
@@ -96,7 +110,9 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
         m = _GARAGE_S3_ERROR_RE.fullmatch(truncated_line)
         if m is not None:
             status = int(m.group("status"))
-    if m is not None:
+    key_id = _line_key_id(m) if m is not None else ""
+    # A line naming no key attributes to no account and is dropped.
+    if m is not None and key_id:
         # The raw path stops here: the operation name and the split segments
         # ride, the query string (a presigned URL's signature) never does.
         path = m.group("path")
@@ -114,7 +130,7 @@ def parse_garage_s3(line: str) -> dict[str, Any] | None:
             "message": message,
             "peer_ip": m.group("ip"),
             "proxy": m.group("proxy"),
-            "key_id": m.group("key_id"),
+            "key_id": key_id,
             "method": method,
             "s3_op": s3_op,
             "bucket": bucket,
